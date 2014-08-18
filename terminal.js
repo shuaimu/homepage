@@ -575,6 +575,8 @@ var Terminal = Terminal || function(containerId) {
              '(v' + VERSION_ + ')</div>');
       output((new Date()).toLocaleString());
       output('<p>Please type "help" for available commands</p>');
+      
+      return;
 
       if (!!!window.requestFileSystem) {
         output('<div>Sorry! The FileSystem APIs are not available in your browser.</div>');
