@@ -89,13 +89,13 @@ var Terminal = Terminal || function(containerId) {
   window.requestFileSystem = window.requestFileSystem ||
                              window.webkitRequestFileSystem;
 
-  const VERSION_ = '0.0.1';
+  const VERSION_ = '0.0.2';
   //const CMDS_ = [
   //  '3d', 'cat', 'cd', 'cp', 'clear', 'date', 'help', 'install', 'ls', 'mkdir',
   //  'mv', 'open', 'pwd', 'rm', 'rmdir', 'theme', 'version', 'who', 'wget'
   //];
   const CMDS_ = [
-      'about', 'pub', 'clear', 'help',
+      'about', 'pub', 'photo', 'clear', 'help',
   ];
   const THEMES_ = ['default', 'cream'];
 
@@ -360,9 +360,14 @@ var Terminal = Terminal || function(containerId) {
           output('Contact: shuai at cs nyu edu<br>');
           output('</p>');
 
-          output('<p>I am an irrelevant researcher and a slow coder visiting New York University, I am also suffering a Permanent-head-Damage from Tsinghua University.</p>');
+          output('<p>I am an irrelevant researcher and a slow coder visiting New York University, I am also suffering a Permanent-head-Damage from Tsinghua University. I used to attend China Agricultural University, where I ate a few experimental genetically modified cucumbers and spent a lot of time in the defense of the ancients. </p>');
           output('<p>I love to read (but sadly often cannot fully understand) system research papers appeared in OSDI/SOSP/NSDI. But luckily I have two very kind advisors <a href="http://www.news.cs.nyu.edu/~jinyang/" target="_blank">Jinyang</a> and <a href="http://www.cs.princeton.edu/~wlloyd/" target="_blank">Wyatt</a>, who are always very patient with my stupid questions. </p>');
           output('<p>This lovely terminal emulator is from Eric Bidelman &lt;ericbidelman@chromium.org&gt; </p>');
+          break;
+        case 'photo':
+          var idx = Math.floor(Math.random() * 10);
+          var tip = idx == 0 ? "Ok..ok..This is me...": "Lol...Why do you want to see my photo?"; 
+          output('<p><a><img src="./photo/sealion' + idx + '.jpg" width=600></a><br><a>' + tip + '</a></p>');
           break;
         default:
           if (cmd) {
