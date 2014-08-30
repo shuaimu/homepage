@@ -358,6 +358,7 @@ var Terminal = Terminal || function(containerId) {
           output('715 Broadway Room 719<br>');
           output('New York, NY 10003<br>');
           output('Contact: shuai at cs nyu edu<br>');
+          output('Github: <a href="http://github.com/msmummy" target="_blank">github.com/msmummy</a><br>')
           output('</p>');
 
           output('<p>I am an irrelevant researcher and a slow coder visiting New York University, I am also suffering a Permanent-head-Damage from Tsinghua University. I used to attend China Agricultural University, where I ate a few experimental genetically modified cucumbers and spent a lot of time in the defense of the ancients. </p>');
