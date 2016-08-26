@@ -361,8 +361,8 @@ var Terminal = Terminal || function(containerId) {
           output('Github: <a href="http://github.com/msmummy" target="_blank">github.com/msmummy</a><br>')
           output('</p>');
 
-          output('<p>I am an irrelevant researcher and a slow coder visiting New York University, I am also suffering a Permanent-head-Damage from Tsinghua University. I used to attend China Agricultural University, where I ate a few experimental genetically modified cucumbers and spent a lot of time in the defense of the ancients. </p>');
-          output('<p>I love to read (but sadly often cannot fully understand) system research papers appeared in OSDI/SOSP/NSDI. But luckily I have two very kind advisors <a href="http://www.news.cs.nyu.edu/~jinyang/" target="_blank">Jinyang</a> and <a href="http://www.cs.princeton.edu/~wlloyd/" target="_blank">Wyatt</a>, who are always very patient with my stupid questions. </p>');
+          output('<p>I am an irrelevant post-doc researcher and a slow coder who is learning to multi-task (Yes! I am even slower now!) at New York University. I spent five lovely years to grew my madness at <a href="http://madsys.cs.tsinghua.edu.cn/">MadSys</a> with some fantastic people. Recently, however, my head damage goes beyond control and becomes permanant. But I am lucky to have the kind Mike Walfish to take me over in custody for further therapy. (And also thanks a lot for the quick release from my last facility.) </p>');
+          output('<p>A year ago I had the privilege to be advised by I love to read (but sadly often cannot fully understand) system research papers appeared in OSDI/SOSP/NSDI. But luckily I have two very kind advisors <a href="http://www.news.cs.nyu.edu/~jinyang/" target="_blank">Jinyang</a> and <a href="http://www.cs.princeton.edu/~wlloyd/" target="_blank">Wyatt</a>, who are always very patient with my stupid questions. </p>');
           output('<p>This lovely terminal emulator is from Eric Bidelman &lt;ericbidelman@chromium.org&gt; </p>');
           break;
         case 'photo':
