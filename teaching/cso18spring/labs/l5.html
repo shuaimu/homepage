@@ -1,0 +1,185 @@
+<html>
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no, content=no-cache">
+
+	<!-- Bootstrap CSS -->
+	<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0-beta.3/css/bootstrap.min.css" integrity="sha384-Zug+QiDoJOrZ5t4lssLdxGhVrurbmBWopoEl+M6BdEfwnCJZtKxi1KgxUyJq13dy" crossorigin="anonymous">
+	<link rel="stylesheet" href="../sty2.css">
+
+  <title>Computer Systems Organization (Spring 2018) </title>
+</head>
+
+<body>
+<br>
+    <main role="main" class="container">
+      <header class="header clearfix">
+        <nav>
+          <ul class="nav nav-pills float-left">
+            <li class="nav-item">
+              <a class="nav-link " href="../index.html">Home <span class="sr-only">(current)</span></a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="../schedule.html">Schedule</a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link active" href=".">Lab</a>
+            </li>
+          </ul>
+        </nav>
+	<div class="row">
+		<div class="col-sm-3"><img src="../org.png" width=150></div>
+		<div class="col-sm-9">
+		<div class="row">
+        <h3 class="text-muted">Computer Systems Organization</h3>
+		</div>
+		<div class="row">
+			CSCI-UA.0201(005), Spring 2018
+		</div>
+		</div>
+	</div>
+      </header>
+
+<div id="content">
+<hr>
+
+<h2> Lab-5: Thread lab</h2>
+<h5>Due: 5/6</h5>
+
+
+
+<a name="labs">
+<h3>Introduction</h3>
+
+<p>In this lab, you are going to implement a hash table that allows multiple threads to concurrently perform insert and lookup operations on it.
+
+<p>This is an individual lab.
+
+<h3>Obtaining the lab</h3>
+<pre>
+$ cd cso-labs/ 
+$ git fetch upstream 
+$ git merge upstream/master
+</pre>
+
+<p>
+This creates a number of new files in subdirectory <tt>threadlab/</tt>.
+<div class="bd-callout bd-callout-warning">
+	<h5>Change these files only</h5>
+	<p>The only files you should modify for this lab are <tt>htable.{h,c}</tt> and <tt>rwlock.{h,c}</tt>
+<ul>
+</div>
+
+
+<h3>Step 1: Make a fixed-size hash table thread-safe</h3>
+
+<p>Let's first solve the easy problem of adding locks to a hash table that does not do resize.
+
+<p>Read the given hash table implementation in files <tt>htable.{h,c}</tt>.  We can see that the hash table contains an array of pointers.  Each slot of the array contains 
+the head of a singly-linked list that chains together those inserted items that have hashed to the same slot.   Function <tt>htable_init</tt> initializes the hash table with a certain number of slots. It also remembers whether the initialized hash table is allowed to resize itself or not. For step 1, the hash table does not resize.
+
+<p>To insert a tuple whose key is a C string and whose value is a (void *) pointer, function <tt>htable_insert</tt> computes a hashcode based on the key and finds the tuple's corresponding slot based on the hashcode. It then inserts the tuple into the linked list at that slot.
+
+<p>Add locks to the hash table code (you should only change <tt>htable.c</tt> and <tt>htable.h</tt>) so that multiple threads can insert and lookup items in the hash table concurrently.
+The easiest locking strategy is to use a single big lock.  However, this strategy does not leave any room for concurrency (resulting in bad performance with multiple threads).  <font color="red">You are expected to use a fine-grained locking strategy.</font>
+
+<p>Hint: you only need to use these pthread functions: <tt>pthread_mutex_init, pthread_mutex_destroy, pthread_mutex_lock, pthread_mutex_unlock</tt>.
+
+<p>To test your code, run <kbd>./tester -t htable</kbd>. This test uses a fixed-size hash table. 
+Below is an example of a successful test.
+
+<pre>
+$ make
+$ ./tester -t htable 
+Initialized hash table of size 10007
+Spawned 4 threads, each to insert 500000 tuples
+All 4 threads finished. Throughput is 1.578250 inserts/sec
+Spawned 4 threads, each to insert or lookup 500000 tuples
+All 4 threads finished. Throughput is 1.195037 lookups/sec
+--- HTABLE TEST PASSED (final htable size 10007) 
+</pre>
+
+<p>You can change the number of threads that perform concurrent hash table operations by using 
+the <tt>-n</tt> option. For example, <kbd>./tester -t htable -n 1</kbd> uses a single thread 
+to perform hash table operations (i.e. there are no concurrent operations in this test). As another example, <kbd>./tester -t htable -n 2</kbd> performs hash table operations using two threads.
+
+<h3>Step 2: Implement a reader-writer lock</h3>
+
+<p>In order to make hash table resize thread-safe, we are going to need an utility called the
+reader-writer lock.  Read the skeleton code of the reader-writer lock in <tt>rwlock.{c,h}</tt>.
+
+<p>A reader-writer lock can be acquired in either the "read" (also referred to as "shared") or "write" (also referred to as "excluse") mode. In the given code skeleton, function <tt>rwl_rlock</tt> attempts to grab the lock in "read" mode, <tt>rwl_runlock</tt> releases the grabbed lock in "read" mode. Similarly, function <tt>rwl_wlock</tt> and <tt>rwl_wunlock</tt> locks and unlocks in "write" mode.  
+
+<p>The reader-writer lock allows multiple readers but only one writer at a time.  In other words, If the lock has been acquired in the "read" mode, then other 
+threads can also grab the lock in the "read" mode without blocking.  If the lock has 
+been acquired in the "write" mode, then no other thread should be able to acquire the lock in 
+either "read" or "write" mode.
+
+<p>Hint: you need to use conditional variable(s) to implement the reader-writer locks. The pthread functions related to conditional variables that you may need to use are: <tt>pthread_cond_init</tt>, <tt>pthread_cond_wait</tt>, <tt>pthread_cond_timedwait</tt>, <tt>pthread_cond_signal</tt>, <tt>pthread_cond_broadcast</tt>.
+
+<p>In order to faciliate testing, function <tt>rwl_rlock</tt> and <tt>rwl_wlock</tt> take a second  
+argument "expire" and requires any conditional wait inside the function to last no later than absolute time "expire".  <font color="red">Therefore, we ask you to use our wrapper function <tt>cond_timedwait</tt> instead of <tt>pthread_cond_wait</tt> </font>.  When <tt>cond_wait</tt> returns ETIMEDOUT if timeout happens. It returns 0 if it has been woken up by a <tt>pthread_cond_signal</tt> or <tt>pthread_cond_broadcast</tt>. In both cases, the corresponding mutex (the second argument of <tt>cond_wait</tt>) is locked.
+
+<p>The reader-writer lock can have different scheduling policies.  For this lab, we ask you to 
+prioritize the writer.  In other words, as long as some writer is waiting to acquire the lock in "write" mode, no subsequent readers are allowed to acquire the lock in "read" mode.
+
+<p>To facilitate testing, we also ask you to implement <tt>rwl_nwaiter</tt> to return the number of threads who are currently waiting to acquire the lock in either mode.
+
+<p>To test your implementation, run <kbd>./tester -t rwl</kbd>. Below is an example of a successful test:
+<pre>
+$ ./tester -t rwl
+Reader grabbed the lock
+Another reader grabbed the lock
+One reader unlocked
+Another reader unlocked
+Writer grabbed the lock
+Writer unlocked
+--- RWLOCK TEST PASSED basic correctness
+Reader has locked but not yet unlocked
+Spawned a writer who is waiting to lock
+Spawned 8 readers who are waiting to lock
+Writer locked before readers
+--- RWLOCK TEST TEST PASSED (writer is given priority)
+</pre>
+
+<h3>Step 3: Use reader-writer lock to make a resizable hash table thread-safe</h3>
+
+<p>Now that you have the reader-write lock, we can proceed to handle the scenario of hash table resize.
+In particular, we can think of the hash table resize operation as an
+"exclusive" activity: if a hash table resize is ongoing, no other threads can perform any other other hash table operations, such as lookups, inserts, and resize.  On the other hands, 
+hash table lookups and inserts can be viewed as "shared" activities: multiple
+hash table lookups and inserts can occur at the same time (provided that you have already locked properly in step 1) in the absence of resize.
+
+<p>Use your reader-writer lock in <tt>htable.{cc,h}</tt> to deal with resize. When you are done, 
+test using <kbd>./tester -t resize</kbd>. An example of a successful run is as follows:
+<pre>
+Initialized hash table of size 10007
+Spawned 4 threads, each to insert 500000 tuples
+All 4 threads finished. Throughput is 2.007357 inserts/sec
+Spawned 4 threads, each to insert or lookup 500000 tuples
+All 4 threads finished. Throughput is 1.923626 lookups/sec
+--- RESIZE TEST PASSED (final htable size 1282529) 
+</pre>
+
+<h3>Run all tests</h3>
+<p>To run all tests together, type <kbd>./test -t all</kbd>.
+Make sure you run the tests many times as concurrency bugs are non-deterministic and may show up 
+rarely.
+
+<h3>Handin Procedure</h3>
+
+To handin your files, simply commit and push them to github.com 
+<pre>
+$ git commit -am "Finish lab5"
+$ git push origin 
+</pre>
+
+We will fetching your lab files from Github.com at the specified deadline and grade them.
+
+<p>
+
+<hr>
+</body>
+</html>
+
+
