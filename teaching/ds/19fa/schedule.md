@@ -16,18 +16,18 @@ Office hour: W 2-4pm NCS 351. Because we have a large class, you are strongly re
 The schedule is tentative and subject to change.
 
 | Date   | Topic &nbsp;                                                                   | Preparation                                                                                    | Notes        |
-|--------|--------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------|--------------|
+|--------+--------------------------------------------------------------------------------+------------------------------------------------------------------------------------------------+--------------|
 | Aug 26 | Introduction I: [Overview](notes/overview.md), [MapReduce](notes/mapreduce.md) | Read [How to Read a Paper](readings/paper-reading.pdf) and [MapReduce](readings/mapreduce.pdf) |              |
 | Aug 28 | Introduction II: [MapReduce](notes/mapreduce.md)(Cont.)                        |                                                                                                |              |
 | Sep 2  |                                                                                |                                                                                                | Labor Day    |
 | Sep 4  | Introduction III: [RPC](notes/rpc.md), [GFS](notes/gfs.md)                     | Skim [Implementing RPC](readings/rpc.pdf), Read [GFS](readings/gfs.pdf)                        |              |
 | Sep 9  | Introduction IV: [GFS](notes/gfs.md)(Cont.)                                    |                                                                                                |              |
 | Sep 11 | Introduction V: [Primary-Backup Replication](notes/vmft.md)                    | Read [VM Fault tolerance](readings/vm-ft.pdf)                                                  |              |
-| Sep 16 | Consensus I: Raft                                                              | Read [Raft](readings/raft.pdf)                                                                 |              |
+| Sep 16 | Consensus I: [Raft](notes/raft.md)                                             | Read [Raft](readings/raft.pdf)                                                                 |              |
 | Sep 18 | Consensus II: Paxos                                                            | Read [Paxos made simple](readings/paxos.pdf)                                                   |              |
-| Sep 23 | Consensus III: Paxos/Raft (cont'd)                                             | Skim [Raft and Paxos](readings/raft-paxos.pdf)                                                    |              |
-| Sep 25 | Consensus IV: Byzantine failures                                               | Read [Byzantine Paxos](readings/byzpaxos.pdf) and [PBFT](readings/pbft.pdf)                     |              |
-| Sep 30 | Consistency I: Linearizability                                    | Skim [Linearizability](readings/linearizability.pdf)                                           |              |
+| Sep 23 | Consensus III: Paxos/Raft (cont'd)                                             | Skim [Raft and Paxos](readings/raft-paxos.pdf)                                                 |              |
+| Sep 25 | Consensus IV: Byzantine failures                                               | Read [Byzantine Paxos](readings/byzpaxos.pdf) and [PBFT](readings/pbft.pdf)                    |              |
+| Sep 30 | Consistency I: Linearizability                                                 | Skim [Linearizability](readings/linearizability.pdf)                                           |              |
 | Oct 2  | Consistency II: Eventual Consistency and Causality                             | Read [Bayou](readings/bayou.pdf)                                                               |              |
 | Oct 7  | Consistency III: Causal Consistency                                            | Read [COPS](readings/cops.pdf)                                                                 |              |
 | Oct 9  |                                                                                |                                                                                                |              |
