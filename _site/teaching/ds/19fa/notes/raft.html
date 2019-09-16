@@ -43,22 +43,28 @@
 <ul>
   <li>Raft picks one server to be leader</li>
   <li>clients send Append/Get RPCs to leader</li>
-  <li>leader sends each client command to all replicas</li>
-  <li>each follower appends to log</li>
-  <li>goal is to have identical logs</li>
-  <li>log entry is “committed” if a majority put it in their logs – won’t be forgotten
+  <li>leader sends each client command to all replicas
+    <ul>
+      <li>each follower appends to log</li>
+      <li>goal is to have identical logs</li>
+      <li>log entry is “committed” if a majority put it in their logs – won’t be forgotten
  majority -&gt; can proceed despite minority of failed servers</li>
-  <li>servers execute entry once the leader says it’s committed</li>
+      <li>servers execute entry once the leader says it’s committed</li>
+    </ul>
+  </li>
 </ul>
 
 <h2 id="will-the-raft-logs-always-be-exactly-the-same-replicas">Will the Raft logs always be exactly the same replicas?</h2>
 <ul>
   <li>no: some replicas may lag</li>
   <li>no: we’ll see that they can have different entries!</li>
-  <li>if a server has executed a command in a given entry number:</li>
-  <li>no other server will execute a different command for that entry</li>
-  <li>i.e. the servers will agree on the command for each entry</li>
-  <li>State Machine Safety (Figure 3)</li>
+  <li>if a server has executed a command in a given entry number:
+    <ul>
+      <li>no other server will execute a different command for that entry</li>
+      <li>i.e. the servers will agree on the command for each entry</li>
+      <li>State Machine Safety (Figure 3)</li>
+    </ul>
+  </li>
 </ul>
 
 <h2 id="two-parts">Two parts</h2>
@@ -69,34 +75,55 @@
 
 <h2 id="leader-election">Leader election</h2>
 <ul>
-  <li>Raft numbers the sequence of leaders</li>
-  <li>new leader -&gt; new term</li>
-  <li>a term has at most one leader; might have no leader</li>
-  <li>the numbering helps servers follow latest leader, not superseded leader</li>
-  <li>when does Raft start a leader election?</li>
-  <li>other servers don’t hear from current leader for a while</li>
-  <li>they increment local currentTerm, become candidates, start election</li>
-  <li>how to ensure at most one leader in a term?</li>
-  <li>(Figure 2 RequestVote RPC and Rules for Servers)</li>
-  <li>leader must get votes from a majority of servers</li>
-  <li>each server can cast only one vote per term
+  <li>Raft numbers the sequence of leaders
+    <ul>
+      <li>new leader -&gt; new term</li>
+      <li>a term has at most one leader; might have no leader</li>
+      <li>the numbering helps servers follow latest leader, not superseded leader</li>
+    </ul>
+  </li>
+  <li>when does Raft start a leader election?
+    <ul>
+      <li>other servers don’t hear from current leader for a while</li>
+      <li>they increment local currentTerm, become candidates, start election</li>
+    </ul>
+  </li>
+  <li>how to ensure at most one leader in a term?
+    <ul>
+      <li>(Figure 2 RequestVote RPC and Rules for Servers)</li>
+      <li>leader must get votes from a majority of servers</li>
+      <li>each server can cast only one vote per term
  votes for first server that asks (within Figure 2 rules)</li>
-  <li>at most one server can get majority of votes for a given term
- -&gt; at most one leader even if network partition
- -&gt; election can succeed even if some servers have failed</li>
-  <li>how does a server know that election succeeded?</li>
-  <li>winner gets yes votes from majority</li>
-  <li>others see the AppendEntries heart-beats from winner</li>
-  <li>an election may not succeed</li>
-  <li>none gets majority</li>
-  <li>even # of live servers, two candidates each get half</li>
-  <li>less than a majority of servers are reachable</li>
-  <li>what happens after a failed election?</li>
-  <li>another timeout, increment currentTerm, become candidate</li>
-  <li>higher term takes precedence, candidates for older terms quit</li>
-  <li>how does Raft reduce chances of election failure due to split vote?</li>
-  <li>each server delays a random amount of time before starting candidacy</li>
-  <li>why is the random delay useful?</li>
+      <li>at most one server can get majority of votes for a given term
+-&gt; at most one leader even if network partition
+-&gt; election can succeed even if some servers have failed</li>
+    </ul>
+  </li>
+  <li>how does a server know that election succeeded?
+    <ul>
+      <li>winner gets yes votes from majority</li>
+      <li>others see the AppendEntries heart-beats from winner</li>
+    </ul>
+  </li>
+  <li>an election may not succeed
+    <ul>
+      <li>none gets majority</li>
+      <li>even # of live servers, two candidates each get half</li>
+      <li>less than a majority of servers are reachable</li>
+    </ul>
+  </li>
+  <li>what happens after a failed election?
+    <ul>
+      <li>another timeout, increment currentTerm, become candidate</li>
+      <li>higher term takes precedence, candidates for older terms quit</li>
+    </ul>
+  </li>
+  <li>how does Raft reduce chances of election failure due to split vote?
+    <ul>
+      <li>each server delays a random amount of time before starting candidacy</li>
+      <li>why is the random delay useful?</li>
+    </ul>
+  </li>
   <li>what if the old leader isn’t aware a new one is elected?
     <ul>
       <li>a new leader elected means a majority of servers have incremented currentTerm</li>
@@ -111,32 +138,35 @@
 <h2 id="log-synchronization-after-failures">Log synchronization after failures</h2>
 
 <ul>
-  <li>how can logs disagree?</li>
-  <li>a log might be short – missing entries at end of the term
- leader of term 3 crashes before sending all AppendEntries
-    <div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code> S1: 3
- S2: 3 3
- S3: 3 3
-</code></pre></div>    </div>
-  </li>
-  <li>logs might have different commands in same entry!
- after a series of leader crashes, e.g.
-    <div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>     10 11 12 13  &lt;- log entry #
- S1:  3
- S2:  3  3  4
- S3:  3  3  5
-</code></pre></div>    </div>
-  </li>
-  <li>new leader will force its log on followers; example:
+  <li>how can logs disagree?
     <ul>
-      <li>S3 is chosen as new leader for term 6</li>
-      <li>S3 sends a new command, entry 13, term 6</li>
-      <li>AppendEntries, previous entry 12, previous term 5</li>
-      <li>S2 replies false (AppendEntries step 2)</li>
-      <li>S3 decrements nextIndex[S2] to 12</li>
-      <li>S3 sends AppendEntries, prev entry 11, prev term 3</li>
-      <li>S2 deletes entry 12 (AppendEntries step 3)</li>
-      <li>similar story for S1, but have to go back one farther</li>
+      <li>a log might be short – missing entries at end of the term
+leader of term 3 crashes before sending all AppendEntries
+        <div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>S1: 3
+S2: 3 3
+S3: 3 3
+</code></pre></div>        </div>
+      </li>
+      <li>logs might have different commands in same entry!
+after a series of leader crashes, e.g.
+        <div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    10 11 12 13  &lt;- log entry #
+S1:  3
+S2:  3  3  4
+S3:  3  3  5
+</code></pre></div>        </div>
+      </li>
+      <li>new leader will force its log on followers; example:
+        <ul>
+          <li>S3 is chosen as new leader for term 6</li>
+          <li>S3 sends a new command, entry 13, term 6</li>
+          <li>AppendEntries, previous entry 12, previous term 5</li>
+          <li>S2 replies false (AppendEntries step 2)</li>
+          <li>S3 decrements nextIndex[S2] to 12</li>
+          <li>S3 sends AppendEntries, prev entry 11, prev term 3</li>
+          <li>S2 deletes entry 12 (AppendEntries step 3)</li>
+          <li>similar story for S1, but have to go back one farther</li>
+        </ul>
+      </li>
     </ul>
   </li>
   <li>the result of roll-back:

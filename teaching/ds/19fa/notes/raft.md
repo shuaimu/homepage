@@ -5,19 +5,19 @@
 * Raft picks one server to be leader
 * clients send Append/Get RPCs to leader
 * leader sends each client command to all replicas
- * each follower appends to log
- * goal is to have identical logs
- * log entry is "committed" if a majority put it in their logs -- won't be forgotten
-    majority -> can proceed despite minority of failed servers
- * servers execute entry once the leader says it's committed
+  * each follower appends to log
+  * goal is to have identical logs
+  * log entry is "committed" if a majority put it in their logs -- won't be forgotten
+     majority -> can proceed despite minority of failed servers
+  * servers execute entry once the leader says it's committed
 
 ## Will the Raft logs always be exactly the same replicas?
 * no: some replicas may lag
 * no: we'll see that they can have different entries!
 * if a server has executed a command in a given entry number:
- * no other server will execute a different command for that entry
- * i.e. the servers will agree on the command for each entry
- * State Machine Safety (Figure 3)
+  * no other server will execute a different command for that entry
+  * i.e. the servers will agree on the command for each entry
+  * State Machine Safety (Figure 3)
 
 ## Two parts
 * electing a new leader
@@ -25,33 +25,33 @@
 
 ## Leader election 
 * Raft numbers the sequence of leaders
- * new leader -> new term
- * a term has at most one leader; might have no leader
- * the numbering helps servers follow latest leader, not superseded leader
+  * new leader -> new term
+  * a term has at most one leader; might have no leader
+  * the numbering helps servers follow latest leader, not superseded leader
 * when does Raft start a leader election?
- * other servers don't hear from current leader for a while
- * they increment local currentTerm, become candidates, start election
+  * other servers don't hear from current leader for a while
+  * they increment local currentTerm, become candidates, start election
 * how to ensure at most one leader in a term?
- * (Figure 2 RequestVote RPC and Rules for Servers)
- * leader must get votes from a majority of servers
- * each server can cast only one vote per term
-    votes for first server that asks (within Figure 2 rules)
- * at most one server can get majority of votes for a given term
+  * (Figure 2 RequestVote RPC and Rules for Servers)
+  * leader must get votes from a majority of servers
+  * each server can cast only one vote per term
+     votes for first server that asks (within Figure 2 rules)
+  * at most one server can get majority of votes for a given term
     -> at most one leader even if network partition
     -> election can succeed even if some servers have failed
 * how does a server know that election succeeded?
- * winner gets yes votes from majority
- * others see the AppendEntries heart-beats from winner
+  * winner gets yes votes from majority
+  * others see the AppendEntries heart-beats from winner
 * an election may not succeed
- * none gets majority 
- * even # of live servers, two candidates each get half
- * less than a majority of servers are reachable
+  * none gets majority 
+  * even # of live servers, two candidates each get half
+  * less than a majority of servers are reachable
 * what happens after a failed election?
- * another timeout, increment currentTerm, become candidate
- * higher term takes precedence, candidates for older terms quit
+  * another timeout, increment currentTerm, become candidate
+  * higher term takes precedence, candidates for older terms quit
 * how does Raft reduce chances of election failure due to split vote?
- * each server delays a random amount of time before starting candidacy
- * why is the random delay useful?
+  * each server delays a random amount of time before starting candidacy
+  * why is the random delay useful?
 * what if the old leader isn't aware a new one is elected?
   * a new leader elected means a majority of servers have incremented currentTerm
   * so the old leader (w/ old term) can't get majority for AppendEntries
@@ -62,14 +62,14 @@
 ## Log synchronization after failures
 
 * how can logs disagree?
- * a log might be short -- missing entries at end of the term
+  * a log might be short -- missing entries at end of the term
     leader of term 3 crashes before sending all AppendEntries
 ```
     S1: 3
     S2: 3 3
     S3: 3 3
 ```
- * logs might have different commands in same entry!
+  * logs might have different commands in same entry!
     after a series of leader crashes, e.g.
 ```
         10 11 12 13  <- log entry #
@@ -77,15 +77,15 @@
     S2:  3  3  4
     S3:  3  3  5
 ```
- * new leader will force its log on followers; example:
-   * S3 is chosen as new leader for term 6
-   * S3 sends a new command, entry 13, term 6
-   *   AppendEntries, previous entry 12, previous term 5
-   * S2 replies false (AppendEntries step 2)
-   * S3 decrements nextIndex[S2] to 12
-   * S3 sends AppendEntries, prev entry 11, prev term 3
-   * S2 deletes entry 12 (AppendEntries step 3)
-   * similar story for S1, but have to go back one farther
+  * new leader will force its log on followers; example:
+    * S3 is chosen as new leader for term 6
+    * S3 sends a new command, entry 13, term 6
+    *   AppendEntries, previous entry 12, previous term 5
+    * S2 replies false (AppendEntries step 2)
+    * S3 decrements nextIndex[S2] to 12
+    * S3 sends AppendEntries, prev entry 11, prev term 3
+    * S2 deletes entry 12 (AppendEntries step 3)
+    * similar story for S1, but have to go back one farther
 
 * the result of roll-back:
   * each live follower deletes tail of log that differs from leader
