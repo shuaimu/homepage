@@ -1,0 +1,409 @@
+<html>
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no, content=no-cache">
+
+	<!-- Bootstrap CSS -->
+	<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0-beta.3/css/bootstrap.min.css" integrity="sha384-Zug+QiDoJOrZ5t4lssLdxGhVrurbmBWopoEl+M6BdEfwnCJZtKxi1KgxUyJq13dy" crossorigin="anonymous">
+	<link rel="stylesheet" href="../sty2.css">
+
+  <title>Computer Systems Organization (Spring 2018) </title>
+</head>
+
+<body>
+<br>
+    <main role="main" class="container">
+      <header class="header clearfix">
+        <nav>
+          <ul class="nav nav-pills float-left">
+            <li class="nav-item">
+              <a class="nav-link " href="../index.html">Home <span class="sr-only">(current)</span></a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="../schedule.html">Schedule</a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link active" href=".">Lab</a>
+            </li>
+          </ul>
+        </nav>
+	<div class="row">
+		<div class="col-sm-3"><img src="../org.png" width=150></div>
+		<div class="col-sm-9">
+		<div class="row">
+        <h3 class="text-muted">Computer Systems Organization</h3>
+		</div>
+		<div class="row">
+			CSCI-UA.0201(005), Spring 2018
+		</div>
+		</div>
+	</div>
+      </header>
+
+<div id="content">
+<hr>
+
+<h2> Lab-1: Basic C Programming</h2>
+<h5>Segment-1 due: 2/11<br>Segment-2 due: 2/18</h5>
+
+<p>
+The goal of this lab is to get your hands dirty doing some basic C programming
+and debugging. We have structured the lab in two segments. In the <a href="l1.html#c1">first segment</a>, you 
+write simple C functions in programs that we have already structured in skeleton 
+code for you. In the <a href="l1.html#c2">second segment</a>, you write complete C programs by yourself
+from the scratch.
+
+<p>
+<div class="bd-callout bd-callout-warning">
+	<h5>Before you start the lab:</h5>
+	<p>Set up your VM environment by following instructions <a href="index.html#vm">here.</a>.<br>
+Set up your lab repository by following instructions <a href="index.html#repo">here.</a>
+	</ul>
+</div>
+
+<p>
+<div class="bd-callout bd-callout-warning">
+	<h5>Programming style:</h5>
+	<p>In this and subsequent labs, you will be graded for style and we will deduct up to 20% of total lab points for bad style based on our subjective evaluation. Please read this <a href="http://cs61.seas.harvard.edu/wiki/2015/Style">style guide</a> and follow the advice.
+</div>
+
+<h3 id="c1"> Segment-1: mini-exercises (Due: 2/11)</h3>
+<p> Obtain and update your lab files by doing:
+<pre >
+$ cd cso18-labs
+$ git fetch upstream
+$ git merge upstream/master
+</pre>
+
+<p>In segment-1, you shall complete the C exercises found in 
+files <tt>part1.c</tt>, <tt>part2.c</tt>, <tt>...</tt>, <tt>part7.c</tt>.  
+
+<div class="bd-callout bd-callout-danger"><h5>File modification</h5> For the mini-exercises in 
+subdirectory <tt>mini/</tt>, the only files that you should modify are <tt>part1.c</tt>, <tt>part2.c</tt>, ..., <tt>part7.c</tt> and <tt>part7.h</tt>.
+You may read other files but you should not modify them.</tt></span>.
+</div>
+
+<p>
+It is recommended that you complete and test each exercise individually. For example, suppose you have completed 
+the exercise in <tt>part1.c</tt>.  Test by typing the following:
+<pre >
+$ make
+$ build/part1
+variable should be 5, actually is 3!
+Aborted
+</pre>
+
+From the above error message, you can see that it did not pass the test. Debug and try again.
+Complete and test each part individually before moving on to the next one.
+
+<p>Once you've passed the tests for all 7 exercises in <tt>mini/</tt>, you can double check your test-passing status by typing:
+<pre >
+$ ./grade-lab
+basic [part1.c]: 
+  set_to_five: OK
+  array_sum: OK
+bubble sort [part2.c]: 
+  swap: OK
+  bubble_sort: OK
+prime sieves [part3.c]: 
+  initialize_array: OK
+  mark_multiples: OK
+  prime_number_sieves: OK
+  find_smallest_divisor: OK
+point structure [part4.c]: 
+  set_point: OK
+  point_dist: OK
+linked list [part5.c]: 
+  list_insert: OK
+  list_end: OK
+  list_size: OK
+  list_find: OK
+  list_remove: OK
+bitwise operators [part6.c]: 
+  get_exponent_field: OK
+  clear_msb: OK
+  bit_at_index: OK
+binary tree [part7.c]: 
+  preorder_traveral: OK
+  inorder_traversal: OK
+  inorder_traversal_with_dup: OK
+Score: 100/100
+</pre>
+The above shows the example output of a successful full test.
+
+<p>
+
+<h4>Saving changes while you are working on Lab1</h4>
+You should frequently save your 
+work to protect against laptop failures and other unforeseen troubles. 
+You save the changes by first "committing" them to your local lab repo and then "pushing" 
+those changes to the repo stored on github.com
+<p>
+<pre >
+$ git commit -am "saving lab1 changes"
+$ git push origin
+</pre>
+
+<p>Note that whenever you add a new file (you do not add any new file in Phase-1, but will do so in Phase-2), you need to manually tell git to ``track it'' with 
+<kbd>git add</kbd>.  Otherwise, the file will not be committed by <tt>git commit</tt>. 
+After you've pushed your changes with <kbd>git push</kbd>, they are safely stored on github.com.
+Even if your laptop catches on fire in the future, those pushed changes can still be retrieved.
+However, you must remember that <kbd>git commit</kbd> by itself does not save your changes on github.com 
+(it only saves your changes locally).  So, don't forget to type that <kbd>git push origin</kbd>.
+
+<p>
+<h4>Handin Procedure</h4>
+
+To handin your files, simply commit and push them to github.com 
+<p>
+<pre >
+$ git commit -am "hand in lab1, segment-1"
+$ git push origin 
+</pre>
+
+We will fetching your lab files from Github.com at the specified deadline and grade them.
+
+<p>
+<h4 id="debug">Debugging the lab</h4>
+
+Below are some advice on how to debug common problems encountered in doing this lab:
+
+<ul>
+	<li><b>Remember to recompile changed code</b>. Whenever you've changed a file, always type <kbd>make</kbd> to re-compile before executing again.</li>
+
+	<li><b>Write your own simple test code.</b> Don't rely solely on the lab's testing infrastructure (i.e. <tt>./grade-lab</tt>) to test the correctness of your code.  Except for 
+	part7, we do not distribute the source of the test code (hence you will only see <tt>cso18-labs/clab/mini/static/part1_harness.o</tt> and not <tt>cso18-labs/clab/mini/static/part1_harness.c</tt>). 
+	This makes it hard to debug. So you should write your own tester.
+	<p>
+	<p>Let's say you want to test the <tt>array_sum</tt> function in file <tt>part1.c</tt>. To write your own test code, create a file (e.g. called <tt>test-part1.c</tt>) with a <tt>main</tt> function that invokes <tt>array_sum</tt> in various ways to test its correctness. 
+<p>An example <tt>test-part1.c</tt> might look something like <a href="test_part1.c">this</a>.
+<p>Compile your test code by typing:
+<pre >
+$ gcc -std=c99 test_part1.c part1.c
+</pre>
+
+<li><b>Read part7_harness.c test code.</b> For part7, we distribute the source of the tester code in <tt>part7_harness.c</tt>. Read this file carefully to debug your part7 code.
+	<li><b>Learn to use <tt>gdb</tt></b>.  It is absolutely essential that you learn to use <tt>gdb</tt>. This tool is a must for helping you handle ``segmentation fault'',
+		which you'll see a lot when doing labs.  Let's say you have a segfault on part1. Invoke <tt>gdb</tt> by typing:
+		<p>
+<pre >
+$ gdb build/part1
+(gdb) bt
+</pre>
+<tt>bt</tt> is the gdb command to print the stack trace which tells you where the problematic execution occurs and how the program got there.
+<a href="https://github.com/nyu-cso18spring/recitation/tree/master/r02">Recitation 2</a> has covered the use of gdb.  There are also many tutorials online on gdb.
+</ul>
+ 
+<p>
+<div class="bd-callout bd-callout-info">
+<h5>Challenge question for part7 (2 out of 8 total lab points)</h5>
+In part7.c, you've implemented a sorted binary tree and tested it using small inputs (up to 100 inputs). Now test it 
+with very large inputs, e.g. by typing <kbd>build/part7 -n 10000</kbd>, which attempts to insert the same 10000 strings in a tree (and doing it in two different orders).
+Read <tt>part7_harness.c</tt> and run the code to investigate its behavior.  Answer the following questions.
+<ul>
+<li>Q1: Run the test with different large number of strings. Does inserting the same set of strings in the two different order incur different runtime? Why?</li>
+<li>Q2: Run the test with increasingly large number of strings. At which number does the program eventually fail? Does performing insertion in different order both fail? If not, why does one fail and not the other?
+</ul>
+Write your answer in a file called <tt>challenge.md</tt> and add it to the repo <kbd>git add challenge.md</kbd>. Commit and push with 
+<kbd>git commit -am "complete challenge"; git push origin</kbd>
+</div>
+
+
+<h3 id="c2"> Segment-2: Write C from scratch (Due: 2/18) </h3>
+<p>In segment-2 of this lab, we provide no crutches 
+(no skeleton code, no Makefile, no grading testers) to make you get comfortable with the overall experience of writing C programs and testing them on UNIX. 
+You are to write three programs from scratch.
+<ul>
+<li><a href="l1.html#e1">Averaging columns in a *.csv file.</a></li>
+<li><a href="l1.html#e2">Find the ten most frequently used word in a document</a></li>
+<li><a href="l1.html#e3">Game of life.</a></li>
+</ul>
+All the programs you are to write should be reside in the subdirectories under <tt>cso18-labs/clab/scratch/</tt>.  However, 
+unlike in segment-1, you will notice that all sub-directories are completely empty.
+
+<p>
+<h5 id="e1">Segment-2 Exercise 1: Averaging columns in a *.csv file</h5>
+<p>Put all your files for this exercise in <tt>cso18-labs/clab/scratch/avgcsv</tt> directory.
+
+<p>Write a C program to parse a *.csv file where fields are separated by the ';' character and 
+print out the average of each column (which is an integer), separated by the ';' character.
+<span class=text-info>You may assume that the number of fields in a *.csv file is no more than 1000</span>
+
+<p>Your executable file must be named <tt>avgcsv</tt>. It should take as argument the name of a csv file and outputs the average of each column, separated by ';'.
+
+<p>For example, suppose the contents of the <tt>example.csv</tt> are as follows:
+<pre>
+$ cat example.csv   
+10;25;56
+22;10;100
+</pre>
+
+<p>Then, the expected output of the command <kbd>./avgcsv example.csv</kbd> should be:
+<pre>
+$ ./avgcsv example.csv
+16.0;17.5;78.0
+</pre>
+
+<p>We expect you to write a Makefile to generate the <tt>avgcsv</tt> executable file from your source code. 
+<a href="https://github.com/nyu-cso18spring/recitation/tree/master/r01">Recitation 1</a> teaches you how to write a Makefile.
+
+<p>You need to read from a file. Refer to [Kernighan and Ritchie] Chapter 7.5 on how to do this.
+
+<p>We do not provide you with any tests and will test your program under a few *.csv files of our own choosing during grading time. We highly encourage you to write unit tests for your program.
+
+<p>Once finished, add relevant source files and Makefile to your git repo by typing <kbd>git add *.c *.h Makefile</kbd>. 
+Commit and push <kbd>git commit -am "avgcsv"; git push origin</kbd>
+
+<h5 id="e2"> Segment-2 Exercise 2: Find the ten most frequent words</h5>
+<p>Put all your files for this exercise in <tt>cso18-labs/clab/scratch/wordcount</tt> directory.
+
+<p>Write a C program to find the ten most frequently used words in a given file. 
+Your executable file must be named <tt>wordcount</tt>. It should take as argument the name of a file and outputs ten lines, one for each of the ten most frequently used words in the file <i>in sorted order</i>.  If two words w1, w2 have the same occurance counts and w1 is alphabetically smaller than w2, then w1 precedes w2. Each line shows the occurance counts, followed by a whitespace, and then followed by the corresponding word.
+
+<p>For example, suppose the contents of the <tt>example.txt</tt> are given below:
+<pre>
+$ cat example.txt
+A potential victory for Donald J. Trump may hinge on one important (and large) 
+group of Americans: whites who did not attend college.
+
+Polls have shown a deep division between whites of different education levels and 
+economic circumstances. A lot rides on how large these groups will be on Election Day: 
+All pollsters have their own assessment of who will show up, and their predictions 
+rely on these evaluations.
+</pre>
+
+<p>Then, the expected output of the <kbd>./wordcount example.txt</kbd> command should be:
+<pre>
+$ ./wordcount example.txt
+2 large
+2 their
+2 these
+2 whites
+2 who
+2 will
+3 a
+3 and
+3 of
+4 on
+</pre>
+
+
+<p>In order to count the words, your program needs to transform the given textfile into a collection of words.  
+First, you need to split the textfile into words. 
+Each word refers to a consecutive sequence of alpha-numeric characters. Words are separated by 
+one or more non-alphanumeric characters. (Hint: usage the C library function <tt>isalnum</tt>. For usage, type <tt>man isalnum</tt>)
+Second, you need to ``canonicalize`` (aka ``normalize'') each word by turning any uppercase letters into a lower case one.
+
+<p>To count the occurances of words, there are several strategies. 
+<ol>
+	<li>You can
+implement a hash table to store the mapping from each word (C strings) to its
+occurance counter.  C's standard library does not have hash tables nor
+dictionary, so you'll have to implement your own.  After you've counted all the
+words, you'll need to sort them by their occurance counters.
+<li>You can sort all words first.  For sorting, you should learn to 
+use the library 
+function <tt>qsort</tt> (type <tt>man qsort</tt> to learn how to use it). You 
+can then sum consecutive identical words in the sorted list to count them. Last, 
+you need to sort words by their occurance counts.
+</ol>
+
+<p>Like in exercise 1, you should write a Makefile to compile your program and write your 
+own unit tests to check the correctness.  During grading, we'll test your program using text files of our own choosing.
+
+<p>Note that we will test your program using large text files. Your program must not 
+run slower than O(n*log_n), otherwise, you will not be able to pass the test.
+<span class=text-info>You may assume that the miximum size of a word is no more than 100 characters</span>
+
+<p>Once finished, add relevant source files and Makefile to your git repo by typing <kbd>git add *.c *.h Makefile</kbd>. 
+Commit and push <kbd>git commit -am "wordcount"; git push origin</kbd>
+
+<h5 id="e3">Segment-2 Exercise 3: Game of Life</h5>
+<p>Put all your files for this exercise in <tt>cso18-labs/clab/scratch/gameoflife</tt> directory.
+
+<p>Write a C program to simulate the <a href="https://en.wikipedia.org/wiki/Conway%27s_Game_of_Life">Conway's game of life</a>.
+
+<p>In a game of life of size n by n, the universe is two dimensional and consists of n by n cells.
+Each cell is in one of two possible states, "live"/"dead" (or "populated"/"unpopulated").
+Every cell interacts with its eight neighbours, which are the cells that are horizontally, vertically, or diagonally adjacent. At each step in time, the following transitions occur:
+<ul>
+	<li>Any live cell with fewer than two live neighbours dies, as if caused by under-population.
+	<li>Any live cell with two or three live neighbours lives on to the next generation.
+	<li>Any live cell with more than three live neighbours dies, as if by over-population.
+	<li>Any dead cell with exactly three live neighbours becomes a live cell, as if by reproduction.
+</ul>
+
+<p>
+The initial pattern constitutes the seed of the system. The first generation is created by applying the above rules <i>simultaneously</i> to every cell in the seed; births and deaths occur simultaneously, and the discrete moment at which this happens is sometimes called a tick. The rules continue to be applied repeatedly to create further generations.
+
+<p>What about boundary conditions? We treat the borders of the 2D world as if they wrap around. 
+In a universe of n x n cells, let's refer to the top-left cell as in position (0,0) and the bottom right cell as in position (n-1,n-1).  If borders wrap around, then the 8 neighbors of (i,j) are:
+<ol>
+	<li><tt>((i+1)%n,j)</tt> right neighbor
+	<li><tt>((i-1)%n,j)</tt> left neighbor
+	<li><tt>(i,(j+1)%n)</tt> top neighbor
+	<li><tt>(i,(j-1)%n)</tt> bottom neighbor
+	<li><tt>((i+1)%n,(j+1)%n)</tt> topright neighbor
+	<li><tt>((i-1)%n,(j+1)%n)</tt> topleft neighbor
+	<li><tt>((i+1)%n,(j-1)%n)</tt> bottomright neighbor
+	<li><tt>((i-1)%n,(j-1)%n)</tt> bottomleft neighbor
+</ol>
+<p>
+Your executable file must be named <tt>gameoflife</tt>. 
+It should take two arguments. The first argument is the name of a seed pattern file. 
+The second argument is the number of ticks to run for the simulation.
+The seed pattern file contains one line per row of the universe. If the cell is "dead", 
+its position is marked with the '.' character. If the cell is "live", the position is 
+marked with the 'x' character. The seed file also effectively specifies the size of the 
+universe to simulate.
+ 
+<p>For example, the contents of an example seed file <tt>example_seed</tt> are as follows:
+<pre>
+$ cat example_seed
+.....
+.....
+.xxx.
+.....
+.....
+</pre>
+
+Then, the expected output of the command <kbd>./gameoflife example_seed 1</kbd> should be:
+<pre>
+$ ./gameoflife example_seed 1
+.....
+..x..
+..x..
+..x..
+.....
+</pre>
+
+The expected output of the command <kbd>./gameoflife example_seed 2</kbd> should be:
+<pre>
+$ ./gameoflife example_seed 2
+.....
+.....
+.xxx.
+.....
+.....
+</pre>
+
+<p>Like in exercise 1 and 2, you should write a Makefile to compile your program and write your 
+own unit tests to check the correctness.  During grading, we'll test your program using seed files of our own choosing.  <span class=text-info>You may assume that the seed file used for testing contains a world of no more than 1000x1000</p>
+
+<p>Once finished, add relevant source files and Makefile to your git repo by typing <kbd>git add *.c *.h Makefile</kbd>. 
+Commit and push <kbd>git commit -am "gameoflife"; git push origin</kbd>
+
+<h4>Handin Procedure</h4>
+
+To handin your files, simply commit and push them to github.com 
+<p>
+<pre >
+$ git commit -am "hand in lab1, segment-2"
+$ git push origin 
+</pre>
+
+We will fetching your lab files from Github.com at the specified deadline and grade them.
+
+<p>
+<hr>
+</html>

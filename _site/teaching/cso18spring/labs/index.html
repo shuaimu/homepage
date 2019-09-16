@@ -1,0 +1,196 @@
+<html>
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no, content=no-cache">
+
+	<!-- Bootstrap CSS -->
+	<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0-beta.3/css/bootstrap.min.css" integrity="sha384-Zug+QiDoJOrZ5t4lssLdxGhVrurbmBWopoEl+M6BdEfwnCJZtKxi1KgxUyJq13dy" crossorigin="anonymous">
+	<link rel="stylesheet" href="../sty2.css">
+
+  <title>Computer Systems Organization (Spring 2018) </title>
+</head>
+
+<body>
+<br>
+    <main role="main" class="container">
+      <header class="header clearfix">
+        <nav>
+          <ul class="nav nav-pills float-left">
+            <li class="nav-item">
+              <a class="nav-link" href="../index.html">Home <span class="sr-only">(current)</span></a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="../schedule.html">Schedule</a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link active" href="index.html">Lab</a>
+            </li>
+          </ul>
+        </nav>
+	<div class="row">
+		<div class="col-sm-3"><img src="../org.png" width=150></div>
+		<div class="col-sm-9">
+		<div class="row">
+        <h3 class="text-muted">Computer Systems Organization</h3>
+		</div>
+		<div class="row">
+			CSCI-UA.0201(005), Spring 2018
+		</div>
+		</div>
+	</div>
+      </header>
+
+<div id="content">
+<hr>
+
+<h4>Lab assignments</h4>
+
+<a href="l1.html">Lab 1 </a> (Due: 2/11; 2/18)<br>
+<a href="l2.html">Lab 2</a> (Due: 3/18)<br>
+<a href="l3.html">Lab 3 </a> (Due: 4/1)<br>
+<a href="l4.html">Lab 4</a> (Due: 4/22)<br>
+<a href="l5.html">Lab 5</a> (Due: 5/6)<br>
+
+<p>
+<h4>Collaboration and Integrity Policy</h4>
+Please read <a href="../policy.html">this</a> carefully. We will run plagiarism detection software on all submitted code.
+
+<p>
+<h4 id="vm">Lab Virtual Machine</h4>
+We will grade your labs on an Ubuntu 16.04 machine.
+We recommend you do the labs in the 
+the class virtual machine (based on Ubuntu 16.04). 
+
+<p>For a basic virtual machine setup, perform 
+the following four steps:
+<ul>
+<li><b>Step 1. Install VirtualBox.</b> Download the Virtualbox virtual machine monitor <a href="http://download.virtualbox.org/virtualbox/5.1.26/">5.1.26</a>. Choose the right binary to download according to the type of operating system running on your laptop.
+<li><b>Step 2. Download class virtual machine image</b>. Download this <a href="http://tintin.news.cs.nyu.edu/lubuntu16.04.ova">file.</a> This file is fairly large (1.5GB), so you need to be patient.
+<li><b>Step 3. Launch Virtualbox and import class VM image</b>.  On the Virtualbox application toolbar, under the Menu
+item "File", click on "Import appliance...", and choose the previously downloaded lubuntu16.04.ova file
+when prompted.
+<li><b>Step 4. Launch Lubuntu Linux and install necessary packages</b>. After importing, start the virtual machine named "lubuntu" and log in using 
+the username and password given in Piazza). Once you are logged in, 
+start a terminal once you logged in (You can find "LXterminal" under the "System tools" tab, which is expanded when you click the lower left button). 
+Type <kbd>sudo apt-get install gcc gdb make git</kbd> to install GNU C compiler, make builder, gdb debugger, git source management tool</li>
+<!---username=lab lab12345-->
+</ul>
+
+<p>For more advanced tune-ups to help your productivity, do the following:
+<ul>
+<li><b>Enable copy-n-paste between your native OS (e.g. MacOS) and class VM</b>. First, click the settings button in the VirtualBox window, and then click "advanced" tab, change the pulldown button of "Shared Clipboard" and "Drag'n'Drop" to "Bidirectional".
+<p>
+<img src="vboxsettings.png" width=600></img>
+<p>Next, download VirtualBox Guest Additions <a href="http://download.virtualbox.org/virtualbox/5.1.26/VBoxGuestAdditions_5.1.26.iso">VBoxGuestAdditions_5.1.26.iso</a>.  Launch class VM image.  Under the "Devices" menu, click "Optical Drives" --&gt; "Choose disk image...". Select the downloaded VBoxGuestAdditions_5.1.26.iso file in your download directory and click "OK". 
+<p>Lastly, log in to class VM, start LXterminal, type <kbd>cd /media/lab/VBOXADDITIONS_5.1.26_117224</kbd>. Become root by typing <kbd>sudo bash</kbd>. Afterwards, type <kbd>./VBoxLinuxAdditions.run</kbd>. 
+<img src="guestaddition.png" width=900></img>
+Restart Virtual box and re-launch class VM. Now you should be able to do copy-n-paste between native OS and class VM.
+</li>
+<li><b>Mount a folder in native-OS in class VM</b>. (Note that this option requires completing the previous option which installs the virtualbox guest additions.) Instead of writing code in class VM, you may want to write code in your native-OS (e.g. using sublime) and only execute the labs in class VM. In this case, you want to store lab files in a native folder (e.g. /User/jinyang/cso18-labs) and mount the native folder in class VM, so changes made to lab files in native OS are instantly visible inside the class VM. 
+	<p>To mount a native folder in class VM, inside VirtualBox, click "Settings" button, and then click "Shared Folders" on the left. Click the add-share logo on the right hand side. Enter the "Folder path" in your native OS (e.g. <tt>/User/jinyang/cso18-labs</tt> and "Folder name" (e.g. <tt>cso18-labs</tt>) with "Auto-mount" selected.  
+	<img src="vboxmount.png" width=600></img>
+	<p>Launch class VM, open LXterminal once logged in. Create mount directory by typing <kbd>sudo mkdir /mnt/cso18-labs</kbd>.  Mount by typing <kbd> sudo mount -t vboxsf -o uid=1000,gid=1000 cso18-labs /mnt/cso18-labs</kbd>. From now on, the <tt>/mnt/cso18-labs</tt> directory refers to the <tt>/User/jinyang/cso18-labs</tt> directory in your native OS.  If you reboot the VM, you will lose your mount. To keep it automatically mounted across reboots, add the following line (as root user) to your class VM's <tt>/etc/fstab</tt> file by typing:
+	<p>	<kbd>
+		sudo bash -c 'echo "cso18-labs /mnt/cso18-labs vboxsf uid=1000,gid=1000 0 0" >> /etc/fstab'
+</kbd>
+</li>
+</ul>
+
+<p>Note that if you choose to do your labs outside of the class virtual machine,
+we will not provide any technical support should you encounter 
+any OS-related issues in doing the labs. Furthermore, should the results of your
+lab differ from what we have obtained by running the tests on Linux, we will use
+our test results in determining the grade.
+
+<h4 id="rep">Lab Repository Setup</h4>
+For each student in the class, we have created for him/her a corresponding private
+lab repository on Github.com. You will submit labs by pushing to your private
+repo on github.com (as many times as you want) and we will collect labs for
+grading after the lab deadline directly from Github.com.  Below are the steps
+for setting up your the lab environment on your laptop.  If you are not
+familiar with the <tt>git</tt> version control system,  follow the resources <a
+href="https://help.github.com/articles/good-resources-for-learning-git-and-github/">here</a>
+to get started.
+
+<p>
+<ul>
+	<li><b>Cloning your lab repo locally</b>
+<p>In a VirtualBox terminal, clone your repo by typing the following:
+<pre >
+$ git clone https://github.com/nyu-cso18spring/labs-&lt;YourGithubUsername&gt;.git  cso18-labs
+$ cd cso18-labs
+</pre>
+
+<p>
+You will see that a directory named <tt>cso18-labs</tt> has been created under your home directory.  This is the git repo for your lab assignments throughout the semester.
+</li>
+
+<li><b>Setting up the upstream repo</b>
+		<p>The lab skeleton code are kept in the repo <a href="https://github.com/nyu-cso18spring/cso18-labs"><tt>https://github.com/nyu-cso18spring/cso18-labs</tt></a>
+managed by the course staff. Therefore, the first thing you need to do is to
+set up your own lab repo to track the changes made in the <tt>cso18-labs</tt> repo.
+In the git world, <tt>cso18-labs</tt> would be your "upstream" repo from which changes 
+should ``flow'' into your own lab repo.
+
+<p>Type <kbd>git remote add</kbd> to add the upstream repo, and <kbd>git remote -v</kbd> to check that <tt>cso18-labs</tt> is indeed an upstream for your own lab repo.
+<pre >
+$ git remote add upstream https://github.com/nyu-cso18spring/cso18-labs.git
+$ git remote -v
+origin	git@github.com:nyu-cso18spring/labs-YourGithubUsername.git (fetch)
+origin	git@github.com:nyu-cso18spring/labs-YourGithubUsername.git (push)
+upstream	https://github.com/nyu-cso18spring/cso18-labs.git (fetch)
+upstream	https://github.com/nyu-cso18spring/cso18-labs.git (push)
+</pre>
+
+<p>Immediately, you should check if the upstream cso18-labs repo has additional changes not present in your repo. You can check for and merge in those changes by typing:
+<pre >
+$ git fetch upstream
+$ git merge upstream/master
+</pre>
+You should perform the above two steps periodically to ensure that you've got the latest lab code. 
+We will also remind you to fetch upstream on Piazza if we make changes/bug-fixes to the labs.
+</li>
+
+<li><b>Saving changes while you are working on Labs</b>
+<p>
+As you modify the skeleton files to complete the labs, you should frequently save your 
+work to protect against laptop failures and other unforeseen troubles. 
+You save the changes by first "committing" them to your local lab repo and then "pushing" 
+those changes to the repo stored on github.com
+<pre >
+$ git commit -am "saving my changes"
+$ git push origin
+</pre>
+
+Note that whenever you add a new file, you need to manually tell git to ``track it''.
+Otherwise, the file will not be committed by git commit. Make git track a new file by typing:
+<pre >
+$ git add &lt;my-new-file&gt;
+</pre>
+
+<p>After you've pushed your changes by typing <kbd>git push origin</kbd>, they are safely stored on github.com.
+Even if your laptop catches on fire in the future, those pushed changes can still be retrieved.
+However, you must remember that doing <kbd>git commit</kbd> by itself does not save your changes on github.com 
+(it only saves your changes locally).  So, don't forget to type <kbd>git push origin</kbd>.
+
+<p>
+To see if your local repo is up-to-date with your origin repo on github.com and vice versa, type
+<kbd>git status</kbd>
+</li>
+</ul>
+
+<h4>Handin Procedure</h4>
+
+To handin your files, simply commit and push them to github.com by doing:
+<pre >
+$ git commit -am "saving all my changes and handing in"
+$ git push origin 
+</pre>
+
+We will fetch your lab files from Github.com at the specified deadline and grade them.
+<hr>
+
+
+</div>
+</body>
+</html>

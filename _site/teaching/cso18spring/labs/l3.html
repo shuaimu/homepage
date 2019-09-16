@@ -1,0 +1,196 @@
+<html>
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no, content=no-cache">
+
+	<!-- Bootstrap CSS -->
+	<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0-beta.3/css/bootstrap.min.css" integrity="sha384-Zug+QiDoJOrZ5t4lssLdxGhVrurbmBWopoEl+M6BdEfwnCJZtKxi1KgxUyJq13dy" crossorigin="anonymous">
+	<link rel="stylesheet" href="../sty2.css">
+
+  <title>Computer Systems Organization (Spring 2018) </title>
+</head>
+
+<body>
+<br>
+    <main role="main" class="container">
+      <header class="header clearfix">
+        <nav>
+          <ul class="nav nav-pills float-left">
+            <li class="nav-item">
+              <a class="nav-link " href="../index.html">Home <span class="sr-only">(current)</span></a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="../schedule.html">Schedule</a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link active" href=".">Lab</a>
+            </li>
+          </ul>
+        </nav>
+	<div class="row">
+		<div class="col-sm-3"><img src="../org.png" width=150></div>
+		<div class="col-sm-9">
+		<div class="row">
+        <h3 class="text-muted">Computer Systems Organization</h3>
+		</div>
+		<div class="row">
+			CSCI-UA.0201(005), Spring 2018
+		</div>
+		</div>
+	</div>
+      </header>
+
+<div id="content">
+<hr>
+
+<h2> Lab-3: Binary Mystery</h2>
+<h5>Due: 4/1</h5>
+
+<p>
+<p>
+In this lab, we give you 5 object files, <tt>ex1_sol.o, ex2_sol.o, ...,
+ex5-sol.o</tt>, and withhold their corresponding C
+sources. 
+
+Each object file implements a particular mystery function (e.g. <tt>ex1_sol.o</tt> 
+defines function <tt>ex1</tt>).  We ask you to deduce what these mystery functions do based on their x86-64
+assembly code and write the corresponding C function that accomplishes the same
+thing for each of the five functions.
+
+<h3>Obtaining the lab</h3>
+<p>
+As usual, do a <tt>git pull upstream master</tt> in your lab directory. This lab's files are 
+located in the <tt>binarylab/</tt> subdirectory.  The files you will be modifying are 
+<tt>ex{1-5}.c</tt>.
+
+<h3>Uncover the mystery of assembly</h3>
+<p>
+The object files whose assembly code you seek to understand are in the <tt>binarylab/objs/</tt> subdirectory.  Put your C code corresponding to <tt>objs/ex1_sol.o</tt> in file <tt>ex1.c</tt>. Put your C code corresponding to <tt>objs/ex2_sol.o</tt> in file <tt>ex2.c</tt>, and so on.
+
+<p>
+Suppose you set out to figure out what function <tt>ex1</tt> (implemented in <tt>objs/ex1_sol.o</tt>) does.  There are two approaches to do this. You should use them <b>both</b> to help uncover the mystery. 
+
+<ul>
+	<li><b>Approach 1:</b> 
+		<p>Disassemble the object files. Read the assembly and try to understand what the function tries to achieve. To disassemble <tt>objs/ex1_sol.o</tt>, type:
+<pre>
+$ objdump -d objs/ex1_sol.o
+</pre>
+	</li>
+
+
+	<li><b>Approach 2</b>
+		<p>Run the function <tt>ex1</tt> in gdb.  
+
+		<p>You might wonder how to run <tt>ex1</tt> in gdb, since not knowing the function signature of <tt>ex1</tt> makes it hard to write your own C code to correctly invoke <tt>ex1</tt>.  How to run <tt>ex1</tt> then?  It turns out that you can utilize the tester that we have given you to run <tt>ex1</tt> and observe how it executes.  
+
+<p>To run the test with the given <tt>ex1</tt> function, you need to link the test object file <tt>objs/tester.o</tt> together with the given <tt>objs/ex*-sol.o</tt> files.  We have made this step easy by including appropriate Makefile rules. When you type <tt>make</tt>, you will see that there are two binary executables being generated, <tt>tester</tt>, and <tt>tester-sol</tt>. The executable file <tt>tester</tt> links 
+our tester file with <b>your</b> object files <tt>ex*.o</tt> which are generated from your <tt>ex*.c</tt> files.  The executable file <tt>tester-sol</tt> links our tester file with the given object file <tt>objs/ex*-sol.o</tt>. Thus, when you run <tt>./tester-sol</tt>, the tester invokes the given 
+functions, and needless to say, all tests should pass. 
+
+<p>Run <tt>gdb tester-sol</tt>.  Stop the execution when the function <tt>ex1</tt> is invoked.  Dissemble the function. Execute the instructions one by one. Form some hypothesis on what the function signature is and what it does.  Verify your hypothesis during execution by examining register values and memory contents.  To learn more about gdb, see the section on <a href="https://github.com/nyu-cso18/cso18-recitation/tree/master/r01#debug">debug</a> in recitation notes.
+</ul>
+
+<p>
+<div class="bd-callout bd-callout-danger">
+	<h5>Do not try to match assembly</h5>
+<p>It is not the right approach to try to match the object code of your C function line-by-line to those contained in <tt>ex*-sol.o</tt>.
+Doing so is painful and not necessary.  Differences in the compiler versions, compilation flags, and small differences in C code will 
+all result in different object code, although they do not affect the code's semantics.
+Therefore, trying to find a C function that generates the <i>same</i>
+object code is likely futile.
+</i>
+</div>
+
+<h3>Test your solution</h3>
+After you've finished each function (remember to remove the <tt>assert(0)</tt> statement), you can test its correctness as follows:
+<pre>
+$ make
+$ ./tester
+Testing Ex1...
+Ex1: your implementation passes the test
+Testing Ex2...
+Ex2: your implementation passes the test
+Testing Ex3...
+Ex3: your implementation passes the test
+Testing Ex4...
+Ex4: your implementation passes the test
+Testing Ex5...
+Ex5: your implementation passes the test
+</pre>
+
+The above ouput ocurrs when all your ex* functions pass the test.
+<p>
+To test multiple times, run <tt>./tester -r</tt> with the <tt>-r</tt> option. This runs the 
+tester using a new seed for its random number generator.  
+
+<p>Some of you might want to 
+skip around and implement the five <tt>ex*</tt> functions in arbitary order. 
+This is a good strategy if you are stuck on some function.  To test just <tt>ex2</tt>,
+type <tt>./tester -t 2</tt>.  Ditto with other functions.
+
+<p>
+<i>Note: Passing the test does not guarantee that you will get a perfect grade (i.e. your implementation is not necessarily correct).
+During grading, we may use a slightly different test or manually examine your source code to determine its correctness.</i>
+</p>
+
+<h3>Explanations on some unfamiliar assembly and others</h3>
+
+<p>For this lab, you need to review the lecture notes and textbook to 
+refresh your understanding of x86 assembly. 
+Below are some additional information not covered in the lecture notes
+that are helpful for this lab as well.
+
+<ul>
+<li>One can explicitly refer to lower-order bits of the registers. The 
+names that you may find used in this lab are:
+<pre>
+register : name to refer its lower-order portion
+%rax     : %eax(lower-32 bit), %ax(lower-16-bit), %al(lower-8-bit).
+%rcx     : %ecx(lower-32 bit), %cx(lower-16-bit), %cl(lower-8-bit).
+%rdx     : %edx(lower-32 bit), %dx(lower-16-bit), %dl(lower-8-bit).
+%rbx     : %ebx(lower-32 bit), %bx(lower-16-bit), %bl(lower-8-bit).
+%r8      : %r8d(lower-32 bit), %r8w(lower-16-bit),%r8b(lower-8-bit).
+...
+%r15     :%r15d(lower-32 bit),%r15w(lower-16-bit),%r15b(lower-8-bit).
+</pre>
+Note: For some reason, gdb does not recognize %r8b as a valid register name. Please just 
+print register %r8 and manually find out its lower-8-bit to obtain the value for %r8b.
+
+<p>
+<li> Often in the dissembled output, you encounter some instructions without any mnemonics suffix. For example, the <tt>mov</tt> instead of <tt>movl</tt> or <tt>movq</tt> (where <tt>l</tt> or <tt>q</tt> is called the mnemoics). In these scenarios, then treat the missing suffix as one that corresponds to the size of the destination register operand.  For example, <tt>mov $1, %ebx</tt> is equivalent to <tt>movl $1, %ebx</tt> and <tt>mov %rax, %rbx</tt> is equivalent to <tt>movq %rax, %rbx</tt>.
+
+<p>
+<li> <tt>movzbl</tt> instruction moves the 1-byte source operand (the <tt>b</tt> mnemonic) to the 4-byte destination operand (the <tt>l</tt> mnemonic) with zero extension. 
+Instruction <tt>movslq</tt> moves the 4-byte source operand to the 8-byte destination operand with sign extension. That is, if the source operand is negative in two's complement (i.e. has 1 in its most significant bit), then the instruction pads 1s (i.e. fills the most significant 4-byte with 1s).  There are more details on zero-extension and sign extension on Page 184-185 of the textbook.
+
+<p>
+<li>
+The two byte instruction "<tt>repz retq</tt>" behaves identically as the one byte instruction <tt>retq</tt>.
+
+<p>
+<li>If you disassemble an object file, (e.g. "objdump -d objs/ex1_sol.o"), you should <b>not</b> expect valid address for functions, because <a href="http://stackoverflow.com/questions/6264249/how-does-the-compilation-linking-process-work">linking</a> has not yet happened. If you want to see valid function addresses (i.e. those that appear as the operand for the <tt>call</tt> instruction), disassemble the binary executable (<tt>tester</tt> or <tt>tester-sol</tt>) or disassemble in gdb.
+</ul>
+
+<p>For those of you who want to go out in the world to explore other object files,
+you will find the official <a href="http://www.intel.com/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-software-developer-instruction-set-reference-manual-325383.pdf">Intel
+instruction set manual</a> useful.  Note that in the Intel manual, the source
+and destination operands are reversed in an instruction (i.e. destination
+operand first, source operand last). In the lecture notes and gdb/objdump's disassembled
+output, the destination operand appears last in an instruction.  These
+differences are due to <a href="https://en.wikipedia.org/wiki/X86_assembly_language">two assembly syntaxes</a>, AT&amp;T syntax and Intel syntax.
+The GNU software (gcc, gdb etc) and lecture notes use AT&amp;T syntax which
+puts the destination operand last and Intel manual (of course) uses Intel syntax which puts
+the destination operand first.
+<h3>Handin Procedure</h3>
+
+To handin your files, simply commit and push them to github.com 
+<pre>
+$ git commit -am "Finish lab"
+$ git push origin 
+</pre>
+
+We will fetching your lab files from Github.com at the specified deadline and grade them.
+
+</body>
+</html>

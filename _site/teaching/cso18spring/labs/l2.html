@@ -1,0 +1,291 @@
+<html>
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no, content=no-cache">
+
+	<!-- Bootstrap CSS -->
+	<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0-beta.3/css/bootstrap.min.css" integrity="sha384-Zug+QiDoJOrZ5t4lssLdxGhVrurbmBWopoEl+M6BdEfwnCJZtKxi1KgxUyJq13dy" crossorigin="anonymous">
+	<link rel="stylesheet" href="../sty2.css">
+
+  <title>Computer Systems Organization (Spring 2018) </title>
+</head>
+
+<body>
+<br>
+    <main role="main" class="container">
+      <header class="header clearfix">
+        <nav>
+          <ul class="nav nav-pills float-left">
+            <li class="nav-item">
+              <a class="nav-link " href="../index.html">Home <span class="sr-only">(current)</span></a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="../schedule.html">Schedule</a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link active" href=".">Lab</a>
+            </li>
+          </ul>
+        </nav>
+	<div class="row">
+		<div class="col-sm-3"><img src="../org.png" width=150></div>
+		<div class="col-sm-9">
+		<div class="row">
+        <h3 class="text-muted">Computer Systems Organization</h3>
+		</div>
+		<div class="row">
+			CSCI-UA.0201(005), Spring 2018
+		</div>
+		</div>
+	</div>
+      </header>
+
+<div id="content">
+<hr>
+
+<h2> Lab-2: Rabin-Karp Substring Matching</h2>
+<h5>Due: 3/9</h5>
+
+<p>
+In text document processing, it is sometimes the case that we need to 
+find out whether a (smaller) string appears somewhere in another (larger)
+string as a substring.  For example, the UNIX utility <tt>grep</tt> allows 
+you to search for one or more patterns in a file.
+
+<p>
+In this lab, you will write a program called <tt>rkgrep</tt> to find 
+whether one (or more) patterns appears in a file.  The goal of this lab is to
+help you improve your C programming skills e.g.  manipulating arrays, pointers,
+number and character representation, bit operations etc.
+
+
+<h3>Obtaining the lab code</h3>
+<p>
+As usual, do a <kbd>git pull upstream master</kbd> in your cso-labs directory. This lab's files are 
+located in the <tt>rklab/</tt> subdirectory.  The files you will be modifying are 
+<tt>rkgrep.c</tt> and <tt>bloom.c</tt>.
+
+<p>Make sure that you have set up the upstream repo as described <a href="index.html#repo">here</a>.
+
+<h3> Part I: Naive matching</h3>
+
+<p>The most naive way of doing substring matching is to 
+individually check whether a pattern string P matches the substring of length <i>m</i> at position <i>0, 1, 2, ...,
+n-m</i> in the document string Y.  Here, <i>m</i> is the length of the pattern string P and <i>n</i> is the length of document
+string Y.  In other words, we are going to check whether P is the same as Y[0..m-1], Y[1..m], ..., Y[n-m...n-1], where 
+Y[0..m-1] is the substring of length m starting at position 0 of Y, Y[1..m] is the substring at position 1, and so on.
+
+<p>As an example, suppose the pattern string is "dab", the document string
+is "abracadabra", then you would check whether "ada" is the same as the substring at position 0
+("abr"), at position 1 ("bra"), ... until you find a match 
+at position 6.
+
+<p> This naive algorithm is slow. If the pattern string is of length <i>m</i>, each check takes <i>O(m)</i> time in the worst case.
+Since there are total <i>n</i> checks, the naive algorithm takes <i>O(m*n)</i> to perform the substring match.
+Nevetheless, naive matching is extremely simple and so let's get started on that.
+
+<p>
+<div id="problem">
+<b>Your job: </b>
+Complete the function <tt>naive_substring_match</tt> in <tt>rkgrep.c</tt> file and test it by typing:
+<pre>
+$ make
+$ ./rkgrep_test -a naive
+</pre>
+
+</div>
+
+
+<h3>Part II: Rabin-Karp Substring Matching</h3>
+
+<p>
+The <a href="http://ieeexplore.ieee.org/xpl/articleDetails.jsp?arnumber=5390135">Rabin-Karp
+substring matching algorithm</a> (short for RK) was invented in the eighties by
+two renowned computer scientists, Michael Rabin and Richard Karp.
+
+
+<p>To check whether a given pattern string P appears as a substring in document string Y,
+RK uses the idea of hashing: A hash function turns a string of arbitary length
+into a b-bit hash value with the property that collision (two different
+strings having the same hash value) is unlikely.  
+
+<p>
+At a high level, RK works by computing a hash for the pattern string of length m, hash(P), as well as 
+hashes for all n-m+1 substrings of length m in the document string Y, 
+hash(Y[0..m-1]), hash(Y[1..m]), ..., hash(Y[n-m..n-1]), where Y[0..m-1] is the substring of length <i>m</i> at position 0 of Y, Y[1..m] is the 
+substring at position 1 of Y, and so on.  If
+hash(P) is identical to the hash at position i of Y, we can then perform the usual byte-by-byte comparison 
+of P with the substring at position i to determine if P indeed matches at position i of Y.
+
+<p>
+There are many nice hash functions out there
+(such as MD5, SHA-256), but unfortunately, none of them would make RK any faster
+since they would take O(m) time to compute each of the n-m+1 hashes from Y.
+RK's magical ingredient is its invention of a ``rolling'' hash
+function.  Specifically, given hash(Y[i..i+m-1]), RK takes only constant
+time instead of O(m) time to compute the hash for the next substring, hash(Y[i+1..i+m]).
+
+<p>
+Let's see how the rolling hash is done in RK.  Specifically, 
+we'll treat each byte as a "digit" in a base-256 representation.
+For example, the string 'ab' corresponds to two digits with one being 97 (the
+ASCII value of 'a'), and the other being 98 (the ASCII value of 'b').  The
+decimal value of 'ab' in base-256 can be calculated as 256*97+98 = 24930.  For a 
+string P of length m, its RK hash is calculated as hash(P[0...m-1]) =
+256<sup>m-1</sup>*P[0]+256<sup>m-2</sup>*P[1]+...+256<sup>1</sup>*P[m-2]+P[m-1].   
+
+<p>
+Next, let us see how a rolling calculation of the hash values is done. Let 
+y<sub>i</sub>=hash(Y[i...i+m-1]).  We can 
+compute y<sub>i+1</sub> from y<sub>i</sub> in constant time, by observing that
+<pre>
+y<sub>i+1</sub> = 256<sup>m-1</sup>*Y[i+1] + 256<sup>m-2</sup>*Y[i+2] + ... + Y[i+m]
+     = 256 * ( 256<sup>m-2</sup>*Y[i+1] + ... Y[i+m-1]) + Y[i+m]
+     = 256 * ((256<sup>m-1</sup>*Y[i] + 256<sup>m-2</sup>*Y[i+1] + ... Y[i+m-1]) - 256<sup>m-1</sup>*Y[i]) + Y[i+m]
+     = 256 * ( y<sub>i</sub> - 256<sup>m-1</sup> * Y[i]) + Y[i+m]
+     = 256 * y<sub>i</sub> - 256<sup>m</sup> * Y[i] + Y[i+m]
+</pre>
+
+<p>
+Note that in order to achieve constant time calculation, we have to remember the value of
+256<sup>m</sup> in a variable instead of re-computing it each time.
+
+<p>
+Now we've seen how rolling hash works.  The only fly in the ointment is that these base-256 hash values are too
+huge to work with efficiently and conveniently. Therefore, we perform 
+all the computation in modulo q, where q is chosen to be a
+large prime (for those with a joint math major: why a prime instead of non-prime?).
+
+<p>With RK hashes, collisions are infrequent, but still possible.  Therefore
+once we detect some y<sub>i</sub> = hash(P), we should compare the actual strings
+Y[i..i+m-1] and P[0..m-1] to see if they are indeed identical.
+
+<p>RK speeds up substring matching significantly. In particular, RK's runtime is O(n) (since hash collusion is
+rare) compared with O(n*m) for the naive algorithm.  
+
+<div id="problem">
+<p>
+<b>Your job:</b> Implement the RK substring matching algorithm by completing 
+the <tt>rk_substring_match</tt> procedure.
+When calculating the hash values, you should use the given modulo arithmatic
+functions, <tt>madd</tt>, <tt>mdel</tt>, <tt>mmul</tt>.
+
+<p>
+<b>Testing:</b> Test your implementation by typing
+<pre>
+$ make
+$ ./rkgrep_test -a rk</tt>
+</div>
+
+<p>The test prints out the measured running time. You should observe that the running time for RK is significantly faster than 
+that of the naive algorithm.</p>
+
+<h3>Part III: Multi-pattern RK Matching with a Bloom Filter</h3>
+
+<p>It turns out that RK is not the most efficient algorithm for performing
+single-pattern substring matching (i.e.  matching just one pattern in
+a document).  RK's advantage is that it can efficiently match many patterns in
+the same document by storing the rolling hashes of the document and re-using it
+across patterns.
+
+<p>Let us assume that when we do multi-pattern matching, most of the patterns 
+will not have any matches in the document. In this case, we can use a bloom 
+filter to "store" rolling hashes in a kind of super-compressed way.
+
+<p>
+A Bloom filter is a bitmap of h bits initialized to zeros in the beginning.
+To insert value v into the bitmap, 
+we use <i>f</i> hash functions to map v into f positions
+in the bitmap and set each position to be one.  For example, for a 
+8-bit bitmap and f=2, if v is mapped to positions 1,5, then the 
+bitmap after insert v would be 01000100. Subsequently, suppose we also inserted v' which is mapped
+to positions 0,3, the resulting bitmap would be 11010100.
+
+<p>There are 
+many reasonable conventions with which we can use a byte array to represent a bitmap.
+In this lab, we expect you follow one specific convention and interpret bits in
+the Big-Endian convention within a byte.  For example, we use a 2-byte-array to
+represent a 16-bit bitmap. The first byte represents the first 8-bit of the
+bitmap. And the most-significant-bit of the first byte represents the first bit
+of the bitmap. The most-significant-bit of the second byte represents the 9-th
+bit of the bitmap. Suppose the bitmap is 11010100 01000001, then the array content should be
+{0xe4, 0x41}.
+
+<p>We can query the bloom filter to find out whether a value v <b>might</b> be present. To do this, we 
+check all f mapped positions of v. If all f bits are set in these mapped positions, 
+then v is probably among the set of values inserted in the bitmap. We say that v is probably present 
+because there can be false positives, i.e. v may not actually be present 
+since a different value v' may happen to have been mapped to the same positions
+as v (with a very small probability if the bitmap is large enough).  Note that
+there are no false negatives (i.e. if bloom filter says v is not present, then
+v is definitely not present).
+
+<p>To use bloom filter for multi-pattern RK matching, we first create a bloom filter 
+and insert all n-m+1 hashes for substrings of length m in the document to the bloom filter.  Then, for each of the
+k patterns (assuming they all have the same length m), we check whether 
+or not it is present in the bloom filter.  If not, we can declare that the pattern
+is not present in the document and move on to check the next pattern. If yes, we then
+invoke our regular single-pattern RK function to confirm whether the pattern is
+indeed a match or not.
+
+<p>If most patterns are non-matches, then this algorithm is very fast as it only takes a constant time to 
+query the bloom filter.
+
+<p>
+<b>Your job:</b> First implement the Bloom filter functions by 
+implementing the <tt>bloom_query</tt>,
+and <tt>bloom_add</tt> in the source file <tt>bloom.c</tt>.  
+
+<p>
+To help you implement <tt> bloom_add</tt> and <tt>bloom_query</tt>, 
+we provide you with a specific hash function implementation to map a value into a 
+bitmap position, i.e. <tt>int hash_i(int i, long long x)</tt>.  This function will hash a given
+Rabin-Karp hash value x into an <tt>int</tt> value according to the i-th hash
+function.   The number of hash functions that you should use is given by <tt>
+BLOOM_HASH_NUM</tt>, a global constant defined in file <tt> bloom.c</tt>.  Note
+that you need to confine the resulting hash value to the appropriate range [0,
+bloom_bitmap_size) by using the modulo operation.
+
+<p>
+<b>Testing:</b> After you are done with the bloom filter implementation, test its correctness by typing
+<pre>
+$ make
+$ ./rkgrep_test -a bloom
+</pre>
+
+<p>Once your bloom filter passes the test, you can implement the multi-pattern RK matching 
+by implementing the <tt>rk_create_doc_bloom</tt> and <tt>rk_substring_match_using_bloom</tt> in the 
+source file <tt>rkgrep.c</tt>.  Afterwards, test your implementation by typing:
+
+<pre>
+$ make 
+$ ./rkgrep_test -a rkbloom 
+</pre>
+
+<p>
+Once you finish all parts, you can run all tests by simply typing <kbd>./rkgrep_test</kbd>. This would run the tests 
+for all parts one by one.
+
+<p>
+<div class="bd-callout bd-callout-warning">
+	<h5>Programming style:</h5>
+	<p>As is the case with Lab-1, you will be graded for style and we will deduct up to 20% of total lab points for bad style based on our subjective evaluation. Please read this <a href="http://cs61.seas.harvard.edu/wiki/2015/Style">style guide</a> and follow the advice.
+</div>
+
+
+<h3>Handin Procedure</h3>
+
+To handin your files, simply commit and push them to github.com 
+<pre>
+$ git commit -am "Finish lab2"
+$ git push origin 
+</pre>
+
+We will fetching your lab files from Github.com at the specified deadline and grade them.
+
+<p>
+<hr>
+</body>
+</html>
+
+
