@@ -116,7 +116,7 @@
 * end of 5.4.1 explains "at least as up to date" voting rule
   * compare last entry -- higher term wins
   * if equal terms, longer log wins
-  * so only S3 or S3 can be leader, will force S1 to discard 6,7
+  * so only S2 or S3 can be leader, will force S1 to discard 6,7
     * ok since no majority -> not executed -> no client reply
 * the point:
   * "at least as up to date" rule ensures new leader's log contains
