@@ -177,6 +177,11 @@ S3:  3  3  5
 except they may be missing the few most recent entries</li>
     </ul>
   </li>
+  <li>faster rollback?
+    <ul>
+      <li>when rejecting appendEntries, return the beginning/end index of the conflicting term.</li>
+    </ul>
+  </li>
 </ul>
 
 <h2 id="new-leader-must-be-up-to-date">New leader must be “up to date”</h2>
@@ -234,7 +239,7 @@ both times it crashed after only appending to its own log</li>
   </li>
 </ul>
 
-<h2 id="more">More</h2>
+<h2 id="a-corner-case">A corner case</h2>
 <ul>
   <li>why “log[N].term==currentTerm” in figure 2’s Rules for Servers?
     <ul>
@@ -279,18 +284,129 @@ S5: 1       1 3
       <li>the leader imposing its log on followers</li>
     </ul>
   </li>
-  <li>an important aside:
+</ul>
+
+<h2 id="log-compaction-and-snapshots">Log compaction and snapshots</h2>
+<ul>
+  <li>problem:
     <ul>
-      <li>can leader execute read-only operations locally?
+      <li>log will get to be huge – much larger than state-machine state!</li>
+      <li>will use lots of memory</li>
+      <li>will take a long time to
         <ul>
-          <li>without sending to followers in AppendEntries and waiting for commit?</li>
-          <li>very tempting, since r/o ops may dominate, and don’t change state</li>
+          <li>read and re-evaluate after reboot</li>
+          <li>send to a newly added replica</li>
         </ul>
       </li>
-      <li>why might that be a bad idea?</li>
-      <li>how could we make the idea work?</li>
     </ul>
   </li>
+  <li>what constrains how a server can discard old parts of log?
+    <ul>
+      <li>can’t forget un-committed operations</li>
+      <li>need to replay if crash and restart</li>
+      <li>may be needed to bring other servers up to date</li>
+    </ul>
+  </li>
+  <li>solution: service periodically creates persistent “snapshot”
+    <ul>
+      <li>copy of entire state-machine state through a specific log entry
+        <ul>
+          <li>e.g. k/v table, client duplicate state</li>
+        </ul>
+      </li>
+      <li>service writes snapshot to persistent storage (disk)</li>
+      <li>service tells Raft it is snapshotted through some entry</li>
+      <li>Raft discards log before that entry</li>
+      <li>a server can create a snapshot and discard log at any time</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="configuration-change">Configuration change</h2>
+<ul>
+  <li>configuration change (Section 6)
+    <ul>
+      <li>configuration = set of servers</li>
+      <li>every once in a while you might want to
+        <ul>
+          <li>move to an new set of servers, or</li>
+          <li>increase/decrease the number of servers</li>
+        </ul>
+      </li>
+      <li>human initiates configuration change, Raft manages it</li>
+      <li>we’d like Raft to execute correctly across configuration changes</li>
+    </ul>
+  </li>
+  <li>why doesn’t a straightforward approach work?
+    <ul>
+      <li>suppose each server has the list of servers in the current config</li>
+      <li>change configuration by telling each server the new list
+        <ul>
+          <li>using some mechanism outside of Raft</li>
+        </ul>
+      </li>
+      <li>problem: they will learn new configuration at different times</li>
+      <li>example: want to replace S3 with S4
+        <div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>S1: 1,2,3  1,2,4
+S2: 1,2,3  1,2,3
+S3: 1,2,3  1,2,3
+S4:        1,2,4
+</code></pre></div>        </div>
+      </li>
+      <li>OOPS! now <em>two</em> leaders could be elected!
+        <ul>
+          <li>S2 and S3 could elect S2</li>
+          <li>S1 and S4 could elect S1</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>Raft configuration change
+    <ul>
+      <li>idea: “joint consensus” stage that includes <em>both</em> old and new configuration</li>
+      <li>leader of old group logs entry that switches to joint consensus
+        <ul>
+          <li>Cold,new – contains both configurations</li>
+        </ul>
+      </li>
+      <li>during joint consensus, leader gets AppendEntries majority in both old and new</li>
+      <li>after Cold,new commits, leader sends out Cnew
+        <div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>S1: 1,2,3  1,2,3+1,2,4
+S2: 1,2,3
+S3: 1,2,3
+S4:        1,2,3+1,2,4
+</code></pre></div>        </div>
+      </li>
+      <li>no leader will use Cnew until Cold,new commits in <em>both</em> old and new.
+        <ul>
+          <li>so there’s no time at which one leader could be using Cold</li>
+          <li>and another could be using Cnew</li>
+        </ul>
+      </li>
+      <li>if crash but new leader didn’t see Cold,new
+        <ul>
+          <li>then old group will continue, no switch, but that’s OK</li>
+        </ul>
+      </li>
+      <li>if crash and new leader did see Cold,new,
+        <ul>
+          <li>it will complete the configuration change</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="an-important-aside">An important aside:</h2>
+<ul>
+  <li>can leader execute read-only operations locally?
+    <ul>
+      <li>without sending to followers in AppendEntries and waiting for commit?</li>
+      <li>very tempting, since r/o ops may dominate, and don’t change state</li>
+    </ul>
+  </li>
+  <li>why might that be a bad idea?</li>
+  <li>how could we make the idea work?</li>
 </ul>
 
 

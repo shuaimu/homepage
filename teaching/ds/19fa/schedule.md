@@ -16,7 +16,7 @@ Office hour: W 2-4pm NCS 351. Because we have a large class, you are strongly re
 The schedule is tentative and subject to change.
 
 | Date   | Topic &nbsp;                                                                   | Preparation                                                                                    | Notes        |
-|--------+--------------------------------------------------------------------------------+------------------------------------------------------------------------------------------------+--------------|
+|--------|--------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------|--------------|
 | Aug 26 | Introduction I: [Overview](notes/overview.md), [MapReduce](notes/mapreduce.md) | Read [How to Read a Paper](readings/paper-reading.pdf) and [MapReduce](readings/mapreduce.pdf) |              |
 | Aug 28 | Introduction II: [MapReduce](notes/mapreduce.md)(Cont.)                        |                                                                                                |              |
 | Sep 2  |                                                                                |                                                                                                | Labor Day    |
@@ -24,13 +24,13 @@ The schedule is tentative and subject to change.
 | Sep 9  | Introduction IV: [GFS](notes/gfs.md)(Cont.)                                    |                                                                                                |              |
 | Sep 11 | Introduction V: [Primary-Backup Replication](notes/vmft.md)                    | Read [VM Fault tolerance](readings/vm-ft.pdf)                                                  |              |
 | Sep 16 | Consensus I: [Raft](notes/raft.md)                                             | Read [Raft](readings/raft.pdf)                                                                 |              |
-| Sep 18 | Consensus II: Paxos                                                            | Read [Paxos made simple](readings/paxos.pdf)                                                   |              |
-| Sep 23 | Consensus III: Paxos/Raft (cont'd)                                             | Skim [Raft and Paxos](readings/raft-paxos.pdf)                                                 |              |
-| Sep 25 | Consensus IV: Byzantine failures                                               | Read [Byzantine Paxos](readings/byzpaxos.pdf) and [PBFT](readings/pbft.pdf)                    |              |
-| Sep 30 | Consistency I: Linearizability                                                 | Skim [Linearizability](readings/linearizability.pdf)                                           |              |
-| Oct 2  | Consistency II: Eventual Consistency and Causality                             | Read [Bayou](readings/bayou.pdf)                                                               |              |
-| Oct 7  | Consistency III: Causal Consistency                                            | Read [COPS](readings/cops.pdf)                                                                 |              |
-| Oct 9  |                                                                                |                                                                                                |              |
+| Sep 18 | Consensus II: [Raft](notes/raft.md)(Cont.)                                      | Read [Raft](readings/raft.pdf)                                                                 |              |
+| Sep 23 | Consensus III: Paxos                                                           | Read [Paxos made simple](readings/paxos.pdf)                                                   |              |
+| Sep 25 | Consensus IV: Paxos/Raft (cont'd)                                              | Skim [Raft and Paxos](readings/raft-paxos.pdf)                                                 |              |
+| Sep 30 | Consensus V: Byzantine failures                                                | Read [Byzantine Paxos](readings/byzpaxos.pdf) and [PBFT](readings/pbft.pdf)                    |              |
+| Oct 2  | Consistency I: Linearizability                                                 | Skim [Linearizability](readings/linearizability.pdf)                                           |              |
+| Oct 7  | Consistency II: Eventual Consistency and Causality                             | Read [Bayou](readings/bayou.pdf)                                                               |              |
+| Oct 9  | Consistency III: Causal Consistency                                            | Read [COPS](readings/cops.pdf)                                                                 |              |
 | Oct 14 |                                                                                |                                                                                                | Fall break   |
 | Oct 16 |                                                                                |                                                                                                |              |
 | Oct 21 | [Transaction I: Serializability]()                                             | [Concurrency control and recovery](readings/franklin97concurrency.pdf)                         |              |

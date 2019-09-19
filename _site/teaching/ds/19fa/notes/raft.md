@@ -92,6 +92,8 @@
   * thus live followers' logs are prefixes of leader's log
   * and live followers that keep up will have logs identical to leader's
     except they may be missing the few most recent entries
+* faster rollback?
+  * when rejecting appendEntries, return the beginning/end index of the conflicting term. 
 
 ## New leader must be "up to date" 
 * could new leader roll back *executed* entries from end of previous term?
@@ -123,7 +125,7 @@
     * all potentially executed entries
   * so new leader won't roll back any executed operation
 
-## More 
+## A corner case 
 * why "log[N].term==currentTerm" in figure 2's Rules for Servers?
   * why can't we execute any entry that's on a majority?
     * how could such an entry be discarded?
@@ -149,10 +151,77 @@
 * this is a consequence of:
   * the "more up to date" voting rule favoring higher term, and
   * the leader imposing its log on followers
-* an important aside: 
-  * can leader execute read-only operations locally?
-    * without sending to followers in AppendEntries and waiting for commit?
-    * very tempting, since r/o ops may dominate, and don't change state
-  * why might that be a bad idea?
-  * how could we make the idea work?
+
+
+## Log compaction and snapshots
+* problem:
+  * log will get to be huge -- much larger than state-machine state!
+  * will use lots of memory
+  * will take a long time to
+    * read and re-evaluate after reboot
+    * send to a newly added replica
+
+* what constrains how a server can discard old parts of log?
+  * can't forget un-committed operations
+  * need to replay if crash and restart
+  * may be needed to bring other servers up to date
+
+* solution: service periodically creates persistent "snapshot"
+  * copy of entire state-machine state through a specific log entry
+    * e.g. k/v table, client duplicate state
+  * service writes snapshot to persistent storage (disk)
+  * service tells Raft it is snapshotted through some entry
+  * Raft discards log before that entry
+  * a server can create a snapshot and discard log at any time
+  
+## Configuration change
+* configuration change (Section 6)
+  * configuration = set of servers
+  * every once in a while you might want to
+    * move to an new set of servers, or
+    * increase/decrease the number of servers
+  * human initiates configuration change, Raft manages it
+  * we'd like Raft to execute correctly across configuration changes
+
+* why doesn't a straightforward approach work?
+  * suppose each server has the list of servers in the current config
+  * change configuration by telling each server the new list
+    * using some mechanism outside of Raft
+  * problem: they will learn new configuration at different times
+  * example: want to replace S3 with S4
+  ```
+    S1: 1,2,3  1,2,4
+    S2: 1,2,3  1,2,3
+    S3: 1,2,3  1,2,3
+    S4:        1,2,4
+  ```
+  * OOPS! now *two* leaders could be elected!
+    * S2 and S3 could elect S2
+    * S1 and S4 could elect S1
+* Raft configuration change
+  * idea: "joint consensus" stage that includes *both* old and new configuration
+  * leader of old group logs entry that switches to joint consensus
+    * Cold,new -- contains both configurations
+  * during joint consensus, leader gets AppendEntries majority in both old and new
+  * after Cold,new commits, leader sends out Cnew
+  ```
+  S1: 1,2,3  1,2,3+1,2,4
+  S2: 1,2,3
+  S3: 1,2,3
+  S4:        1,2,3+1,2,4
+  ```
+  * no leader will use Cnew until Cold,new commits in *both* old and new.
+    * so there's no time at which one leader could be using Cold
+    * and another could be using Cnew
+  * if crash but new leader didn't see Cold,new
+    * then old group will continue, no switch, but that's OK
+  * if crash and new leader did see Cold,new,
+    * it will complete the configuration change
+
+## An important aside: 
+* can leader execute read-only operations locally?
+  * without sending to followers in AppendEntries and waiting for commit?
+  * very tempting, since r/o ops may dominate, and don't change state
+* why might that be a bad idea?
+* how could we make the idea work?
 
