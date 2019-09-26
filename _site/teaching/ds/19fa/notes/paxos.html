@@ -137,9 +137,16 @@
       <li>no</li>
     </ul>
   </li>
-  <li>in a 3-replica system, if (v1, 1) is accepted on replica-1, (v1, 3) is accepted on replica-2, is the value v1 chosen (committed)?
+  <li>in a 3-replica system, if (v1, b1) is accepted on server s1, (v1, b3) is accepted on s2, is the value v1 considered chosen (committed)?
     <ul>
-      <li>no, think about the case where replica-3 has (v2, 2) accepted.</li>
+      <li>no, think about the case where:
+        <ul>
+          <li>s1, s2 prepared b1; s1 accepted (v1, b1)</li>
+          <li>s2, s3 prepared b2; s2 accepted (v2, b2)</li>
+          <li>s1, s3 prepared b3; s3 accepted (v1, b3)</li>
+          <li>s1, s2 prepared b4; s1, s2 accepted (v2, b4)</li>
+        </ul>
+      </li>
     </ul>
   </li>
 </ul>
@@ -168,6 +175,85 @@
     </ul>
   </li>
 </ul>
+
+<h2 id="compare-multi-paxos-and-raft">Compare Multi-Paxos and Raft</h2>
+<ul>
+  <li>similarities:
+    <ul>
+      <li>log structure</li>
+      <li>performance (w.r.t. 1 message roundtrip to commit)</li>
+    </ul>
+  </li>
+  <li>differences:
+    <ul>
+      <li>currentTerm is not highest seen ballot</li>
+      <li>term in each log entry is not the same as accepted ballot</li>
+      <li>Raft has two extra rules</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="paxos-raft">Paxos-&gt;Raft</h2>
+<ul>
+  <li>change phase-1: move comparison from proposer to acceptor.
+    <ul>
+      <li>proposer send its accepted ballot to others to request a “vote”</li>
+    </ul>
+  </li>
+  <li>“super-prepare/accept”
+    <ul>
+      <li>each super-prepare prepares all instances</li>
+      <li>each super-accept accepts all instances</li>
+      <li>“super-reject”, if any instances refuses to prepare/accept, then reject</li>
+    </ul>
+  </li>
+  <li>global ballot number?
+    <ul>
+      <li>a single highest seen ballot for all instances</li>
+      <li>a single highest accepted ballot number for all instances
+        <ul>
+          <li>what about the ballot numbers in each log entry?</li>
+          <li>if we keep them, “sometimes”, they are the same as the highest accepted ballot number
+            <ul>
+              <li>sometimes = when highest seen ballot = highest accepted ballot.</li>
+            </ul>
+          </li>
+          <li>if the proposing server always use the ballot in a new log entry:
+            <ul>
+              <li>for a recipient, the last log entry log ballot is always the same as the global highest accepted ballot.</li>
+              <li>so we can remove the global highest accepted ballot.</li>
+            </ul>
+          </li>
+        </ul>
+      </li>
+      <li>revisit Raft rules
+        <ul>
+          <li>“up-to-date” rule in leader election</li>
+          <li>“cannot count” rule in failure recovery</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>shrink the super-prepare/accept message size.
+    <ul>
+      <li>prepare
+        <ul>
+          <li>send a digest of all previously accepted entries</li>
+          <li>this digest is accepted ballot + log length (index).</li>
+        </ul>
+      </li>
+      <li>accept
+        <ul>
+          <li>prefix of the committed logs are the same.</li>
+          <li>inductively, a ballot at the same index is the same =&gt; all previous are the same</li>
+          <li>send a “delta”: what is different between the leader/follower?</li>
+          <li>should guarantee no “holes”.</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+</ul>
+
 
   </section>
 
