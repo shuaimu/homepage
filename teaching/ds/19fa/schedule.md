@@ -24,9 +24,9 @@ The schedule is tentative and subject to change.
 | Sep 9  | Introduction IV: [GFS](notes/gfs.md) (cont'd)                                  |                                                                                                |              |
 | Sep 11 | Introduction V: [Primary-Backup Replication](notes/vmft.md)                    | Read [VM Fault tolerance](readings/vm-ft.pdf)                                                  |              |
 | Sep 16 | Consensus I: [Raft](notes/raft.md)                                             | Read [Raft](readings/raft.pdf)                                                                 |              |
-| Sep 18 | Consensus II: [Raft](notes/raft.md) (cont'd)                                   |                                                                  |              |
-| Sep 23 | Consensus III: [Paxos](notes/paxos.md)                                          | Read [Paxos made simple](readings/paxos.pdf)                                                   |              |
-| Sep 25 | Consensus IV: Paxos/Raft (cont'd)                                              | Skim [Raft and Paxos](readings/raft-paxos.pdf)                                                 |              |
+| Sep 18 | Consensus II: [Raft](notes/raft.md) (cont'd)                                   |                                                                                                |              |
+| Sep 23 | Consensus III: [Paxos](notes/paxos.md)                                         | Read [Paxos made simple](readings/paxos.pdf)                                                   |              |
+| Sep 25 | Consensus IV: [Paxos](notes/paxos.md) (cont'd)                                 | Skim [Raft and Paxos](readings/raft-paxos.pdf)                                                 |              |
 | Sep 30 | Consensus V: Byzantine failures                                                | Read [Byzantine Paxos](readings/byzpaxos.pdf) and [PBFT](readings/pbft.pdf)                    |              |
 | Oct 2  | Consistency I: Linearizability                                                 | Skim [Linearizability](readings/linearizability.pdf)                                           |              |
 | Oct 7  | Consistency II: Eventual Consistency and Causality                             | Read [Bayou](readings/bayou.pdf)                                                               |              |
