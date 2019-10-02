@@ -40,7 +40,7 @@
 * usage: closer to today's multi-core memory system
 * example (consider the case with and without c3)
   ```
-  x,y=0 initialliy
+  x,y=0 initially
   c1: put(x)=1        get(y)=?
   c2:      put(y)=1
   c3:                         get(y)=1  get(x)=0
