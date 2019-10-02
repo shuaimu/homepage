@@ -28,7 +28,7 @@ The schedule is tentative and subject to change.
 | Sep 23 | Consensus III: [Paxos](notes/paxos.md)                                         | Read [Paxos made simple](readings/paxos.pdf)                                                   |              |
 | Sep 25 | Consensus IV: [Paxos](notes/paxos.md) (cont'd)                                 | Skim [Raft and Paxos](readings/raft-paxos.pdf)                                                 |              |
 | Sep 30 | Consensus V: [Byzantine failures](notes/byz.md)                                | Read [Byzantine Paxos](readings/byzpaxos.pdf) and [PBFT](readings/pbft.pdf)                    |              |
-| Oct 2  | Consistency I: Linearizability                                                 | Skim [Linearizability](readings/linearizability.pdf)                                           |              |
+| Oct 2  | Consistency I: [Linearizability](notes/linear.md)                              | Skim [Linearizability](readings/linearizability.pdf)                                           |              |
 | Oct 7  | Consistency II: Eventual Consistency and Causality                             | Read [Bayou](readings/bayou.pdf)                                                               |              |
 | Oct 9  | Consistency III: Causal Consistency                                            | Read [COPS](readings/cops.pdf)                                                                 |              |
 | Oct 14 |                                                                                |                                                                                                | Fall break   |
