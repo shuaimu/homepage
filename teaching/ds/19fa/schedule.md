@@ -30,7 +30,7 @@ The schedule is tentative and subject to change.
 | Sep 30 | Consensus V: [Byzantine failures](notes/byz.md)                                | Read [Byzantine Paxos](readings/byzpaxos.pdf) and [PBFT](readings/pbft.pdf)                    |              |
 | Oct 2  | Consistency I: [Linearizability](notes/linear.md)                              | Skim [Linearizability](readings/linearizability.pdf)                                           |              |
 | Oct 7  | Consistency II: Eventual Consistency and Causality                             | Read [Bayou](readings/bayou.pdf)                                                               |              |
-| Oct 9  | Consistency III: Causal Consistency                                            | Read [COPS](readings/cops.pdf)                                                                 |              |
+| Oct 9  | Consistency III: Causal and Fork Consistency                                   | Skim [COPS](readings/cops.pdf) and [SUNDR](readings/sundr.pdf)                                 |              |
 | Oct 14 |                                                                                |                                                                                                | Fall break   |
 | Oct 16 |                                                                                |                                                                                                |              |
 | Oct 21 | [Transaction I: Serializability]()                                             | [Concurrency control and recovery](readings/franklin97concurrency.pdf)                         |              |
