@@ -16,7 +16,7 @@ Office hour: W 2-4pm NCS 351. Because we have a large class, you are strongly re
 The schedule is tentative and subject to change.
 
 | Date   | Topic &nbsp;                                                                   | Preparation                                                                                    | Notes        |
-|--------|--------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------|--------------|
+|--------+--------------------------------------------------------------------------------+------------------------------------------------------------------------------------------------+--------------|
 | Aug 26 | Introduction I: [Overview](notes/overview.md), [MapReduce](notes/mapreduce.md) | Read [How to Read a Paper](readings/paper-reading.pdf) and [MapReduce](readings/mapreduce.pdf) |              |
 | Aug 28 | Introduction II: [MapReduce](notes/mapreduce.md) (cont'd)                      |                                                                                                |              |
 | Sep 2  |                                                                                |                                                                                                | Labor Day    |
@@ -32,7 +32,7 @@ The schedule is tentative and subject to change.
 | Oct 7  | Consistency II: Eventual Consistency and Causality                             | Read [Bayou](readings/bayou.pdf)                                                               |              |
 | Oct 9  | Consistency III: Causal and Fork Consistency                                   | Skim [COPS](readings/cops.pdf) and [SUNDR](readings/sundr.pdf)                                 |              |
 | Oct 14 |                                                                                |                                                                                                | Fall break   |
-| Oct 16 |                                                                                |                                                                                                |              |
+| Oct 16 | Consistency V: Existential Consistency                                         | Read [Existential consistency](readings/existential.pdf)                                       |              |
 | Oct 21 | [Transaction I: Serializability]()                                             | [Concurrency control and recovery](readings/franklin97concurrency.pdf)                         |              |
 | Oct 23 | [Transaction II: Two-phase Locking]()                                          |                                                                                                |              |
 | Oct 28 | [Transaction III: Isolation Levels]()                                          | [A Critique of ANSI SQL Isolation Levels](readings/si.pdf)                                     |              |
