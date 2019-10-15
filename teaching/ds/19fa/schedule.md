@@ -16,7 +16,7 @@ Office hour: W 2-4pm NCS 351. Because we have a large class, you are strongly re
 The schedule is tentative and subject to change.
 
 | Date   | Topic &nbsp;                                                                   | Preparation                                                                                    | Notes        |
-|--------+--------------------------------------------------------------------------------+------------------------------------------------------------------------------------------------+--------------|
+|--------|--------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------|--------------|
 | Aug 26 | Introduction I: [Overview](notes/overview.md), [MapReduce](notes/mapreduce.md) | Read [How to Read a Paper](readings/paper-reading.pdf) and [MapReduce](readings/mapreduce.pdf) |              |
 | Aug 28 | Introduction II: [MapReduce](notes/mapreduce.md) (cont'd)                      |                                                                                                |              |
 | Sep 2  |                                                                                |                                                                                                | Labor Day    |
