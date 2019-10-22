@@ -33,10 +33,10 @@ The schedule is tentative and subject to change.
 | Oct 9  | Consistency III: Causal and Fork Consistency                                   | Skim [COPS](readings/cops.pdf) and [SUNDR](readings/sundr.pdf)                                 |              |
 | Oct 14 |                                                                                |                                                                                                | Fall break   |
 | Oct 16 | Consistency V: Existential Consistency                                         | Read [Existential consistency](readings/existential.pdf)                                       |              |
-| Oct 21 | [Transaction I: Serializability]()                                             | [Concurrency control and recovery](readings/franklin97concurrency.pdf)                         |              |
-| Oct 23 | [Transaction II: Two-phase Locking]()                                          |                                                                                                |              |
+| Oct 21 | Transaction I: Serializability                                                 | Read [Concurrency control and recovery](readings/franklin97concurrency.pdf)                    |              |
+| Oct 23 | Transaction II: Distributed Transactions                                       | Read [Spanner](readings/spanner.pdf)                                                           |              |
 | Oct 28 | [Transaction III: Isolation Levels]()                                          | [A Critique of ANSI SQL Isolation Levels](readings/si.pdf)                                     |              |
-| Oct 30 | [Transaction IV: Distributed Transactions]()                                   | [Spanner](readings/spanner.pdf)                                                                |              |
+| Oct 30 | [Transaction IV: Distributed Transactions]()                                   |                                                                                                |              |
 | Nov 4  | Transaction V: Distributed Transactions (cont'd)                               |                                                                                                |              |
 | Nov 6  | [Transaction VI: Serverless]()                                                 | [Percolator](readings/percolator.pdf)                                                          |              |
 | Nov 11 | Blockchain I: Proof-of-work                                                    | [Bitcoin](readings/bitcoin.pdf)                                                                |              |
