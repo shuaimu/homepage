@@ -34,11 +34,11 @@ The schedule is tentative and subject to change.
 | Oct 14 |                                                                                |                                                                                                | Fall break   |
 | Oct 16 | Consistency V: Existential Consistency                                         | Read [Existential consistency](readings/existential.pdf)                                       |              |
 | Oct 21 | Transaction I: Serializability                                                 | Read [Concurrency control and recovery](readings/franklin97concurrency.pdf)                    |              |
-| Oct 23 | Transaction II: Distributed Transactions                                       | Read [Spanner](readings/spanner.pdf)                                                           |              |
-| Oct 28 | [Transaction III: Isolation Levels]()                                          | [A Critique of ANSI SQL Isolation Levels](readings/si.pdf)                                     |              |
-| Oct 30 | [Transaction IV: Distributed Transactions]()                                   |                                                                                                |              |
-| Nov 4  | Transaction V: Distributed Transactions (cont'd)                               |                                                                                                |              |
-| Nov 6  | [Transaction VI: Serverless]()                                                 | [Percolator](readings/percolator.pdf)                                                          |              |
+| Oct 23 | Transaction II: 2PL and 2PC                                                    | Read [Spanner](readings/spanner.pdf)                                                           |              |
+| Oct 28 | Transaction III: 2PC and Paxos                                                 | Read [Replicated Commit](readings/rc.pdf)                                                      |              |
+| Oct 30 | Transaction IV: OCC and Snapshot Isolation                                     | Read [Percolator](readings/percolator.pdf)                                                     |              |
+| Nov 4  | Transaction V: Parallel Snapshot Isolation                                     |                                                                                                |              |
+| Nov 6  | Transaction VI: Isolation Levels                                               | [A Critique of ANSI SQL Isolation Levels](readings/si.pdf)                                     |              |
 | Nov 11 | Blockchain I: Proof-of-work                                                    | [Bitcoin](readings/bitcoin.pdf)                                                                |              |
 | Nov 13 | Blockchain II: BFT Consensus                                                   | [Algorand](readings/algorand.pdf)                                                              |              |
 | Nov 18 | Blockchain III: Smart Contract                                                 |                                                                                                |              |
