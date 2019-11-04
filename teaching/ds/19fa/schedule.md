@@ -37,8 +37,8 @@ The schedule is tentative and subject to change.
 | Oct 23 | Transaction II: 2PL and 2PC                                                    | Read [Spanner](readings/spanner.pdf)                                                           |              |
 | Oct 28 | Transaction III: 2PC and Paxos                                                 | Read [Replicated Commit](readings/rc.pdf)                                                      |              |
 | Oct 30 | Transaction IV: OCC and Snapshot Isolation                                     | Read [Percolator](readings/percolator.pdf)                                                     |              |
-| Nov 4  | Transaction V: Parallel Snapshot Isolation                                     |                                                                                                |              |
-| Nov 6  | Transaction VI: Isolation Levels                                               | [A Critique of ANSI SQL Isolation Levels](readings/si.pdf)                                     |              |
+| Nov 4  | Transaction V: Parallel Snapshot Isolation                                     | Skim [PSI](readings/psdi.pdf)                                                                  |              |
+| Nov 6  | Transaction VI: More Isolation Levels                                          | Skim [A Critique of ANSI SQL Isolation Levels](readings/si.pdf) and [HAT](readings/hat.pdf)    |              |
 | Nov 11 | Blockchain I: Proof-of-work                                                    | [Bitcoin](readings/bitcoin.pdf)                                                                |              |
 | Nov 13 | Blockchain II: BFT Consensus                                                   | [Algorand](readings/algorand.pdf)                                                              |              |
 | Nov 18 | Blockchain III: Smart Contract                                                 |                                                                                                |              |
