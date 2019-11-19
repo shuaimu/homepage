@@ -37,11 +37,11 @@ The schedule is tentative and subject to change.
 | Oct 23 | Transaction II: 2PL and 2PC                                                    | Read [Spanner](readings/spanner.pdf)                                                           |              |
 | Oct 28 | Transaction III: 2PC and Paxos                                                 | Read [Replicated Commit](readings/rc.pdf)                                                      |              |
 | Oct 30 | Transaction IV: OCC and Snapshot Isolation                                     | Read [Percolator](readings/percolator.pdf)                                                     |              |
-| Nov 4  | Transaction V: Parallel Snapshot Isolation                                     | Skim [PSI](readings/psi.pdf)                                                                  |              |
+| Nov 4  | Transaction V: Parallel Snapshot Isolation                                     | Skim [PSI](readings/psi.pdf)                                                                   |              |
 | Nov 6  | Transaction VI: More Isolation Levels                                          | Skim [A Critique of ANSI SQL Isolation Levels](readings/si.pdf) and [HAT](readings/hat.pdf)    |              |
-| Nov 11 | Blockchain I: Proof-of-work                                                    | [Bitcoin](readings/bitcoin.pdf)                                                                |              |
-| Nov 13 | Blockchain II: BFT Consensus                                                   | [Algorand](readings/algorand.pdf)                                                              |              |
-| Nov 18 | Blockchain III: Smart Contract                                                 |                                                                                                |              |
+| Nov 11 | Blockchain I: [Proof-of-work](notes/bitcoin.md)                                | Read [Bitcoin](readings/bitcoin.pdf)                                                           |              |
+| Nov 13 | Blockchain II: [BA in Blockchains](notes/algorand.md)                          | Skim [Algorand](readings/algorand.pdf)                                                         |              |
+| Nov 18 | Blockchain III: [Smart Contract](notes/smartcontract.md)                       |                                                                                                |              |
 | Nov 20 | Blockchain IV: Storage Network                                                 | [Filecoin](readings/filecoin.pdf)                                                              |              |
 | Nov 25 | Security I: Private Communication                                              | [Tor](readings/tor.pdf)                                                                        |              |
 | Nov 27 | Security II: DDoS Defense                                                      | [Speakup](readings/speakup.pdf)                                                                | Thanksgiving |
