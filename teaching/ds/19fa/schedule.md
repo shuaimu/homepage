@@ -41,7 +41,7 @@ The schedule is tentative and subject to change.
 | Nov 6  | Transaction VI: More Isolation Levels                                          | Skim [A Critique of ANSI SQL Isolation Levels](readings/si.pdf) and [HAT](readings/hat.pdf)    |              |
 | Nov 11 | Blockchain I: [Proof-of-work](notes/bitcoin.md)                                | Read [Bitcoin](readings/bitcoin.pdf)                                                           |              |
 | Nov 13 | Blockchain II: [BA in Blockchains](notes/algorand.md)                          | Skim [Algorand](readings/algorand.pdf)                                                         |              |
-| Nov 18 | Blockchain III: [Smart Contract](notes/smartcontract.md)                       |                                                                                                |              |
+| Nov 18 | Blockchain III: [Smart Contract](notes/eth.md)                    |                                                                                                |              |
 | Nov 20 | Blockchain IV: Storage Network                                                 | [Filecoin](readings/filecoin.pdf)                                                              |              |
 | Nov 25 | Security I: Private Communication                                              | [Tor](readings/tor.pdf)                                                                        |              |
 | Nov 27 | Security II: DDoS Defense                                                      | [Speakup](readings/speakup.pdf)                                                                | Thanksgiving |
