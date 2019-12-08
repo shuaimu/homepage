@@ -29,24 +29,24 @@ The schedule is tentative and subject to change.
 | Sep 25 | Consensus IV: [Paxos](notes/paxos.md) (cont'd)                                 | Skim [Raft and Paxos](readings/raft-paxos.pdf)                                                 |              |
 | Sep 30 | Consensus V: [Byzantine failures](notes/byz.md)                                | Read [Byzantine Paxos](readings/byzpaxos.pdf) and [PBFT](readings/pbft.pdf)                    |              |
 | Oct 2  | Consistency I: [Linearizability](notes/linear.md)                              | Skim [Linearizability](readings/linearizability.pdf)                                           |              |
-| Oct 7  | Consistency II: Eventual Consistency and Causality                             | Read [Bayou](readings/bayou.pdf)                                                               |              |
-| Oct 9  | Consistency III: Causal and Fork Consistency                                   | Skim [COPS](readings/cops.pdf) and [SUNDR](readings/sundr.pdf)                                 |              |
+| Oct 7  | Consistency II: [Eventual Consistency and Causality](notes/bayou.md)           | Read [Bayou](readings/bayou.pdf)                                                               |              |
+| Oct 9  | Consistency III: [Causal Consistency](notes/cops.md)                           | Skim [COPS](readings/cops.pdf) and [SUNDR](readings/sundr.pdf)                                 |              |
 | Oct 14 |                                                                                |                                                                                                | Fall break   |
 | Oct 16 | Consistency V: Existential Consistency                                         | Read [Existential consistency](readings/existential.pdf)                                       |              |
-| Oct 21 | Transaction I: Serializability                                                 | Read [Concurrency control and recovery](readings/franklin97concurrency.pdf)                    |              |
-| Oct 23 | Transaction II: 2PL and 2PC                                                    | Read [Spanner](readings/spanner.pdf)                                                           |              |
+| Oct 21 | Transaction I: [Serializability](notes/serializability.md)                     | Read [Concurrency control and recovery](readings/franklin97concurrency.pdf)                    |              |
+| Oct 23 | Transaction II: [2PL and 2PC](notes/spanner.md)                                | Read [Spanner](readings/spanner.pdf)                                                           |              |
 | Oct 28 | Transaction III: 2PC and Paxos                                                 | Read [Replicated Commit](readings/rc.pdf)                                                      |              |
-| Oct 30 | Transaction IV: OCC and Snapshot Isolation                                     | Read [Percolator](readings/percolator.pdf)                                                     |              |
-| Nov 4  | Transaction V: Parallel Snapshot Isolation                                     | Skim [PSI](readings/psi.pdf)                                                                   |              |
+| Oct 30 | Transaction IV: [OCC and Snapshot Isolation](notes/si.md)                      | Read [Percolator](readings/percolator.pdf)                                                     |              |
+| Nov 4  | Transaction V: [Parallel Snapshot Isolation](notes/psi.md)                     | Skim [PSI](readings/psi.pdf)                                                                   |              |
 | Nov 6  | Transaction VI: More Isolation Levels                                          | Skim [A Critique of ANSI SQL Isolation Levels](readings/si.pdf) and [HAT](readings/hat.pdf)    |              |
 | Nov 11 | Blockchain I: [Proof-of-work](notes/bitcoin.md)                                | Read [Bitcoin](readings/bitcoin.pdf)                                                           |              |
 | Nov 13 | Blockchain II: [BA in Blockchains](notes/algorand.md)                          | Skim [Algorand](readings/algorand.pdf)                                                         |              |
-| Nov 18 | Blockchain III: [Smart Contract](notes/eth.md)                    |                                                                                                |              |
-| Nov 20 | Blockchain IV: Storage Network                                                 | [Filecoin](readings/filecoin.pdf)                                                              |              |
-| Nov 25 | Security I: Private Communication                                              | [Tor](readings/tor.pdf)                                                                        |              |
-| Nov 27 | Security II: DDoS Defense                                                      | [Speakup](readings/speakup.pdf)                                                                | Thanksgiving |
-| Dec 2  | Security III: Verifiable Systems                                               | [Orochi](readings/orochi.pdf)                                                                  |              |
-| Dec 4  | Review                                                                         |                                                                                                |              |
+| Nov 18 | Blockchain III: [Smart Contract](notes/eth.md)                                 |                                                                                                |              |
+| Nov 20 | Blockchain IV: Storage Network                                                 | Skim [Filecoin](readings/filecoin.pdf)                                                         |              |
+| Nov 25 | Invited talk: Replication in MongoDB (Siyuan Zhou)                             |                                                                                                |              |
+| Nov 27 |                                                                                |                                                                                                | Thanksgiving |
+| Dec 2  | Seminar                                                                        |                                                                                                |              |
+| Dec 4  | Seminar                                                                        |                                                                                                |              |
 | Dec 9  | Review                                                                         |                                                                                                |              |
 
 

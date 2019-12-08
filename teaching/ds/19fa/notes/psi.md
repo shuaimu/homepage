@@ -1,14 +1,5 @@
 # Parallel Snapshot Isolation
 
-## SI recap
-
-
-## Geo-distribution?
-
-
-## Relaxed SI
-
-
 ## Design
 * each data item has a preferred site
 * use per site timestamp <site, seqno>
