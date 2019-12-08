@@ -38,7 +38,7 @@ The schedule is tentative and subject to change.
 | Oct 28 | Transaction III: 2PC and Paxos                                                 | Read [Replicated Commit](readings/rc.pdf)                                                      |              |
 | Oct 30 | Transaction IV: [OCC and Snapshot Isolation](notes/si.md)                      | Read [Percolator](readings/percolator.pdf)                                                     |              |
 | Nov 4  | Transaction V: [Parallel Snapshot Isolation](notes/psi.md)                     | Skim [PSI](readings/psi.pdf)                                                                   |              |
-| Nov 6  | Transaction VI: More Isolation Levels                                          | Skim [A Critique of ANSI SQL Isolation Levels](readings/si.pdf) and [HAT](readings/hat.pdf)    |              |
+| Nov 6  | Transaction VI: [More Isolation Levels](notes/isolations.md)                   | Skim [A Critique of ANSI SQL Isolation Levels](readings/si.pdf) and [HAT](readings/hat.pdf)    |              |
 | Nov 11 | Blockchain I: [Proof-of-work](notes/bitcoin.md)                                | Read [Bitcoin](readings/bitcoin.pdf)                                                           |              |
 | Nov 13 | Blockchain II: [BA in Blockchains](notes/algorand.md)                          | Skim [Algorand](readings/algorand.pdf)                                                         |              |
 | Nov 18 | Blockchain III: [Smart Contract](notes/eth.md)                                 |                                                                                                |              |
