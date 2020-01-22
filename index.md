@@ -40,12 +40,14 @@ If you are interested, email me a brief resume.
 * [Distributed Systems, Spring 2019, Stony Brook University](https://github.com/shuaimu/ds19spring)
 * [Computer Systems Organization, Spring 2018, NYU](./teaching/cso18spring/index.html)
 
-<!--
 ## Students
-* Mrityunjay Kumar (MS)
-* Bo Wu (MS)
-* Peiyi Hou (MS)
--->
+This is a list of students whom I am currently closely working with: 
+* Sergey Madaminov (PhD advised by Mike Ferdman)
+* Reza Alimadadi (PhD advised by Mike Ferdman)
+* [Mrityunjay Kumar](https://www3.cs.stonybrook.edu/~mrkumar/) (MS)
+* Satya Jain (MS)
+* Andrew Yoo (MS@UIUC advised by Tianyin Xu)
+
 
 ## Recent publications 
 
