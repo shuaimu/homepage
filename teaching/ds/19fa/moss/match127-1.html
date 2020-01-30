@@ -1,0 +1,489 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/swsekar/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/swsekar/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+
+import "raft"
+import "labrpc"
+import "sync"
+import "labgob"
+import "log"
+import "time"
+
+
+type ShardMaster struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	// Your data here.
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match127-0.html#7" TARGET="0"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	configs []Config // indexed by config num
+	applyMap		map[int](chan ApplyResult)
+	IndexOpIdMap	map[int][]int
+	lastClientReq	map[int]ApplyResult
+	currentTerm		int
+	dead			bool
+</FONT>}
+
+type ApplyResult struct {
+	Err Err
+	Config Config
+}
+
+type Op struct {
+	// Your data here.
+	Op string
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match127-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	Args interface{}
+	Id	int
+}
+
+func (sm *ShardMaster) ApplyLog() {
+	for {
+		applyMsg := &lt;- sm.applyCh
+		sm.mu.Lock()
+		if (sm.dead) {
+			sm.mu.Unlock()
+			return
+		}
+		sm.mu.Unlock()
+		if (!applyMsg.CommandValid) {
+</FONT>			continue
+		}
+		sm.mu.Lock()
+		op,ok := applyMsg.Command.(Op)
+		if (!ok) {
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match127-0.html#6" TARGET="0"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			log.Fatalf("server %d: invalid command\n", sm.me)
+		}
+		if _, ok := sm.lastClientReq[op.Id]; ok {
+			//log.Printf("server %d: already applied op %d\n", sm.me, op.Id)
+			sm.mu.Unlock()
+			continue
+		}
+		//log.Printf("server %d: applying index %d, opId %d\n", sm.me, applyMsg.CommandIndex, op.Id)
+		appRes := &ApplyResult{}
+		appRes.Err = OK
+</FONT>		//appRes.Config = nil
+		if (op.Op == "Join") {
+			config := sm.getLastConfigCopy()
+			config.Num = len(sm.configs)
+			args,ok := op.Args.(JoinArgs)
+			if (!ok) {
+				log.Fatalf("server %d: invalid command\n", sm.me)
+			}
+			for k,v := range args.Servers {
+				//log.Printf("server %d: join, c = %d, %d\n", sm.me, len(sm.configs), k)
+				config.Groups[k] = v
+			}
+			// rebalance shards map
+			config = sm.balanceShards(config)
+			sm.configs = append(sm.configs, config)
+		} else if (op.Op == "Leave") {
+			config := sm.getLastConfigCopy()
+			config.Num = len(sm.configs)
+			args,ok := op.Args.(LeaveArgs)
+			if (!ok) {
+				log.Fatalf("server %d: invalid command\n", sm.me)
+			}
+			for _,gid := range args.GIDs {
+				//log.Printf("server %d, c = %d: leave %d\n", sm.me, len(sm.configs), gid)
+				delete(config.Groups, gid)
+				for shard, assignedGid := range config.Shards {
+					if (gid == assignedGid) {
+						config.Shards[shard] = 0
+					}
+				}
+			}
+			// rebalance shards map
+			config = sm.balanceShards(config)
+			sm.configs = append(sm.configs, config)
+		} else if (op.Op == "Move") {
+			config := sm.getLastConfigCopy()
+			config.Num = len(sm.configs)
+			args,ok := op.Args.(MoveArgs)
+			if (!ok) {
+				log.Fatalf("server %d: invalid command\n", sm.me)
+			}
+			config.Shards[args.Shard] = args.GID
+			sm.configs = append(sm.configs, config)
+		} else if (op.Op == "Query") {
+			args,ok := op.Args.(QueryArgs)
+			if (!ok) {
+				log.Fatalf("server %d: invalid command\n", sm.me)
+			}
+			if (args.Num == -1 || args.Num &gt;= len(sm.configs)) {
+				appRes.Config = sm.configs[len(sm.configs)-1]
+			} else {
+				appRes.Config = sm.configs[args.Num]
+			}
+			//log.Printf("server %d, query = %d, num %d\n", sm.me, args.Num, appRes.Config.Num)
+			/*
+			for shard,gid := range appRes.Config.Shards {
+				log.Printf("s %d -&gt; gid %d\n", shard, gid)
+			}
+			*/
+		}
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match127-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		delete(sm.lastClientReq, op.Id-1)
+		sm.lastClientReq[op.Id] = *appRes
+		if _, ok := sm.applyMap[op.Id]; ok {
+			sm.applyMap[op.Id]&lt;-*appRes
+		}
+		failedAgreementAppRes := &ApplyResult{}
+		failedAgreementAppRes.Err = ErrFailedAgree
+</FONT>		//failedAgreementAppRes.Config = nil
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match127-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		for _, opId := range sm.IndexOpIdMap[applyMsg.CommandIndex] {
+			if (opId != op.Id) {
+				sm.applyMap[opId]&lt;-*failedAgreementAppRes
+			}
+		}
+		delete(sm.IndexOpIdMap, applyMsg.CommandIndex)
+		sm.mu.Unlock()
+	}
+}
+
+func (sm *ShardMaster) getLastConfigCopy() Config {
+</FONT>	lastConfig := sm.configs[len(sm.configs)-1]
+	config := new(Config)
+	config.Num = lastConfig.Num
+	config.Shards = lastConfig.Shards
+	config.Groups = make(map[int][]string)
+	for k,v := range lastConfig.Groups {
+		config.Groups[k] = v
+	}
+	return *config
+}
+
+func (sm *ShardMaster) balanceShards(config Config) Config {
+	x := len(config.Shards)
+	n := len(config.Groups)
+	//log.Printf("server %d: x = %d, n = %d\n", sm.me, x,n)
+	if (n == 0) {
+		for shard,_ := range config.Shards {
+			config.Shards[shard] = 0
+		}
+		return config
+	}
+	groupAssignments := make(map[int][]bool)
+	groupAssignments[0] = make([]bool, NShards)
+	for gid,_ := range config.Groups {
+		groupAssignments[gid] = make([]bool, NShards)
+	}
+	for shard,gid := range config.Shards {
+		//log.Printf("server %d: before shard %d -&gt; gid %d\n", sm.me, shard, gid)
+		groupAssignments[gid][shard] = true
+	}
+
+	var maxShardsPerGroup int
+	var minShardsPerGroup int
+	nShardsPerGroup := make(map[int]int)
+	if (x % n == 0) {
+		nShardsPerGroup[x/n] = n
+		maxShardsPerGroup = x/n
+		minShardsPerGroup = x/n
+		//log.Printf("server %d: amt(%d) = %d", sm.me, x/n, nShardsPerGroup[x/n])
+	} else {
+		for i := 0; i &lt; n; i++ {
+			if (i &gt;= n - (x % n)) {
+				nShardsPerGroup[(x/n) + 1] = nShardsPerGroup[x/n + 1] + 1
+			} else {
+				nShardsPerGroup[x/n] = nShardsPerGroup[x/n] + 1
+			}
+		}
+		maxShardsPerGroup = (x/n) + 1
+		minShardsPerGroup = x/n
+		//log.Printf("server %d: max(%d) = %d", sm.me, (x/n) + 1, nShardsPerGroup[(x/n) + 1])
+		//log.Printf("server %d: min(%d) = %d", sm.me, x/n, nShardsPerGroup[x/n])
+	}
+	assignedShards := make([]bool, NShards)
+	for gid,shards := range groupAssignments {
+		nShards := 0
+		for shard,_ := range shards {
+			if (assignedShards[shard]) {
+				shards[shard] = false
+			}
+			if (shards[shard] == true) {
+				nShards++
+			}
+		}
+		if (gid == 0) {
+			continue
+		}
+		//log.Printf("%d, %d\n", gid, nShards)
+		for (nShards &gt;= minShardsPerGroup) {
+			if (nShards &gt; minShardsPerGroup) {
+				for shard,_ := range shards {
+					if (shards[shard]) {
+						groupAssignments[0][shard] = true
+						shards[shard] = false
+						break
+					}
+				}
+				nShards--
+			}
+			if _, ok := nShardsPerGroup[nShards]; ok {
+				for shard,_ := range shards {
+					if (shards[shard]) {
+						config.Shards[shard] = gid
+						assignedShards[shard] = true
+						//log.Printf("server %d: after shard %d -&gt; gid %d\n", sm.me, shard, gid)
+					}
+				}
+				nShardsPerGroup[nShards] = nShardsPerGroup[nShards] - 1
+				if (nShardsPerGroup[nShards] == 0) {
+					if (nShards == minShardsPerGroup) {
+						minShardsPerGroup = maxShardsPerGroup
+					}
+					delete(nShardsPerGroup, nShards)
+				}
+				delete(groupAssignments, gid)
+				break
+			}
+		}
+	}
+	for gid,shards := range groupAssignments {
+		nShards := 0
+		for shard,_ := range shards {
+			if (assignedShards[shard]) {
+				shards[shard] = false
+			}
+			if (shards[shard] == true) {
+				nShards++
+			}
+		}
+		if (gid == 0) {
+			continue
+		}
+		//log.Printf("%d, %d\n", gid, nShards)
+		for (nShards &lt;= maxShardsPerGroup) {
+			if (nShards &lt; maxShardsPerGroup) {
+				for shard,_ := range shards {
+					if (groupAssignments[0][shard]) {
+						shards[shard] = true
+						groupAssignments[0][shard] = false
+						break
+					}
+				}
+				nShards++
+			}
+			if _, ok := nShardsPerGroup[nShards]; ok {
+				for shard,_ := range shards {
+					if (shards[shard]) {
+						config.Shards[shard] = gid
+						assignedShards[shard] = true
+						//log.Printf("server %d: after shard %d -&gt; gid %d\n", sm.me, shard, gid)
+					}
+				}
+				nShardsPerGroup[nShards] = nShardsPerGroup[nShards] - 1
+				if (nShardsPerGroup[nShards] == 0) {
+					delete(nShardsPerGroup, nShards)
+				}
+				delete(groupAssignments, gid)
+				break
+			}
+		}
+	}
+	return config
+}
+
+// return true if leader
+func (sm *ShardMaster) SubmitOp(op Op) (bool, *ApplyResult) {
+	_, isleader := sm.rf.GetState()
+	if (!isleader) {
+		return false, nil
+	}
+	sm.mu.Lock()
+	if _, ok := sm.lastClientReq[op.Id]; ok && sm.lastClientReq[op.Id].Err != ErrFailedAgree {
+		applyRes := sm.lastClientReq[op.Id]
+		sm.mu.Unlock()
+		return true, &applyRes
+	}
+	if _, ok := sm.applyMap[op.Id]; ok {
+		// make stale request stop listening to channel
+		log.Fatalf("server %d: already waiting for reqId %d \n", sm.me, op.Id)
+	}
+	sm.applyMap[op.Id] = make(chan ApplyResult)
+	index, term, isLeader := sm.rf.Start(op)
+	if (!isLeader) {
+		close(sm.applyMap[op.Id])
+		delete(sm.applyMap, op.Id)
+		sm.mu.Unlock()
+		return false, nil
+	}
+	sm.currentTerm = term
+	sm.IndexOpIdMap[index] = append(sm.IndexOpIdMap[index], op.Id)
+	applyDoneCh := sm.applyMap[op.Id]
+	sm.mu.Unlock()
+	applyRes :=&lt;-applyDoneCh
+	sm.mu.Lock()
+	close(sm.applyMap[op.Id])
+	delete(sm.applyMap, op.Id)
+	sm.mu.Unlock()
+	return true, &applyRes
+}
+
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+	// Your code here.
+	op := &Op{}
+	op.Op = "Join"
+	op.Args = *args
+	op.Id = args.RequestId
+	isLeader, applyRes := sm.SubmitOp(*op)
+	if (!isLeader) {
+		reply.WrongLeader = true
+		return
+	}
+	reply.WrongLeader = false
+	reply.Err = applyRes.Err
+}
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+	// Your code here.
+	op := &Op{}
+	op.Op = "Leave"
+	op.Args = *args
+	op.Id = args.RequestId
+	isLeader, applyRes := sm.SubmitOp(*op)
+	if (!isLeader) {
+		reply.WrongLeader = true
+		return
+	}
+	reply.WrongLeader = false
+	reply.Err = applyRes.Err
+}
+
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+	// Your code here.
+	op := &Op{}
+	op.Op = "Move"
+	op.Args = *args
+	op.Id = args.RequestId
+	isLeader, applyRes := sm.SubmitOp(*op)
+	if (!isLeader) {
+		reply.WrongLeader = true
+		return
+	}
+	reply.WrongLeader = false
+	reply.Err = applyRes.Err
+}
+
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+	// Your code here.
+	op := &Op{}
+	op.Op = "Query"
+	op.Args = *args
+	op.Id = args.RequestId
+	isLeader, applyRes := sm.SubmitOp(*op)
+	if (!isLeader) {
+		reply.WrongLeader = true
+		return
+	}
+	reply.WrongLeader = false
+	reply.Err = applyRes.Err
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match127-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	reply.Config = applyRes.Config
+}
+
+func (sm *ShardMaster) detectTermChange() {
+	for {
+		sm.mu.Lock()
+		if (sm.dead) {
+			sm.mu.Unlock()
+			return
+		}
+		sm.mu.Unlock()
+		term,_ := sm.rf.GetState()
+		sm.mu.Lock()
+		if (sm.currentTerm != term) {
+			failedAgreementAppRes := &ApplyResult{}
+			failedAgreementAppRes.Err = ErrFailedAgree
+</FONT>			//failedAgreementAppRes.Config = nil
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match127-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			for opId := range sm.applyMap {
+				sm.applyMap[opId]&lt;-*failedAgreementAppRes
+			}
+			sm.currentTerm = term
+		}
+		sm.mu.Unlock()
+		time.Sleep(10000 * time.Millisecond)
+	}
+}
+
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+</FONT>	// Your code here, if desired.
+	sm.mu.Lock()
+	sm.dead = true
+	sm.mu.Unlock()
+}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+	return sm.rf
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	sm := new(ShardMaster)
+	sm.me = me
+
+	sm.configs = make([]Config, 1)
+	sm.configs[0].Groups = map[int][]string{}
+
+	labgob.Register(Op{})
+	sm.applyCh = make(chan raft.ApplyMsg)
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+
+	// Your code here.
+	for i,_ := range sm.configs[0].Shards {
+		sm.configs[0].Shards[i] = 0
+	}
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match127-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	sm.applyMap = make(map[int](chan ApplyResult))
+	sm.IndexOpIdMap = make(map[int][]int)
+	sm.lastClientReq = make(map[int]ApplyResult)
+</FONT>	sm.currentTerm = 0
+	sm.dead = false
+
+	labgob.Register(JoinArgs{})
+	labgob.Register(LeaveArgs{})
+	labgob.Register(MoveArgs{})
+	labgob.Register(QueryArgs{})
+
+	go sm.ApplyLog()
+	go sm.detectTermChange()
+
+	return sm
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,120 @@
+<HTML>
+<HEAD>
+<TITLE>./github/comiser/MIT-6.824-2016/src/kvraft/client.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github/comiser/MIT-6.824-2016/src/kvraft/client.go<p><PRE>
+package raftkv
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match178-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_13.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+import "labrpc"
+import "crypto/rand"
+import "math/big"
+import "sync"
+
+type Clerk struct {
+	servers []*labrpc.ClientEnd
+	// You will have to modify this struct.
+	id int64
+	reqid int
+	mu      sync.Mutex
+}
+
+func nrand() int64 {
+	max := big.NewInt(int64(1) &lt;&lt; 62)
+	bigx, _ := rand.Int(rand.Reader, max)
+</FONT>	x := bigx.Int64()
+	return x
+}
+
+func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
+	ck := new(Clerk)
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match178-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_67.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	ck.servers = servers
+	// You'll have to add code here.
+	ck.id = nrand()
+	ck.reqid = 0
+	return ck
+}
+
+//
+// fetch the current value for a key.
+// returns "" if the key does not exist.
+// keeps trying forever in the face of all other errors.
+//
+// you can send an RPC with code like this:
+// ok := ck.servers[i].Call("RaftKV.Get", &args, &reply)
+//
+// the types of args and reply (including whether they are pointers)
+// must match the declared types of the RPC handler function's
+// arguments. and reply must be passed as a pointer.
+//
+func (ck *Clerk) Get(key string) string {
+
+	// You will have to modify this function.
+	var args GetArgs
+	args.Key = key
+	args.Id = ck.id
+	ck.mu.Lock()
+	args.ReqID = ck.reqid
+	ck.reqid++
+	ck.mu.Unlock()
+	for {
+		for _,v := range ck.servers {
+			var reply GetReply
+			ok := v.Call("RaftKV.Get", &args, &reply)
+			if ok && reply.WrongLeader == false {
+				//if reply.Err == ErrNoKey {
+				//	reply.Value = ""
+			//	}
+				return reply.Value
+			}
+		}
+	}
+}
+
+//
+// shared by Put and Append.
+//
+// you can send an RPC with code like this:
+// ok := ck.servers[i].Call("RaftKV.PutAppend", &args, &reply)
+//
+// the types of args and reply (including whether they are pointers)
+// must match the declared types of the RPC handler function's
+// arguments. and reply must be passed as a pointer.
+//
+func (ck *Clerk) PutAppend(key string, value string, op string) {
+	// You will have to modify this function.
+	var args PutAppendArgs
+	args.Key = key
+	args.Value = value
+	args.Op = op
+	args.Id = ck.id
+	ck.mu.Lock()
+	args.ReqID = ck.reqid
+	ck.reqid++
+	ck.mu.Unlock()
+	for {
+		for _,v := range ck.servers {
+			var reply PutAppendReply
+			ok := v.Call("RaftKV.PutAppend", &args, &reply)
+			if ok && reply.WrongLeader == false {
+				return
+			}
+		}
+	}
+}
+
+func (ck *Clerk) Put(key string, value string) {
+	ck.PutAppend(key, value, "Put")
+}
+func (ck *Clerk) Append(key string, value string) {
+</FONT>	ck.PutAppend(key, value, "Append")
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

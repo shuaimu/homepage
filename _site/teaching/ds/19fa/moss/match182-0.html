@@ -1,0 +1,316 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/prasadmajali/src/shardmaster/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/prasadmajali/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+import (
+	"labgob"
+	"labrpc"
+	"log"
+	"math"
+	"raft"
+	"sync"
+	"time"
+)
+
+// For debug
+const Debug = 0
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match182-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+type ShardMaster struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	// Your data here.
+
+	configs   []Config // indexed by config num
+</FONT>	chMap     map[int]chan Op
+	cidSeqMap map[int64]int
+	killCh    chan bool
+}
+
+type Op struct {
+	// Your data here.
+	OpKind string
+	Args   interface{}
+	Cid    int64
+	SeqNum int
+}
+
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+	// Your code here.
+	iOp := Op{"Join", *args, args.ClientId, args.SeqNum}
+	reply.WrongLeader = sm.templateHandler(iOp)
+}
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+	// Your code here.
+	iOp := Op{"Leave", *args, args.ClientId, args.SeqNum}
+	reply.WrongLeader = sm.templateHandler(iOp)
+}
+
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+	// Your code here.
+	iOp := Op{"Move", *args, args.ClientId, args.SeqNum}
+	reply.WrongLeader = sm.templateHandler(iOp)
+}
+
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+	// Your code here.
+	reply.WrongLeader = true
+	iOp := Op{"Query", *args, Nrand(), -1}
+	reply.WrongLeader = sm.templateHandler(iOp)
+	if !reply.WrongLeader {
+		sm.mu.Lock()
+		defer sm.mu.Unlock()
+		if args.Num &gt;= 0 && args.Num &lt; len(sm.configs) {
+			reply.Config = sm.configs[args.Num]
+		} else {
+			reply.Config = sm.configs[len(sm.configs)-1]
+		}
+	}
+}
+
+func (sm *ShardMaster) templateHandler(originOp Op) bool {
+	wrongLeaderflag := true
+	idx, _, isLeader := sm.rf.Start(originOp)
+	if !isLeader {
+		return wrongLeaderflag
+	}
+	ch := sm.put(idx, true)
+	op := sm.getChanVal(ch, idx)
+	if op.SeqNum == originOp.SeqNum && op.Cid == originOp.Cid && op.OpKind == originOp.OpKind {
+		wrongLeaderflag = false
+	}
+	return wrongLeaderflag
+}
+
+func (sm *ShardMaster) getChanVal(ch chan Op, index int) Op {
+	select {
+	case val := &lt;-ch:
+		close(ch)
+		sm.mu.Lock()
+		delete(sm.chMap, index)
+		sm.mu.Unlock()
+		return val
+	case &lt;-time.After(time.Duration(600) * time.Millisecond):
+		return Op{}
+	}
+}
+
+func send(notify chan Op, op Op) {
+	notify &lt;- op
+}
+
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+	// Your code here, if desired.
+}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+	return sm.rf
+}
+
+func (sm *ShardMaster) put(idx int, createIfNotAvail bool) chan Op {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	if _, ok := sm.chMap[idx]; !ok {
+		if !createIfNotAvail {
+			return nil
+		}
+		sm.chMap[idx] = make(chan Op, 1)
+	}
+	return sm.chMap[idx]
+}
+
+func (sm *ShardMaster) updateConfig(op string, arg interface{}) {
+	cfg := sm.createNextConfig()
+	switch op {
+	case "Move":
+		moveArg := arg.(MoveArgs)
+		if _, exists := cfg.Groups[moveArg.GID]; exists {
+			cfg.Shards[moveArg.Shard] = moveArg.GID
+		} else {
+			return
+		}
+
+	case "Join":
+		joinArg := arg.(JoinArgs)
+		for gid, servers := range joinArg.Servers {
+			newServers := make([]string, len(servers))
+			copy(newServers, servers)
+			cfg.Groups[gid] = newServers
+			sm.rebalance(&cfg, op, gid)
+		}
+
+	case "Leave":
+		leaveArg := arg.(LeaveArgs)
+		for _, gid := range leaveArg.GIDs {
+			delete(cfg.Groups, gid)
+			sm.rebalance(&cfg, op, gid)
+		}
+
+	default:
+		DPrintf("Invalid %v", op)
+
+	}
+	sm.configs = append(sm.configs, cfg)
+}
+
+func (sm *ShardMaster) createNextConfig() Config {
+	lastCfg := sm.configs[len(sm.configs)-1]
+	nextCfg := Config{Num: lastCfg.Num + 1, Shards: lastCfg.Shards, Groups: make(map[int][]string)}
+	for gid, servers := range lastCfg.Groups {
+		nextCfg.Groups[gid] = append([]string{}, servers...)
+	}
+	return nextCfg
+}
+
+func (sm *ShardMaster) rebalance(cfg *Config, request string, gid int) {
+	shardsCount := sm.groupByGid(cfg)
+
+	if request == "Join" {
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match182-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		avgSC := NShards / len(cfg.Groups)
+		for i := 0; i &lt; avgSC; i++ {
+			maxGid := sm.getMaxShardGid(shardsCount)
+			cfg.Shards[shardsCount[maxGid][0]] = gid
+			shardsCount[maxGid] = shardsCount[maxGid][1:]
+</FONT>		}
+	} else if request == "Leave" {
+		shardsArray, ok := shardsCount[gid]
+		if !ok {
+			return
+		}
+		delete(shardsCount, gid)
+		if len(cfg.Groups) == 0 {
+			cfg.Shards = [NShards]int{}
+			return
+		}
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match182-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		for _, v := range shardsArray {
+			minGid := sm.getMinShardGid(shardsCount)
+			cfg.Shards[v] = minGid
+			shardsCount[minGid] = append(shardsCount[minGid], v)
+		}
+	}
+}
+
+func (sm *ShardMaster) groupByGid(cfg *Config) map[int][]int {
+</FONT><A NAME="1"></A><FONT color = #00FF00><A HREF="match182-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	shardsCount := map[int][]int{}
+	for k, _ := range cfg.Groups {
+		shardsCount[k] = []int{}
+	}
+	for k, v := range cfg.Shards {
+		shardsCount[v] = append(shardsCount[v], k)
+</FONT><A NAME="0"></A><FONT color = #FF0000><A HREF="match182-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	}
+	return shardsCount
+}
+
+func (sm *ShardMaster) getMaxShardGid(shardsCount map[int][]int) int {
+	max := -1
+	var gid int
+	for k, v := range shardsCount {
+		if max &lt; len(v) {
+			max = len(v)
+			gid = k
+		}
+	}
+	return gid
+}
+
+func (sm *ShardMaster) getMinShardGid(shardsCount map[int][]int) int {
+	min := math.MaxInt32
+</FONT>	var gid int
+	for k, v := range shardsCount {
+		if min &gt; len(v) {
+			min = len(v)
+			gid = k
+		}
+	}
+	return gid
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	sm := new(ShardMaster)
+	sm.me = me
+
+	sm.configs = make([]Config, 1)
+	sm.configs[0].Groups = map[int][]string{}
+
+	labgob.Register(Op{})
+	labgob.Register(JoinArgs{})
+	labgob.Register(LeaveArgs{})
+	labgob.Register(MoveArgs{})
+	labgob.Register(QueryArgs{})
+	sm.applyCh = make(chan raft.ApplyMsg)
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+
+	// Your code here.
+	sm.chMap = make(map[int]chan Op)
+	sm.cidSeqMap = make(map[int64]int)
+	sm.killCh = make(chan bool, 1)
+
+	go func() {
+		for {
+			select {
+			case &lt;-sm.killCh:
+				return
+			case applyMsg := &lt;-sm.applyCh:
+				if !applyMsg.CommandValid {
+					continue
+				}
+				op := applyMsg.Command.(Op)
+				sm.mu.Lock()
+				maxSeq, ok := sm.cidSeqMap[op.Cid]
+				if op.SeqNum &gt;= 0 && (!ok || op.SeqNum &gt; maxSeq) {
+					sm.updateConfig(op.OpKind, op.Args)
+					sm.cidSeqMap[op.Cid] = op.SeqNum
+				}
+				sm.mu.Unlock()
+				if notifyCh := sm.put(applyMsg.CommandIndex, false); notifyCh != nil {
+					send(notifyCh, op)
+				}
+			}
+		}
+	}()
+
+	return sm
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

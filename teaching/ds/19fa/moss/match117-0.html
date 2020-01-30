@@ -1,0 +1,390 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/shrikant-jagtap/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/shrikant-jagtap/src/kvraft/server.go<p><PRE>
+package raftkv
+
+import (
+	"bytes"
+	"labgob"
+	"labrpc"
+	"log"
+	"raft"
+	"sync"
+	"time"
+)
+
+const Debug = 0
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+type Op struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+	Operation  string
+	Key        string
+	Value      string
+	ClientId   int64
+	SequenceNo int
+}
+
+type KVServer struct {
+	mu                                  sync.Mutex
+	me                                  int
+	rf                                  *raft.Raft
+	persister                           *raft.Persister
+	applyCh                             chan raft.ApplyMsg
+	database                            map[string]string
+	clientSeqNoMapping                  map[int64]int
+	commandIndexMappingFromStart        map[int]Op
+	commandIndexMappingFromApplyChannel map[int]Op
+
+	maxraftstate int // snapshot if log grows this big
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match117-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	killChannel  chan bool
+	// Your definitions here.
+}
+
+func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
+	// Your code here.
+	kv.mu.Lock()
+
+	//operationArgs := new(Op)
+	operationArgs := Op{
+		Operation:  "Get",
+</FONT>		Key:        args.Key,
+		ClientId:   args.ClientId,
+		SequenceNo: args.SequenceNo,
+	}
+	//operationArgs.Key = args.Key
+	//operationArgs.ClientId = args.ClientId
+	//operationArgs.SequenceNo = args.SequenceNo
+	//operationArgs.Operation = "Get"
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match117-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_7.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	lIndex, _, lIsLeader := kv.rf.Start(operationArgs)
+	if lIsLeader == false {
+		reply.WrongLeader = true
+		reply.Err = OK
+		kv.mu.Unlock()
+
+		return
+	}
+
+	kv.commandIndexMappingFromStart[lIndex] = operationArgs
+	kv.mu.Unlock()
+
+	for {
+		select {
+		case &lt;-time.After(time.Duration(10) * time.Millisecond):
+			kv.mu.Lock()
+			if operationFromChannel, lFound := kv.commandIndexMappingFromApplyChannel[lIndex]; lFound { //Value at the index comitted
+</FONT>				if operationArgs == operationFromChannel { //Correct operation comitted
+
+					if value, present := kv.database[operationArgs.Key]; present { //Key present
+						reply.Value = value
+						reply.Err = OK
+						reply.WrongLeader = false
+
+						//println("KV Server: ",kv.me,"Get Key: ",args.Key," Get reply: ",reply.Value)
+						kv.mu.Unlock()
+						return
+					} else { //Key not present
+						reply.Value = ""
+						reply.Err = ErrNoKey
+						reply.WrongLeader = false
+
+						kv.mu.Unlock()
+						return
+					}
+				} else { //Inconrect operation comitted
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match117-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+					reply.WrongLeader = true
+
+					kv.mu.Unlock()
+					return
+				}
+			} else { //Operation not yet comitted
+				_, lIsLeader = kv.rf.GetState()
+
+				if lIsLeader == false { // No more a leader
+					reply.WrongLeader = true
+					kv.mu.Unlock()
+
+					return
+				}
+			}
+			kv.mu.Unlock()
+		}
+	}
+
+}
+
+func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	// Your code here.
+	kv.mu.Lock()
+
+	//operationArgs := new(Op)
+	//operationArgs.Key = args.Key
+	//operationArgs.Value = args.Value
+	//operationArgs.ClientId = args.ClientId
+	//operationArgs.SequenceNo = args.SequenceNo
+	//operationArgs.Operation = args.Op
+
+	operationArgs := Op{
+</FONT>		Operation:  args.Op,
+		Key:        args.Key,
+		Value:      args.Value,
+		ClientId:   args.ClientId,
+		SequenceNo: args.SequenceNo,
+	}
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match117-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_7.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	lIndex, _, lIsLeader := kv.rf.Start(operationArgs)
+	if lIsLeader == false {
+		reply.WrongLeader = true
+		reply.Err = OK
+		kv.mu.Unlock()
+
+		return
+	}
+
+	kv.commandIndexMappingFromStart[lIndex] = operationArgs
+	kv.mu.Unlock()
+
+	for {
+		select {
+		case &lt;-time.After(time.Duration(10) * time.Millisecond):
+			kv.mu.Lock()
+			if operationFromApplyChannel, lFound := kv.commandIndexMappingFromApplyChannel[lIndex]; lFound { //Value at the index comitted
+</FONT>				if operationArgs == operationFromApplyChannel { //Correct operation comitted
+					reply.WrongLeader = false
+					reply.Err = OK
+
+					//delete(kv.commandIndexMappingFromApplyChannel, lIndex)
+					kv.mu.Unlock()
+					return
+				} else { //Inconrect operation comitted
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match117-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+					reply.WrongLeader = true
+
+					//delete(kv.commandIndexMappingFromApplyChannel, lIndex)
+					kv.mu.Unlock()
+					return
+				}
+			} else { //Operation not yet comitted
+				_, lIsLeader = kv.rf.GetState()
+
+				if lIsLeader == false { // No more a leader
+					reply.WrongLeader = true
+					kv.mu.Unlock()
+
+					return
+				}
+			}
+			kv.mu.Unlock()
+		}
+	}
+}
+
+//
+// the tester calls Kill() when a KVServer instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *KVServer) Kill() {
+	kv.rf.Kill()
+</FONT>	kv.killChannel &lt;- true
+	// Your code here, if desired.
+}
+
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match117-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *KVServer) CommitChannelListener() {
+	channelKilled := false
+
+	for {
+
+		select {
+		case appliedCommand := &lt;-kv.applyCh:
+
+			////println("Read commit. KV Server: ",kv.me)
+			lCommandValid := appliedCommand.CommandValid
+</FONT>			if lCommandValid == false {
+				//println("KV Server: ",kv.me," Command Valid: ",lCommandValid)
+				kv.resetState(appliedCommand.SnapshotData)
+			} else {
+				appliedOperation := appliedCommand.Command.(Op)
+				kv.mu.Lock()
+				////println("Rec lock for command processing. KV Server: ",kv.me," for index: ",appliedCommand.CommandIndex)
+				kv.commandIndexMappingFromApplyChannel[appliedCommand.CommandIndex] = appliedOperation
+				kv.CheckAndApplyOperationOnDatabase(appliedOperation)
+
+				lKvMaxRaftState := kv.maxraftstate
+				lRaftStateSize := kv.persister.RaftStateSize()
+
+				if lKvMaxRaftState != -1 && lKvMaxRaftState &lt;= lRaftStateSize {
+					//kv.mu.Lock()
+					////println("Max raft state exceeded. KV Server: ",kv.me," Raft Size: ",lRaftStateSize)
+					persistedData := kv.persist()
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match117-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+					kv.rf.CreateSnapshot(persistedData)
+					//kv.mu.Unlock()
+				}
+
+				kv.mu.Unlock()
+
+				//if lKvMaxRaftState != -1 && lKvMaxRaftState &lt;= lRaftStateSize {
+				//
+				//	go func() {
+				//		kv.mu.Lock()
+				//		////println("Max raft state exceeded. KV Server: ",kv.me," Raft Size: ",lRaftStateSize)
+				//		persistedData := kv.persist()
+				//		kv.mu.Unlock()
+				//
+				//		kv.rf.CreateSnapshot(persistedData)
+				//	}()
+				//}
+			}
+
+		case &lt;-kv.killChannel:
+			channelKilled = true
+			break
+		}
+
+		if channelKilled == true {
+			break
+		}
+	}
+}
+
+func (kv *KVServer) resetState(serverData []byte) {
+</FONT>	if serverData == nil || len(serverData) &lt; 1 { // bootstrap without any state?
+		return
+	}
+
+	r := bytes.NewBuffer(serverData)
+	d := labgob.NewDecoder(r)
+	var database map[string]string
+	var clientSeqNoMapping map[int64]int
+	//var commandIndexMappingFromStart map[int]Op
+	//var commandIndexMappingFromApplyChannel map[int]Op
+
+	//println("KV Server: ",kv.me," Reset State ")
+
+	if d.Decode(&database) != nil ||
+		d.Decode(&clientSeqNoMapping) != nil { //|| //||
+		//d.Decode(&commandIndexMappingFromStart) != nil ||
+		//d.Decode(&commandIndexMappingFromApplyChannel) != nil{
+		//error...
+
+		//println("Found KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK")
+	} else {
+		kv.mu.Lock()
+		kv.database = database
+		kv.clientSeqNoMapping = clientSeqNoMapping
+		//kv.commandIndexMappingFromStart = commandIndexMappingFromStart
+		//kv.commandIndexMappingFromApplyChannel = commandIndexMappingFromApplyChannel
+		kv.mu.Unlock()
+
+		//log.//println("KV Server: ",kv.me," Reset snapshot: ",kv.database)
+	}
+}
+
+func (kv *KVServer) persist() []byte {
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(kv.database)
+	e.Encode(kv.clientSeqNoMapping)
+	//e.Encode(kv.commandIndexMappingFromStart)
+	//e.Encode(kv.commandIndexMappingFromApplyChannel)
+	data := w.Bytes()
+
+	return data
+}
+
+func (kv *KVServer) CheckAndApplyOperationOnDatabase(op Op) {
+	lCliendId := op.ClientId
+	lSeqNo := op.SequenceNo
+
+	if lSeqNo &gt; kv.clientSeqNoMapping[lCliendId] {
+		if op.Operation == "Put" {
+			kv.database[op.Key] = op.Value
+		} else if op.Operation == "Append" {
+			kv.database[op.Key] += op.Value
+		}
+
+		kv.clientSeqNoMapping[lCliendId] = lSeqNo
+
+		//log.//println("KV Server: ",kv.me," Database: ",kv.database)
+	}
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Raft to
+// form the fault-tolerant key/value service.
+// me is the index of the current server in servers[].
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+// the k/v server should snapshot when Raft's saved state exceeds maxraftstate bytes,
+// in order to allow Raft to garbage-collect its log. if maxraftstate is -1,
+// you don't need to snapshot.
+// StartKVServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
+	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+
+	kv := new(KVServer)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+
+	// You may need initialization code here.
+
+	////println("Max raftstate: ",kv.maxraftstate," Server: ",kv.me)
+
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.persister = persister
+	//kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+	kv.database = make(map[string]string)
+	kv.clientSeqNoMapping = make(map[int64]int)
+	kv.commandIndexMappingFromStart = make(map[int]Op)
+	kv.commandIndexMappingFromApplyChannel = make(map[int]Op)
+
+	// You may need initialization code here.
+	kv.killChannel = make(chan bool)
+
+	kv.resetState(kv.persister.ReadSnapshot())
+
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+
+	go func() {
+		kv.CommitChannelListener()
+	}()
+
+	return kv
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

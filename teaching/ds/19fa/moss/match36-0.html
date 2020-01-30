@@ -1,0 +1,337 @@
+<HTML>
+<HEAD>
+<TITLE>./spring19/gauravkaushik/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./spring19/gauravkaushik/src/kvraft/server.go<p><PRE>
+package raftkv
+
+import (
+	"labgob"
+	"labrpc"
+	"log"
+	"os"
+	"raft"
+	"sync"
+	"time"
+)
+
+const loglevel = 2
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match36-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_10.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+const TIMEOUT = 200
+
+type Level int
+
+const (
+	INFO  Level = 1
+	DEBUG Level = 2
+)
+
+func DPrintf(level Level, format string, a ...interface{}) (n int, err error) {
+	if level &gt;= loglevel {
+		f, err := os.OpenFile("log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+		if err != nil {
+			log.Fatalf("error opening file: %v", err)
+		}
+		defer f.Close()
+
+		log.SetOutput(f)
+		log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+		log.Printf(format, a...)
+	}
+	return
+}
+
+
+type Op struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+	Key string
+	Value string
+	OpType string
+	ClientId int64
+	RequestId int64
+</FONT>}
+
+type KVServer struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	maxraftstate int // snapshot if log grows this big
+
+	// Your definitions here.
+	dataStore map[string]string
+	servedRequests map[int64]int64
+	waitingRoutines map[int](chan raft.ApplyMsg)
+	killed bool
+}
+
+
+func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
+	// Your code here.
+	op := Op{}
+	op.Key = args.Key
+	op.ClientId = args.ClientId
+	op.RequestId = args.RequestId
+
+	kv.mu.Lock()
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match36-1.html#7" TARGET="1"><IMG SRC="../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	logIdx, _, isLeader := kv.rf.Start(op) //TODO unlock here itself and try
+	me := kv.me
+	kv.mu.Unlock()
+
+	if !isLeader {
+		reply.WrongLeader = true
+		return
+	}
+
+	kv.mu.Lock()
+	DPrintf(DEBUG, "S_Get me %d Start %v", me, op)
+</FONT><A NAME="9"></A><FONT color = #FF00FF><A HREF="match36-1.html#9" TARGET="1"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	waitCh := make(chan raft.ApplyMsg, 1)
+	kv.waitingRoutines[logIdx] = waitCh
+	kv.mu.Unlock()
+
+	for {
+		select {
+
+		case msg := &lt;-waitCh:
+</FONT>
+<A NAME="11"></A><FONT color = #00FF00><A HREF="match36-1.html#11" TARGET="1"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			kv.mu.Lock()
+			delete(kv.waitingRoutines, logIdx)
+			kv.mu.Unlock()
+
+			if msg.CommandIndex == logIdx && msg.Command == op {
+				DPrintf(DEBUG, "S_Get me %d Committed %v", me, op)
+</FONT>
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match36-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				kv.mu.Lock()
+				value, isPresent := kv.dataStore[op.Key]
+				if !isPresent {
+					value = ""
+					reply.Err = ErrNoKey
+				} else {
+					reply.Err = OK
+				}
+				kv.mu.Unlock()
+
+</FONT><A NAME="3"></A><FONT color = #00FFFF><A HREF="match36-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_8.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				reply.Value = value
+
+				return
+			} else {
+				DPrintf(DEBUG, "S_Get me %d WrongLeader %v", me, op)
+				reply.WrongLeader = true
+				return
+			}
+
+
+			case &lt;-time.After(TIMEOUT * time.Millisecond):
+				kv.mu.Lock()
+				_, isLeader := kv.rf.GetState()
+
+				if !isLeader {
+					DPrintf(DEBUG, "S_Get me %d TimedOut %v", me, op)
+					delete(kv.waitingRoutines, logIdx)
+					reply.WrongLeader = true
+					kv.mu.Unlock()
+					return
+				}
+
+				kv.mu.Unlock()
+		}
+	}
+}
+
+func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+</FONT>	// Your code here.
+	op := Op{}
+	op.Key = args.Key
+	op.Value = args.Value
+	op.OpType = args.Op
+	op.ClientId = args.ClientId
+	op.RequestId = args.RequestId
+
+	kv.mu.Lock()
+<A NAME="8"></A><FONT color = #00FFFF><A HREF="match36-1.html#8" TARGET="1"><IMG SRC="../../bitmaps/tm_3_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	logIdx, _, isLeader := kv.rf.Start(op)
+	me := kv.me
+	kv.mu.Unlock()
+
+	if !isLeader {
+		reply.WrongLeader = true
+		return
+	}
+
+	kv.mu.Lock()
+	DPrintf(DEBUG, "S_Put me %d Start %v", me, op)
+</FONT><A NAME="10"></A><FONT color = #FF0000><A HREF="match36-1.html#10" TARGET="1"><IMG SRC="../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	waitCh := make(chan raft.ApplyMsg, 1)
+	kv.waitingRoutines[logIdx] = waitCh
+	kv.mu.Unlock()
+
+	for {
+		select {
+
+		case msg := &lt;-waitCh:
+</FONT>
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match36-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_14.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			kv.mu.Lock()
+			delete(kv.waitingRoutines, logIdx)
+			kv.mu.Unlock()
+
+			if msg.CommandIndex == logIdx && msg.Command == op {
+				DPrintf(DEBUG, "S_Put me %d Committed %v", me, op)
+				reply.Err = OK
+			} else {
+				DPrintf(DEBUG, "S_Put me %d WrongLeader %v", me, op)
+				reply.WrongLeader = true
+			}
+
+			return
+
+		case &lt;-time.After(TIMEOUT * time.Millisecond):
+
+			kv.mu.Lock()
+
+			_, isLeader := kv.rf.GetState()
+			if !isLeader {
+				DPrintf(DEBUG, "S_Put me %d TimedOut %v", me, op)
+				reply.WrongLeader = true
+				delete(kv.waitingRoutines, logIdx)
+				kv.mu.Unlock()
+				return
+			}
+
+			kv.mu.Unlock()
+		}
+	}
+}
+
+//
+// the tester calls Kill() when a KVServer instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *KVServer) Kill() {
+	kv.rf.Kill()
+	// Your code here, if desired.
+	kv.mu.Lock()
+	kv.killed = true
+	kv.mu.Unlock()
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Raft to
+// form the fault-tolerant key/value service.
+// me is the index of the current server in servers[].
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+// the k/v server should snapshot when Raft's saved state exceeds maxraftstate bytes,
+// in order to allow Raft to garbage-collect its log. if maxraftstate is -1,
+// you don't need to snapshot.
+// StartKVServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
+</FONT>	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+
+	kv := new(KVServer)
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match36-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+
+	// You may need initialization code here.
+	kv.killed = false
+	kv.dataStore = make(map[string]string, 0)
+	kv.waitingRoutines = make(map[int](chan raft.ApplyMsg), 0)
+	kv.servedRequests = make(map[int64]int64, 0)
+
+	kv.applyCh = make(chan raft.ApplyMsg)
+</FONT>	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+
+	// You may need initialization code here.
+	go kv.applyToStateMachine()
+
+
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match36-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	return kv
+}
+
+func (kv *KVServer) applyToStateMachine() {
+	for {
+		kv.mu.Lock()
+		if kv.killed {
+			kv.mu.Unlock()
+			return
+		}
+		me := kv.me
+		kv.mu.Unlock()
+
+		msg := &lt;-kv.applyCh
+		if msg.Command == nil {
+			DPrintf(DEBUG, "S_App me %d NIL %v", me, msg)
+		} else {
+			op := msg.Command.(Op)
+			DPrintf(DEBUG, "S_App me %d Start %v", me, op)
+</FONT>
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match36-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_14.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			kv.mu.Lock()
+			requestId, isPresent := kv.servedRequests[op.ClientId]
+
+			if !isPresent || requestId != op.RequestId {
+				DPrintf(DEBUG, "S_App me %d NewRequest %v", me, op)
+				kv.servedRequests[op.ClientId] = op.RequestId
+
+				if op.OpType == "Put" {
+					kv.dataStore[op.Key] = op.Value
+				} else if op.OpType == "Append" {
+					value, exists := kv.dataStore[op.Key]
+					if !exists {
+						value = ""
+					}
+					kv.dataStore[op.Key] = value + op.Value
+				}
+			} else {
+				DPrintf(DEBUG, "S_App me %d DuplicateRequest %v", me, op)
+			}
+
+			waitCh, exists := kv.waitingRoutines[msg.CommandIndex]
+			kv.mu.Unlock()
+
+			if exists {
+				DPrintf(DEBUG, "S_App me %d Send %v", me, op)
+				waitCh &lt;- msg
+			} else {
+				DPrintf(DEBUG, "S_App me %d ChannelNotFound %v", me, op)
+</FONT>			}
+
+		}
+	}
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

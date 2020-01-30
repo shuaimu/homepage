@@ -1,0 +1,308 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/amanagarwal03/src/shardmaster/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/amanagarwal03/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+import (
+	"log"
+	"math"
+	"raft"
+	"time"
+	"labrpc"
+	"sync"
+	"labgob"
+)
+
+type ShardMaster struct {
+	mu                  sync.Mutex
+	rf                  *raft.Raft
+	duplicateRequestMap map[int64]int
+	chanMap             map[int]chan Op
+	me                  int
+	killCh chan bool
+	applyCh             chan raft.ApplyMsg
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match181-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	configs             []Config // indexed by config num
+}
+
+type Op struct {
+	Args          interface{}
+	OperationType string
+	ClientId      int64
+	SequenceId    int
+}
+
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+	op := Op{
+</FONT>		Args:          *args,
+		OperationType: "Join",
+		ClientId:      args.ClientId,
+		SequenceId:    args.SequenceId,
+	}
+	reply.WrongLeader = sm.SMRaft(op)
+}
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+	op := Op{
+		Args:          *args,
+		OperationType: "Leave",
+		ClientId:      args.ClientId,
+		SequenceId:    args.SequenceId,
+	}
+	reply.WrongLeader = sm.SMRaft(op)
+}
+
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+	op := Op{
+		Args:          *args,
+		OperationType: "Move",
+		ClientId:      args.ClientId,
+		SequenceId:    args.SequenceId,
+	}
+	reply.WrongLeader = sm.SMRaft(op)
+}
+
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+	op := Op{
+		Args:          *args,
+		OperationType: "Query",
+		ClientId: nrand(),
+		SequenceId:-1,
+	}
+	sm.mu.Lock()
+	lenConfig := len(sm.configs)
+	sm.mu.Unlock()
+	reply.WrongLeader = sm.SMRaft(op)
+	sm.mu.Lock()
+	reply.Config = sm.configs[lenConfig-1]
+	sm.mu.Unlock()
+	if reply.WrongLeader == false {
+		sm.mu.Lock()
+		if args.Num &lt; lenConfig && args.Num &gt;= 0 {
+			reply.Config = sm.configs[args.Num]
+		}
+		sm.mu.Unlock()
+	}
+}
+
+func (sm *ShardMaster) SMRaft(op Op) bool {
+	log.Printf("ere")
+	index, _, isLeader := sm.rf.Start(op)
+	if !isLeader {
+		return true
+	}
+	sm.mu.Lock()
+	_, ok := sm.chanMap[index]
+	if !ok {
+		sm.chanMap[index]  = make(chan Op,1)
+	}
+	channel := sm.chanMap[index]
+	sm.mu.Unlock()
+	var oper Op
+	select {
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match181-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	case msg := &lt;-channel:
+		close(channel)
+		sm.mu.Lock()
+		delete(sm.chanMap,index)
+		sm.mu.Unlock()
+		oper = msg
+</FONT>	case &lt;- time.After(time.Duration(600)*time.Millisecond):
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match181-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		oper = Op{}
+	}
+	if op.OperationType == oper.OperationType && op.ClientId == oper.ClientId && op.SequenceId == oper.SequenceId {
+		return false
+</FONT>	}
+	return true
+}
+
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match181-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+	// Your code here, if desired.
+}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+	return sm.rf
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+func (sm *ShardMaster) changeConfiguration(opType string, arg interface{}) {
+</FONT><A NAME="0"></A><FONT color = #FF0000><A HREF="match181-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	prevConfig := sm.configs[len(sm.configs)-1]
+	newConfig := Config{
+		Num:    prevConfig.Num+1,
+		Shards: prevConfig.Shards,
+		Groups: make(map[int][]string),
+</FONT>	}
+	for group, server := range prevConfig.Groups {
+		newConfig.Groups[group] = append([]string{},server...)
+	}
+	log.Print("Operation Type is:"+opType)
+	switch opType {
+	case "Join":
+		args := arg.(JoinArgs)
+		for group, server := range args.Servers {
+			newServers := make([] string, len(server))
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match181-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			newServers = server
+			newConfig.Groups[group] = newServers
+			sm.rebalanceShards(&newConfig,opType,group)
+		}
+	case "Move":
+		args := arg.(MoveArgs)
+</FONT>		_, ok := newConfig.Groups[args.GID]
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match181-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		if ok {
+			newConfig.Shards[args.Shard] = args.GID
+		} else {
+			return
+		}
+	case "Leave":
+		args := arg.(LeaveArgs)
+		for _,id := range args.GIDs {
+</FONT>			delete(newConfig.Groups,id)
+			sm.rebalanceShards(&newConfig,opType,id)
+		}
+	}
+	sm.configs = append(sm.configs,newConfig)
+}
+func (sm *ShardMaster) smOperations() {
+	for{
+		select {
+		case msg := &lt;- sm.applyCh :
+			commandNotValid := !msg.CommandValid
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match181-1.html#7" TARGET="1"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			if commandNotValid {
+				continue
+			}
+			op := msg.Command.(Op)
+
+			sm.mu.Lock()
+			seq, ok := sm.duplicateRequestMap[op.ClientId]
+</FONT>			sequenceIdValid := op.SequenceId &gt;= 0
+			operationValid := !ok || op.SequenceId &gt; seq
+			if sequenceIdValid && operationValid {
+				sm.changeConfiguration(op.OperationType,op.Args)
+				sm.duplicateRequestMap[op.ClientId] = op.SequenceId
+			}
+			var channel chan Op
+			channel = nil
+			sm.mu.Unlock()
+			sm.mu.Lock()
+			_, exists := sm.chanMap[msg.CommandIndex]
+			if exists {
+				channel = sm.chanMap[msg.CommandIndex]
+			}
+			sm.mu.Unlock()
+			if channel != nil {
+				channel &lt;- op
+			}
+		}
+	}
+}
+
+func (sm *ShardMaster) rebalanceShards(config *Config, configType string, groupId int) {
+	numShards := map[int] []int {}
+	log.Printf("here")
+	for shard,_ := range config.Groups {
+		numShards[shard] = [] int{}
+	}
+	lenGroups := len(config.Groups)
+	for key, value := range config.Shards {
+		numShards[value] = append(numShards[value],key)
+	}
+	if configType == "Leave" {
+		groupShards, groupPresent := numShards[groupId]
+		if !groupPresent {
+			return
+		}
+		delete(numShards,groupId)
+		switch lenGroups{
+		case 0:
+			config.Shards = [NShards]int{}
+			return
+		}
+		for _, shard := range groupShards {
+			minVal := math.MaxInt64
+			var minGroupId int
+			for x,y := range numShards {
+				lenShard := len(y)
+				if minVal &gt; lenShard {
+					minVal = lenShard
+					minGroupId = x
+				}
+			}
+			config.Shards[shard] = minGroupId
+			numShards[minGroupId] = append(numShards[minGroupId],shard)
+		}
+	} else if configType == "Join" {
+		val := NShards/lenGroups
+		for i:= 0;i &lt; val;i++ {
+			var maxGroupId int
+			maxVal := math.MinInt64
+			for x,y := range numShards {
+				lenShard := len(y)
+				if maxVal &lt; lenShard {
+					maxVal = lenShard
+					maxGroupId = x
+				}
+			}
+<A NAME="8"></A><FONT color = #00FFFF><A HREF="match181-1.html#8" TARGET="1"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			config.Shards[numShards[maxGroupId][0]] = groupId
+			numShards[maxGroupId] = numShards[maxGroupId][1:]
+</FONT>		}
+	}
+}
+
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	sm := new(ShardMaster)
+	sm.duplicateRequestMap = make(map[int64]int)
+	sm.configs = make([]Config, 1)
+	sm.chanMap = make(map[int]chan Op)
+	sm.configs[0].Groups = map[int][]string{}
+	sm.me = me
+	sm.killCh = make(chan bool,1)
+
+	labgob.Register(Op{})
+	labgob.Register(JoinArgs{})
+	labgob.Register(MoveArgs{})
+	labgob.Register(QueryArgs{})
+	labgob.Register(LeaveArgs{})
+
+	sm.applyCh = make(chan raft.ApplyMsg)
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+
+	go sm.smOperations()
+	return sm
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

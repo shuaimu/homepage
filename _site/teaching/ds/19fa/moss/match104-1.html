@@ -1,0 +1,404 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/nitesh-idnani/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/nitesh-idnani/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+import "raft"
+import "labrpc"
+import "sync"
+import "labgob"
+import "time"
+
+// import "fmt"
+
+const MaxRaftState = 1000
+
+type ShardMaster struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	// Your data here.
+	clerkRequestMap    map[int64]int
+	logEntryReplyChMap map[int]chan Op
+
+	isAlive bool
+
+	configs []Config // indexed by config num
+}
+
+type Op struct {
+	// Your data here.
+	ClerkId       int64
+	OperationId   int
+	OperationType string
+	OperationArg  interface{}
+}
+
+func (sm *ShardMaster) handleJoin(args JoinArgs) Config {
+
+	lastConfig := sm.configs[len(sm.configs)-1]
+	var config Config
+
+	config.Num = lastConfig.Num + 1
+	config.Groups = make(map[int][]string)
+	groupList := make([]int, 0)
+
+	for key, value := range lastConfig.Groups {
+		config.Groups[key] = value
+		groupList = append(groupList, key)
+	}
+
+	for key, value := range args.Servers {
+		config.Groups[key] = value
+		groupList = append(groupList, key)
+	}
+
+	for i, j := 0, 0; i &lt; NShards; i, j = i+1, j+1 {
+		config.Shards[i] = groupList[j%len(groupList)]
+	}
+
+	return config
+}
+
+func (sm *ShardMaster) handleLeave(args LeaveArgs) Config {
+
+	lastConfig := sm.configs[len(sm.configs)-1]
+	var config Config
+
+	config.Num = lastConfig.Num + 1
+	config.Groups = make(map[int][]string)
+	groupList := make([]int, 0)
+
+	for key, value := range lastConfig.Groups {
+		toDelete := false
+		for _, val := range args.GIDs {
+			if key == val {
+				toDelete = true
+				break
+			}
+		}
+		if toDelete == false {
+			config.Groups[key] = value
+			groupList = append(groupList, key)
+		}
+	}
+
+	if len(groupList) == 0 {
+		groupList = append(groupList, 0)
+	}
+
+	for i, j := 0, 0; i &lt; NShards; i, j = i+1, j+1 {
+		config.Shards[i] = groupList[j%len(groupList)]
+	}
+
+	return config
+}
+
+func (sm *ShardMaster) handleMove(args MoveArgs) Config {
+
+	lastConfig := sm.configs[len(sm.configs)-1]
+	var config Config
+
+	config.Num = lastConfig.Num + 1
+	config.Groups = make(map[int][]string)
+
+	for key, value := range lastConfig.Groups {
+		config.Groups[key] = value
+	}
+
+	for i, _ := range lastConfig.Shards {
+		config.Shards[i] = lastConfig.Shards[i]
+	}
+	config.Shards[args.Shard] = args.GID
+
+	return config
+}
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match104-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (sm *ShardMaster) runMainLoop() {
+
+	for {
+
+		// Exit the routine if server is killed
+		sm.mu.Lock()
+		if sm.isAlive == false {
+			sm.mu.Unlock()
+			return
+		}
+		sm.mu.Unlock()
+
+		// Handle applyCh for the corresponding raft server
+		select {
+		case applyMsg := &lt;-sm.applyCh:
+			sm.mu.Lock()
+
+			if applyMsg.CommandValid == false {
+				sm.mu.Unlock()
+</FONT>			} else {
+
+				operationMsg := applyMsg.Command.(Op)
+				lastOperationId, ok := sm.clerkRequestMap[operationMsg.ClerkId]
+				// Check for duplicate operations
+				if !ok || operationMsg.OperationId &gt; lastOperationId {
+					var config Config
+					if operationMsg.OperationType == "Join" {
+						config = sm.handleJoin(operationMsg.OperationArg.(JoinArgs))
+					} else if operationMsg.OperationType == "Leave" {
+						config = sm.handleLeave(operationMsg.OperationArg.(LeaveArgs))
+					} else if operationMsg.OperationType == "Move" {
+						config = sm.handleMove(operationMsg.OperationArg.(MoveArgs))
+					}
+					if operationMsg.OperationType != "Query" {
+						sm.configs = append(sm.configs, config)
+					}
+					sm.clerkRequestMap[operationMsg.ClerkId] = operationMsg.OperationId
+				}
+
+				// Send the response on waiting channel
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match104-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				logEntryReplyCh, ok := sm.logEntryReplyChMap[applyMsg.CommandIndex]
+				if ok {
+					logEntryReplyCh &lt;- operationMsg
+				}
+				sm.mu.Unlock()
+			}
+		}
+	}
+}
+
+func isSame(op1 Op, op2 Op) bool {
+
+	return op1.ClerkId == op2.ClerkId &&
+		op1.OperationId == op2.OperationId
+</FONT>}
+
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+	// Your code here.
+
+	op := Op{args.ClerkId, args.OperationId, "Join", *args}
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match104-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	startIndex, startTerm, startLeader := sm.rf.Start(op)
+
+	// Check if server is leader or not
+	if startLeader == false {
+		reply.WrongLeader = true
+		return
+	}
+
+	// Allocate a channel waiting on the raft response
+	sm.mu.Lock()
+	ch := make(chan Op, 1)
+	sm.logEntryReplyChMap[startIndex] = ch
+	sm.mu.Unlock()
+	duration, _ := time.ParseDuration("600ms")
+	waitTimer := time.NewTimer(duration)
+	select {
+	case opReply := &lt;-ch:
+		currentTerm, _ := sm.rf.GetState()
+		// Check if the current server is still a leader
+		if currentTerm == startTerm && isSame(op, opReply) {
+			reply.WrongLeader = false
+</FONT><A NAME="2"></A><FONT color = #0000FF><A HREF="match104-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		} else {
+			reply.WrongLeader = true
+		}
+	case &lt;-waitTimer.C:
+		reply.WrongLeader = true
+	}
+
+	sm.mu.Lock()
+	delete(sm.logEntryReplyChMap, startIndex)
+	sm.mu.Unlock()
+
+}
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+	// Your code here.
+
+	op := Op{args.ClerkId, args.OperationId, "Leave", *args}
+</FONT><A NAME="0"></A><FONT color = #FF0000><A HREF="match104-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_7.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	startIndex, startTerm, startLeader := sm.rf.Start(op)
+
+	// Check if server is leader or not
+	if startLeader == false {
+		reply.WrongLeader = true
+		return
+	}
+
+	// Allocate a channel waiting on the raft response
+	sm.mu.Lock()
+	ch := make(chan Op, 1)
+	sm.logEntryReplyChMap[startIndex] = ch
+	sm.mu.Unlock()
+	duration, _ := time.ParseDuration("600ms")
+	waitTimer := time.NewTimer(duration)
+	select {
+	case opReply := &lt;-ch:
+		currentTerm, _ := sm.rf.GetState()
+		// Check if the current server is still a leader
+		if currentTerm == startTerm && isSame(op, opReply) {
+			reply.WrongLeader = false
+		} else {
+			reply.WrongLeader = true
+		}
+	case &lt;-waitTimer.C:
+		reply.WrongLeader = true
+	}
+
+	sm.mu.Lock()
+	delete(sm.logEntryReplyChMap, startIndex)
+	sm.mu.Unlock()
+
+}
+
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+</FONT>	// Your code here.
+
+	op := Op{args.ClerkId, args.OperationId, "Move", *args}
+	startIndex, startTerm, startLeader := sm.rf.Start(op)
+
+	// Check if server is leader or not
+	if startLeader == false {
+		reply.WrongLeader = true
+		return
+	}
+
+	// Allocate a channel waiting on the raft response
+	sm.mu.Lock()
+	ch := make(chan Op, 1)
+	sm.logEntryReplyChMap[startIndex] = ch
+	sm.mu.Unlock()
+	duration, _ := time.ParseDuration("600ms")
+	waitTimer := time.NewTimer(duration)
+	select {
+	case opReply := &lt;-ch:
+		currentTerm, _ := sm.rf.GetState()
+		// Check if the current server is still a leader
+		if currentTerm == startTerm && isSame(op, opReply) {
+			reply.WrongLeader = false
+		} else {
+			reply.WrongLeader = true
+		}
+	case &lt;-waitTimer.C:
+		reply.WrongLeader = true
+	}
+
+	sm.mu.Lock()
+	delete(sm.logEntryReplyChMap, startIndex)
+	sm.mu.Unlock()
+
+}
+
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+	// Your code here.
+
+	op := Op{args.ClerkId, args.OperationId, "Query", args}
+	startIndex, startTerm, startLeader := sm.rf.Start(op)
+
+	// Check if server is leader or not
+	if startLeader == false {
+		reply.WrongLeader = true
+		return
+	}
+
+	// Allocate a channel waiting on the raft response
+	sm.mu.Lock()
+	ch := make(chan Op, 1)
+	sm.logEntryReplyChMap[startIndex] = ch
+	sm.mu.Unlock()
+	duration, _ := time.ParseDuration("600ms")
+	waitTimer := time.NewTimer(duration)
+	select {
+	case opReply := &lt;-ch:
+		currentTerm, _ := sm.rf.GetState()
+		// Check if the current server is still a leader
+		if currentTerm == startTerm && isSame(op, opReply) {
+			reply.WrongLeader = false
+			sm.mu.Lock()
+			lastConfigNum := sm.configs[len(sm.configs)-1].Num
+			if args.Num == -1 || args.Num &gt; lastConfigNum {
+				reply.Config = sm.configs[len(sm.configs)-1]
+			} else {
+				reply.Config = sm.configs[args.Num]
+			}
+			sm.mu.Unlock()
+		} else {
+			reply.WrongLeader = true
+		}
+	case &lt;-waitTimer.C:
+		reply.WrongLeader = true
+	}
+
+	sm.mu.Lock()
+	delete(sm.logEntryReplyChMap, startIndex)
+	sm.mu.Unlock()
+
+}
+
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+	// Your code here, if desired.
+	sm.mu.Lock()
+	sm.isAlive = false
+	sm.mu.Unlock()
+}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+	return sm.rf
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	sm := new(ShardMaster)
+	sm.me = me
+
+	sm.configs = make([]Config, 1)
+	sm.configs[0].Num = 0
+	sm.configs[0].Groups = map[int][]string{}
+
+	labgob.Register(Op{})
+	labgob.Register(JoinArgs{})
+	labgob.Register(LeaveArgs{})
+	labgob.Register(MoveArgs{})
+	labgob.Register(QueryArgs{})
+	sm.applyCh = make(chan raft.ApplyMsg)
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+
+	// Your code here.
+	sm.clerkRequestMap = make(map[int64]int)
+	sm.logEntryReplyChMap = make(map[int]chan Op)
+
+	sm.isAlive = true
+
+	// You may need initialization code here.
+	go sm.runMainLoop()
+
+	return sm
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

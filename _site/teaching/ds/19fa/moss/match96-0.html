@@ -1,0 +1,232 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/alok123t/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/alok123t/src/kvraft/server.go<p><PRE>
+package raftkv
+
+import (
+	"labgob"
+	"labrpc"
+	"log"
+	"raft"
+	"sync"
+	"time"
+)
+
+const Debug = 0
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+type Op struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+	Key         string
+	Value       string
+	ClientId    int64
+	RequestId   int
+	RequestType string
+}
+
+type KVServer struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	maxraftstate int // snapshot if log grows this big
+
+	// Your definitions here.
+	db            map[string]string
+	latestRequest map[int64]int
+	agreeChan     map[int]chan Op
+	killChan      chan struct{}
+}
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match96-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+const AgreeTimeout int = 300
+
+func GetAgreeTimeout() time.Duration {
+	return time.Duration(AgreeTimeout) * time.Millisecond
+}
+
+func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
+	// Your code here.
+	cmd := Op{
+		Key:         args.Key,
+</FONT><A NAME="0"></A><FONT color = #FF0000><A HREF="match96-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_15.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		ClientId:    args.ClientId,
+		RequestId:   args.RequestId,
+		RequestType: "Get",
+	}
+
+	index, _, isLeader := kv.rf.Start(cmd)
+	if !isLeader {
+		reply.WrongLeader = true
+		return
+	}
+
+	kv.mu.Lock()
+	_, chanExists := kv.agreeChan[index]
+	if !chanExists {
+		kv.agreeChan[index] = make(chan Op, 100)
+	}
+	agreeChan := kv.agreeChan[index]
+	kv.mu.Unlock()
+	select {
+	case &lt;-time.After(GetAgreeTimeout()):
+		reply.WrongLeader = true
+		return
+	case op := &lt;-agreeChan:
+		kv.mu.Lock()
+		defer kv.mu.Unlock()
+		if args.Key == op.Key && args.ClientId == op.ClientId && args.RequestId == op.RequestId {
+</FONT>			reply.Value = kv.db[args.Key]
+		} else {
+			reply.WrongLeader = true
+		}
+
+	}
+}
+
+func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	// Your code here.
+	cmd := Op{
+		Key:         args.Key,
+		Value:       args.Value,
+		ClientId:    args.ClientId,
+		RequestId:   args.RequestId,
+		RequestType: args.Op,
+	}
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match96-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_13.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	index, _, isLeader := kv.rf.Start(cmd)
+	if !isLeader {
+		reply.WrongLeader = true
+		return
+	}
+
+	kv.mu.Lock()
+	_, chanExists := kv.agreeChan[index]
+	if !chanExists {
+		kv.agreeChan[index] = make(chan Op, 100)
+	}
+	agreeChan := kv.agreeChan[index]
+	kv.mu.Unlock()
+	select {
+	case &lt;-time.After(GetAgreeTimeout()):
+		reply.WrongLeader = true
+		return
+	case op := &lt;-agreeChan:
+		kv.mu.Lock()
+		defer kv.mu.Unlock()
+		if args.Key == op.Key && args.ClientId == op.ClientId && args.RequestId == op.RequestId {
+</FONT><A NAME="4"></A><FONT color = #FF00FF><A HREF="match96-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		} else {
+			reply.WrongLeader = true
+		}
+	}
+}
+
+//
+// the tester calls Kill() when a KVServer instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *KVServer) Kill() {
+	kv.rf.Kill()
+	// Your code here, if desired.
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	close(kv.killChan)
+}
+
+</FONT><A NAME="2"></A><FONT color = #0000FF><A HREF="match96-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_7.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *KVServer) Process() {
+	for {
+		select {
+		case &lt;-kv.killChan:
+			return
+		case applyMsg := &lt;-kv.applyCh:
+			kv.mu.Lock()
+			op := applyMsg.Command.(Op)
+			latestRequestId, ok := kv.latestRequest[op.ClientId]
+			if !ok || op.RequestId &gt; latestRequestId {
+</FONT>				kv.latestRequest[op.ClientId] = op.RequestId
+				if op.RequestType == "Put" {
+					kv.db[op.Key] = op.Value
+				} else if op.RequestType == "Append" {
+					kv.db[op.Key] += op.Value
+				}
+			}
+			_, chanExists := kv.agreeChan[applyMsg.CommandIndex]
+			if !chanExists {
+				kv.agreeChan[applyMsg.CommandIndex] = make(chan Op, 100)
+			}
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match96-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			kv.agreeChan[applyMsg.CommandIndex] &lt;- op
+			kv.mu.Unlock()
+		}
+	}
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Raft to
+// form the fault-tolerant key/value service.
+// me is the index of the current server in servers[].
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+// the k/v server should snapshot when Raft's saved state exceeds maxraftstate bytes,
+// in order to allow Raft to garbage-collect its log. if maxraftstate is -1,
+// you don't need to snapshot.
+// StartKVServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
+</FONT>	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+
+	kv := new(KVServer)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+
+	// You may need initialization code here.
+
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+
+	kv.db = make(map[string]string)
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match96-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.latestRequest = make(map[int64]int)
+	kv.agreeChan = make(map[int]chan Op)
+
+	kv.killChan = make(chan struct{})
+
+	// You may need initialization code here.
+	go kv.Process()
+
+	return kv
+</FONT>}
+</PRE>
+</PRE>
+</BODY>
+</HTML>
