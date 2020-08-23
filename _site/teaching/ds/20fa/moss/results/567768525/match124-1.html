@@ -1,0 +1,497 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/psdilip1995/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/psdilip1995/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+
+import "raft"
+import "labrpc"
+import "sync"
+import "labgob"
+//import "fmt"
+import "time"
+import "sort"
+//import "reflect"
+import "strconv"
+
+//checking in lab 4
+
+type ShardMaster struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	// Your data here.
+
+	configs []Config // indexed by config num
+	putting map[int]string
+	done map[int]string
+	alreadydone map[int]map[int]string
+}
+
+
+type Op struct {
+	// Your data here.
+	Type string
+	/*joinArgs JoinArgs
+	leaveArgs LeaveArgs
+	moveArgs MoveArgs
+	queryArgs QueryArgs*/
+	JoinServers map[int][]string
+	LeaveGIDs []int
+	MoveShard int
+	MoveGID   int
+	QueryNum int
+
+	Id int
+	SeqId int
+}
+
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match124-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+	// Your code here.
+	index,_,isLeader := sm.rf.Start(Op{Type:"JOIN",JoinServers:args.Servers,Id:args.Id,SeqId:args.SeqId})
+</FONT>
+	reply.Err = ""
+
+	if isLeader{
+		reply.WrongLeader = false
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match124-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		compareval := "JOIN "+strconv.Itoa(args.Id)+" "+strconv.Itoa(args.SeqId)
+		puttingval := ""
+		beforeTime := time.Now()
+		for{
+			time.Sleep(50*time.Millisecond)
+			sm.mu.Lock()
+			val,ok := sm.putting[index]
+			sm.mu.Unlock()
+			if ok {
+				puttingval = val
+				break
+			}
+			now := time.Now()
+			if (now.Sub(beforeTime) &gt; 2000*time.Millisecond){
+				reply.Err = "timeout"
+				//fmt.Println("time out in get with cid:seqid as ",args.Id,":",args.SeqId," with expected index ",index)
+				break
+			}
+		}
+
+		if reply.Err != "timeout"{
+			if puttingval == compareval{
+</FONT>				
+				/*sm.mu.Lock()
+				var newConfig Config
+				//latestConfig := sm.configs[len(sm.configs)-1]
+				newConfig.Num = sm.configs[len(sm.configs)-1].Num + 1
+				newConfig.Shards = sm.configs[len(sm.configs)-1].Shards
+				//newConfig.Groups = sm.configs[len(sm.configs)-1].Groups
+				newConfig.Groups = make(map[int][]string)
+				for gid,s := range(sm.configs[len(sm.configs)-1].Groups){
+					newConfig.Groups[gid] = s
+				}
+				//fmt.Println(reflect.TypeOf(newConfig.Groups))
+				for gid,s := range(args.Servers){
+					newConfig.Groups[gid] = s
+				}
+				//latestConfig.Num++
+				NofG := len(newConfig.Groups)
+				bal := 10/NofG
+				for gid,_ := range(newConfig.Groups){
+					for shard := 0;shard&lt;bal;shard++{
+						newConfig.Shards[shard]=gid
+					}
+				}
+				sm.configs = append(sm.configs,newConfig)
+				fmt.Println("Joined new config ",sm.configs)
+				sm.mu.Unlock()*/
+
+			}else{
+				reply.Err = "timeout"
+			}
+		}
+
+	}else{
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match124-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		reply.WrongLeader = true
+	}
+}
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+	// Your code here.
+	index,_,isLeader := sm.rf.Start(Op{Type:"Leave",LeaveGIDs:args.GIDs,Id:args.Id,SeqId:args.SeqId})
+</FONT>
+	reply.Err = ""
+
+	if isLeader{
+		reply.WrongLeader = false
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match124-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		compareval := "Leave "+strconv.Itoa(args.Id)+" "+strconv.Itoa(args.SeqId)
+		puttingVal := ""
+		beforeTime := time.Now()
+		for{
+			time.Sleep(50*time.Millisecond)
+			sm.mu.Lock()
+			val,ok := sm.putting[index]
+			sm.mu.Unlock()
+			if ok {
+				puttingVal = val
+				break
+			}
+			now := time.Now()
+			if (now.Sub(beforeTime) &gt; 2000*time.Millisecond){
+				reply.Err = "timeout"
+				//fmt.Println("time out in get with cid:seqid as ",args.Id,":",args.SeqId," with expected index ",index)
+				break
+			}
+		}
+
+		if reply.Err != "timeout"{
+			if puttingVal == compareval{
+</FONT>				
+				/*sm.mu.Lock()
+				var newConfig Config
+				//latestConfig := sm.configs[len(sm.configs)-1]
+				//copy(latestConfig,sm.configs[len(sm.configs)-1])
+				//fmt.Println(args.GIDs)
+				newConfig.Num = sm.configs[len(sm.configs)-1].Num + 1
+				newConfig.Shards = sm.configs[len(sm.configs)-1].Shards
+				//newConfig.Groups = sm.configs[len(sm.configs)-1].Groups
+				newConfig.Groups = make(map[int][]string)
+				for gid,s := range(sm.configs[len(sm.configs)-1].Groups){
+					newConfig.Groups[gid] = s
+				}
+				for _,gid := range(args.GIDs){
+					//fmt.Println("deleting gid ",gid)
+					//fmt.Println(sm.configs)
+					delete(newConfig.Groups,gid)
+					//fmt.Println(sm.configs)
+				}
+				//latestConfig.Num++
+				NofG := len(newConfig.Groups)
+				//fmt.Println(NofG," latest config groups ",latestConfig.Groups)
+				if NofG != 0{
+					bal := 10/NofG
+					for gid,_ := range(newConfig.Groups){
+						for shard := 0;shard&lt;bal;shard++{
+							newConfig.Shards[shard]=gid
+						}
+					}
+				}else{
+					for shard:=0 ;shard&lt;10;shard++{
+						newConfig.Shards[shard]=0
+					}
+				}
+				//fmt.Println(sm.configs)
+				sm.configs = append(sm.configs,newConfig)
+				//fmt.Println(sm.configs)
+				sm.mu.Unlock()*/
+			}else{
+				reply.Err = "timeout"
+			}
+		}
+
+	}else{
+		reply.WrongLeader = true
+	}
+}
+
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+	// Your code here.
+	index,_,isLeader := sm.rf.Start(Op{Type:"MOVE",MoveGID:args.GID,MoveShard:args.Shard,Id:args.Id,SeqId:args.SeqId})
+
+	reply.Err = ""
+
+	if isLeader{
+		reply.WrongLeader = false
+		compareval := "MOVE "+strconv.Itoa(args.Id)+" "+strconv.Itoa(args.SeqId)
+		puttingVal := ""
+		beforeTime := time.Now()
+		for{
+			time.Sleep(50*time.Millisecond)
+			sm.mu.Lock()
+			val,ok := sm.putting[index]
+			sm.mu.Unlock()
+			if ok {
+				puttingVal = val
+				break
+			}
+			now := time.Now()
+			if (now.Sub(beforeTime) &gt; 2000*time.Millisecond){
+				reply.Err = "timeout"
+				//fmt.Println("time out in get with cid:seqid as ",args.Id,":",args.SeqId," with expected index ",index)
+				break
+			}
+		}
+
+		if reply.Err != "timeout"{
+			if puttingVal == compareval{
+				
+			}else{
+				reply.Err = "timeout"
+			}
+		}
+
+	}else{
+		reply.WrongLeader = true
+	}
+
+}
+
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+	// Your code here.
+	index,_,isLeader := sm.rf.Start(Op{Type:"QUERY",QueryNum:args.Num,Id:args.Id,SeqId:args.SeqId})
+
+	reply.Err = ""
+
+	if isLeader{
+		reply.WrongLeader = false
+		compareval := "QUERY "+strconv.Itoa(args.Id)+" "+strconv.Itoa(args.SeqId)
+		puttingVal := ""
+		beforeTime := time.Now()
+		for{
+			time.Sleep(50*time.Millisecond)
+			sm.mu.Lock()
+			val,ok := sm.putting[index]
+			sm.mu.Unlock()
+			if ok {
+				puttingVal = val
+				break
+			}
+			now := time.Now()
+			if (now.Sub(beforeTime) &gt; 2000*time.Millisecond){
+				reply.Err = "timeout"
+				//fmt.Println("time out in get with cid:seqid as ",args.Id,":",args.SeqId," with expected index ",index)
+				break
+			}
+		}
+
+		if reply.Err != "timeout"{
+			if puttingVal == compareval{
+				//If the number is -1 or bigger than the biggest known configuration number,
+				//the shardmaster should reply with the latest configuration.
+				sm.mu.Lock()
+				//fmt.Println(sm.configs," from server ",sm.me)
+				if args.Num == -1 || args.Num &gt;= len(sm.configs){
+					reply.Config = sm.configs[len(sm.configs)-1]
+				}else{
+					reply.Config = sm.configs[args.Num]
+				}
+				sm.mu.Unlock()
+			}else{
+				reply.Err = "timeout"
+			}
+		}
+
+	}else{
+		reply.WrongLeader = true
+	}
+}
+
+
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+	// Your code here, if desired.
+}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+	return sm.rf
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	sm := new(ShardMaster)
+	sm.me = me
+
+	sm.configs = make([]Config, 1)
+	sm.configs[0].Groups = map[int][]string{}
+
+	labgob.Register(Op{})
+	sm.applyCh = make(chan raft.ApplyMsg)
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+
+	// Your code here.
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match124-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	sm.putting = make(map[int]string)
+	sm.done = make(map[int]string)
+	sm.alreadydone = make(map[int]map[int]string)
+</FONT>
+	//fmt.Println("start server : ",sm.me," ",sm.configs)
+	//fmt.Println(sm.configs[0].Groups)
+	go func(){
+		for{
+			msg := &lt;- sm.applyCh
+			//fmt.Println("msg for server ",sm.me," =====&gt; ",msg)
+			if(msg.CommandIndex == 0){
+				continue
+			}
+			msgCmdValid := msg.CommandValid
+			msgOp := msg.Command.(Op)
+			sm.mu.Lock()
+			_,dne := sm.alreadydone[msgOp.Id][msgOp.SeqId]
+			if !dne {
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match124-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				_,exsist2 := sm.alreadydone[msgOp.Id]
+				if exsist2{
+					sm.alreadydone[msgOp.Id][msgOp.SeqId] = "1"
+</FONT>				}else{
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match124-0.html#6" TARGET="0"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+					sm.alreadydone[msgOp.Id] = make(map[int]string)
+					sm.alreadydone[msgOp.Id][msgOp.SeqId] = "1"
+</FONT>				}
+				if msgCmdValid {
+					//sm.mu.Lock()
+
+					/*switch msgOp.Type{
+					case "JOIN":
+						fmt.Println("join called for server ",sm.me," with id--seqid ",msgOp.Id,"--",msgOp.SeqId)
+					case "Leave":
+						fmt.Println("Leave called for server ",sm.me,"with id--seqid ",msgOp.Id,"--",msgOp.SeqId)
+					default:
+
+					}*/
+
+					switch msgOp.Type {
+					case "JOIN":
+						//sm.mu.Lock()
+						var newConfig Config
+						//latestConfig := sm.configs[len(sm.configs)-1]
+						newConfig.Num = sm.configs[len(sm.configs)-1].Num + 1
+						newConfig.Shards = sm.configs[len(sm.configs)-1].Shards
+						//newConfig.Groups = sm.configs[len(sm.configs)-1].Groups
+						newConfig.Groups = make(map[int][]string)
+						for gid,s := range(sm.configs[len(sm.configs)-1].Groups){
+							newConfig.Groups[gid] = s
+						}
+						for gid,s := range(msgOp.JoinServers){
+							newConfig.Groups[gid] = s
+						}
+						//latestConfig.Num++
+						NofG := len(newConfig.Groups)
+						/*bal := 10/NofG
+						for gid,_ := range(newConfig.Groups){
+							for shard := 0;shard&lt;bal;shard++{
+								newConfig.Shards[shard]=gid
+							}
+						}*/
+						keys := make([]int, 0, NofG)
+						for k := range (newConfig.Groups) {
+							keys = append(keys, k)
+						}
+						//fmt.Println(keys)
+						sort.Ints(keys)
+						//fmt.Println(keys)
+						for i:=0 ;i&lt;10;i++{
+							newConfig.Shards[i]=keys[i%NofG]
+						}
+						sm.configs = append(sm.configs,newConfig)
+						//fmt.Println("Joined new config ",newConfig)
+						//fmt.Println(sm.configs)
+						//sm.mu.Unlock()
+						//break
+					case "Leave":
+						//sm.mu.Lock()
+						var newConfig Config
+						//latestConfig := sm.configs[len(sm.configs)-1]
+						//copy(latestConfig,sm.configs[len(sm.configs)-1])
+						//fmt.Println(args.GIDs)
+						newConfig.Num = sm.configs[len(sm.configs)-1].Num + 1
+						newConfig.Shards = sm.configs[len(sm.configs)-1].Shards
+						//newConfig.Groups = sm.configs[len(sm.configs)-1].Groups
+						newConfig.Groups = make(map[int][]string)
+						for gid,s := range(sm.configs[len(sm.configs)-1].Groups){
+							newConfig.Groups[gid] = s
+						}
+						for _,gid := range(msgOp.LeaveGIDs){
+							//fmt.Println("deleting gid ",gid)
+							//fmt.Println(sm.configs)
+							delete(newConfig.Groups,gid)
+							//fmt.Println(sm.configs)
+						}
+						//latestConfig.Num++
+						NofG := len(newConfig.Groups)
+						//fmt.Println(NofG," latest config groups ",latestConfig.Groups)
+						if NofG != 0{
+							/*bal := 10/NofG
+							for gid,_ := range(newConfig.Groups){
+								for shard := 0;shard&lt;bal;shard++{
+									newConfig.Shards[shard]=gid
+								}
+							}*/
+							keys := make([]int, 0, NofG)
+							for k := range (newConfig.Groups) {
+								keys = append(keys, k)
+							}
+							sort.Ints(keys)
+							for i:=0 ;i&lt;10;i++{
+								newConfig.Shards[i]=keys[i%NofG]
+							}
+						}else{
+							for shard:=0 ;shard&lt;10;shard++{
+								newConfig.Shards[shard]=0
+							}
+						}
+						//fmt.Println(sm.configs)
+						sm.configs = append(sm.configs,newConfig)
+						//fmt.Println("appending new configuration ",newConfig)
+						//fmt.Println(sm.configs)
+						//fmt.Println(sm.configs)
+						//sm.mu.Unlock()
+					case "MOVE":
+						var newConfig Config
+						//latestConfig := sm.configs[len(sm.configs)-1]
+						newConfig.Num = sm.configs[len(sm.configs)-1].Num + 1
+						newConfig.Shards = sm.configs[len(sm.configs)-1].Shards
+						//newConfig.Groups = sm.configs[len(sm.configs)-1].Groups
+						newConfig.Groups = make(map[int][]string)
+						for gid,s := range(sm.configs[len(sm.configs)-1].Groups){
+							newConfig.Groups[gid] = s
+						}
+						newConfig.Shards[msgOp.MoveShard] = msgOp.MoveGID
+						sm.configs = append(sm.configs,newConfig)
+					default:
+					}
+
+					sm.putting[msg.CommandIndex] = msgOp.Type+" "+strconv.Itoa(msgOp.Id)+" "+strconv.Itoa(msgOp.SeqId)
+					//sm.mu.Unlock()
+				}
+			}else{
+				//sm.mu.Lock()
+				sm.putting[msg.CommandIndex] = msgOp.Type+" "+strconv.Itoa(msgOp.Id)+" "+strconv.Itoa(msgOp.SeqId)
+				//sm.mu.Unlock()
+			}
+			sm.mu.Unlock()
+		}
+	}()
+
+	return sm
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

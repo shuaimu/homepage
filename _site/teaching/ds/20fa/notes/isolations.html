@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.5.0 -->
+<title>Locking-based isolations levels | Home</title>
+<meta name="generator" content="Jekyll v3.8.5" />
+<meta property="og:title" content="Locking-based isolations levels" />
+<meta property="og:locale" content="en_US" />
+<link rel="canonical" href="http://localhost:4000/teaching/ds/20fa/notes/isolations.html" />
+<meta property="og:url" content="http://localhost:4000/teaching/ds/20fa/notes/isolations.html" />
+<meta property="og:site_name" content="Home" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"Locking-based isolations levels","url":"http://localhost:4000/teaching/ds/20fa/notes/isolations.html","@context":"http://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://localhost:4000/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>Locking-based isolations levels</h1>
+         </header> -->
+
+  <section>
+    
+<h1 id="locking-based-isolations-levels">Locking-based isolations levels</h1>
+<ul>
+  <li>serializable
+    <ul>
+      <li>2PL (long-duration read/write locks)</li>
+    </ul>
+  </li>
+  <li>repeatable read
+    <ul>
+      <li>long w/r locks, short predicate read locks</li>
+      <li>could have phantom read
+        <ul>
+          <li>r1[P]…w2[y in P]…c2…r1[P]…c1</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>read committed
+    <ul>
+      <li>long w locks, short r locks</li>
+      <li>could have non-repeatable (fuzzy) read
+        <ul>
+          <li>r1[x]…w2[x]…c2…r1[x]…c1</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>read uncommitted
+    <ul>
+      <li>long write locks, no read locks.</li>
+      <li>could have dirty read
+        <ul>
+          <li>w1[x]…r2[x]…(a1 and c2 in any order)</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h1 id="ansi">ANSI</h1>
+<ul>
+  <li>English version
+    <ul>
+      <li>read committed cannot have dirty read</li>
+      <li>repeatable read cannot have dirty/fuzzy read</li>
+      <li>serializability cannot have any of: dirty/fuzzy/phantom read</li>
+    </ul>
+  </li>
+  <li>Simply forbidding dirty/fuzzy/phantom read does not give you serializability, or, “anomaly serializable != serializable”
+    <ul>
+      <li>H1: r1[x=50]w1[x=10]r2[x=10]r2[y=50]c2 r1[y=50]w1[y=90]c1</li>
+      <li>H2: r1[x=50]r2[x=50]w2[x=10]r2[y=50]w2[y=90]c2r1[y=90]c1</li>
+      <li>H3: r1[P] w2[insert y to P] r2[z] w2[z] c2 r1[z] c10</li>
+    </ul>
+  </li>
+  <li>Snapshot isolation
+    <ul>
+      <li>read skew, not possible with si
+        <ul>
+          <li>r1[x]…w2[x]…w2[y]…c2…r1[y]…(c1 or a1)</li>
+        </ul>
+      </li>
+      <li>write skew, possible with si
+        <ul>
+          <li>r1[x]…r2[y]…w1[y]…w2[x]…(c1 and c2 occur)</li>
+        </ul>
+      </li>
+      <li>stronger than read committed</li>
+      <li>stronger than “anomaly serializable”.</li>
+      <li>revisit the long fork example: read skew
+        <div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>T1: R(A)=0, R(B)=0, W(A)=1 
+T2:                        R(A)=1, R(B)=0
+T3: R(A)=0, R(B)=0, W(B)=1 
+T4:                        R(A)=0, R(B)=1
+T5:                                       R(A)=1, R(B)=1
+</code></pre></div>        </div>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h1 id="graph">Graph</h1>
+<ul>
+  <li>Read uncommitted
+    <ul>
+      <li>disallows cycles consisting only of write-write edges</li>
+    </ul>
+  </li>
+  <li>Read committed/repeatable read
+    <ul>
+      <li>disallow cycles consisting of write-write/write-read edges</li>
+    </ul>
+  </li>
+  <li>Snapshot isolation, disallows:
+    <ul>
+      <li>write-write/write-read edges without corresponding start edges</li>
+      <li>cycles containing a single read-write edge</li>
+    </ul>
+  </li>
+</ul>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+</body>
+
+</html>

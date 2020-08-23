@@ -1,0 +1,255 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/GouravMangla/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/GouravMangla/src/kvraft/server.go<p><PRE>
+package raftkv
+
+import (
+	"labgob"
+	"labrpc"
+	"log"
+	"raft"
+	"sync"
+	"time"
+)
+
+const Debug = 0
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+type MessageApply struct{
+	CommandType string
+	CommandIndex int
+	Key string
+	Value string
+	ClientId int64
+	SequenceNumber int
+}
+
+type Op struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+	Key string
+	Value string
+	Command string
+	ClientId int64
+	SequenceNum int
+}
+
+type KVServer struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+	maxraftstate int // snapshot if log grows this big
+	// Your definitions here.
+
+	TerminateChan chan bool
+	KeyValueData map[string]string
+	ConnectClientRequestID map[int64] int
+	Callback map[int] chan MessageApply
+}
+
+
+func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
+	// Your code here.
+	operation:=Op{
+		Key:      args.Key,
+		Command:  "GET",
+	}
+	index,_,isLeader:=kv.rf.Start(operation)
+
+
+	if isLeader==false{
+		reply.WrongLeader=true
+		return
+	}
+	kv.mu.Lock()
+	Channel,ok := kv.Callback[index]
+	if ok == false{
+		Channel = make(chan MessageApply,1)
+		kv.Callback[index] = Channel
+	}
+	kv.mu.Unlock()
+	select{
+	case msg:=&lt;-Channel://&lt;-kv.Callback[index]:
+
+		kv.mu.Lock()
+		delete(kv.Callback, index)
+		kv.mu.Unlock()
+
+		if msg.CommandIndex==index{
+			reply.Err="Success"
+			reply.WrongLeader=false
+			kv.mu.Lock()
+			val:=kv.KeyValueData[args.Key]
+			kv.mu.Unlock()
+			reply.Value=val
+		}else {
+			reply.WrongLeader=true
+		}
+
+	case &lt;-time.After(10*time.Millisecond):
+		reply.WrongLeader=true
+	}
+}
+
+func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	// Your code here.
+	operation:=Op{
+		Key:           args.Key,
+		Value:         args.Value,
+		Command:       args.Op,
+		ClientId:      args.ClientInfo.ClientId,
+		SequenceNum:   args.ClientInfo.SequenceNum,
+	}
+
+
+	index,_,isLeader:=kv.rf.Start(operation)
+
+
+	if isLeader==false{
+		reply.WrongLeader=true
+		return
+	}
+	kv.mu.Lock()
+	Channel,ok := kv.Callback[index]
+	if ok == false{
+		Channel = make(chan MessageApply,1)
+		kv.Callback[index] = Channel
+	}
+	kv.mu.Unlock()
+	select{
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match229-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	case msg:=&lt;-Channel://&lt;-kv.Callback[index]:
+
+
+		kv.mu.Lock()
+		delete(kv.Callback, index)
+		kv.mu.Unlock()
+
+		if msg.CommandIndex==index && msg.CommandType==operation.Command && msg.ClientId==operation.ClientId && msg.SequenceNumber==operation.SequenceNum &&
+</FONT>			msg.Key==operation.Key && msg.Value==operation.Value{
+			reply.Err="Success"
+			reply.WrongLeader=false
+		}else {
+			reply.WrongLeader=true
+		}
+
+	case &lt;-time.After(time.Duration(600)*time.Millisecond):
+		reply.WrongLeader=true
+	}
+
+}
+
+//
+// the tester calls Kill() when a KVServer instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *KVServer) Kill() {
+	kv.rf.Kill()
+	close(kv.TerminateChan)
+	// Your code here, if desired.
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Raft to
+// form the fault-tolerant key/value service.
+// me is the index of the current server in servers[].
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+// the k/v server should snapshot when Raft's saved state exceeds maxraftstate bytes,
+// in order to allow Raft to garbage-collect its log. if maxraftstate is -1,
+// you don't need to snapshot.
+// StartKVServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
+	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+
+	kv := new(KVServer)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+
+	// You may need initialization code here.
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match229-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+	kv.TerminateChan=make(chan bool,1)
+	kv.ConnectClientRequestID=make(map[int64]int)
+</FONT>	kv.KeyValueData=make(map[string]string)
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match229-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_8.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.Callback=make(map[int] chan MessageApply)
+
+	go kv.startGoRoutineProcessForEveryKeyValueServer()
+
+
+	return kv
+}
+
+func (kv *KVServer) startGoRoutineProcessForEveryKeyValueServer(){
+
+	for true{
+		select {
+		case&lt;-kv.TerminateChan:
+			return
+		case message:= &lt;-kv.applyCh:
+
+			kv.mu.Lock()
+			operation := message.Command.(Op)
+
+			seq, present :=kv.ConnectClientRequestID[operation.ClientId]
+
+			if present==false || seq&lt;operation.SequenceNum{
+</FONT>				if operation.Command=="Put"{
+					kv.KeyValueData[operation.Key]=operation.Value
+				}else if operation.Command=="Append"{
+					kv.KeyValueData[operation.Key]+=operation.Value
+				}
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match229-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				kv.ConnectClientRequestID[operation.ClientId]=operation.SequenceNum
+			}
+			_,flag:=kv.Callback[message.CommandIndex]
+
+			msg:=MessageApply{
+				CommandType:  operation.Command,
+				CommandIndex: message.CommandIndex,
+				ClientId:     operation.ClientId,
+				SequenceNumber: operation.SequenceNum,
+</FONT>				Key:operation.Key,
+				Value:operation.Value,
+			}
+			if flag==true{
+				kv.Callback[message.CommandIndex]&lt;-msg
+			}
+			kv.mu.Unlock()
+		}
+	}
+}
+
+
+</PRE>
+</PRE>
+</BODY>
+</HTML>

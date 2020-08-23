@@ -1,0 +1,306 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/mayankX/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/mayankX/src/kvraft/server.go<p><PRE>
+package raftkv
+
+import (
+	"bytes"
+	"io/ioutil"
+	"labgob"
+	"labrpc"
+	"log"
+	"raft"
+	"sync"
+	"time"
+)
+
+const Debug = 0
+const AppendEntryChannelTimeout = 600
+
+const GetOperation = "Get"
+const PutOperation = "Put"
+const AppendOperation = "Append"
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+type Op struct {
+	OperationType  string
+	Key            string
+	Value          string
+	Id             int64
+	SequenceNumber int64
+}
+
+type KVServer struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match62-1.html#7" TARGET="1"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	applyCh chan raft.ApplyMsg
+
+	maxraftstate int // snapshot if log grows this big
+	persister    *raft.Persister
+
+	keyValueMap       map[string]string
+	clientSequenceMap map[int64]int64
+	applyChMap        map[int]chan Op
+
+	killCh chan bool
+</FONT>}
+
+func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
+	log.Printf("====Get RPC Called")
+	op := Op{
+		OperationType:  GetOperation,
+		Key:            args.Key,
+		Id:             0,
+		SequenceNumber: 0,
+	}
+	ok := kv.AppendEntry(op)
+	log.Printf("Get Operation Result: %t", ok)
+	if ok {
+		reply.WrongLeader = false
+		kv.mu.Lock()
+		value, found := kv.keyValueMap[args.Key]
+		kv.mu.Unlock()
+
+		if found {
+			reply.Value = value
+		} else {
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match62-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			reply.Err = KeyNotFoundError
+		}
+	} else {
+		reply.WrongLeader = true
+	}
+}
+
+func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	log.Printf("====Appending, %v", args)
+	operation := Op{
+		OperationType:  args.Op,
+		Key:            args.Key,
+		Value:          args.Value,
+		Id:             args.ClientId,
+		SequenceNumber: args.SequenceNumber,
+	}
+	ok := kv.AppendEntry(operation)
+	log.Printf("%s Operation Result: %t", args.Op, ok)
+</FONT>	if ok {
+		reply.WrongLeader = false
+	} else {
+		reply.WrongLeader = true
+	}
+}
+
+//
+// the tester calls Kill() when a KVServer instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *KVServer) Kill() {
+	log.Printf("===========Server=%d has just been killed.", kv.me)
+	pingChannel(kv.killCh)
+	kv.rf.Kill()
+}
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match62-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *KVServer) AppendEntry(operation Op) bool {
+	logIndex, term, isLeader := kv.rf.Start(operation)
+	log.Printf("Appending entries for Operation=%d, Raft Server =&gt; [Log Index: %d, Term: %d, Leader?: %t", operation.Id, logIndex, term, isLeader)
+	if !isLeader {
+		return false
+	}
+
+	kv.mu.Lock()
+	ch, ok := kv.applyChMap[logIndex]
+</FONT>	if !ok {
+		ch = make(chan Op, 1)
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match62-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_9.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		kv.applyChMap[logIndex] = ch
+	}
+	kv.mu.Unlock()
+
+	select {
+	case channelOp := &lt;-ch:
+		//return channelOp == operation
+		return compareOperations(channelOp, operation)
+	case &lt;-time.After(time.Duration(AppendEntryChannelTimeout) * time.Millisecond):
+		return false
+	}
+}
+
+func compareOperations(op1 Op, op2 Op) bool {
+	return op1.Id == op2.Id &&
+		op1.SequenceNumber == op2.SequenceNumber &&
+		op1.OperationType == op2.OperationType &&
+		op1.Key == op2.Key &&
+		op1.Value == op2.Value
+}
+
+func (kv *KVServer) Start() {
+</FONT>	for {
+		select {
+		case &lt;-kv.killCh:
+			return
+		case applyMessage := &lt;-kv.applyCh:
+			if !applyMessage.CommandValid {
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match62-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_15.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				kv.loadSnapshot(applyMessage.SnapShot)
+				continue
+			}
+
+			operation := applyMessage.Command.(Op)
+
+			operationId := operation.Id
+			operationType := operation.OperationType
+			operationKey := operation.Key
+			operationValue := operation.Value
+
+			kv.mu.Lock()
+			maxSequenceNumber, ok := kv.clientSequenceMap[operationId]
+			if !ok || operation.SequenceNumber &gt; maxSequenceNumber {
+				log.Printf("Applying '%s' operation KV: (%s, %s)", operationType, operationKey, operationValue)
+				switch operationType {
+				case PutOperation:
+					kv.keyValueMap[operationKey] = operationValue
+				case AppendOperation:
+					kv.keyValueMap[operationKey] += operationValue
+				}
+				kv.clientSequenceMap[operationId] = operation.SequenceNumber
+			}
+
+			ch, ok := kv.applyChMap[applyMessage.CommandIndex]
+			if !ok {
+				ch = make(chan Op, 1)
+				kv.applyChMap[applyMessage.CommandIndex] = ch
+			}
+
+			maxRaftState := kv.maxraftstate
+			currentRaftState := kv.persister.RaftStateSize()
+			kv.mu.Unlock()
+
+			if maxRaftState &gt; 0 && currentRaftState &gt; maxRaftState {
+				go kv.createSnapshot(applyMessage.CommandIndex)
+</FONT>			}
+
+			//ch &lt;- operation
+			pingOperationChannel(ch, operation)
+		}
+	}
+}
+
+func (kv *KVServer) createSnapshot(index int) {
+	log.Printf("Creating new snapshot from Index: %d ", index)
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	kv.mu.Lock()
+	_ = e.Encode(kv.keyValueMap)
+	_ = e.Encode(kv.clientSequenceMap)
+	kv.mu.Unlock()
+	kv.rf.CreateSnapshot(index, w.Bytes())
+}
+
+func (kv *KVServer) loadSnapshot(data []byte) {
+	log.Printf("Loading Snapshot data for KVServer: %d", kv.me)
+	if data == nil || len(data) &lt; 1 { // bootstrap without any state?
+		log.Printf("No Snapshot data to restore for server: %d", kv.me)
+		return
+	}
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var keyValueMap map[string]string
+	var clientSequenceMap map[int64]int64
+
+	if d.Decode(&keyValueMap) != nil || d.Decode(&clientSequenceMap) != nil {
+		log.Fatalf("Error while loading snapshots for server=%d", kv.me)
+	} else {
+		kv.mu.Lock()
+		kv.keyValueMap = keyValueMap
+		kv.clientSequenceMap = clientSequenceMap
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match62-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		kv.mu.Unlock()
+	}
+}
+
+func pingOperationChannel(ch chan Op, op Op) {
+	select {
+	case &lt;-ch: //consumes channel, if needed
+	default:
+	}
+	ch &lt;- op
+}
+
+func pingChannel(ch chan bool) {
+	select {
+	case &lt;-ch: //consumes channel, if needed
+	default:
+	}
+	ch &lt;- true
+</FONT>}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Raft to
+// form the fault-tolerant key/value service.
+// me is the index of the current server in servers[].
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+// the k/v server should snapshot when Raft's saved state exceeds maxraftstate bytes,
+// in order to allow Raft to garbage-collect its log. if maxraftstate is -1,
+// you don't need to snapshot.
+// StartKVServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
+	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+
+	log.SetFlags(0)
+	log.SetOutput(ioutil.Discard)
+
+	kv := new(KVServer)
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match62-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+	kv.persister = persister
+
+	kv.keyValueMap = make(map[string]string)
+	kv.clientSequenceMap = make(map[int64]int64)
+	kv.applyChMap = make(map[int]chan Op)
+	kv.loadSnapshot(kv.persister.ReadSnapshot())
+</FONT>
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match62-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+
+	kv.killCh = make(chan bool, 1)
+
+	go kv.Start()
+
+	return kv
+</FONT>}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

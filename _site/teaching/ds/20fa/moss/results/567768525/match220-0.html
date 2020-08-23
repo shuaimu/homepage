@@ -1,0 +1,260 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/akundhuru/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/akundhuru/src/kvraft/server.go<p><PRE>
+package raftkv
+
+import (
+	"encoding/gob"
+	"labrpc"
+	"log"
+	"raft"
+	"sync"
+	"time"
+	"bytes"
+)
+
+const Debug = 0
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+
+type Op struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+	Key	 string
+	Value    string
+	ClientId int64
+	OpType	 string
+	OpIndex	 int64
+}
+
+type KVServer struct {
+	mu      sync.Mutex
+	me      int
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match220-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	maxraftstate int // snapshot if log grows this big
+
+	// Your definitions here.
+	data			map[string]string
+	callbackCh		map[int64]chan Result // [clientId] result
+	lastCommitedOpIndex	map[int64]int64
+	lastCommitedLogIndex	int
+}
+
+func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
+</FONT>	// Your code here.
+	//DPrintf("# [%d]: Get(%v, %v): start...", kv.me, args, reply)
+	_, isLeader := kv.rf.GetState()
+
+	if isLeader {
+		reply.WrongLeader = false
+		kv.mu.Lock()
+		defer kv.mu.Unlock()
+		if _, ok := kv.callbackCh[args.ClientId]; !ok {
+			kv.callbackCh[args.ClientId] = make(chan Result)
+		}
+
+		kv.rf.Start(Op{args.Key, "", args.ClientId, "Get", args.OpIndex})
+
+		//kv.mu.Lock()
+		select {
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match220-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		case res := &lt;-kv.callbackCh[args.ClientId]:
+			//kv.mu.Unlock()
+			if res.OpIndex == args.OpIndex {
+				if res.Value != "" {
+</FONT>					reply.Err = OK
+					reply.Value = res.Value
+				} else {
+					reply.Err = ErrNoKey
+				}
+			}
+		case &lt;- time.After(2 * time.Second):
+			//kv.mu.Unlock()
+			reply.Err = TimeOut
+		}
+	} else {
+		reply.WrongLeader = true
+	}
+	DPrintf("# [%d]: Get(%v, %v): End...", kv.me, args, reply)
+}
+
+func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	// Your code here.
+	DPrintf("# [%d]: PutAppend(%v, %v): start...", kv.me, args, reply)
+	_, isLeader := kv.rf.GetState()
+
+	if isLeader {
+		reply.WrongLeader = false
+		kv.mu.Lock()
+		defer kv.mu.Unlock()
+		if _, ok := kv.callbackCh[args.ClientId]; !ok {
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match220-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			kv.callbackCh[args.ClientId] = make(chan Result)
+		}
+
+		kv.rf.Start(Op{args.Key, args.Value, args.ClientId, args.Op, args.OpIndex})
+
+		//kv.mu.Lock()
+		select {
+		case res := &lt;-kv.callbackCh[args.ClientId]:
+</FONT><A NAME="5"></A><FONT color = #FF0000><A HREF="match220-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			//kv.mu.Unlock()
+			if res.OpIndex &gt;= args.OpIndex {
+				reply.Err = OK
+</FONT>			}
+		case &lt;- time.After(2 * time.Second):
+			//kv.mu.Unlock()
+			reply.Err = TimeOut
+		}
+	} else {
+		reply.WrongLeader = true
+	}
+
+	DPrintf("# [%d]: PutAppend(%v, %v): end...", kv.me, args, reply)
+}
+
+//
+// the tester calls Kill() when a KVServer instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *KVServer) Kill() {
+	kv.rf.Kill()
+	// Your code here, if desired.
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Raft to
+// form the fault-tolerant key/value service.
+// me is the index of the current server in servers[].
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+// the k/v server should snapshot when Raft's saved state exceeds maxraftstate bytes,
+// in order to allow Raft to garbage-collect its log. if maxraftstate is -1,
+// you don't need to snapshot.
+// StartKVServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
+	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	gob.Register(Op{})
+
+	kv := new(KVServer)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+
+	// You may need initialization code here.
+	//kv.applyCh = make(chan raft.ApplyMsg, 100)
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+	kv.data = make(map[string]string)
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match220-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.callbackCh = make(map[int64]chan Result)
+	kv.lastCommitedOpIndex = make(map[int64]int64)
+
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+
+	//ApplyMsg
+	go func(){
+		for {
+			msg := &lt;-kv.applyCh
+</FONT>			if msg.UseSnapshot {
+				data := msg.Snapshot
+				kv.deserializeSnapshot(data)
+				kv.lastCommitedLogIndex = msg.CommandIndex
+			} else {
+				command := msg.Command.(Op)
+				res := kv.ApplyCommand(command)
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match220-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				if msg.CommandIndex &gt; kv.lastCommitedLogIndex {
+					kv.lastCommitedLogIndex = msg.CommandIndex
+				}
+
+				select {
+				case kv.callbackCh[command.ClientId] &lt;- res:
+					DPrintf("# [%d]: Callback succeeded.", kv.me)
+</FONT>				default:
+					DPrintf("# [%d]: Callback failed.", kv.me)
+				}
+
+				if kv.maxraftstate != -1 && kv.rf.GetStateSize() &gt;= kv.maxraftstate {
+					DPrintf("# [%d]: Start SaveSnapshot.", kv.me)
+					data := kv.serializeSnapshot()
+					go kv.rf.UpdateSnapshot(data, kv.lastCommitedLogIndex)
+				}
+			}
+		}
+
+	}()
+
+	return kv
+}
+
+type Result struct {
+	OpIndex int64
+	Value string
+}
+
+func (kv *KVServer) ApplyCommand(command Op) Result {
+	result := Result{command.OpIndex, ""}
+
+	if kv.lastCommitedOpIndex[command.ClientId] &lt; command.OpIndex {
+		switch command.OpType {
+		case "Put":
+			kv.data[command.Key] = command.Value
+		case "Append":
+			kv.data[command.Key] += command.Value
+		}
+		DPrintf("# [%d]: Applied %v.", kv.me, command)
+		kv.lastCommitedOpIndex[command.ClientId] = command.OpIndex
+	}
+	if val, ok := kv.data[command.Key]; ok {
+		result.Value = val
+	}
+	return result
+}
+
+func (kv *KVServer) serializeSnapshot() []byte {
+	w := new(bytes.Buffer)
+	e := gob.NewEncoder(w)
+	e.Encode(kv.data)
+	e.Encode(kv.lastCommitedOpIndex)
+	return w.Bytes()
+}
+
+func (kv *KVServer) deserializeSnapshot(data []byte) {
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match220-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	r := bytes.NewBuffer(data)
+	d := gob.NewDecoder(r)
+	d.Decode(&kv.data)
+	d.Decode(&kv.lastCommitedOpIndex)
+</FONT>}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

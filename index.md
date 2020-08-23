@@ -24,38 +24,46 @@ Links: <a href="https://scholar.google.com/citations?user=wcbyR5UAAAAJ&hl=en">Go
 
 <hr>
 
-I am an assistant professor of [Computer Science](http://cs.stonybrook.edu) at [Stony Brook University](http://www.stonybrook.edu).
+
+# **Cobra accepted to OSDI '20!**
+
+I am an assistant professor of [Computer Science](http://www.cs.stonybrook.edu) at [Stony Brook University](http://www.stonybrook.edu).
 My main research interests are in distributed systems and multi-core systems.
 I'm particularly interested in:
   * Building fault-tolerant storage and database systems.
   * Building tools to ease concurrent programming for developers.  
   * Verifying correctness of distributed systems and algorithms.
 
-**I am looking for motivated PhD/MS students.** 
+**I am looking for motivated PhD/MS/Undergrad students.** 
 If you are interested, email me a brief resume.
 
 
 ## Courses
+* [Distributed Systems, Fall 2020, Stony Brook University](./teaching/ds/20fa/)
 * [Distributed Systems, Fall 2019, Stony Brook University](./teaching/ds/19fa/)
 * [Distributed Systems, Spring 2019, Stony Brook University](https://github.com/shuaimu/ds19spring)
 * [Computer Systems Organization, Spring 2018, NYU](./teaching/cso18spring/index.html)
 
-## Students
-This is a list of students whom I am currently closely working with: 
-* Sergey Madaminov (PhD advised by Mike Ferdman)
-* Reza Alimadadi (PhD advised by Mike Ferdman)
-* [Mrityunjay Kumar](https://www3.cs.stonybrook.edu/~mrkumar/) (MS)
-* Satya Jain (MS)
-* Andrew Yoo (MS@UIUC advised by Tianyin Xu)
-
+## Program committees 
+* NSDI 2021
+* ATC 2020
+* APSys 2019, 2020
 
 ## Recent publications 
 
    <ul>
      <li>
+     Making Cloud Key-Value Databases Verifiably Serializable
+     <br>
+     Cheng Tan, Changgeng Zhao, <strong>Shuai Mu</strong>, Michael Walfish
+     <br>
+     OSDI 20 (To appear)
+     </li>
+
+     <li>
 On the Parallels of Raft and Paxos [<a href="./pub/raft-paxos.pdf">paper</a>]
          <br>
-Zhaoguo Wang, Changgeng Zhao, Jinyang Li, <strong>Shuai Mu</strong>, Haibo Chen <br>
+Zhaoguo Wang, Changgeng Zhao, <strong>Shuai Mu</strong>, Haibo Chen, Jinyang Li <br>
          PODC 19 
      </li> 
      <li>
@@ -92,6 +100,20 @@ Deferred Runtime Pipelining for contentious multicore software transactions
                   <a href="./pub/rococo-tr.pdf">tr</a>] <br><strong>Shuai Mu</strong>, Yang Cui, Yang Zhang, Wyatt Lloyd, Jinyang Li<br>OSDI 14</li><br>
 	  -->
       </ul>
+
+## Students
+* Reza Alimadadi (PhD, co-advised with Mike Ferdman)
+* Yida Wu (MS-\>PhD)
+* Xiang Liu (PhD, Joining Fall 20)
+* Yuhao Su (PhD, Joining Fall 20)
+* Ansh Khanna (MS)
+* Satya Jain (MS)
+* Ritesh Sinha (MS)
+* Andrew Yoo (MS@UIUC, advised by Tianyin Xu)
+* Yuanli Wang (MS@Minnesota)
+
+Alumni:
+* [Mrityunjay Kumar](https://www3.cs.stonybrook.edu/~mrkumar/) (MS-\> VMWare)
 
 ## Bio
 Prior to joining Stony Brook, I spent 4 years at [NYU](http://nyu.edu) as a visiting student/post-doc/lecturer in the [Systems Group](http://news.cs.nyu.edu). 

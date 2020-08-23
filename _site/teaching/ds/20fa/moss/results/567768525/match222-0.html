@@ -1,0 +1,882 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/pnpninja/src/raft/raft.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/pnpninja/src/raft/raft.go<p><PRE>
+package raft
+
+//
+// this is an outline of the API that raft must expose to
+// the service (or tester). see comments below for
+// each of these functions for more details.
+//
+// rf = Make(...)
+//   create a new Raft server.
+// rf.Start(command interface{}) (index, term, isleader)
+//   start agreement on a new log entry
+// rf.GetState() (term, isLeader)
+//   ask a Raft for its current term, and whether it thinks it is leader
+// ApplyMsg
+//   each time a new entry is committed to the log, each Raft peer
+//   should send an ApplyMsg to the service (or tester)
+//   in the same server.
+//
+
+import (
+	"bytes"
+	"labgob"
+	"math/rand"
+	"sort"
+	"sync"
+	"time"
+)
+import "labrpc"
+
+// import "bytes"
+// import "labgob"
+
+
+
+//
+// as each Raft peer becomes aware that successive log entries are
+// committed, the peer should send an ApplyMsg to the service (or
+// tester) on the same server, via the applyCh passed to Make(). set
+// CommandValid to true to indicate that the ApplyMsg contains a newly
+// committed log entry.
+//
+// in Lab 3 you'll want to send other kinds of messages (e.g.,
+// snapshots) on the applyCh; at that point you can add fields to
+// ApplyMsg, but set CommandValid to false for these other uses.
+//
+type ApplyMsg struct {
+	CommandValid bool
+	Command      interface{}
+	CommandIndex int
+}
+
+//
+// A Go object implementing a single Raft peer.
+//
+type RaftLog struct {
+	Term int
+	Index int
+	Data interface{}
+}
+type Raft struct {
+	mu        sync.Mutex          // Lock to protect shared access to this peer's state
+	peers     []*labrpc.ClientEnd // RPC end points of all peers
+	persister *Persister          // Object to hold this peer's persisted state
+	me        int                 // this peer's index into peers[]
+	applyCh chan ApplyMsg
+	// Your data here (2A, 2B, 2C).
+	// Look at the paper's Figure 2 for a description of what
+	// state a Raft server must maintain.
+
+	//Persistent state on all servers:
+	currentTerm int  //latest term server has seen (initialized to 0 on first boot, increases monotonically)
+	votedFor int     //candidateId that received vote in current term (or null if none)
+	log []RaftLog   //log entries; each entry contains command for state machine, and term when entry was received by leader (first index is 1)
+
+	//Volatile state on all servers
+	commitIndex int  //index of highest log entry known to be committed (initialized to 0, increases
+					 // monotonically)
+	lastApplied int  //index of highest log entry applied to state machine (initialized to 0, increases monotonically)
+
+	//Volatile state on leaders:
+	nextIndex []int  //for each server, index of the next log entry to send to that server
+	                  // (initialized to leader last log index + 1)
+	matchIndex []int //for each server, index of highest log entry known to be replicated on server
+	                  // (initialized to 0, increases monotonically)
+
+	//Other variables
+	state int         //0 - Follower, 1 - Candidate, 2 - Leader
+	appendEntryReceived bool
+	votes int
+
+	kill bool
+}
+
+// return currentTerm and whether this server
+// believes it is the leader.
+func (rf *Raft) GetState() (int, bool) {
+
+	var term int
+	var isleader bool
+	// Your code here (2A).
+	//DPrintf("Node %v term - %v\n", rf.me,rf.currentTerm)
+	rf.mu.Lock()
+	term = rf.currentTerm
+	isleader = rf.state == 2
+	rf.mu.Unlock()
+	return term, isleader
+}
+
+/*------------------------------------------------------------HELPER FUNCTIONS--------------------------------------------------------------------*/
+/*------------------------------------------------------------------------------------------------------------------------------------------------*/
+/*------------------------------------------------------------------------------------------------------------------------------------------------*/
+/*------------------------------------------------------------------------------------------------------------------------------------------------*/
+
+func max(x int, y int)(int){
+	if(x &gt; y){
+		return x
+	}else{
+		return y
+	}
+}
+
+func min(x int, y int)(int){
+	if(x &gt; y){
+		return y
+	}else{
+		return x
+	}
+}
+
+//Helpful to find the log index that majority of nodes have.
+func median(arr ...int)(int){
+	sort.Ints(arr)
+	return arr[(len(arr))/2]
+}
+
+func copy(arr ...int) ([]int){
+	b := make([]int,0)
+	for _,data :=  range arr{
+		b = append(b,data)
+	}
+	return b
+}
+
+func (rf *Raft) leaderInitialize(leaderLastLogIndex int){
+	for i := range rf.matchIndex{
+		rf.matchIndex[i] = 0
+	}
+	for i := range rf.nextIndex{
+		rf.nextIndex[i] = leaderLastLogIndex + 1
+	}
+}
+//Function to calculate last log term
+func (rf *Raft) getLastLogTerm(flag bool)(lastLogTermInput int){
+	if(flag == true){
+		DPrintf("CHECKENTRY getLastLogTerm() -- Node %v - Current Term - %v\n",rf.me,rf.currentTerm)
+	}else{
+		DPrintf("ENTRY getLastLogTerm() -- Node %v - Current Term -  %v\n",rf.me,rf.currentTerm)
+	}
+	if(len(rf.log) == 0){
+		if(flag == true){
+			DPrintf("CHECKEXIT getLastLogTerm()-- Node %v - LastLogTerm - %v\n",rf.me, -1)
+		}else{
+			DPrintf("EXIT getLastLogTerm()-- Node %v - LastLogTerm - %v\n",rf.me, -1)
+		}
+		return -1
+	}else{
+		if(flag == true){
+			DPrintf("CHECKEXIT getLastLogTerm()-- Node %v - LastLogTerm %v\n",rf.me,rf.log[len(rf.log) - 1].Term)
+		}else{
+			DPrintf("EXIT getLastLogTerm()-- Node %v - LastLogTerm - %v\n",rf.me,rf.log[len(rf.log) - 1].Term)
+		}
+		return rf.log[len(rf.log) - 1].Term
+	}
+}
+
+//Function to calculate last log index
+func (rf *Raft) getLastLogIndex(flag bool)(lastLogIndex int){
+	returnVal := len(rf.log) - 1
+	if(flag == true){
+		DPrintf("CHECKENTRY getLastLogIndex() -- Node %v\n",rf.me)
+		DPrintf("CHECKEXIT getLastLogIndex() -- Node %v - %v\n",rf.me,returnVal)
+	}
+	DPrintf("ENTRY getLastLogIndex() -- Node %v\n",rf.me)
+	DPrintf("EXIT getLastLogIndex() -- Node %v - %v\n",rf.me,returnVal)
+	return returnVal
+}
+
+//Function to create AppendEntriesArgs
+func (rf *Raft) createAppendEntriesArgs(peerId int)(appendEntriesArgs AppendEntriesArgs){
+	DPrintf("ENTRY createAppendEntriesArgs() -  Node %v\n",rf.me)
+	DPrintf("EXIT createAppendEntriesArgs() -  Node %v\n",rf.me)
+	return AppendEntriesArgs{
+		Term:         rf.currentTerm,
+		LeaderId:     rf.me,
+		PrevLogIndex: rf.nextIndex[peerId] - 1,
+		PrevLogTerm:  rf.log[rf.nextIndex[peerId] - 1].Term,
+		Entries:      rf.log[rf.nextIndex[peerId]:],
+		LeaderCommit: rf.commitIndex,
+	}
+
+}
+
+//Function to become candidate
+func (rf *Raft) becomeCandidate()(args RequestVoteArgs){
+	DPrintf("ENTRY becomeCandidate() -  Node %v from %v\n",rf.me,rf.currentTerm)
+	rf.currentTerm += 1
+	rf.state = 1
+	rf.votedFor = rf.me
+	rf.votes = 1
+	DPrintf("EXIT becomeCandidate() -  Node %v to %v\n",rf.me,rf.currentTerm)
+
+	newVoteArgs := RequestVoteArgs{
+		Term:         rf.currentTerm,
+		CandidateId:  rf.me,
+		LastLogIndex: rf.getLastLogIndex(false),
+		LastLogTerm:  rf.getLastLogTerm(false),
+	}
+	return newVoteArgs
+}
+
+func createRequestVoteReply(term int)(reply RequestVoteReply){
+	return RequestVoteReply{
+		Term:        term,
+		VoteGranted: false,
+	}
+}
+
+
+
+func (rf *Raft) sendHeartBeat(){
+	rf.mu.Lock()
+	if(rf.state == 2){
+		DPrintf("ENTRY sendHeartBeat() - Node %v changing appendEntriesReceived to true\n",rf.me)
+		rf.appendEntryReceived = true
+		rf.mu.Unlock()
+		for index :=0; index &lt; len(rf.peers); index++ {
+			if (index == rf.me) {
+				continue
+			}
+			rf.mu.Lock()
+			args := rf.createAppendEntriesArgs(index)
+			rf.mu.Unlock()
+			go func(serverNumber int, args AppendEntriesArgs) {
+				DPrintf("INSIDE sendHeartBeat() - Send heart beat from Leader Node %v to Node %v\n", rf.me,serverNumber)
+				reply := AppendEntriesReply{
+					Term:    -1,
+					Success: false,
+					LastMatchIndex: 0,
+
+				}
+				serverReply := rf.sendHeartBeatVote(serverNumber, &args, &reply,serverNumber)
+				rf.mu.Lock()
+				if (serverReply == true && reply.Success == false) {
+					DPrintf("INSIDE sendHeartBeat() - Bad heart beat for %v (Reply Term - %v, Current Term - %v)\n", rf.me,reply.Term,rf.currentTerm)
+					if(reply.Term &gt; args.Term){
+						rf.currentTerm = max(reply.Term, rf.currentTerm)
+						DPrintf("Going to follower - %v\n", rf.me)
+						rf.state = 0
+						rf.votedFor = -1
+						DPrintf("Node %v appendEntriesFlag = false\n", rf.me)
+						rf.appendEntryReceived = true
+					}else{
+						DPrintf("INSIDE sendHeartBeat() Leader - %v. Server number %+v",rf.me,serverNumber)
+						DPrintf("INSIDE sendHeartBeat() Leader - %v. Len peers %+v",rf.me,len(rf.peers))
+						DPrintf("INSIDE sendHeartBeat() Leader - %v. Match Index %+v",rf.me,rf.matchIndex)
+						DPrintf("INSIDE sendHeartBeat() Leader - %v. Next Index %+v",rf.me,rf.nextIndex)
+						rf.matchIndex[serverNumber] = reply.LastMatchIndex
+						rf.nextIndex[serverNumber] = reply.LastMatchIndex + 1
+					}
+				}
+
+				if(serverReply == true && reply.Success){
+					DPrintf("INSIDE sendHeartBeat(SUCCESS) Leader - %v. Server number %+v, Reply - %+v\n",rf.me,serverNumber,reply)
+					DPrintf("INSIDE sendHeartBeat(SUCCESS) Leader - %v. Len peers %+v\n",rf.me,len(rf.peers))
+					DPrintf("INSIDE sendHeartBeat(SUCCESS) Leader - %v. Match Index %+v\n",rf.me,rf.matchIndex)
+					DPrintf("INSIDE sendHeartBeat(SUCCESS) Leader - %v. Next Index %+v\n",rf.me,rf.nextIndex)
+					rf.matchIndex[serverNumber] = reply.LastMatchIndex
+					rf.nextIndex[serverNumber] = reply.LastMatchIndex + 1
+					DPrintf("INSIDE sendHeartBeat(SUCCESS After Update) Leader - %v. Match Index %+v\n",rf.me,rf.matchIndex)
+					DPrintf("INSIDE sendHeartBeat(SUCCESS After Update) Leader - %v. Next Index %+v\n",rf.me,rf.nextIndex)
+				}
+				rf.mu.Unlock()
+			}(index, args)
+		}
+	} else {
+		rf.mu.Unlock()
+	}
+
+}
+
+
+//Function to ask for votes
+func (rf *Raft) askForVotes(args RequestVoteArgs)(){
+	DPrintf("ENTRY askForVotes() -  Node %v\n",rf.me)
+	var x sync.WaitGroup
+	x.Add(len(rf.peers) - 1)
+	DPrintf("INSIDE askForVotes() - WaitGroup Started for Candidate Node %v\n",rf.me)
+	for index := 0; index &lt; len(rf.peers); index++{
+		if(index != rf.me){
+			go func(serverNumber int, args RequestVoteArgs){
+				//defer x.Done()
+				DPrintf("INSIDE askForVotes() - Node %v asking Node %v for vote\n",rf.me,serverNumber)
+				serverReply := createRequestVoteReply(args.Term)
+				responseReceived := rf.sendRequestVote(serverNumber,&args,&serverReply)
+				x.Done()
+				DPrintf("INSIDE askForVotes() - Response received for Node %v - %+v\n",rf.me,serverReply)
+				rf.mu.Lock()
+				if(responseReceived == true && serverReply.VoteGranted == true){
+					DPrintf("INSIDE askForVotes() - Vote Granted for Node %v by Node %v\n",rf.me,serverNumber)
+					rf.votes += 1
+					if(rf.state == 1 && rf.votes == (len(rf.peers)/2) + 1){
+						DPrintf("Leader elected - %v",rf.me)
+						rf.state = 2
+						rf.leaderInitialize(rf.getLastLogIndex(false))
+						DPrintf("INSIDE askForVotes() - Node %v changing appendEntriesReceived to true\n",rf.me)
+						rf.appendEntryReceived = true
+						//Send Heart Beat
+						rf.mu.Unlock()
+						//x.Done()
+						//go rf.sendHeartBeat()
+					}else{
+						//x.Done()
+						rf.mu.Unlock()
+					}
+				}else if(responseReceived == true && serverReply.VoteGranted == false){
+					DPrintf("INSIDE askForVotes() - Vote Denied for Node %v by Node %v\n",rf.me,serverNumber)
+					if(serverReply.Term &gt; args.Term){
+						//Stepdown
+						DPrintf("Going to follower - %v\n", rf.me)
+						rf.state = 0
+						rf.currentTerm = serverReply.Term
+						rf.votedFor = -1
+						rf.mu.Unlock()
+						//x.Done()
+					}else{
+						//x.Done()
+						rf.mu.Unlock()
+					}
+				}else{
+					DPrintf("INSIDE askForVotes() - No Vote Response for Node %v by Node %v\n",rf.me,serverNumber)
+					//x.Done()
+					rf.mu.Unlock()
+				}
+
+			}(index, args)
+		}
+	}
+	x.Wait()
+	DPrintf("INSIDE askForVotes() - WaitGroup Ended for Candidate Node %v\n",rf.me)
+	rf.mu.Lock()
+	if(rf.state == 1){
+		DPrintf("INSIDE askForNodes() - Node %v is standing back to follower",rf.me)
+		rf.state = 0
+		//rf.votedFor = -1
+	}
+	rf.mu.Unlock()
+	DPrintf("EXIT askForVotes() -  Node %v\n",rf.me)
+
+}
+
+/*------------------------------------------------------------------------------------------------------------------------------------------------*/
+/*------------------------------------------------------------------------------------------------------------------------------------------------*/
+/*------------------------------------------------------------------------------------------------------------------------------------------------*/
+/*------------------------------------------------------------------------------------------------------------------------------------------------*/
+//
+// save Raft's persistent state to stable storage,
+// where it can later be retrieved after a crash and restart.
+// see paper's Figure 2 for a description of what should be persistent.
+//
+func (rf *Raft) persist() {
+	// Your code here (2C).
+	// Example:
+	//rf.mu.Lock()
+	 w := new(bytes.Buffer)
+	 e := labgob.NewEncoder(w)
+	 e.Encode(rf.currentTerm)
+	 e.Encode(rf.votedFor)
+	 e.Encode(rf.log)
+	 e.Encode(rf.lastApplied)
+	 data := w.Bytes()
+	 rf.persister.SaveRaftState(data)
+	 //rf.mu.Unlock()
+}
+
+
+//
+// restore previously persisted state.
+//
+func (rf *Raft) readPersist(data []byte) {
+	if data == nil || len(data) &lt; 1 {
+		return
+	}
+	// Your code here (2C).
+	// Example:
+	 r := bytes.NewBuffer(data)
+	 d := labgob.NewDecoder(r)
+	 var xxx int
+	 var yyy int
+	 var zzz []RaftLog
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match222-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	 if d.Decode(&xxx) != nil ||
+	    d.Decode(&yyy) != nil ||
+	 	d.Decode(&zzz) != nil{
+	//   error...
+	 } else {
+	 	rf.mu.Lock()
+	   rf.currentTerm = xxx
+	   rf.votedFor = yyy
+	   rf.log = zzz
+	   rf.mu.Unlock()
+	 }
+}
+
+
+
+
+//
+// example RequestVote RPC arguments structure.
+// field names must start with capital letters!
+//
+type RequestVoteArgs struct {
+</FONT>	// Your data here (2A, 2B).
+	Term int             //candidate’s term
+	CandidateId int      //candidate requesting vote
+	LastLogIndex int     //index of candidate’s last log entry (§5.4)
+	LastLogTerm int      //term of candidate’s last log entry (§5.4)
+
+}
+
+//
+// example RequestVote RPC reply structure.
+// field names must start with capital letters!
+//
+type RequestVoteReply struct {
+	// Your data here (2A).
+	Term int          //currentTerm, for candidate to update itself
+	VoteGranted bool  //true means candidate received vote
+}
+
+type AppendEntriesArgs struct{
+	Term int
+	LeaderId int
+	PrevLogIndex int
+	PrevLogTerm int
+	Entries []RaftLog
+	LeaderCommit int
+}
+
+type AppendEntriesReply struct{
+	Term int          //currentTerm, for leader to update itself
+	Success bool      //true if follower contained entry
+	                  // matching prevLogIndex and prevLogTerm
+	LastMatchIndex int
+}
+
+//
+// example RequestVote RPC handler.
+//
+/*---------------------------------------------------------------RPC HANDLER FUNCTIONS--------------------------------------------------------------*/
+/*--------------------------------------------------------------------------------------------------------------------------------------------------*/
+/*--------------------------------------------------------------------------------------------------------------------------------------------------*/
+/*--------------------------------------------------------------------------------------------------------------------------------------------------*/
+func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
+	// Your code here (2A, 2B).
+	//Paper snippet
+	//Receiver implementation:
+	//1. Reply false if term &lt; currentTerm (§5.1)
+	//2. If votedFor is null or candidateId, and candidate’s log is at
+	//least as up-to-date as receiver’s log, grant vote (§5.2, §5.4)
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match222-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	DPrintf("ENTRY RequestVote() - Voter Node %v, Candidate Node %v\n",rf.me,args.CandidateId)
+	rf.mu.Lock()
+	//defer rf.mu.Unlock()
+	if(args.Term &lt; rf.currentTerm){
+		DPrintf("INSIDE RequestVote() -Voter Node %v, Candidate Node %v - Vote DENIED (Reason - 1)\n", rf.me,args.CandidateId)
+</FONT>		reply.VoteGranted = false
+		reply.Term = rf.currentTerm
+		rf.mu.Unlock()
+		return
+	}else{
+		voterLastLogIndex := rf.getLastLogIndex(true)
+		voterLastLogTerm := rf.getLastLogTerm(true)
+		if(args.Term &gt; rf.currentTerm){
+			rf.currentTerm = args.Term
+			rf.votedFor = -1
+		}
+
+		if(voterLastLogTerm == args.LastLogTerm && voterLastLogIndex &gt; args.LastLogIndex || voterLastLogTerm &gt; args.LastLogTerm){
+			DPrintf("INSIDE RequestVote() -Voter Node %v, Candidate Node %v - Vote DENIED (Reason - 2)\n", rf.me,args.CandidateId)
+			reply.VoteGranted = false
+			reply.Term = rf.currentTerm
+			rf.mu.Unlock()
+			return
+		}
+
+		if(rf.votedFor != args.CandidateId && rf.votedFor &gt; -1){
+			DPrintf("INSIDE RequestVote() -Voter Node %v, Candidate Node %v - Vote DENIED (Reason - 3)\n", rf.me,args.CandidateId)
+			reply.VoteGranted = false
+			reply.Term = rf.currentTerm
+			rf.mu.Unlock()
+			return
+		}
+		DPrintf("INSIDE RequestVote() -Voter Node %v, Candidate Node %v - Vote APPROVED (Reason - 4)\n", rf.me,args.CandidateId)
+		DPrintf("INSIDE RequestVote() -Voter Node %v, Candidate Node %v - Changing appendEntriesReceived = true\n", rf.me,args.CandidateId)
+		rf.appendEntryReceived = true
+		rf.votedFor = args.CandidateId
+		reply.VoteGranted = true
+		rf.mu.Unlock()
+		return
+
+	}
+
+}
+
+//function to respond to heartbeat
+func (rf *Raft) HeartBeat(args *AppendEntriesArgs, reply *AppendEntriesReply){
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match222-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	rf.mu.Lock()
+	if(rf.currentTerm &gt; args.Term){
+		DPrintf("ENTRY HeartBeat() - Receiver %v currentTerm - %v, Leader %v currentTerm - %v (BAD)\n",rf.me,rf.currentTerm,args.LeaderId,args.Term)
+		reply.Term = rf.currentTerm
+		reply.Success = false
+</FONT>	}else{
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match222-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		DPrintf("ENTRY HeartBeat() - Receiver %v currentTerm - %v, Leader %v currentTerm - %v (GOOD)\n",rf.me,rf.currentTerm,args.LeaderId,args.Term)
+		rf.currentTerm = args.Term
+		reply.Success = true
+</FONT>		DPrintf("ENTRY HeartBeat() - Receiver %v currentTerm - %v, Leader %v currentTerm - %v - Changing Node %v appendEntriesFlag to true \n",rf.me,rf.currentTerm,args.LeaderId,args.Term,rf.me)
+		rf.appendEntryReceived = true
+		rf.state = 0
+	}
+	rf.mu.Unlock()
+}
+
+//function to respond to AppendEntries
+/*
+Receiver implementation:
+1. Reply false if term &lt; currentTerm (§5.1)
+2. Reply false if log doesn’t contain an entry at prevLogIndex
+   whose term matches prevLogTerm (§5.3)
+3. If an existing entry conflicts with a new one (same index
+   but different terms), delete the existing entry and all that
+   follow it (§5.3)
+4. Append any new entries not already in the log
+5. If leaderCommit &gt; commitIndex, set commitIndex =
+   min(leaderCommit, index of last new entry)
+ */
+func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply){
+	DPrintf("INSIDE AppendEntries() for Node %v - Waiting for lock....",rf.me)
+	rf.mu.Lock()
+	DPrintf("INSIDE AppendEntries() for Node %v - Lock Received",rf.me)
+	//Condition 1 check
+	DPrintf("ENTRY AppendEntries() - Node %v Term %v Request %+v\n",rf.me,rf.currentTerm,args)
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match222-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	if(rf.currentTerm &gt; args.Term){
+		DPrintf("ENTRY AppendEntries() - Receiver %v currentTerm - %v, Leader %v currentTerm - %v (BAD. Reason - 1)\n",rf.me,rf.currentTerm,args.LeaderId,args.Term)
+		reply.Term = rf.currentTerm
+</FONT>		reply.Success = false
+		rf.mu.Unlock()
+		DPrintf("INSIDE AppendEntries() for Node %v - Lock Released",rf.me)
+		return
+	}else{
+		//Condition 2 check
+		//Part 2-1 : Not sufficient logs to check
+		rf.currentTerm = args.Term
+		rf.state = 0
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match222-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		reply.Term = rf.currentTerm
+		DPrintf("ENTRY AppendEntries() - Receiver %v currentTerm - %v, Leader %v currentTerm - %v (OK)\n",rf.me,rf.currentTerm,args.LeaderId,args.Term)
+		nodeLastLogIndex := rf.getLastLogIndex(false)
+</FONT>		if(nodeLastLogIndex &lt; args.PrevLogIndex) {
+			DPrintf("INSIDE1 AppendEntries() - Receiver %v - Block 1\n",rf.me)
+			DPrintf("INSIDE1 AppendEntries() - Node %v - LastLogIndex = %v, Args.PrevLogIndex = %v\n",rf.me,nodeLastLogIndex,args.PrevLogIndex)
+			reply.Success = false
+			reply.LastMatchIndex = nodeLastLogIndex
+			DPrintf("INSIDE1 AppendEntries() Node %v - nodeLastLogIndex - %+v\n",rf.me,nodeLastLogIndex)
+			reply.Term = rf.currentTerm
+			DPrintf("INSIDE1 AppendEntries(1) Node %v  - Reply - %+v\n",rf.me,reply)
+			DPrintf("INSIDE1 AppendEntries() for Node %v - Lock Released",rf.me)
+			rf.mu.Unlock()
+			return
+		}else if(rf.log[args.PrevLogIndex].Term != args.PrevLogTerm){
+			//Find the last log entry whose term is not the same
+			DPrintf("INSIDE2 AppendEntries() - Receiver %v - Block 2\n",rf.me)
+			DPrintf("INSIDE2 AppendEntries() - Node %v - LastLogIndex = %v, Args.PrevLogIndex = %v",rf.me,nodeLastLogIndex,args.PrevLogIndex)
+			prevPrevTerm := rf.log[args.PrevLogIndex].Term
+			index := args.PrevLogIndex - 1
+			for index &gt;= 0 {
+				if(rf.log[index].Term != prevPrevTerm){
+					break
+				}else{
+					index--
+				}
+			}
+			if(index &lt; 0){
+				index = 0
+				//Cannot happen to go in negative - because 0th log is common
+			}
+			reply.LastMatchIndex = index
+			reply.Success = false
+			DPrintf("INSIDE2 AppendEntries(2) Node %v  - Reply - %+v\n",rf.me,reply)
+			rf.mu.Unlock()
+			DPrintf("INSIDE2 AppendEntries() for Node %v - Lock Released",rf.me)
+			return
+		}else{
+			DPrintf("INSIDE3 AppendEntries() - Receiver %v - Block 3\n",rf.me)
+			DPrintf("INSIDE3 AppendEntries() - Node %v - LastLogIndex = %v, Args.PrevLogIndex = %v",rf.me,nodeLastLogIndex,args.PrevLogIndex)
+			rf.log = append(rf.log[:args.PrevLogIndex + 1],args.Entries...)
+			temp := rf.getLastLogIndex(false)
+			DPrintf("INSIDE3 AppendEntries() - Node %v - NewLastLogIndex = %v, Args.PrevLogIndex = %v",rf.me,temp,args.PrevLogIndex)
+			reply.Success = true
+			rf.appendEntryReceived = true
+			reply.LastMatchIndex = temp
+			rf.commitIndex = min(temp,args.LeaderCommit)
+			DPrintf("INSIDE3 AppendEntries() - Node %v - LastLogIndex = %v, Args.PrevLogIndex = %v",rf.me,nodeLastLogIndex,args.PrevLogIndex)
+			DPrintf("INSIDE3 AppendEntries(3) Node %v  - Reply - %+v\n",rf.me,reply)
+			rf.mu.Unlock()
+			DPrintf("INSIDE3 AppendEntries() for Node %v - Lock Released",rf.me)
+			return
+		}
+	}
+}
+
+/*--------------------------------------------------------------------------------------------------------------------------------------------------*/
+/*--------------------------------------------------------------------------------------------------------------------------------------------------*/
+/*--------------------------------------------------------------------------------------------------------------------------------------------------*/
+/*--------------------------------------------------------------------------------------------------------------------------------------------------*/
+
+//
+// example code to send a RequestVote RPC to a server.
+// server is the index of the target server in rf.peers[].
+// expects RPC arguments in args.
+// fills in *reply with RPC reply, so caller should
+// pass &reply.
+// the types of the args and reply passed to Call() must be
+// the same as the types of the arguments declared in the
+// handler function (including whether they are pointers).
+//
+// The labrpc package simulates a lossy network, in which servers
+// may be unreachable, and in which requests and replies may be lost.
+// Call() sends a request and waits for a reply. If a reply arrives
+// within a timeout interval, Call() returns true; otherwise
+// Call() returns false. Thus Call() may not return for a while.
+// A false return can be caused by a dead server, a live server that
+// can't be reached, a lost request, or a lost reply.
+//
+// Call() is guaranteed to return (perhaps after a delay) *except* if the
+// handler function on the server side does not return.  Thus there
+// is no need to implement your own timeouts around Call().
+//
+// look at the comments in ../labrpc/labrpc.go for more details.
+//
+// if you're having trouble getting RPC to work, check that you've
+// capitalized all field names in structs passed over RPC, and
+// that the caller passes the address of the reply struct with &, not
+// the struct itself.
+//
+func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
+	//DPrintf("CALL SendRequestVote\n")
+	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
+	//DPrintf("DONE SendRequestVote\n")
+	return ok
+}
+
+func (rf *Raft) sendHeartBeatVote(server int, args *AppendEntriesArgs, reply *AppendEntriesReply, nodeId int) bool {
+	//DPrintf("CALL AppendEntries to Node %v - Args - %+v, Reply - %+v\n",nodeId,*args,*reply)
+	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
+	//DPrintf("DONE AppendEntries to Node %v - Args - %+v, Reply - %+v\n",nodeId,*args,*reply)
+	return ok
+}
+
+func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply, nodeId int) bool {
+	//DPrintf("CALL AppendEntries to Node %v - Args - %+v, Reply - %+v\n",nodeId,*args,*reply)
+	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
+	//DPrintf("DONE AppendEntries to Node %v - Args - %+v, Reply - %+v\n",nodeId,*args,*reply)
+	return ok
+}
+
+//
+// the service using Raft (e.g. a k/v server) wants to start
+// agreement on the next command to be appended to Raft's log. if this
+// server isn't the leader, returns false. otherwise start the
+// agreement and return immediately. there is no guarantee that this
+// command will ever be committed to the Raft log, since the leader
+// may fail or lose an election. even if the Raft instance has been killed,
+// this function should return gracefully.
+//
+// the first return value is the index that the command will appear at
+// if it's ever committed. the second return value is the current
+// term. the third return value is true if this server believes it is
+// the leader.
+//
+func (rf *Raft) Start(command interface{}) (int, int, bool) {
+	index := -1
+	term := -1
+	isLeader := false
+
+	// Your code here (2B).
+	rf.mu.Lock()
+	if(rf.state == 2){
+		log := RaftLog{
+			Term:  rf.currentTerm,
+			Index: rf.getLastLogIndex(false) + 1,
+			Data:  command,
+		}
+		rf.log = append(rf.log, log)
+		DPrintf("DATA ADDED AT Leader Node %v - Log - %v\n",rf.me,rf.log)
+		rf.matchIndex[rf.me] = rf.getLastLogIndex(false)
+		rf.nextIndex[rf.me] = rf.matchIndex[rf.me] + 1
+		//rf.commitIndex = rf.commitIndex + 1
+		index = len(rf.log) - 1
+		term = rf.currentTerm
+		isLeader = rf.state == 2
+	}
+	rf.mu.Unlock()
+
+
+	return index, term, isLeader
+}
+
+//
+// the tester calls Kill() when a Raft instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (rf *Raft) Kill() {
+	// Your code here, if desired.
+	rf.mu.Lock()
+	rf.kill = true
+	rf.mu.Unlock()
+}
+
+//
+// the service or tester wants to create a Raft server. the ports
+// of all the Raft servers (including this one) are in peers[]. this
+// server's port is peers[me]. all the servers' peers[] arrays
+// have the same order. persister is a place for this server to
+// save its persistent state, and also initially holds the most
+// recent saved state, if any. applyCh is a channel on which the
+// tester or service expects Raft to send ApplyMsg messages.
+// Make() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func Make(peers []*labrpc.ClientEnd, me int,
+	persister *Persister, applyCh chan ApplyMsg) *Raft {
+	rf := &Raft{}
+	rf.peers = peers
+	rf.persister = persister
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match222-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	rf.me = me
+	rf.applyCh = applyCh
+	// Your initialization code here (2A, 2B, 2C).
+	rf.votedFor = -1
+	rf.currentTerm = 0
+	rf.log = make([]RaftLog,0)
+</FONT>	emptyLog :=  RaftLog{
+		Term:  0,
+		Index: 0,
+		Data:  nil,
+	}
+	rf.log = append(rf.log,emptyLog)
+	rf.state = 0
+	rf.matchIndex = make([]int,len(rf.peers))
+	rf.nextIndex = make([]int,len(rf.peers))
+	rf.commitIndex = 0
+	rf.lastApplied = 0
+	rf.votes = 0
+	DPrintf("Node %v initial setup appendEntriesFlag = false",rf.me)
+	rf.appendEntryReceived = false
+	rf.kill = false
+
+	go func() {
+		for{
+			time.Sleep(time.Duration(400 + rand.Intn(200)) * time.Millisecond)
+			rf.mu.Lock()
+			if(rf.kill == true){
+				rf.mu.Unlock()
+				break
+			}
+			rf.mu.Unlock()
+			rf.mu.Lock()
+			DPrintf("ENTRY electionThread - Node %v - appendEntriesReceived = %v, state = %v\n", rf.me,rf.appendEntryReceived,rf.state)
+			if (rf.appendEntryReceived == false && rf.state != 2) {
+				DPrintf("INSIDE electionThread - Node %v State %v AppendEntries %v\n",rf.me,rf.state,rf.appendEntryReceived)
+				voteRequestArgs := rf.becomeCandidate()
+				//fmt.Printf("%+v\n", voteRequestArgs)
+				rf.mu.Unlock()
+				rf.askForVotes(voteRequestArgs)
+			}else{
+				DPrintf("INSIDE electionThread - Node %v changing appendEntriesReceived to false (isLeader = %v)\n",rf.me,rf.state == 2)
+				rf.appendEntryReceived = false
+				rf.mu.Unlock()
+			}
+
+		}
+	}()
+	go func() {
+		for {
+			time.Sleep(time.Duration(150) * time.Millisecond)
+			rf.mu.Lock()
+			if rf.kill==true{
+				rf.mu.Unlock()
+				break
+			}
+			rf.mu.Unlock()
+			go rf.sendHeartBeat()
+		}
+	}()
+	go func() {
+		for{
+			time.Sleep(time.Duration(100) * time.Millisecond)
+			DPrintf("INSIDE applyCommitMessages() for Node %v\n",rf.me)
+			rf.mu.Lock()
+			if(rf.kill == true){
+				rf.mu.Unlock()
+				return
+			}
+			nosLogsToCommit := rf.commitIndex - rf.lastApplied
+			if(nosLogsToCommit == 0){
+				DPrintf("There are logs to commit - Node %v lastApplied = %v, commitIndex = %v\n", rf.me,rf.lastApplied,rf.commitIndex)
+			}
+			//Updating problem. Because last applied increments as well
+			lastLastApplied := rf.lastApplied
+			for index := 1; index &lt;= nosLogsToCommit; index++{
+				message := ApplyMsg{
+					CommandValid: true,
+					Command:      rf.log[lastLastApplied + index].Data,
+					CommandIndex: lastLastApplied + index,
+				}
+				DPrintf("Inside applyCommitMessages - Node - %v, Term - %v, Message - %v, FullLog - %+v\n",rf.me,rf.currentTerm,message,rf.log)
+				rf.lastApplied = rf.lastApplied + 1
+				DPrintf("INSIDE applyCommitMessages (DATA COMMITTED!!!) - Node %v - LastApplied - %v\n",rf.me,rf.lastApplied)
+				DPrintf("INSIDE applyCommitMessages (DATA COMMITTING - %+v)",message)
+				rf.applyCh &lt;- message
+			}
+			rf.persist()
+			if(rf.state == 2){
+				DPrintf("INSIDE commitIndexUpdate() - Node %v\n",rf.me)
+				medianLogEntry := median(copy(rf.matchIndex...)...)
+				DPrintf("INSIDE commitIndexUpdate() - Node %v , MedianLogEntry - %+v, MatchIndex - %+v\n",rf.me, medianLogEntry, rf.matchIndex)
+				if(medianLogEntry &gt; rf.commitIndex && medianLogEntry &lt;= rf.getLastLogIndex(false)){
+					rf.commitIndex = medianLogEntry
+				}
+			}
+			rf.mu.Unlock()
+		}
+	}()
+
+
+	// initialize from state persisted before a crash
+	rf.readPersist(persister.ReadRaftState())
+
+
+	return rf
+}
+
+
+
+/*---------------------------------------------------------------EACH SEPARATE THREAD--------------------------------------------------------------*/
+
+
+
+/*------------------------------------------------------------------------------------------------------------------------------------------------*/
+</PRE>
+</PRE>
+</BODY>
+</HTML>

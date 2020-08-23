@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.5.0 -->
+<title>Paxos | Home</title>
+<meta name="generator" content="Jekyll v3.8.5" />
+<meta property="og:title" content="Paxos" />
+<meta property="og:locale" content="en_US" />
+<link rel="canonical" href="http://localhost:4000/teaching/ds/20fa/notes/paxos.html" />
+<meta property="og:url" content="http://localhost:4000/teaching/ds/20fa/notes/paxos.html" />
+<meta property="og:site_name" content="Home" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"Paxos","url":"http://localhost:4000/teaching/ds/20fa/notes/paxos.html","@context":"http://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://localhost:4000/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>Paxos</h1>
+         </header> -->
+
+  <section>
+    <h1 id="paxos">Paxos</h1>
+
+<h2 id="single-instance-consensus">Single-instance consensus</h2>
+<ul>
+  <li>different problem abstraction from Raft</li>
+  <li>same environment—asynchrony
+    <ul>
+      <li>node/network failure/slowness</li>
+    </ul>
+  </li>
+  <li>“equivalent” to multi-instance consensus</li>
+  <li>proposer/acceptor/learner: logical roles; each server/replica has all</li>
+</ul>
+
+<h2 id="preliminaries">Preliminaries</h2>
+<ul>
+  <li>starting point
+    <ul>
+      <li>different replicas have different ids; can generate distinguished numbers</li>
+      <li>a value is attached with a number to distinguish</li>
+    </ul>
+  </li>
+  <li>goal
+    <ul>
+      <li>The system eventually “chooses” a value; or, a value gets chosen</li>
+      <li>Chosen (by definition) if it is “accepted” by a majority of servers</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="thinking">Thinking</h2>
+<ul>
+  <li>a server has to accept the first value it sees.
+    <ul>
+      <li>otherwise the system will never choose any value</li>
+      <li>consequence: each server may accept different values</li>
+    </ul>
+  </li>
+  <li>a server has to accept multiple values
+    <ul>
+      <li>otherwise “split”</li>
+      <li>consequences multiple values can be chosen</li>
+    </ul>
+  </li>
+  <li>if two values get chosen, they must be the same value
+    <ul>
+      <li>otherwise unsafe</li>
+    </ul>
+  </li>
+  <li>equivalent to: if a value with number n is chosen, any value with greater number m (m&gt;n) chosen must be the same value</li>
+  <li>further: if value-n is chosen, any value-m accepted must be the same value</li>
+  <li>further: if value-n is chosen, any value-m proposed must be the same value</li>
+  <li>if value-n is chosen, before value-m is proposed, the system replies value-n to the value-m proposer.</li>
+  <li>if value-n is <em>possibly</em> chosen, before value-m is proposed, the system
+    <ul>
+      <li>replies value-n to the value-m proposer,</li>
+      <li>or, the system promises not to accept/choose value-n anymore.</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="protocol">Protocol</h2>
+<ul>
+  <li>prepare phase:
+    <ul>
+      <li>pick number n, send prepare messages (phase-1a) to all</li>
+      <li>on receiving a prepare request, each replica updates its highest seen ballot, reply (phase-1b) with the highest number value it has ever accepted.</li>
+      <li>collect replies (phase-1b) until get at least a majority, pick the value with the greatest number to propose, if no value in replies, pick any value</li>
+    </ul>
+  </li>
+  <li>accept phase:
+    <ul>
+      <li>use the value picked, send accept messages to all</li>
+      <li>on receiving an accept message, check highest seen number, accept and reply</li>
+      <li>a majority of replies -&gt; chosen (commit)</li>
+    </ul>
+  </li>
+  <li>commit phase:
+    <ul>
+      <li>broadcast commit messages notifying the chosen value</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="questions">Questions</h2>
+<ul>
+  <li>can a server accept different values?
+    <ul>
+      <li>yes</li>
+    </ul>
+  </li>
+  <li>does the majority of phase-1 (prepare) and phase-2 (accept) have to be the same?
+    <ul>
+      <li>no</li>
+    </ul>
+  </li>
+  <li>can each server only keep 1 ballot number instead of 2?
+    <ul>
+      <li>no</li>
+    </ul>
+  </li>
+  <li>in a 3-replica system, if (v1, b1) is accepted on server s1, (v1, b3) is accepted on s2, is the value v1 considered chosen (committed)?
+    <ul>
+      <li>no, think about the case where:
+        <ul>
+          <li>s1, s2 prepared b1; s1 accepted (v1, b1)</li>
+          <li>s2, s3 prepared b2; s2 accepted (v2, b2)</li>
+          <li>s1, s3 prepared b3; s3 accepted (v1, b3)</li>
+          <li>s1, s2 prepared b4; s1, s2 accepted (v2, b4)</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="multi-paxos">Multi-Paxos</h2>
+<ul>
+  <li>each log entry maps to a Paxos instance</li>
+  <li>batch prepare request
+    <ul>
+      <li>normally 1 roundtrip to commit a value on the leader, same as Raft</li>
+    </ul>
+  </li>
+  <li>log entry has more content than Raft
+    <ul>
+      <li>highest seen ballot, accepted value ballot, value</li>
+    </ul>
+  </li>
+  <li>unlike Raft, log entry could be modified
+    <ul>
+      <li>otherwise what could happen?</li>
+    </ul>
+  </li>
+  <li>reconfiguration
+    <ul>
+      <li>add view information into each log entry.</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="compare-multi-paxos-and-raft">Compare Multi-Paxos and Raft</h2>
+<ul>
+  <li>similarities:
+    <ul>
+      <li>log structure</li>
+      <li>performance (w.r.t. 1 message roundtrip to commit)</li>
+    </ul>
+  </li>
+  <li>differences:
+    <ul>
+      <li>currentTerm is not highest seen ballot</li>
+      <li>term in each log entry is not the same as accepted ballot</li>
+      <li>Raft has two extra rules</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="paxos-raft">Paxos-&gt;Raft</h2>
+<ul>
+  <li>change phase-1: move comparison from proposer to acceptor.
+    <ul>
+      <li>proposer send its accepted ballot to others to request a “vote”</li>
+    </ul>
+  </li>
+  <li>“super-prepare/accept”
+    <ul>
+      <li>each super-prepare prepares all instances</li>
+      <li>each super-accept accepts all instances</li>
+      <li>“super-reject”, if any instances refuses to prepare/accept, then reject</li>
+    </ul>
+  </li>
+  <li>global ballot number?
+    <ul>
+      <li>a single highest seen ballot for all instances</li>
+      <li>a single highest accepted ballot number for all instances
+        <ul>
+          <li>what about the ballot numbers in each log entry?</li>
+          <li>if we keep them, “sometimes”, they are the same as the highest accepted ballot number
+            <ul>
+              <li>sometimes = when highest seen ballot = highest accepted ballot.</li>
+            </ul>
+          </li>
+          <li>if the proposing server always use the ballot in a new log entry:
+            <ul>
+              <li>for a recipient, the last log entry log ballot is always the same as the global highest accepted ballot.</li>
+              <li>so we can remove the global highest accepted ballot.</li>
+            </ul>
+          </li>
+        </ul>
+      </li>
+      <li>revisit Raft rules
+        <ul>
+          <li>“up-to-date” rule in leader election</li>
+          <li>“cannot count” rule in failure recovery</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>shrink the super-prepare/accept message size.
+    <ul>
+      <li>prepare
+        <ul>
+          <li>send a digest of all previously accepted entries</li>
+          <li>this digest is accepted ballot + log length (index).</li>
+        </ul>
+      </li>
+      <li>accept
+        <ul>
+          <li>prefix of the committed logs are the same.</li>
+          <li>inductively, a ballot at the same index is the same =&gt; all previous are the same</li>
+          <li>send a “delta”: what is different between the leader/follower?</li>
+          <li>should guarantee no “holes”.</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+</body>
+
+</html>

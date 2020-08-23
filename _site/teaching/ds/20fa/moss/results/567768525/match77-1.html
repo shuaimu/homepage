@@ -1,0 +1,304 @@
+<HTML>
+<HEAD>
+<TITLE>./spring19/richackard/src/shardkv/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./spring19/richackard/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+import (
+	"labgob"
+	"labrpc"
+	"raft"
+	"sync"
+	"time"
+)
+
+type ShardMaster struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	// Your data here.
+	clerkRequestLastSeen map[int64]int64     // Used to avoid duplicated entry. Maps clerkID to last finished request ID associated with it.
+	requestStatusLookup  map[int64]chan bool // Used to notify task status.
+	configs              []Config            // indexed by config num
+	// TODO: Add another map that stores server to shards mapping.
+}
+
+type Op struct {
+	// Your data here.
+	Type      string
+	RequestID int64
+	ClerkID   int64
+	Servers   map[int][]string
+	GID       int
+	GIDs      []int
+	Shard     int
+	ConfigNum int
+}
+
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+	// Your code here.
+	command := Op{
+		Type:      JoinOp,
+		RequestID: args.RequestID,
+<A NAME="9"></A><FONT color = #FF00FF><A HREF="match77-0.html#9" TARGET="0"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		ClerkID:   args.ClerkID,
+		Servers:   args.Servers,
+	}
+	DPrintf("\033[36m[ShardMaster %d] Received Op (CID %d, RID %d) (content: %s, %+v)\033[37m", sm.me, args.ClerkID, args.RequestID, command.Type, args)
+</FONT>	err := sm.executeCommand(command)
+	reply.Err = err
+	if err != OK {
+		reply.WrongLeader = true
+	}
+	DPrintf("\033[36m[ShardMaster %d] Finished Op (CID %d, RID %d) (content: %s, %+v)\033[37m", sm.me, args.ClerkID, args.RequestID, command.Type, args)
+}
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+	// Your code here.
+	command := Op{
+		Type:      LeaveOp,
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match77-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		RequestID: args.RequestID,
+		ClerkID:   args.ClerkID,
+		GIDs:      args.GIDs}
+	DPrintf("\033[36m[ShardMaster %d] Received Op (CID %d, RID %d) (content: %s, %+v)\033[37m", sm.me, args.ClerkID, args.RequestID, command.Type, args)
+</FONT>	err := sm.executeCommand(command)
+	reply.Err = err
+	if err != OK {
+		reply.WrongLeader = true
+	}
+	DPrintf("\033[36m[ShardMaster %d] Finished Op (CID %d, RID %d) (content: %s, %+v)\033[37m", sm.me, args.ClerkID, args.RequestID, command.Type, args)
+
+}
+
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+	// Your code here.
+	command := Op{
+		Type:      MoveOp,
+		RequestID: args.RequestID,
+		ClerkID:   args.ClerkID,
+		GID:       args.GID,
+		Shard:     args.Shard,
+	}
+	DPrintf("\033[36m[ShardMaster %d] Received Op (CID %d, RID %d) (content: %s, %+v)\033[37m", sm.me, args.ClerkID, args.RequestID, command.Type, args)
+	err := sm.executeCommand(command)
+	reply.Err = err
+	if err != OK {
+		reply.WrongLeader = true
+	}
+	DPrintf("\033[36m[ShardMaster %d] Finished Op (CID %d, RID %d) (content: %s, %+v)\033[37m", sm.me, args.ClerkID, args.RequestID, command.Type, args)
+}
+
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+	// Your code here.
+	command := Op{
+		Type:      QueryOp,
+		RequestID: args.RequestID,
+		ClerkID:   args.ClerkID,
+		ConfigNum: args.Num}
+	DPrintf("\033[36m[ShardMaster %d] Received Op (CID %d, RID %d) (content: %s, %+v)\033[37m", sm.me, args.ClerkID, args.RequestID, command.Type, args)
+	err := sm.executeCommand(command)
+	reply.Err = err
+	if err == OK {
+		sm.mu.Lock()
+		sm.fillConfigTo(args.Num, &reply.Config)
+<A NAME="8"></A><FONT color = #00FFFF><A HREF="match77-0.html#8" TARGET="0"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		sm.mu.Unlock()
+	} else {
+		reply.WrongLeader = true
+	}
+	DPrintf("\033[36m[ShardMaster %d] Finished Op (CID %d, RID %d) (content: %s, %+v)\033[37m", sm.me, args.ClerkID, args.RequestID, command.Type, args)
+</FONT>
+}
+
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match77-0.html#7" TARGET="0"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (sm *ShardMaster) executeCommand(command Op) (err Err) {
+	_, _, isLeader := sm.rf.Start(command)
+
+	if !isLeader {
+		// Wrong Leader
+		DPrintf("\033[31m[ShardMaster %d] *Wrong Leader* (CID %d, RID %d)\033[37m", sm.me, command.ClerkID, command.RequestID)
+</FONT><A NAME="6"></A><FONT color = #00FF00><A HREF="match77-0.html#6" TARGET="0"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		err = NotLeader
+		return
+	}
+
+	// It's a fresh request and it's executing normally (at least for now).
+	// Don't block the applying command goroutine.
+	resultCh := make(chan bool, 1)
+
+	sm.mu.Lock()
+	sm.requestStatusLookup[command.RequestID] = resultCh
+	sm.mu.Unlock()
+
+	// Start waiting for command to be successully applied to state machine or timeout.
+	success := false
+</FONT>	select {
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match77-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	case success = &lt;-resultCh:
+		if success {
+			err = OK
+		}
+	case &lt;-time.After(Timeout * time.Millisecond):
+		// The raft peer could have lost its leadership.
+		err = NotLeader
+	}
+	// Remove the request from status table since it is now completed.
+	sm.mu.Lock()
+	delete(sm.requestStatusLookup, command.RequestID)
+	sm.mu.Unlock()
+	return
+}
+
+func (sm *ShardMaster) StartApplyingCommands(ch chan raft.ApplyMsg, persister *raft.Persister) {
+	for {
+		commandWrapper := &lt;-ch
+</FONT>		DPrintf("\033[32m[ShardMaster %d New Command]: %+v", sm.me, commandWrapper)
+		if !commandWrapper.CommandValid {
+			continue
+		}
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match77-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_7.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		commandToApply := commandWrapper.Command.(Op)
+		clerkID := commandToApply.ClerkID
+		requestID := commandToApply.RequestID
+		opType := commandToApply.Type
+
+		sm.mu.Lock()
+		if lastRequestID, exist := sm.clerkRequestLastSeen[clerkID]; exist && lastRequestID == requestID {
+			// Duplicate Request.
+			DPrintf("\033[31m[ShardMaster %d] Duplicate Request (CID %d, RID %d)\033[37m", sm.me, clerkID, requestID)
+			if ch, exist := sm.requestStatusLookup[lastRequestID]; exist {
+				sm.mu.Unlock()
+				ch &lt;- true
+			} else {
+				sm.mu.Unlock()
+			}
+		} else {
+			sm.mu.Unlock()
+			switch opType {
+			case QueryOp:
+				sm.mu.Lock()
+</FONT>				// Notify the main routine this put has been handled.
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match77-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				if ch, exist := sm.requestStatusLookup[requestID]; exist {
+					sm.clerkRequestLastSeen[clerkID] = requestID
+					sm.mu.Unlock()
+					ch &lt;- true
+				} else {
+					sm.clerkRequestLastSeen[clerkID] = requestID
+					sm.mu.Unlock()
+				}
+				DPrintf("\033[32m[ShardMaster %d Applied] (CID %d, RID %d) - (%s, %+v)\033[37m", sm.me, clerkID, requestID, opType, commandToApply)
+</FONT>			case JoinOp:
+				sm.mu.Lock()
+				args := JoinArgs{
+					Servers: commandToApply.Servers,
+				}
+				sm.handleJoinOp(&args)
+				// Notify the main routine this put has been handled.
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match77-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				if ch, exist := sm.requestStatusLookup[requestID]; exist {
+					sm.clerkRequestLastSeen[clerkID] = requestID
+					sm.mu.Unlock()
+					ch &lt;- true
+				} else {
+					sm.clerkRequestLastSeen[clerkID] = requestID
+					sm.mu.Unlock()
+				}
+				DPrintf("\033[32m[ShardMaster %d Applied] (CID %d, RID %d) - (%s, %+v)\033[37m", sm.me, clerkID, requestID, opType, commandToApply)
+</FONT>			case LeaveOp:
+				sm.mu.Lock()
+				args := LeaveArgs{
+					GIDs: commandToApply.GIDs,
+				}
+				sm.handleLeaveOp(&args)
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match77-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				if ch, exist := sm.requestStatusLookup[requestID]; exist {
+					sm.clerkRequestLastSeen[clerkID] = requestID
+					sm.mu.Unlock()
+					ch &lt;- true
+				} else {
+					sm.clerkRequestLastSeen[clerkID] = requestID
+					sm.mu.Unlock()
+				}
+				DPrintf("\033[32m[ShardMaster %d Applied] (CID %d, RID %d) - (%s, %+v)\033[37m", sm.me, clerkID, requestID, opType, commandToApply)
+</FONT>			case MoveOp:
+				sm.mu.Lock()
+				args := MoveArgs{
+					GID:   commandToApply.GID,
+					Shard: commandToApply.Shard,
+				}
+				sm.handleMoveOp(&args)
+				if ch, exist := sm.requestStatusLookup[requestID]; exist {
+					sm.clerkRequestLastSeen[clerkID] = requestID
+					sm.mu.Unlock()
+					ch &lt;- true
+				} else {
+					sm.clerkRequestLastSeen[clerkID] = requestID
+					sm.mu.Unlock()
+				}
+				DPrintf("\033[32m[ShardMaster %d Applied] (CID %d, RID %d) - (%s, %+v)\033[37m", sm.me, clerkID, requestID, opType, commandToApply)
+			}
+
+		}
+		DPrintf("\033[35m***END [ShardMaster %d Applied] (CID %d, RID %d) - (%s, %+v)\033[37m", sm.me, clerkID, requestID, opType, commandToApply)
+	}
+}
+
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+	// Your code here, if desired.
+}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+	return sm.rf
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	sm := new(ShardMaster)
+	sm.me = me
+
+	sm.configs = make([]Config, 1)
+	sm.configs[0].Groups = map[int][]string{}
+
+	labgob.Register(Op{})
+	sm.applyCh = make(chan raft.ApplyMsg)
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+	// Your code here.
+	sm.clerkRequestLastSeen = make(map[int64]int64)
+	sm.requestStatusLookup = make(map[int64]chan bool)
+	go sm.StartApplyingCommands(sm.applyCh, persister)
+	return sm
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,282 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/yashd/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/yashd/src/kvraft/server.go<p><PRE>
+package raftkv
+
+import (
+	"fmt"
+	"labgob"
+	"labrpc"
+	"log"
+	"raft"
+	"sync"
+	"time"
+)
+
+const Debug = 0
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+
+type Op struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+	Command string
+	Key string
+	Value string
+	ClientId int64
+	LogId int64
+}
+
+type MapKey struct{
+	ClientId int64
+	LogId int64
+}
+
+type KVServer struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	maxraftstate int // snapshot if log grows this big
+	data map[string]string
+	IndexMap map[int]Op
+	ExpectedIndexMap map[int]MapKey
+	AppliedMap map[MapKey]int
+	lastApplied int
+
+	// Your definitions here.
+}
+
+func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
+	// Your code here.
+	oper:=Op{Command:"Get",Key:args.Key,LogId:args.LogId,ClientId:args.ClientId}
+	_,leaderCheck:=kv.rf.GetState()
+
+	if !leaderCheck{
+		return
+	}
+
+	map_key:=MapKey{ClientId:oper.ClientId,LogId:oper.LogId}
+	fmt.Println("Sending Get Command from client:",args)
+	index,_,isLeader:=kv.rf.Start(oper)
+	reply.WrongLeader=isLeader
+	reply.Index=index
+	reply.Status=false
+
+	kv.mu.Lock()
+	kv.ExpectedIndexMap[index]=map_key
+	kv.mu.Unlock()
+
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match164-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	if reply.WrongLeader {
+
+		count:=0
+		for count&lt;10 {
+		//for{
+			flag := -1
+			kv.mu.Lock()
+			if actual_index, ok := kv.IndexMap[index]; ok  {
+</FONT>					fmt.Println("Successfully completed Get request from server side:", args)
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match164-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+					flag=0
+					if actual_index.ClientId==map_key.ClientId && actual_index.LogId==map_key.LogId{
+						reply.Status=true
+						reply.Value = kv.data[oper.Key]
+</FONT><A NAME="7"></A><FONT color = #0000FF><A HREF="match164-1.html#7" TARGET="1"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+					}else{
+						reply.Status=false
+					}
+			}
+
+			kv.mu.Unlock()
+			//fmt.Println("Server Waiting")
+			if flag == 0 {
+				break
+			}
+			count+=1
+			time.Sleep(100*time.Millisecond)
+</FONT>		}
+	}
+
+	if !reply.Status {
+		fmt.Println("Get Command failed from client:", args)
+	}
+
+}
+
+func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	// Your code here.
+	oper:=Op{Command:args.Op,Key:args.Key,Value:args.Value,LogId:args.LogId,ClientId:args.ClientId}
+	_,leaderCheck:=kv.rf.GetState()
+	if !leaderCheck{
+		return
+	}
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match164-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	map_key:=MapKey{ClientId:oper.ClientId,LogId:oper.LogId}
+	index,term,isLeader:=kv.rf.Start(oper)
+	reply.WrongLeader=isLeader
+	reply.Index=index
+</FONT>	reply.Status=false
+
+	kv.mu.Lock()
+	kv.ExpectedIndexMap[index]=map_key
+	kv.mu.Unlock()
+
+	fmt.Println("Sending Put Command from client:",args, " in term:",term)
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match164-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	if reply.WrongLeader {
+		count:=0
+		for count&lt;10 {
+			flag:=-1
+			kv.mu.Lock()
+			if actual_index, ok := kv.IndexMap[index]; ok {
+</FONT>				fmt.Println("Successfully completed Get request from server side:", args)
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match164-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				flag=0
+				if actual_index.ClientId==map_key.ClientId && actual_index.LogId==map_key.LogId{
+					reply.Status=true
+				}else{
+					reply.Status=false
+				}
+			}
+			kv.mu.Unlock()
+</FONT>			fmt.Println("Server Waiting")
+			if flag==0{
+				break
+			}
+			count+=1
+			time.Sleep(100*time.Millisecond)
+		}
+	}
+	if !reply.Status {
+		fmt.Println("Put Command failed from client:", args )
+	}
+}
+
+//
+// the tester calls Kill() when a KVServer instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *KVServer) Kill() {
+
+	kv.rf.Kill()
+	// Your code here, if desired.
+}
+
+
+func (kv *KVServer) ApplyLog(op Op,index int) {
+
+	if op.Command!="Get"{
+		if op.Command=="Put" {
+			kv.mu.Lock()
+			kv.data[op.Key]=op.Value
+			kv.mu.Unlock()
+		}
+
+		if op.Command=="Append"{
+			kv.mu.Lock()
+			kv.data[op.Key]+=op.Value
+			kv.mu.Unlock()
+		}
+	}
+	map_key:=MapKey{ClientId:op.ClientId,LogId:op.LogId}
+
+	kv.mu.Lock()
+	kv.AppliedMap[map_key]=1
+	kv.IndexMap[index]=op
+	fmt.Println("Successfully applied log:",op ," at index:",index,kv.data[op.Key])
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match164-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.mu.Unlock()
+
+}
+
+
+
+func (kv *KVServer) applychannelLogs() {
+	for{
+		for data_ := range kv.applyCh {
+			op_:=data_.Command.(Op)
+			kv.mu.Lock()
+			fmt.Println("Recieved from applychan:", kv.me, data_, op_.Command, op_.Key, op_.Value)
+</FONT><A NAME="1"></A><FONT color = #00FF00><A HREF="match164-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			index_:=data_.CommandIndex
+			map_key:=MapKey{ClientId:op_.ClientId,LogId:op_.LogId}
+			_,ok:=kv.AppliedMap[map_key]
+			kv.mu.Unlock()
+
+			if ok{
+				fmt.Println("Map key already exists:",op_,map_key)
+</FONT>				kv.mu.Lock()
+				kv.IndexMap[index_]=op_
+				kv.mu.Unlock()
+			}else{
+				kv.ApplyLog(op_,index_)
+			}
+
+
+		}
+	}
+	// Your code here, if desired.
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Raft to
+// form the fault-tolerant key/value service.
+// me is the index of the current server in servers[].
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+// the k/v server should snapshot when Raft's saved state exceeds maxraftstate bytes,
+// in order to allow Raft to garbage-collect its log. if maxraftstate is -1,
+// you don't need to snapshot.
+// StartKVServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
+	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+
+	kv := new(KVServer)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+	// You may need initialization code here.
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+	kv.data = map[string]string{}
+
+	kv.IndexMap=map[int]Op{}
+	kv.ExpectedIndexMap=map[int]MapKey{}
+	kv.AppliedMap=map[MapKey]int{}
+
+	// You may need initialization code here.
+	go func() { kv.applychannelLogs()}()
+	return kv
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>
