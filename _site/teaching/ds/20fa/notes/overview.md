@@ -4,10 +4,6 @@
 
 ## Class stuff and office hour
 
-* Lecturer: Shuai Mu shuai@cs.stonybrook.edu
-* Office hour: W 2:00-4:00pm (appointment recommended)
-* TA TBD
-
 ## Prerequisites
 
 * Familiar with OS & networking
@@ -30,20 +26,34 @@
 
 ## How are you evaluated?
 
-* Labs 50% 
+* Labs 70 points
  * You must work alone on all assignments.
- * A single deadline: Dec 1
- * Late policy: 10% off per day  
-* Final exam 50%
-* Grading
- * A: achieve > 85% in score, or ranking top 20% 
- * B+: score > 80%, or ranking 35% 
- * B: score > 75%, or ranking 50% 
- * B-: score > 70%, or ranking 75% 
- * C: score > 60%, or ranking 90%
- * F: achieve < 30%, or ranking bottom 10% 
- * No A-, C+, C-
-
+ * A single deadline: Nov 1
+ * A bonus lab that can pump your score to 80 (B+)  
+ * Late policy: 10 off per day, at most 60 (after 6 days)
+* A bonus project 30 points
+ * optional only if you finish at least lab3 by Oct 1  
+ * you can group or you can do it individually, but the bonus points will be distributed evenly among you  
+ * I will release a few candidate projects which you can choose from
+ * You can also propose your own, but it has to be releated to distributed systems research and has to go through me first.
+  * warning: a randomly pitched idea (e.g., let me show you what I did in my intern / past work / another class) will not be accepted. 
+ * You will likely receive 0, 10, 20, 30 bonus points depending on your implementation and presentation. 
+* Grading standard
+ * A: achieve > 90 in score 
+ * A-: achieve > 80 in score, or ranking 10% 
+ * B+: score > 70, or ranking 30% 
+ * B: score > 60, or ranking 50% 
+ * B-: score > 50, or ranking 70% 
+ * C+: score > 40, or ranking 90%
+ * C: score > 20, or ranking 95%
+ * F: score <= 20 and last 5%
+* Other bonus 
+ * reporting a technical error I made give you extra 2%, up to 20%
+ * reporting a non-technical error I made give you extra 0.5%, up to 5%
+  * including grammar errors in any written text.
+  * excluding grammar errors in any verbal communication unless it is a specific and repeated error. 
+ * Note: this will be added to your score after multiplied by the base score. 
+  * e.g., if you get 80 on your labs+project, and you have 3% bonus from correcting errors, your final score will be 82.4
  
 ## Integrity policies 
 
@@ -55,9 +65,8 @@
 * If there are inexplicable discrepancies between exam and lab performance, we will over-weight the exam and interview you.
 
 ## Penalty
-* Violate policy -> F (and report to department) 
+* Violate policy -> Incomplete, report to the department   
 * Attempt to negotiate on grading -> 10% off per each attempt 
-
 
 ## What are distributed systems?
 
