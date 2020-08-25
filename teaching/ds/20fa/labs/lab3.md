@@ -6,6 +6,8 @@ layout: page
 
 Recommended finish date: Oct 20
 
+Note: If you would like to do the "project", you need to finish this lab (and pass most of the tests) by Oct 1.  
+
 * * *
 
 ### Introduction
