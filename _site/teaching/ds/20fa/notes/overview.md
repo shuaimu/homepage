@@ -35,7 +35,7 @@
   * optional only if you finish at least lab3 by Oct 1  
   * you can group or you can do it individually, but the bonus points will be distributed evenly among you  
   * I will release a few candidate projects which you can choose from
-  * You can also propose your own, but it has to be releated to distributed systems research and has to go through me first.
+  * You can also propose your own, but it has to be related to distributed systems research and has to go through me first.
     * warning: a randomly pitched idea (e.g., let me show you what I did in my intern / past work / another class) will not be accepted. 
   * You will likely receive 0, 10, 20, 30 bonus points depending on your implementation and presentation. 
 * Grading standard
