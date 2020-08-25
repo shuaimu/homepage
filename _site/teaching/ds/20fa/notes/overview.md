@@ -48,11 +48,11 @@
   * C: score > 20, or ranking 95%
   * F: score <= 20 and last 5%
 * Other bonus 
-  * reporting a technical error I made give you extra 2%, up to 20%
-  * reporting a non-technical error I made give you extra 0.5%, up to 5%
+  * reporting a technical error I made gives you 2%, up to 20%
+  * reporting a non-technical error I made gives you 0.5%, up to 5%
     * including grammar errors in any written text.
     * excluding grammar errors in any verbal communication unless it is a specific and repeated error. 
-  * Note: this will be added to your score after multiplied by the base score. 
+  * Note: this will be added to your score after it is multiplied by the base score. 
     * e.g., if you get 80 on your labs+project, and you have 3% bonus from correcting errors, your final score will be 82.4
  
 ## Integrity policies 
