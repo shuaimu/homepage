@@ -27,33 +27,33 @@
 ## How are you evaluated?
 
 * Labs 70 points
- * You must work alone on all assignments.
- * A single deadline: Nov 1
- * A bonus lab that can pump your score to 80 (B+)  
- * Late policy: 10 off per day, at most 60 (after 6 days)
+  * You must work alone on all assignments.
+  * A single deadline: Nov 1
+  * A bonus lab that can pump your score to 80 (B+)  
+  * Late policy: 10 off per day, at most 60 (after 6 days)
 * A bonus project 30 points
- * optional only if you finish at least lab3 by Oct 1  
- * you can group or you can do it individually, but the bonus points will be distributed evenly among you  
- * I will release a few candidate projects which you can choose from
- * You can also propose your own, but it has to be releated to distributed systems research and has to go through me first.
-  * warning: a randomly pitched idea (e.g., let me show you what I did in my intern / past work / another class) will not be accepted. 
- * You will likely receive 0, 10, 20, 30 bonus points depending on your implementation and presentation. 
+  * optional only if you finish at least lab3 by Oct 1  
+  * you can group or you can do it individually, but the bonus points will be distributed evenly among you  
+  * I will release a few candidate projects which you can choose from
+  * You can also propose your own, but it has to be releated to distributed systems research and has to go through me first.
+    * warning: a randomly pitched idea (e.g., let me show you what I did in my intern / past work / another class) will not be accepted. 
+  * You will likely receive 0, 10, 20, 30 bonus points depending on your implementation and presentation. 
 * Grading standard
- * A: achieve > 90 in score 
- * A-: achieve > 80 in score, or ranking 10% 
- * B+: score > 70, or ranking 30% 
- * B: score > 60, or ranking 50% 
- * B-: score > 50, or ranking 70% 
- * C+: score > 40, or ranking 90%
- * C: score > 20, or ranking 95%
- * F: score <= 20 and last 5%
+  * A: achieve > 90 in score 
+  * A-: achieve > 80 in score, or ranking 10% 
+  * B+: score > 70, or ranking 30% 
+  * B: score > 60, or ranking 50% 
+  * B-: score > 50, or ranking 70% 
+  * C+: score > 40, or ranking 90%
+  * C: score > 20, or ranking 95%
+  * F: score <= 20 and last 5%
 * Other bonus 
- * reporting a technical error I made give you extra 2%, up to 20%
- * reporting a non-technical error I made give you extra 0.5%, up to 5%
-  * including grammar errors in any written text.
-  * excluding grammar errors in any verbal communication unless it is a specific and repeated error. 
- * Note: this will be added to your score after multiplied by the base score. 
-  * e.g., if you get 80 on your labs+project, and you have 3% bonus from correcting errors, your final score will be 82.4
+  * reporting a technical error I made give you extra 2%, up to 20%
+  * reporting a non-technical error I made give you extra 0.5%, up to 5%
+    * including grammar errors in any written text.
+    * excluding grammar errors in any verbal communication unless it is a specific and repeated error. 
+  * Note: this will be added to your score after multiplied by the base score. 
+    * e.g., if you get 80 on your labs+project, and you have 3% bonus from correcting errors, your final score will be 82.4
  
 ## Integrity policies 
 
@@ -87,17 +87,17 @@
 ## Main challenges/topics in distributed systems
 
 * Abstraction/Interface
- * different system requirements: file system/database/disk 
- * simple, flexible, implementation-friendly
+  * different system requirements: file system/database/disk 
+  * simple, flexible, implementation-friendly
 * System architecture
- * data center / wide area
- * client-server / peer-to-peer
+  * data center / wide area
+  * client-server / peer-to-peer
 * Fault Tolerance
- * backup/replication
- * backup fail-over 
+  * backup/replication
+  * backup fail-over 
 * Consistency
- * keep replicas identical
- * keep replicas non-identical
+  * keep replicas identical
+  * keep replicas non-identical
 * Performance
- * throughput (parallelism/divide load)
- * latency (queuing, minimize critical path)
+  * throughput (parallelism/divide load)
+  * latency (queuing, minimize critical path)
