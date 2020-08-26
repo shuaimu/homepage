@@ -82,7 +82,7 @@
 * modular functionality (authentication service)
 
 ## Downside
-* A distributed system is a system in which I can’t do my work because some computer that I’ve never even heard of has failed.” -- Leslie Lamport
+* "A distributed system is one in which the failure of a computer you didn't even know existed can render your own computer unusable." -- Leslie Lamport
 
 ## Main challenges/topics in distributed systems
 
