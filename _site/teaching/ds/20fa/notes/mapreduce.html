@@ -109,9 +109,20 @@
 <h2 id="distributed-implementation">Distributed implementation</h2>
 <ul>
   <li>Input (in GFS) —&gt; (M) Map jobs —&gt; (R) Reduce jobs —&gt; Output (in GFS)</li>
-  <li>Map workers and Reduce workers communicate in network (RPC), possible alternative?</li>
+  <li>Map workers and Reduce workers communicate in network (RPC)
+    <ul>
+      <li>why not using external storage same as input/output?</li>
+    </ul>
+  </li>
   <li>A master that assigns jobs to workers</li>
   <li>UDF partition</li>
+  <li>Linked as library
+    <ul>
+      <li>C++</li>
+      <li>debug locally</li>
+      <li>bootstrap time?</li>
+    </ul>
+  </li>
 </ul>
 
 <h2 id="load-balancing-and-pipelining-example">Load balancing and pipelining example</h2>
@@ -135,6 +146,22 @@ W4: ...........2.1.......2.3...2.2 r2---r2
   <li>Reduce: relaunch, atomic GFS functions</li>
   <li>Slow worker = failed worker</li>
 </ul>
+
+<h2 id="performance-opt">Performance opt</h2>
+<ul>
+  <li>What is the “scarce” resource?
+    <ul>
+      <li>network</li>
+    </ul>
+  </li>
+  <li>Optimization to reduce network traffic
+    <ul>
+      <li>Combine: local reduce (commutative/associative)</li>
+      <li>Locality read</li>
+    </ul>
+  </li>
+</ul>
+
 
   </section>
 

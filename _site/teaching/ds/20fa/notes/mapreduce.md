@@ -54,9 +54,14 @@
 
 ## Distributed implementation
 * Input (in GFS) ---> (M) Map jobs ---> (R) Reduce jobs ---> Output (in GFS) 
-* Map workers and Reduce workers communicate in network (RPC), possible alternative?
+* Map workers and Reduce workers communicate in network (RPC)
+  * why not using external storage same as input/output? 
 * A master that assigns jobs to workers 
 * UDF partition
+* Linked as library
+  * C++
+  * debug locally
+  * bootstrap time?
 
 ## Load balancing and pipelining example
 * M=3, R=2 
@@ -75,3 +80,11 @@
  * Map: relaunch
  * Reduce: relaunch, atomic GFS functions
 * Slow worker = failed worker
+
+## Performance opt
+* What is the "scarce" resource?
+  * network
+* Optimization to reduce network traffic
+  * Combine: local reduce (commutative/associative)
+  * Locality read
+
