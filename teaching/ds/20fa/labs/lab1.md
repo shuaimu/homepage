@@ -25,6 +25,8 @@ The Go web site contains lots of tutorial information which you may want to look
 at. We will grade your labs using Go version 1.9; you should use 1.9 too, though
 we don't know of any problems with other versions.
 
+There are many ways to install a custom Go version. Two possible ways: [link1](https://golang.org/doc/install#extra_versions), [link2](https://github.com/moovweb/gvm)
+
 <!-- The labs are designed to run on Athena Linux machines with x86 or x86_64 -->
 <!-- architecture; <tt>uname -a</tt> should mention <tt>i386 GNU/Linux</tt> or -->
 <!-- <tt>i686 GNU/Linux</tt> or <tt>x86_64 GNU/Linux</tt>. You can log into a public -->
