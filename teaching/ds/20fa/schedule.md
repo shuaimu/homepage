@@ -11,7 +11,7 @@ layout: page
 
 # Schedule 
 
-Lecture: MW 7:50-8:10pm (Aug 24 -- Dec 7)
+Lecture: MW 7:50-9:10pm (Aug 24 -- Dec 7)
 
 Office hour: T 8-10pm in this [Zoom meeting room](https://stonybrook.zoom.us/j/94704333277?pwd=NFhrbGYzUW50ZSt5R0Z3d3hobk54Zz09). Please book a meeting before 6pm using this [link](https://calendly.com/shuaimu/officehour). Each slot is 15 minutes. You can book 2 slots for 30 minutes, 3 slots for 45 minutes, etc.
 
