@@ -15,7 +15,7 @@ permalink: /teaching/ds/20fa/
 ## Announcements
 
 <!-- * (Apr 15, 2019) Final exam date: May 20, 2:15pm, Humanities 1003 -->
-* (Aug 22, 2020) We will use this [Zoom meeting room](https://stonybrook.zoom.us/j/96065145543?pwd=ckVOSXoyamNxZEFIcjJhaWx3bjJYUT09) for our lectures. 
+* (Aug 22, 2020) We will use this [Zoom meeting room](https://stonybrook.zoom.us/j/97748330819?pwd=UWhITE1qcTE1T0Rwc2RXTXlKeWR3Zz09) for our lectures. 
 * (Aug 22, 2020) Please join
 [Piazza](https://piazza.com/stonybrook/fall2020/cse535) for class
 notifications and discussions.
