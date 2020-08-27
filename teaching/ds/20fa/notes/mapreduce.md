@@ -45,7 +45,7 @@
 ## Example: word count
 * input k: doc-name, v: doc-content
 * map: k: each word, v: 1  
-* reduce: k: each work, v; word count 
+* reduce: k: each word, v; word count 
 
 ## More examples:
 * grep
