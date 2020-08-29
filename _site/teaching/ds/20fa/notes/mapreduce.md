@@ -85,6 +85,6 @@
 * What is the "scarce" resource?
   * network
 * Optimization to reduce network traffic
-  * Combine: local reduce (commutative/associative)
+  * Combine: local reduce (commutative&associative)
   * Locality read
 

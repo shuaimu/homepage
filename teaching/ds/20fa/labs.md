@@ -125,13 +125,13 @@ $ git status
 
 ## Handin Procedure
 
-Make sure you carefully read the collaboration policy, and then create a file named `agreement.txt` in the root directory of the lab (the same folder as the Makefile) and type in the exact following single-line content in the file. 
+Make sure you carefully read the collaboration policy, then in the root directory of the lab (the same folder as the Makefile), type these: 
 
 ```
-I acknowledge that I have read, understand, and agree to the class policies.
+$ echo "I acknowledge that I have read, understand, and agree to the class policies." > agreement.txt
 ```
 
-Check if the file has the correct sha256 hash. If you have a different hash, check if you have any typos, or have a new line after the sentence (there should be none).
+Check if the file has the correct sha256 hash. If you have a different hash, check if you have any typos.
 
 ```
 $ sha256sum agreement.txt
