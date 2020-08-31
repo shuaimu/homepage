@@ -34,6 +34,7 @@
   * Late policy: 10 off per day, at most 60 (after 6 days)
 * A bonus project 30 points
   * optional only if you finish at least lab3 by Oct 1  
+    * **revision: you can only get a bonus score if you finish lab 1/2/3 on Nov1 and get at least 60 points**
   * you can group or you can do it individually, but the bonus points will be distributed evenly among you  
   * I will release a few candidate projects which you can choose from
   * You can also propose your own, but it has to be related to distributed systems research and has to go through me first.
