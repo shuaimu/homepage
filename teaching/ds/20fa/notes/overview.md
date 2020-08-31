@@ -29,7 +29,8 @@
 * Labs 70 points
   * You must work alone on all assignments.
   * A single deadline: Nov 1
-  * A bonus lab that can pump your score to 80 (B+)  
+  * A bonus lab that can pump your score up to 80 (B+)  
+    * **revision: 80 is now A-**
   * Late policy: 10 off per day, at most 60 (after 6 days)
 * A bonus project 30 points
   * optional only if you finish at least lab3 by Oct 1  
@@ -41,6 +42,7 @@
 * Grading standard
   * A: achieve > 90 in score 
   * A-: achieve > 80 in score, or ranking 10% 
+    * **revision: A-: achieve >= 80 in score, or ranking 10%**
   * B+: score > 70, or ranking 30% 
   * B: score > 60, or ranking 50% 
   * B-: score > 50, or ranking 70% 

@@ -39,20 +39,32 @@
     <h1 id="gfs">GFS</h1>
 <h2 id="goals-shared-storage">Goals (shared storage)</h2>
 <ul>
-  <li>capacity</li>
-  <li>e.g., 1000 servers, 300TB</li>
+  <li>capacity
+    <ul>
+      <li>e.g., 1000 servers, 300TB</li>
+    </ul>
+  </li>
   <li>performance</li>
-  <li>fault tolerance</li>
-  <li>map-reduce</li>
+  <li>fault tolerance
+    <ul>
+      <li>map-reduce</li>
+    </ul>
+  </li>
 </ul>
 
 <h2 id="approach">Approach</h2>
 <ul>
-  <li>filesystem-like API</li>
-  <li>proprietary library (write/read/append)</li>
-  <li>not POSIX</li>
-  <li>single master (metadata)</li>
-  <li>(filename, offset) -&gt; chunk</li>
+  <li>filesystem-like API
+    <ul>
+      <li>proprietary library (write/read/append)</li>
+      <li>not POSIX</li>
+    </ul>
+  </li>
+  <li>single master (metadata)
+    <ul>
+      <li>(filename, offset) -&gt; chunk</li>
+    </ul>
+  </li>
   <li>chunk size: 64MB. why not smaller, such as 4KB(hdd), 4MB (ssd)?</li>
   <li>3-way replication</li>
 </ul>
@@ -66,21 +78,33 @@
 
 <h2 id="performance">Performance</h2>
 <ul>
-  <li>why single master and 64 MB sufficient?</li>
-  <li>workload: large files; sequential read/write</li>
-  <li>not a good design if</li>
-  <li>small files (aggregate)</li>
-  <li>random accesses (buffer)</li>
+  <li>why single master and 64 MB sufficient?
+    <ul>
+      <li>workload: large files; sequential read/write</li>
+    </ul>
+  </li>
+  <li>not a good design if
+    <ul>
+      <li>small files (aggregate)</li>
+      <li>random accesses (buffer)</li>
+    </ul>
+  </li>
 </ul>
 
 <h2 id="consistency">Consistency</h2>
 <ul>
-  <li>correctness: outcome = expectation</li>
-  <li>concurrency</li>
-  <li>failures</li>
-  <li>tradeoff</li>
-  <li>weak consistency: easier to implement, hard to use</li>
-  <li>strong consistency: hard to implement, easy to use</li>
+  <li>correctness: outcome = expectation
+    <ul>
+      <li>concurrency</li>
+      <li>failures</li>
+    </ul>
+  </li>
+  <li>tradeoff
+    <ul>
+      <li>weak consistency: easier to implement, hard to use</li>
+      <li>strong consistency: hard to implement, easy to use</li>
+    </ul>
+  </li>
 </ul>
 
 <h2 id="case-1-strawman-inconsistent-with-concurrency">Case 1 (strawman, inconsistent with concurrency)</h2>
@@ -101,8 +125,11 @@ S2   : C2 C1             S1-id-C1 S1-id-C2
 <ul>
   <li>follower fails</li>
   <li>primary fails</li>
-  <li>two primary? (what about serial numbers?)</li>
-  <li>leases to avoid two masters</li>
+  <li>two primary? (what about serial numbers?)
+    <ul>
+      <li>leases to avoid two masters</li>
+    </ul>
+  </li>
 </ul>
 
 <h2 id="case-5-more-consistency-anomaly">Case 5 (more consistency anomaly)</h2>

@@ -1,17 +1,17 @@
 # GFS
 ## Goals (shared storage)
 * capacity
- * e.g., 1000 servers, 300TB
+  * e.g., 1000 servers, 300TB
 * performance
 * fault tolerance
- * map-reduce
+  * map-reduce
 
 ## Approach
 * filesystem-like API 
- * proprietary library (write/read/append)
- * not POSIX
+  * proprietary library (write/read/append)
+  * not POSIX
 * single master (metadata) 
- * (filename, offset) -> chunk 
+  * (filename, offset) -> chunk 
 * chunk size: 64MB. why not smaller, such as 4KB(hdd), 4MB (ssd)?
 * 3-way replication 
 
@@ -22,18 +22,18 @@
 
 ## Performance
 * why single master and 64 MB sufficient?
- * workload: large files; sequential read/write
+  * workload: large files; sequential read/write
 * not a good design if
- * small files (aggregate)
- * random accesses (buffer)
+  * small files (aggregate)
+  * random accesses (buffer)
 
 ## Consistency
 * correctness: outcome = expectation
- * concurrency
- * failures
+  * concurrency
+  * failures
 * tradeoff
- * weak consistency: easier to implement, hard to use 
- * strong consistency: hard to implement, easy to use
+  * weak consistency: easier to implement, hard to use 
+  * strong consistency: hard to implement, easy to use
 
 ## Case 1 (strawman, inconsistent with concurrency) 
 ```
@@ -53,7 +53,7 @@ S2   : C2 C1             S1-id-C1 S1-id-C2
  * follower fails
  * primary fails 
  * two primary? (what about serial numbers?)
-  * leases to avoid two masters 
+   * leases to avoid two masters 
 
 ## Case 5 (more consistency anomaly)
 ```

@@ -40,22 +40,37 @@
 
 <h2 id="overview">Overview</h2>
 <ul>
-  <li>basic building block to make distributed programming easier</li>
-  <li>make a remote call similar to a local call</li>
-  <li>e.g. <code class="highlighter-rouge">server.add(3, 5), proxy.add(3, 5)</code></li>
-  <li>As a library</li>
-  <li>e.g. gRPC, go-rpc, json-rpc</li>
+  <li>basic building block to make distributed programming easier
+    <ul>
+      <li>make a remote call similar to a local call</li>
+      <li>e.g. <code class="highlighter-rouge">server.add(3, 5), proxy.add(3, 5)</code></li>
+    </ul>
+  </li>
+  <li>As a library
+    <ul>
+      <li>e.g. gRPC, go-rpc, json-rpc</li>
+    </ul>
+  </li>
 </ul>
 
 <h2 id="inside-rpc">Inside RPC</h2>
 <ul>
-  <li>function register</li>
-  <li>protocol file -&gt; compile -&gt; source code -&gt; put in your repo</li>
-  <li>marshalling (serialization) and unmarshalling</li>
-  <li>data structure &lt;—&gt; bytes</li>
-  <li>network connections</li>
-  <li>hard to deal (buffer, async calls, error codes)</li>
-  <li>(optional) read C10k problem</li>
+  <li>function register
+    <ul>
+      <li>protocol file -&gt; compile -&gt; source code -&gt; put in your repo</li>
+    </ul>
+  </li>
+  <li>marshalling (serialization) and unmarshalling
+    <ul>
+      <li>data structure &lt;—&gt; bytes</li>
+    </ul>
+  </li>
+  <li>network connections
+    <ul>
+      <li>hard to deal (buffer, async calls, error codes)</li>
+      <li>(optional) read C10k problem</li>
+    </ul>
+  </li>
 </ul>
 
 <h2 id="challenge-failures">Challenge: failures</h2>
@@ -71,15 +86,23 @@
   <li>pro: simple implementation</li>
 </ul>
 
-<h2 id="at-most-once-and-exactly-once">At most once (and exactly once)</h2>
+<h2 id="at-most-once">At most once</h2>
 <ul>
   <li>clients use a globally unique xid for each request</li>
   <li>servers keep a buffer of previous results</li>
   <li>keep a window of outstanding requests</li>
-  <li>force ordering</li>
-  <li>clients use sequentially increasing xid</li>
-  <li>servers block on “holes”</li>
-  <li>exactly once: write the buffer to durable storage and never delete</li>
+  <li>force ordering
+    <ul>
+      <li>clients use sequentially increasing xid</li>
+      <li>servers block on “holes”</li>
+    </ul>
+  </li>
+  <li>exactly once?
+    <ul>
+      <li>clients may fail</li>
+      <li>write the buffer to durable storage and never delete</li>
+    </ul>
+  </li>
 </ul>
 
   </section>
