@@ -28,10 +28,11 @@
 ## At most once
 * clients use a globally unique xid for each request 
 * servers keep a buffer of previous results
-* keep a window of outstanding requests 
-* force ordering
+* keep a window of outstanding requests and force ordering
   * clients use sequentially increasing xid 
   * servers block on "holes" 
-* exactly once?
-  * clients may fail 
-  * write the buffer to durable storage and never delete
+* alternative: write the buffer to durable storage and never delete
+
+## Exactly once?
+* "eventually"
+* theoratically not possible with asynchronous network
