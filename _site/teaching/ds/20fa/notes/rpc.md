@@ -35,4 +35,4 @@
 
 ## Exactly once?
 * "eventually"
-* theoratically not possible with asynchronous network
+* hard with asynchronous network

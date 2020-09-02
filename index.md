@@ -103,9 +103,9 @@ Deferred Runtime Pipelining for contentious multicore software transactions
 
 ## Students
 * Reza Alimadadi (PhD, co-advised with Mike Ferdman)
-* Yida Wu (MS-\>PhD)
-* Xiang Liu (PhD, Joining Fall 20)
-* Yuhao Su (PhD, Joining Fall 20)
+* Xiang Liu (PhD, Joining Spring 21)
+* Yuhao Su (PhD, Joining Spring 21)
+* Yida Wu (MS-\>PhD Spring 21)
 * Ansh Khanna (MS)
 * Satya Jain (MS)
 * Ritesh Sinha (MS)
