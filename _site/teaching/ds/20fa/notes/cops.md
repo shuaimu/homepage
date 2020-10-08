@@ -26,9 +26,12 @@
 * value = get(key,context);  //add dependencies of get to context
 * example
 ```
-Client 1:  put(x,1) ---> put(y,2)           ctx1:x1       store (x1) with y2, ctx=x1,y2Client 2:                get(y)=2 --> put(x,4)                         ctx2:x1,y=2   store (y2), ctx2:x=4,y=2Client 3:                             get(x)=4) --> put(z,5)                                      ctx3:x=4,y=2  store (x=4,y=2), ctx
-
-3:x=4,y=2,z=5
+Client 1:  put(x,1) ---> put(y,2)           
+           ctx1:x1       store (x1) with y2, ctx=x1,y2
+Client 2:                get(y)=2 --> put(x,4)                         
+                         ctx2:x1,y2   store (y2) with x4, ctx2:x4,y2
+Client 3:                             get(x)=4 --> put(z,5)                                      
+                                      ctx3:x4,y2  store (x4,y2), ctx3:x4,y2,z5
 ```
 * Site A replicate y2 with dependency (x1) to site B.
 * Site B performs a dependency check locally to wait for x1 to commit before committing y2.

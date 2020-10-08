@@ -41,28 +41,69 @@
 
 <h2 id="overview">Overview</h2>
 <ul>
-  <li>virtual machines layers</li>
-  <li>replication in different layers</li>
-  <li>e.g., replicating GFS master</li>
+  <li>system layers
+    <ul>
+      <li>Physical machine, OS/hypervisor, VM, OS/VM, Systems App, App</li>
+    </ul>
+  </li>
+  <li>replication in different layers
+    <ul>
+      <li>e.g., replicating GFS master</li>
+    </ul>
+  </li>
+  <li>virtual machine basics
+    <ul>
+      <li>a stream of instruction logs</li>
+      <li>inputs / outputs</li>
+    </ul>
+  </li>
 </ul>
 
 <h2 id="approaches">Approaches</h2>
 <ul>
-  <li>pause, replicate states, continue</li>
-  <li>easy to implement</li>
-  <li>state machine, replicate inputs</li>
-  <li>efficient in performance</li>
+  <li>pause, replicate states, continue (migration)
+    <ul>
+      <li>easy to implement</li>
+      <li>but cost time, can be used in adding new replica</li>
+    </ul>
+  </li>
+  <li>state machine, replicate inputs
+    <ul>
+      <li>efficient in performance</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="correctness">Correctness</h2>
+<ul>
+  <li>Input events need to be replicated at exact point of instruction</li>
+  <li>When can primary return?
+    <ul>
+      <li>ack from F followers: tolerate F failures</li>
+      <li>otherwise?</li>
+    </ul>
+  </li>
+  <li></li>
 </ul>
 
 <h2 id="non-determinism">Non-determinism</h2>
 <ul>
-  <li>clock</li>
-  <li>record</li>
-  <li>multi-core (different from multi-thread)</li>
-  <li>not supported in vmft</li>
-  <li>IO race</li>
-  <li>non-blocking</li>
-  <li>DMA</li>
+  <li>clock
+    <ul>
+      <li>record</li>
+    </ul>
+  </li>
+  <li>multi-core (different from multi-thread)
+    <ul>
+      <li>not supported in vmft</li>
+    </ul>
+  </li>
+  <li>IO race
+    <ul>
+      <li>non-blocking</li>
+      <li>DMA</li>
+    </ul>
+  </li>
 </ul>
 
 <h2 id="inputoutput-consistency">Input/Output consistency</h2>
@@ -73,8 +114,8 @@
 
 <h2 id="network-partition-and-split-brain">Network partition and “split-brain”</h2>
 <ul>
-  <li>failure detector</li>
-  <li>atomic compare and swap</li>
+  <li>perfect failure detector? no</li>
+  <li>atomic test and set</li>
   <li>can lease solve the problem?</li>
 </ul>
 
