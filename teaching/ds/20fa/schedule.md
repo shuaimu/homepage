@@ -34,19 +34,20 @@ The schedule is tentative and subject to change.
 | Sep 30 | Consistency I: [Linearizability](notes/linear.md)                              | Skim [Linearizability](readings/linearizability.pdf)                                           |
 | Oct 5  | Consistency II: [Eventual Consistency and Causality](notes/bayou.md)           | Read [Bayou](readings/bayou.pdf)                                                               |
 | Oct 7  | Consistency III: [Causal Consistency](notes/cops.md)                           | Skim [COPS](readings/cops.pdf) and [SUNDR](readings/sundr.pdf)                                 |
-| Oct 12 | Consistency V: Existential Consistency                                         | Read [Existential consistency](readings/existential.pdf)                                       |
-| Oct 14 | Transaction I: [Serializability](notes/serializability.md)                     | Read [Concurrency control and recovery](readings/franklin97concurrency.pdf)                    |
-| Oct 19 | Transaction II: [2PL and 2PC](notes/spanner.md)                                | Read [Spanner](readings/spanner.pdf)                                                           |
-| Oct 21 | Transaction III: 2PC and Paxos                                                 | Read [Replicated Commit](readings/rc.pdf)                                                      |
-| Oct 26 | Transaction IV: [OCC and Snapshot Isolation](notes/si.md)                      | Read [Percolator](readings/percolator.pdf)                                                     |
-| Oct 28 | Transaction V: [Parallel Snapshot Isolation](notes/psi.md)                     | Skim [PSI](readings/psi.pdf)                                                                   |
-| Nov 2  | Transaction VI: [More Isolation Levels](notes/isolations.md)                   | Skim [A Critique of ANSI SQL Isolation Levels](readings/si.pdf) and [HAT](readings/hat.pdf)    |
-| Nov 4  | Blockchain I: [Proof-of-work](notes/bitcoin.md)                                | Read [Bitcoin](readings/bitcoin.pdf)                                                           |
-| Nov 9  | Blockchain II: [BA in Blockchains](notes/algorand.md)                          | Skim [Algorand](readings/algorand.pdf)                                                         |
-| Nov 11 | Blockchain III: [Smart Contract](notes/eth.md)                                 |                                                                                                |
-| Nov 16 | Blockchain IV: Storage Network                                                 | Skim [Filecoin](readings/filecoin.pdf)                                                         |
-| Nov 18 | TBD                                                                            |                                                                                                |
-| Nov 23 | No class (Thanksgiving)                                                        |                                                                                                |
+| Oct 12 | Consistency IV: Fork-Join-Causal Consistency                                   | Read [Depot](readings/depot.pdf)                                       
+    |
+| Oct 14 | Consistency V: More Consistency                                                | Skim [Incremental](readings/incremental.pdf), [RedBlue](readings/redblue.pdf), and [Existential](readings/existential.pdf)                    |
+| Oct 19 | Transaction I: [Serializability](notes/serializability.md)                     | Read [Concurrency control and recovery](readings/franklin97concurrency.pdf)                    |
+| Oct 21 | Transaction II: [2PL and 2PC](notes/spanner.md)                                | Read [Spanner](readings/spanner.pdf)                                                           |
+| Oct 26 | Transaction III: 2PC and Paxos                                                 | Read [Replicated Commit](readings/rc.pdf)                                                      |
+| Oct 28 | Transaction IV: [OCC and Snapshot Isolation](notes/si.md)                      | Read [Percolator](readings/percolator.pdf)                                                     |
+| Nov 2  | Transaction V: [Parallel Snapshot Isolation](notes/psi.md)                     | Skim [PSI](readings/psi.pdf)                                                                   |
+| Nov 4  | Transaction VI: [More Isolation Levels](notes/isolations.md)                   | Skim [A Critique of ANSI SQL Isolation Levels](readings/si.pdf) and [HAT](readings/hat.pdf)    |
+| Nov 9  | Blockchain I: [Proof-of-work](notes/bitcoin.md)                                | Read [Bitcoin](readings/bitcoin.pdf)                                                           |
+| Nov 11 | Blockchain II: [BA in Blockchains](notes/algorand.md)                          | Skim [Algorand](readings/algorand.pdf)                                                         |
+| Nov 16 | Blockchain III: [Smart Contract](notes/eth.md)                                 |                                                                                                |
+| Nov 18 | Blockchain IV: Storage Network                                                 | Skim [Filecoin](readings/filecoin.pdf)                                                         |
+| Nov 23 | No class (Thanksgiving)                                                                               |                                                                                                |
 | Nov 25 | No class (Thanksgiving)                                                        |                                                                                                |
 | Nov 30 | TBD                                                                            |                                                                                                |
 | Dec 2  | TBD                                                                            |                                                                                                |
