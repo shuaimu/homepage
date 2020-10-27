@@ -39,18 +39,18 @@ The schedule is tentative and subject to change.
 | Oct 14 | Consistency V: More Consistency                                                | Skim [Incremental](readings/incremental.pdf), [RedBlue](readings/redblue.pdf), and [Existential](readings/existential.pdf)                    |
 | Oct 19 | Transaction I: [Serializability](notes/serializability.md)                     | Read [Concurrency control and recovery](readings/franklin97concurrency.pdf)                    |
 | Oct 21 | Transaction II: [2PL and 2PC](notes/spanner.md)                                | Read [Spanner](readings/spanner.pdf)                                                           |
-| Oct 26 | Transaction III: 2PC and Paxos                                                 | Read [Replicated Commit](readings/rc.pdf)                                                      |
-| Oct 28 | Transaction IV: [OCC and Snapshot Isolation](notes/si.md)                      | Read [Percolator](readings/percolator.pdf)                                                     |
-| Nov 2  | Transaction V: [Parallel Snapshot Isolation](notes/psi.md)                     | Skim [PSI](readings/psi.pdf)                                                                   |
-| Nov 4  | Transaction VI: [More Isolation Levels](notes/isolations.md)                   | Skim [A Critique of ANSI SQL Isolation Levels](readings/si.pdf) and [HAT](readings/hat.pdf)    |
-| Nov 9  | Blockchain I: [Proof-of-work](notes/bitcoin.md)                                | Read [Bitcoin](readings/bitcoin.pdf)                                                           |
-| Nov 11 | Blockchain II: [BA in Blockchains](notes/algorand.md)                          | Skim [Algorand](readings/algorand.pdf)                                                         |
-| Nov 16 | Blockchain III: [Smart Contract](notes/eth.md)                                 |                                                                                                |
-| Nov 18 | Blockchain IV: Storage Network                                                 | Skim [Filecoin](readings/filecoin.pdf)                                                         |
+| Oct 26 | Transaction III: [OCC and Snapshot Isolation](notes/si.md)                     | Read [Percolator](readings/percolator.pdf)                                                     |
+| Oct 28 | Transaction IV: [Parallel Snapshot Isolation](notes/psi.md)                    | Read [PSI](readings/psi.pdf) and Skim [Lazy Consistency](readings/lazyconsistency.pdf)                                                                   |
+| Nov 2  | Transaction V: [More Isolation Levels](notes/isolations.md)                    | Read [A Critique of ANSI SQL Isolation Levels](readings/si.pdf)      |
+| Nov 4  | Blockchain I: [Proof-of-work](notes/bitcoin.md)                                | Read [Bitcoin](readings/bitcoin.pdf)                                                           |
+| Nov 9 | Blockchain II: [BA in Blockchains](notes/algorand.md)                           | Skim [Algorand](readings/algorand.pdf)                                                         |
+| Nov 11 | Blockchain III: [Smart Contract](notes/eth.md)                                 |                                                                                                |
+| Nov 16 | Blockchain IV: Storage Network                                                 | Skim [Filecoin](readings/filecoin.pdf)                                                         |
+| Nov 18 | Blockchain V: TBD                                                              |                                                          |
 | Nov 23 | No class (Thanksgiving)                                                                               |                                                                                                |
 | Nov 25 | No class (Thanksgiving)                                                        |                                                                                                |
 | Nov 30 | TBD                                                                            |                                                                                                |
 | Dec 2  | TBD                                                                            |                                                                                                |
-| Dec 7  | Review                                                                         |                                                                                                |
+| Dec 7  | TBD                                                                            |                                                                                                |
 
 [SBU calendar](https://www.stonybrook.edu/commcms/registrar/calendars/_ucalcontent/fall20summer21.php)

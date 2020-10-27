@@ -53,7 +53,8 @@ If you are interested, email me a brief resume.
 
    <ul>
      <li>
-     Making Cloud Key-Value Databases Verifiably Serializable
+     Cobra: Making Transactional Key-Value Stores Verifiably Serializable 
+     [<a href="./pub/cobra-osdi20.pdf">paper</a>]
      <br>
      Cheng Tan, Changgeng Zhao, <strong>Shuai Mu</strong>, Michael Walfish
      <br>
@@ -102,14 +103,19 @@ Deferred Runtime Pipelining for contentious multicore software transactions
       </ul>
 
 ## Students
-* Reza Alimadadi (PhD, co-advised with Mike Ferdman)
-* Xiang Liu (PhD, Joining Spring 21)
-* Yuhao Su (PhD, Joining Spring 21)
-* Yida Wu (MS-\>PhD Spring 21)
-* Ansh Khanna (MS)
+
+* Reza Alimadadi (PhD, with Mike Ferdman)
+* Xiang Liu (PhD)
+* Weihai Shen (PhD)
+* Yuhao Su (PhD)
 * Satya Jain (MS)
+* Ansh Khanna (MS)
 * Ritesh Sinha (MS)
-* Andrew Yoo (MS@UIUC, advised by Tianyin Xu)
+* Yida Wu (MS)
+
+I am also privileged to work closely with other great students including:
+
+* Andrew Yoo (MS@UIUC, with Tianyin Xu)
 * Yuanli Wang (MS@Minnesota)
 
 Alumni:
