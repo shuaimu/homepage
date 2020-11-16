@@ -43,11 +43,11 @@ The schedule is tentative and subject to change.
 | Oct 28 | Transaction IV: [Parallel Snapshot Isolation](notes/psi.md)                    | Read [PSI](readings/psi.pdf) and Skim [Lazy Consistency](readings/lazyconsistency.pdf)                                                                   |
 | Nov 2  | Transaction V: [More Isolation Levels](notes/isolations.md)                    | Read [A Critique of ANSI SQL Isolation Levels](readings/si.pdf)      |
 | Nov 4  | Blockchain I: [Proof-of-work](notes/bitcoin.md)                                | Read [Bitcoin](readings/bitcoin.pdf)                                                           |
-| Nov 9 | Blockchain II: [BA in Blockchains](notes/algorand.md)                           | Skim [Algorand](readings/algorand.pdf)                                                         |
-| Nov 11 | Blockchain III: [Smart Contract](notes/eth.md)                                 |                                                                                                |
-| Nov 16 | Blockchain IV: Storage Network                                                 | Skim [Filecoin](readings/filecoin.pdf)                                                         |
-| Nov 18 | Blockchain V: TBD                                                              |                                                          |
-| Nov 23 | No class (Thanksgiving)                                                                               |                                                                                                |
+| Nov 9 | Blockchain II:  Stellar                                                         | Skim Stellar                                                         |
+| Nov 11 | Blockchain III: [BA in Blockchains](notes/algorand.md)                         | Skim [Algorand](readings/algorand.pdf)                                                                                               |
+| Nov 16 | Blockchain IV: [Storage Network](notes/filecoin.md)                            | Skim [Filecoin](readings/filecoin.pdf)                                                         |
+| Nov 18 | Blockchain V: [Smart Contract](notes/eth.md)                                   |                                                          |
+| Nov 23 | No class (Thanksgiving)                                                                             |                                                                                                |
 | Nov 25 | No class (Thanksgiving)                                                        |                                                                                                |
 | Nov 30 | TBD                                                                            |                                                                                                |
 | Dec 2  | TBD                                                                            |                                                                                                |
