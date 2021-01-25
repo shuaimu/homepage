@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.6.1 -->
+<title>Tor: The Onion Routers | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="Tor: The Onion Routers" />
+<meta property="og:locale" content="en_US" />
+<link rel="canonical" href="http://0.0.0.0/teaching/ds/20fa/notes/tor.html" />
+<meta property="og:url" content="http://0.0.0.0/teaching/ds/20fa/notes/tor.html" />
+<meta property="og:site_name" content="Home" />
+<script type="application/ld+json">
+{"@type":"WebPage","url":"http://0.0.0.0/teaching/ds/20fa/notes/tor.html","headline":"Tor: The Onion Routers","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://0.0.0.0/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>Tor: The Onion Routers</h1>
+         </header> -->
+
+  <section>
+    <h1 id="tor-the-onion-routers">Tor: The Onion Routers</h1>
+
+<h2 id="unsafe-communication">Unsafe communication</h2>
+<ul>
+  <li>data: content (“what”) can be intercepted
+    <ul>
+      <li>this can be solved by encryption.</li>
+    </ul>
+  </li>
+  <li>metadata: source (“who”) is known by any router on the link
+    <ul>
+      <li>metadata leak in some cases has severe outcome</li>
+      <li>this is harder to protect.</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="tor">Tor</h2>
+<ul>
+  <li>goal: mask identity of source</li>
+  <li>assumptions
+    <ul>
+      <li>trusted: directory server that has the information of the routers</li>
+      <li>untrusted: a router can be hostile, but as long as one router is “good”, the communication is safe</li>
+    </ul>
+  </li>
+  <li>Protocol
+    <ul>
+      <li>the user contacts the directory server and selects a set of routers.</li>
+      <li>the user establishes a communication link (“circuit”) hop by hop. each router is only aware of the prior router on the circuit.</li>
+      <li>when the user sends a message over the circuit, the message should be encrypted in layers. Each hop only knows the key to decrypt its own layer.</li>
+      <li>Each circuit is multiplexed by multiple TCP streams. (why? because establishing a circuit costs time.)</li>
+    </ul>
+  </li>
+  <li>main idea, layered encryption over a circuit of onion routers (OR)
+    <ul>
+      <li>the client chooses a circuit: a set of routers as a link (why cannot a router choose?)</li>
+      <li>for each OR on the circuit, the client shares a key with the OR. e.g., if the circuit has two routers r1 and r2.
+        <ul>
+          <li>r1 has K1, r2 has K2</li>
+          <li>client has both K1 and K2</li>
+          <li>client encrypts the message like {{msg, dst}_K2}, r2}_K1, and send it to r1</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>how can the network be transparent to applications?
+    <ul>
+      <li>e.g., web browsers and web servers</li>
+      <li>both the server and client uses a proxy</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="creating-circuits-dynamically">Creating circuits dynamically</h2>
+<ul>
+  <li>background: shared secret
+    <ul>
+      <li>each party generates a pub/pri key pair</li>
+      <li>share the pub key with each other</li>
+      <li>use the other’s public key and its own private key to generates the same result</li>
+      <li>use the result as a shared key.</li>
+    </ul>
+  </li>
+  <li>incrementally create a circuit
+    <ul>
+      <li>first add r1</li>
+      <li>then ask r1 to add r2</li>
+      <li>repeat the above process until get all routers in the circuit</li>
+      <li>between each pair of routers, circ-id changes to avoid leak of info</li>
+    </ul>
+  </li>
+  <li>Tor uses this to establish the key for symmetric encryption. (Why not use public/private key scheme? Because it may leak the user’s identity.)</li>
+</ul>
+
+<h2 id="possible-attacks">Possible attacks</h2>
+<ul>
+  <li>if we can hack into all the routers on a circuit in the order from the destination to the source, we’re able to find the source.</li>
+  <li>the attack can also be done by hijacking the network traffic of all routers on the circuit.</li>
+</ul>
+
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+</body>
+
+</html>

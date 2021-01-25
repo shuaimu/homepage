@@ -25,7 +25,8 @@ Links: <a href="https://scholar.google.com/citations?user=wcbyR5UAAAAJ&hl=en">Go
 <hr>
 
 
-# **Cobra accepted to OSDI '20!**
+# **MongoDB Replication accepted to NSDI '21!**
+## **Cobra appeared at OSDI '20!**
 
 I am an assistant professor of [Computer Science](http://www.cs.stonybrook.edu) at [Stony Brook University](http://www.stonybrook.edu).
 My main research interests are in distributed systems and multi-core systems.
@@ -53,32 +54,39 @@ If you are interested, email me a brief resume.
 
    <ul>
      <li>
+     Fault-Tolerant Replication with Pull-Based Consensus in MongoDB
+     <br>
+     Siyuan Zhou, Shuai Mu
+     <br>
+     NSDI 21 (to appear)
+     </li>
+     <li>
      Cobra: Making Transactional Key-Value Stores Verifiably Serializable 
      [<a href="./pub/cobra-osdi20.pdf">paper</a>]
      <br>
-     Cheng Tan, Changgeng Zhao, <strong>Shuai Mu</strong>, Michael Walfish
+     Cheng Tan, Changgeng Zhao, Shuai Mu, Michael Walfish
      <br>
-     OSDI 20 (To appear)
+     OSDI 20
      </li>
 
      <li>
 On the Parallels of Raft and Paxos [<a href="./pub/raft-paxos.pdf">paper</a>]
          <br>
-Zhaoguo Wang, Changgeng Zhao, <strong>Shuai Mu</strong>, Haibo Chen, Jinyang Li <br>
+Zhaoguo Wang, Changgeng Zhao, Shuai Mu, Haibo Chen, Jinyang Li <br>
          PODC 19 
      </li> 
      <li>
 Deferred Runtime Pipelining for contentious multicore software transactions
 [<a href="./pub/drp-eurosys19.pdf">paper</a>, <a href="./pub/drp-tr.pdf">tr</a>]
          <br>
-<strong>Shuai Mu</strong>, Sebastian Angel, Dennis Shasha <br>
+Shuai Mu, Sebastian Angel, Dennis Shasha <br>
          EuroSys 19
      </li> 
      <li>
      Giza: Erasure Coding Objects across Global Data Centers
 [<a href="./pub/giza-atc17.pdf">paper</a>]
      <br>
-     Yu Lin Chen, <strong>Shuai Mu</strong>, Jinyang Li, Cheng Huang, Jin Li, Aaron Ogus, Douglas Phillips<br>
+     Yu Lin Chen, Shuai Mu, Jinyang Li, Cheng Huang, Jin Li, Aaron Ogus, Douglas Phillips<br>
      ATC 17
      </li> 
      <li>Consolidating Concurrency Control and Consensus for Commits under Conflicts 
@@ -87,14 +95,14 @@ Deferred Runtime Pipelining for contentious multicore software transactions
           <a href="https://raw.githubusercontent.com/NYU-NEWS/janus/master/tla/Janus.tla">tla+</a>,
          <a href="https://github.com/nyu-news/janus">code</a>] 
          <br>
-	  <strong>Shuai Mu</strong>, Lamont Nelson, Wyatt Lloyd, Jinyang Li <br>
+	  Shuai Mu, Lamont Nelson, Wyatt Lloyd, Jinyang Li <br>
 	  OSDI 16</li>
      <li>The SNOW Theorem and Latency-Optimal Read-Only Transactions 
-         [<a href="./pub/snow-osdi16.pdf">paper</a>]<br> Haonan Lu, Christopher Hodsdon, Khiem Ngo, <strong>Shuai Mu</strong>, Wyatt Lloyd <br> OSDI 16</li>
+         [<a href="./pub/snow-osdi16.pdf">paper</a>]<br> Haonan Lu, Christopher Hodsdon, Khiem Ngo, Shuai Mu, Wyatt Lloyd <br> OSDI 16</li>
      <li>Scaling Multicore Databases via Constrained Parallel Execution 
          [<a href="./pub/ic3-sigmod16.pdf">paper</a>,
           <a href="http://ic3.news.cs.nyu.edu/techreport16.pdf">tr</a>] 
-         <br> Zhaoguo Wang, <strong>Shuai Mu</strong>, Yang Cui, Han Yi, Haibo Chen, Jinyang Li <br> SIGMOD 16</li>
+         <br> Zhaoguo Wang, Shuai Mu, Yang Cui, Han Yi, Haibo Chen, Jinyang Li <br> SIGMOD 16</li>
 	  <!--
               <li>Extracting More Concurrency from Distributed Transactions 
                   [<a href="./pub/rococo-osdi14.pdf">paper</a>, 

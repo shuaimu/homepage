@@ -2,18 +2,18 @@
 <html lang="en"><head>
  <meta charset="utf-8">
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
-  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.5.0 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.6.1 -->
 <title>Two Phase Locking with two-phase commit (2PL+2PC) | Home</title>
-<meta name="generator" content="Jekyll v3.8.5" />
+<meta name="generator" content="Jekyll v3.9.0" />
 <meta property="og:title" content="Two Phase Locking with two-phase commit (2PL+2PC)" />
 <meta property="og:locale" content="en_US" />
-<link rel="canonical" href="http://localhost:4000/teaching/ds/20fa/notes/spanner.html" />
-<meta property="og:url" content="http://localhost:4000/teaching/ds/20fa/notes/spanner.html" />
+<link rel="canonical" href="http://0.0.0.0/teaching/ds/20fa/notes/spanner.html" />
+<meta property="og:url" content="http://0.0.0.0/teaching/ds/20fa/notes/spanner.html" />
 <meta property="og:site_name" content="Home" />
 <script type="application/ld+json">
-{"@type":"WebPage","headline":"Two Phase Locking with two-phase commit (2PL+2PC)","url":"http://localhost:4000/teaching/ds/20fa/notes/spanner.html","@context":"http://schema.org"}</script>
+{"@type":"WebPage","url":"http://0.0.0.0/teaching/ds/20fa/notes/spanner.html","headline":"Two Phase Locking with two-phase commit (2PL+2PC)","@context":"https://schema.org"}</script>
 <!-- End Jekyll SEO tag -->
-<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://localhost:4000/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://0.0.0.0/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
   <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
 </head>
 <body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
@@ -57,7 +57,7 @@
 <h2 id="problem-with-strawman-2">Problem with strawman 2?</h2>
 <ul>
   <li>Permits this non-serializable interleaving
-    <div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>R_1(C), R_1(S), W_1(C), R_3(C), R_3(S), Commit3, W_1(S), Commit1
+    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>R_1(C), R_1(S), W_1(C), R_3(C), R_3(S), Commit3, W_1(S), Commit1
 </code></pre></div>    </div>
   </li>
   <li>Look at W_1(C), if lock on C is released, then another transaction T’ can read new value of C, but T’ must be able to read new value of S that T has not yet written yet.</li>
@@ -66,7 +66,7 @@
 </ul>
 
 <h2 id="extra-question-how-about-read-locks-must-it-also-be-held-till-transaction-commits">(Extra question) How about read locks, must it also be held till transaction commits?</h2>
-<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>R_3(C), R_1(C), R_1(S), W_1(S), W_1(S), Commit1, R_3(S), Commit3
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>R_3(C), R_1(C), R_1(S), W_1(S), W_1(S), Commit1, R_3(S), Commit3
 </code></pre></div></div>
 <ul>
   <li>This is a non-serializable schedule

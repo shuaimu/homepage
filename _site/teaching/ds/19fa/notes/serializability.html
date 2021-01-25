@@ -2,18 +2,18 @@
 <html lang="en"><head>
  <meta charset="utf-8">
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
-  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.5.0 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.6.1 -->
 <title>Serializable transactions | Home</title>
-<meta name="generator" content="Jekyll v3.8.5" />
+<meta name="generator" content="Jekyll v3.9.0" />
 <meta property="og:title" content="Serializable transactions" />
 <meta property="og:locale" content="en_US" />
-<link rel="canonical" href="http://localhost:4000/teaching/ds/19fa/notes/serializability.html" />
-<meta property="og:url" content="http://localhost:4000/teaching/ds/19fa/notes/serializability.html" />
+<link rel="canonical" href="http://0.0.0.0/teaching/ds/19fa/notes/serializability.html" />
+<meta property="og:url" content="http://0.0.0.0/teaching/ds/19fa/notes/serializability.html" />
 <meta property="og:site_name" content="Home" />
 <script type="application/ld+json">
-{"@type":"WebPage","headline":"Serializable transactions","url":"http://localhost:4000/teaching/ds/19fa/notes/serializability.html","@context":"http://schema.org"}</script>
+{"@type":"WebPage","url":"http://0.0.0.0/teaching/ds/19fa/notes/serializability.html","headline":"Serializable transactions","@context":"https://schema.org"}</script>
 <!-- End Jekyll SEO tag -->
-<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://localhost:4000/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://0.0.0.0/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
   <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
 </head>
 <body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
@@ -41,7 +41,7 @@
 <h1 id="transactions-groups-a-set-of-readwrite-operations-together">Transactions groups a set of read/write operations together</h1>
 <ul>
   <li>e.g.
-    <div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>begin_tx
+    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>begin_tx
 v &lt;-- read(checking)
 v' &lt;-- read(saving)
 write(checking, v-10)
@@ -75,7 +75,7 @@ commit_tx
 </ul>
 
 <h1 id="concurrency-control">Concurrency control</h1>
-<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>T1:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>T1:
 transfer $10 from checking to saving
 
 T2:
@@ -107,7 +107,7 @@ T2:              Read(C)=100          Write(C, 80)
 <ul>
   <li>An execution schedule is an ordering of read/write/commit/abort operations (executed by the local system)</li>
   <li>e.g.
-    <div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>R_1(C), R_2(C), R_1(S), W_2(C), Commit2, W_1(C), W_1(S), Commit1
+    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>R_1(C), R_2(C), R_1(S), W_2(C), Commit2, W_1(C), W_1(S), Commit1
 </code></pre></div>    </div>
   </li>
   <li>Two schedules are equivalent if they:
@@ -118,7 +118,7 @@ T2:              Read(C)=100          Write(C, 80)
   </li>
   <li>A pair of operations conflict if they access the same data item and one is a write.</li>
   <li>Examples:
-    <div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Serializable? R_1(C), R_1(S), R_2(C), W_2(C), Commit2, W_1(C), W_1(S), Commit1
+    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Serializable? R_1(C), R_1(S), R_2(C), W_2(C), Commit2, W_1(C), W_1(S), Commit1
 No
 Serialiazable? R_1(C), R_1(S), R_3(C), R_3(S), Commit3, W_1(C), W_1(S), Commit1
 equivalent to R_3(C), R_3(S), Commit3, R_1(C), R_1(S), W_1(C), W_1(S), Commit1

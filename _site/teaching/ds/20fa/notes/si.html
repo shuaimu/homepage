@@ -2,18 +2,18 @@
 <html lang="en"><head>
  <meta charset="utf-8">
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
-  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.5.0 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.6.1 -->
 <title>Optimistic concurrency control (OCC) | Home</title>
-<meta name="generator" content="Jekyll v3.8.5" />
+<meta name="generator" content="Jekyll v3.9.0" />
 <meta property="og:title" content="Optimistic concurrency control (OCC)" />
 <meta property="og:locale" content="en_US" />
-<link rel="canonical" href="http://localhost:4000/teaching/ds/20fa/notes/si.html" />
-<meta property="og:url" content="http://localhost:4000/teaching/ds/20fa/notes/si.html" />
+<link rel="canonical" href="http://0.0.0.0/teaching/ds/20fa/notes/si.html" />
+<meta property="og:url" content="http://0.0.0.0/teaching/ds/20fa/notes/si.html" />
 <meta property="og:site_name" content="Home" />
 <script type="application/ld+json">
-{"@type":"WebPage","headline":"Optimistic concurrency control (OCC)","url":"http://localhost:4000/teaching/ds/20fa/notes/si.html","@context":"http://schema.org"}</script>
+{"@type":"WebPage","url":"http://0.0.0.0/teaching/ds/20fa/notes/si.html","headline":"Optimistic concurrency control (OCC)","@context":"https://schema.org"}</script>
 <!-- End Jekyll SEO tag -->
-<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://localhost:4000/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://0.0.0.0/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
   <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
 </head>
 <body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
@@ -38,7 +38,7 @@
   <section>
     
 <h2 id="optimistic-concurrency-control-occ">Optimistic concurrency control (OCC)</h2>
-<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>T1:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>T1:
 Begin_tx
 v&lt;-R(C)  # remember read version c#=1
 v'&lt;-R(S) # remember read version s#=1
@@ -69,7 +69,7 @@ unlock(S)
     </ul>
   </li>
   <li>protocol:
-    <div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code> begin_tx : T is assigned a start timestamp T.sts
+    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code> begin_tx : T is assigned a start timestamp T.sts
  Read: T reads the biggest version i such that i &lt; = T.sts
  Write: buffers writes, T.wset += {C}
  commit_tx: T is assigned a commit timestamp T.cts
@@ -80,7 +80,7 @@ unlock(S)
 </ul>
 
 <h2 id="recall-our-earlier-bad-interleaving">Recall our earlier bad interleaving:</h2>
-<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>T1: Read(C) Read(S) Write(C, 90)                Write(S, 110)
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>T1: Read(C) Read(S) Write(C, 90)                Write(S, 110)
 T3:                              Read(C) Read(S)
 
 T3 reads old value of C and S (due to T3.sts &lt; T1.cts)
@@ -89,7 +89,7 @@ T3 reads old value of C and S (due to T3.sts &lt; T1.cts)
 <h2 id="does-snapshot-isolation-implement-serializability-no">Does snapshot isolation implement serializability? No</h2>
 <ul>
   <li>The write-skew problem
-    <div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>R_1(A), R_2(B), W_1(B), W_2(A), C_1(A), C_2(B)
+    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>R_1(A), R_2(B), W_1(B), W_2(A), C_1(A), C_2(B)
 </code></pre></div>    </div>
   </li>
   <li>non-serializable interleaving but, possible under SI</li>

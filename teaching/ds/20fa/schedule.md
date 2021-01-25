@@ -49,8 +49,8 @@ The schedule is tentative and subject to change.
 | Nov 18 | Blockchain V: [Smart Contract](notes/eth.md)                                   |                                                          |
 | Nov 23 | No class (Thanksgiving)                                                                             |                                                                                                |
 | Nov 25 | No class (Thanksgiving)                                                        |                                                                                                |
-| Nov 30 | TBD                                                                            |                                                                                                |
-| Dec 2  | TBD                                                                            |                                                                                                |
+| Nov 30 | Misc I: [Distributed Hash Table](notes/chord.md)                               | Read [Chord](readings/chord.pdf)                                                                                      |
+| Dec 2  | Misc II: [Anonymous Network](notes/tor.md)                                     | Read [Tor](readings/tor.pdf)                                                                     |
 | Dec 7  | TBD                                                                            |                                                                                                |
 
 [SBU calendar](https://www.stonybrook.edu/commcms/registrar/calendars/_ucalcontent/fall20summer21.php)
