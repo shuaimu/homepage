@@ -1,0 +1,743 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/anshkhannasbu/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/anshkhannasbu/src/shardkv/server.go<p><PRE>
+package shardkv
+
+
+import "shardmaster"
+import "labrpc"
+import "raft"
+import "sync"
+import "labgob"
+import "strconv"
+import "time"
+import "strings"
+import "log"
+
+
+
+type Op struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+	ClientId int64
+	RpcId int
+	Key string
+	OpType string
+	Value string
+	ConfigMsg bool
+	Config shardmaster.Config
+	KvMap map[string]string
+	RpcMapComm map[string]string
+}
+
+type RaftOp struct {
+	Op Op
+}
+
+type ShardTransferOp struct{
+	Reply ShardTransferReply
+	Group int
+}
+
+type ShardKV struct {
+	mu           sync.Mutex
+	me           int
+	rf           *raft.Raft
+	applyCh      chan raft.ApplyMsg
+	make_end     func(string) *labrpc.ClientEnd
+	gid          int
+	masters      []*labrpc.ClientEnd
+	maxraftstate int // snapshot if log grows this big
+
+	// Your definitions here.
+	mck *shardmaster.Clerk
+	rpcMapComm map[string]string
+	rpcMapUncomm map[string]string
+	kvMap map[string]string
+	config shardmaster.Config
+	lastProcessedIndex int
+	StopServe bool
+	quitAll chan int
+	latestConfigSeen int
+	latestConfigApplied int
+}
+
+const Debug = 1
+
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match38-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		log.Printf(format, a...)
+	}
+	return
+}
+
+func opToRaftOp(op Op) RaftOp{
+	rop := RaftOp{}
+	rop.Op = op
+	return rop
+}
+
+func raftOpToOp(rop RaftOp) Op{
+	return rop.Op
+}
+
+func getKey(op interface{}) string{
+	nop := op.(Op)
+	return strconv.FormatInt(nop.ClientId, 10) + "$" + strconv.FormatInt(int64(nop.RpcId), 10)
+</FONT>}
+
+func(kv *ShardKV) keyOwnership(key string) bool{
+	shard := key2shard(key)
+	own := false
+	ngid := kv.config.Shards[shard]
+	if ngid == kv.gid{
+		own = true
+	}
+	return own
+}
+
+<A NAME="12"></A><FONT color = #0000FF><A HREF="match38-0.html#12" TARGET="0"><IMG SRC="../../bitmaps/tm_2_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func(kv *ShardKV) isLeader() (int, bool){
+	a,b := kv.rf.GetState()
+	return a,b
+}
+
+func (kv *ShardKV) processOp(op Op) (bool, Err){
+</FONT>
+<A NAME="11"></A><FONT color = #00FF00><A HREF="match38-0.html#11" TARGET="0"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	prevop := Op{}
+	prevop.ClientId = op.ClientId
+	prevop.RpcId = op.RpcId - 1
+
+	rpckey := getKey(op)
+
+	kv.mu.Lock()
+</FONT>
+	isOwner := kv.keyOwnership(op.Key)
+
+	if !isOwner{
+		kv.mu.Unlock()
+		return false, ErrWrongGroup
+	}
+
+	if kv.StopServe{
+		kv.mu.Unlock()
+		return false, ErrWrongGroup
+	}
+	
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match38-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.initMaps()
+	
+	_, ok1 := kv.rpcMapUncomm[rpckey]
+	_, ok2 := kv.rpcMapComm[rpckey]
+
+	if !ok1 && !ok2 {
+		_, _, done := kv.rf.Start(opToRaftOp(op))
+		//DPrintf("received operation for server %d and index %d and client %d and rpc id %d last processed is %d\n", kv.me, idx_op, op.ClientId, op.RpcId, kv.lastProcessedIndex)
+		if !done{
+			kv.mu.Unlock()
+</FONT>			//DPrintf("returning reply1 %t\n", reply.Success)
+			return done, WrongLeader
+		}
+		kv.rpcMapUncomm[rpckey] = "done"
+	}
+
+	kv.mu.Unlock()
+	
+	return true, OK
+}
+
+
+<A NAME="8"></A><FONT color = #00FFFF><A HREF="match38-0.html#8" TARGET="0"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
+	// Your code here.
+	op := Op{}
+	op.ClientId = args.ClientId
+	op.RpcId = args.RpcId
+	op.OpType = "Get"
+	op.Key = args.Key
+	op.Value = ""
+</FONT>
+	opDone, err := kv.processOp(op)
+	rpckey := getKey(op)
+
+	if !opDone{
+		reply.WrongLeader = (err == WrongLeader)
+<A NAME="9"></A><FONT color = #FF00FF><A HREF="match38-0.html#9" TARGET="0"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		reply.Err = err
+		return
+	}
+
+	for {
+
+		time.Sleep(10*time.Millisecond)
+
+		_, isLeader := kv.isLeader()
+		if !isLeader{
+			reply.WrongLeader = true
+			break
+		}
+
+		kv.mu.Lock()
+		isOwner := kv.keyOwnership(op.Key)
+</FONT>		val, ok := kv.rpcMapComm[rpckey]
+		_, ok1 := kv.rpcMapUncomm[rpckey]
+		kv.mu.Unlock()
+
+		if !isOwner {
+			reply.Err = ErrWrongGroup
+			break
+		}
+
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match38-0.html#7" TARGET="0"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		if ok {
+			reply.Value = val
+			reply.Err = OK
+			break
+		}
+
+		if !ok1{
+			reply.WrongLeader = true
+			break
+		}
+	}
+
+}
+
+func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	op := Op{}
+	op.ClientId = args.ClientId
+	op.RpcId = args.RpcId
+</FONT>	op.OpType = args.Op
+	op.Key = args.Key
+	op.Value = args.Value
+
+	opDone, err := kv.processOp(op)
+	rpckey := getKey(op)
+
+	if !opDone{
+		reply.WrongLeader = (err == WrongLeader)
+<A NAME="10"></A><FONT color = #FF0000><A HREF="match38-0.html#10" TARGET="0"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		reply.Err = err
+		return
+	}
+
+	for {
+
+		time.Sleep(10*time.Millisecond)
+
+		_, isLeader := kv.isLeader()
+		if !isLeader{
+			reply.WrongLeader = true
+			break
+		}
+
+		kv.mu.Lock()
+		isOwner := kv.keyOwnership(op.Key)
+</FONT>		_, ok := kv.rpcMapComm[rpckey]
+		_, ok1 := kv.rpcMapUncomm[rpckey]
+		kv.mu.Unlock()
+
+		if !isOwner {
+			reply.Err = ErrWrongGroup
+			break
+		}
+
+		if ok {
+			reply.Err = OK
+			break
+		}
+
+		if !ok1{
+			reply.WrongLeader = true
+			break
+		}
+	}
+}
+
+func copyMap(ma map[string]string) map[string]string {
+	copyMa := make(map[string]string)
+	for k,v := range ma {
+		copyMa[k] = v
+	}
+	return copyMa
+}
+
+func(kv *ShardKV) ShardTransfer(args *ShardTransferArgs, reply *ShardTransferReply){
+	kv.mu.Lock()
+	
+	_, b := kv.isLeader()
+
+	if !b {
+		reply.WrongLeader = true
+		kv.mu.Unlock()
+		return
+	}
+
+	if args.ConfigNum &lt; kv.config.Num {
+		reply.OldConfig = true
+		kv.mu.Unlock()
+		return
+	}
+
+	if args.ConfigNum &gt; kv.config.Num {
+		kv.StopServe = true
+		go kv.stepDownAndSyncData(copyConfig(kv.mck.Query(-1)))
+		reply.OldConfig = true
+		kv.mu.Unlock()
+		return
+	}
+
+	reply.KvMap = copyMap(kv.kvMap)
+	reply.RpcMapComm = copyMap(kv.rpcMapComm)
+
+	kv.mu.Unlock()
+}
+
+//
+// the tester calls Kill() when a ShardKV instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *ShardKV) Kill() {
+	kv.rf.Kill()
+	// Your code here, if desired.
+	go func(){
+		for {
+			kv.quitAll &lt;- 1
+		}
+	}()
+}
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match38-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func(kv *ShardKV) updateRPCMap(nop interface{}, index int, value string){
+
+	op := nop.(Op)
+	key := getKey(op)
+	kv.rpcMapComm[key] = value
+	kv.deleteKeys(op.ClientId, op.RpcId - 1)
+	kv.lastProcessedIndex = max(kv.lastProcessedIndex, index)
+
+}
+
+func(kv *ShardKV) deleteKeys(cid int64, rpcid int){
+	
+	for k,_ := range kv.rpcMapComm {
+		arr := strings.Split(k, "$")
+		ncid, _ := strconv.ParseInt(arr[0], 10, 64)
+		nrpcid, _ := strconv.Atoi(arr[1])
+</FONT><A NAME="0"></A><FONT color = #FF0000><A HREF="match38-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		if ncid != cid {
+			continue
+		}
+		if nrpcid &lt;= rpcid {
+			delete(kv.rpcMapComm, k)
+		}
+	}
+
+}
+
+func(kv *ShardKV) updateKVMap(nop interface{}, index int) string {
+
+	op := nop.(Op)
+	_, ok := kv.kvMap[op.Key]
+
+	if ok {
+		if op.OpType == "Append"{
+			kv.kvMap[op.Key] += op.Value
+		} 
+		if op.OpType == "Put"{
+			//DPrintf("Server %d Put Op key %s Op value %s\n", kv.me, op.Key, op.Value)
+			kv.kvMap[op.Key] = op.Value
+		}
+		if op.OpType == "Get" {
+			//DPrintf("Server %d Get Op key %s Op value %s\n", kv.me, op.Key, op.Value)
+		}
+	} else{
+		if op.OpType != "Get"{
+			kv.kvMap[op.Key] = op.Value
+		}
+	}
+
+	return kv.kvMap[op.Key]
+	//DPrintf("kvMap keys count %d\n", len(kv.kvMap))
+}
+
+func dummyOp() Op{
+	op := Op{}
+	op.Key = "bits"
+	return op
+}
+
+func(kv *ShardKV) listenToCommit(){
+	go func(){
+</FONT>		for{
+<A NAME="13"></A><FONT color = #00FFFF><A HREF="match38-0.html#13" TARGET="0"><IMG SRC="../../bitmaps/tm_3_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			select{
+			case nop := (&lt;-kv.applyCh):
+				_, ok := nop.Command.(RaftOp)
+				if !ok {
+					if nop.SnapshotMessage {
+</FONT>						//kv.readSnapshot(nop.Snapshot)
+						continue
+					}
+				}
+				//DPrintf("command index %d\n", nop.CommandIndex)
+				kv.addOp(nop)
+			}
+		}
+	}()
+}
+
+func(kv *ShardKV) delOp(msg raft.ApplyMsg){
+	rop, ok := msg.Command.(RaftOp)
+	var op Op
+	if !ok {
+		op = dummyOp()
+	} else{
+		op = raftOpToOp(rop)
+	}
+	key := getKey(op)
+	delete(kv.rpcMapUncomm, key)
+	kv.lastProcessedIndex = max(kv.lastProcessedIndex, msg.CommandIndex)
+}
+
+func(kv *ShardKV) processConfigMsg(op Op){
+	if kv.latestConfigApplied &gt;= op.Config.Num {
+		return
+	}
+	if kv.latestConfigSeen &gt; op.Config.Num{
+		return
+	}
+	kv.kvMap = copyMap(op.KvMap)
+	kv.rpcMapComm = copyMap(op.RpcMapComm)
+	kv.config = copyConfig(op.Config)
+	kv.StopServe = false
+	kv.latestConfigApplied = max(kv.latestConfigApplied, kv.config.Num)
+}
+
+
+
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match38-0.html#6" TARGET="0"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func(kv *ShardKV) addOp(msg raft.ApplyMsg){
+	kv.mu.Lock()
+	if msg.CommandIndex &lt;= kv.lastProcessedIndex {
+		kv.mu.Unlock()
+		return
+	}
+	rop, ok := msg.Command.(RaftOp)
+	var op Op
+	if !ok {
+		op = dummyOp()
+	} else{
+		op = raftOpToOp(rop)
+</FONT>	}
+	if op.ConfigMsg {
+		kv.processConfigMsg(op)
+		kv.mu.Unlock()
+		return
+	}
+	if kv.StopServe {
+		kv.delOp(msg)
+		kv.mu.Unlock()
+		return
+	}
+	value := kv.updateKVMap(op, msg.CommandIndex)
+	kv.updateRPCMap(op, msg.CommandIndex, value)
+	kv.mu.Unlock()
+}
+
+func(kv *ShardKV) sendShardTransfer(group int, servers []string, configNum int, replies chan ShardTransferOp){
+	for j := 0; j &lt; len(servers); j++ {
+		srv := kv.make_end(servers[j])
+		args := ShardTransferArgs{}
+		reply := ShardTransferReply{}
+		rep := ShardTransferOp{}
+
+		args.ConfigNum = configNum
+
+		ok := srv.Call("ShardKV.ShardTransfer", &args, &reply)
+
+		if !ok || reply.WrongLeader {
+			continue
+		}
+
+		rep.Reply = reply
+		rep.Group = group
+		replies &lt;- rep
+		return
+	}
+	rep := ShardTransferOp{}
+	rep.Reply.OldConfig = true
+	replies &lt;- rep
+}
+
+func(kv *ShardKV) stepDownAndSyncData(config shardmaster.Config){
+	
+	_, isLeader := kv.isLeader()
+	if !isLeader{
+		return
+	}
+
+	kv.mu.Lock()
+	if config.Num &lt;= kv.config.Num{
+		kv.mu.Unlock()
+		return
+	}
+
+	kv.StopServe = true
+	kv.latestConfigSeen = max(kv.latestConfigSeen, config.Num)
+
+	curKvMap := copyMap(kv.kvMap)
+	curCommitMap := copyMap(kv.rpcMapComm)
+
+	groupMap := make(map[int][]string)
+	responsibleShards := make(map[int][]int)
+
+	for i := 0; i &lt; len(config.Shards); i++ {
+		if config.Shards[i] == kv.gid {
+			if kv.config.Shards[i] != kv.gid && kv.config.Shards[i] != -1{
+				group := kv.config.Shards[i]
+				servers := kv.config.Groups[group]
+				groupMap[group] = servers
+				responsibleShards[group] = append(responsibleShards[group], i)
+			}
+		}
+	}
+
+	kv.mu.Unlock()
+	
+
+	replies := make(chan ShardTransferOp, len(groupMap) + 1)
+	doneChan := make(chan int)
+	netrep := len(groupMap)
+
+	for k,v := range groupMap {
+		go kv.sendShardTransfer(k, v, config.Num, replies)
+	}
+
+
+	invalidConf := false
+	commitMap := make([]map[string]string, 0)
+	kvMap := make([]map[string]string, 0)
+	repGroup := make([]int, 0)
+
+	go func(){
+		if netrep == 0 {
+			doneChan &lt;- 1
+			return
+		}
+		for {
+			select {
+			case &lt;- kv.quitAll:
+				return
+			case resp := &lt;-replies:
+				if !resp.Reply.OldConfig {
+					netrep --
+					commitMap = append(commitMap, resp.Reply.RpcMapComm)
+					kvMap = append(kvMap, resp.Reply.KvMap)
+					repGroup = append(repGroup, resp.Group)
+				} else {
+					invalidConf = true
+					doneChan &lt;- 1
+					return
+				}
+				if netrep == 0 {
+					doneChan &lt;- 1
+					return
+				}
+			}
+		}
+	}()
+	&lt;- doneChan
+
+	if invalidConf {
+		return
+	}
+
+	kv.mu.Lock()
+	if config.Num &lt;= kv.config.Num{
+		kv.mu.Unlock()
+		return
+	}
+	kv.mu.Unlock()
+	for i := 0; i &lt; len(commitMap); i++ {
+		for k,v := range commitMap[i] {
+			curCommitMap[k] = v
+		}
+	}
+	for i := 0; i &lt; len(kvMap); i++ {
+		for k,v := range kvMap[i] {
+			shard := key2shard(k)
+			for j := 0; j &lt; len(responsibleShards[repGroup[i]]); j++ {
+				if shard == responsibleShards[repGroup[i]][j]{
+					curKvMap[k] = v
+					break
+				}
+			}
+		}	
+	}
+
+	op := Op{}
+	op.Config = copyConfig(config)
+	op.KvMap = curKvMap
+	op.RpcMapComm = curCommitMap
+	op.ConfigMsg = true
+
+	kv.rf.Start(opToRaftOp(op))
+
+}
+
+func copyConfig(cfg shardmaster.Config) shardmaster.Config {
+	ncfg := shardmaster.Config{}
+	ncfg.Groups = map[int][]string{}
+	for k,v := range cfg.Groups {
+		ncfg.Groups[k] = make([]string, len(v))
+		copy(ncfg.Groups[k], v)
+	}
+	for i := 0; i &lt; len(cfg.Shards); i++ {
+		ncfg.Shards[i] = cfg.Shards[i]
+	}
+	ncfg.Num = cfg.Num
+
+	return ncfg
+}
+
+func(kv *ShardKV) syncConfig(){
+	go func(){
+		for {
+			config := copyConfig(kv.mck.Query(-1))
+			go kv.stepDownAndSyncData(config)
+			time.Sleep(20*time.Millisecond)
+		}
+	}()
+}
+
+func(kv *ShardKV) initMaps(){
+	raftlog, commitIdx := kv.rf.GetLogAndCommit()
+	kv.initRPCMap(raftlog, commitIdx)
+}
+
+<A NAME="14"></A><FONT color = #FF00FF><A HREF="match38-0.html#14" TARGET="0"><IMG SRC="../../bitmaps/tm_4_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *ShardKV) initRPCMap(log []raft.LogEntry, commitIdx int){
+	kv.rpcMapUncomm = make(map[string]string)
+	for i := kv.lastProcessedIndex + 1; i &lt; len(log); i++ {
+</FONT><A NAME="2"></A><FONT color = #0000FF><A HREF="match38-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		rop, ok := log[i].Command.(RaftOp)
+		var op Op
+		if !ok {
+			op = dummyOp()
+		} else{
+			op = raftOpToOp(rop)
+		}
+		key := getKey(op)
+		_, ok2 := kv.rpcMapComm[key]
+		if !ok2 {
+			kv.rpcMapUncomm[key] = strconv.Itoa(i)
+</FONT>		}
+	}
+}
+
+func dummyConfig() shardmaster.Config {
+	ncfg := shardmaster.Config{}
+	ncfg.Groups = map[int][]string{}
+	for i := 0; i &lt; len(ncfg.Shards); i++ {
+		ncfg.Shards[i] = -1
+	}
+	return ncfg
+}
+
+
+//
+// servers[] contains the ports of the servers in this group.
+//
+// me is the index of the current server in servers[].
+//
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+//
+// the k/v server should snapshot when Raft's saved state exceeds
+// maxraftstate bytes, in order to allow Raft to garbage-collect its
+// log. if maxraftstate is -1, you don't need to snapshot.
+//
+// gid is this group's GID, for interacting with the shardmaster.
+//
+// pass masters[] to shardmaster.MakeClerk() so you can send
+// RPCs to the shardmaster.
+//
+// make_end(servername) turns a server name from a
+// Config.Groups[gid][i] into a labrpc.ClientEnd on which you can
+// send RPCs. You'll need this to send RPCs to other groups.
+//
+// look at client.go for examples of how to use masters[]
+// and make_end() to send RPCs to the group owning a specific shard.
+//
+// StartServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int, gid int, masters []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *ShardKV {
+	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+	labgob.Register(RaftOp{})
+
+	kv := new(ShardKV)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+	kv.make_end = make_end
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match38-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.gid = gid
+	kv.masters = masters
+	kv.lastProcessedIndex = -1
+	kv.latestConfigSeen = -1
+	kv.latestConfigApplied = -1
+	kv.rpcMapComm = make(map[string]string)
+	kv.rpcMapUncomm = make(map[string]string)
+	kv.kvMap = make(map[string]string)
+	kv.quitAll = make(chan int)
+</FONT>	kv.config = dummyConfig()
+
+	// Your initialization code here.
+	// Use something like this to talk to the shardmaster:
+	kv.mck = shardmaster.MakeClerk(kv.masters)
+
+<A NAME="15"></A><FONT color = #FF0000><A HREF="match38-0.html#15" TARGET="0"><IMG SRC="../../bitmaps/tm_0_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+
+	kv.listenToCommit()
+	kv.syncConfig()
+
+
+	return kv
+</FONT>}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

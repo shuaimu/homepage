@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>Raft | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="Raft" />
+<meta property="og:locale" content="en_US" />
+<link rel="canonical" href="http://0.0.0.0/teaching/ds/22fa/notes/raft.html" />
+<meta property="og:url" content="http://0.0.0.0/teaching/ds/22fa/notes/raft.html" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="Raft" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"Raft","url":"http://0.0.0.0/teaching/ds/22fa/notes/raft.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://0.0.0.0/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>Raft</h1>
+         </header> -->
+
+  <section>
+    
+<h1 id="raft">Raft</h1>
+
+<h2 id="a-linearizable-replicated-log">A linearizable replicated log</h2>
+<ul>
+  <li>Raft picks one server to be leader</li>
+  <li>clients send Append/Get RPCs to leader</li>
+  <li>leader sends each client command to all replicas
+    <ul>
+      <li>each follower appends to log</li>
+      <li>goal is to have identical logs</li>
+      <li>log entry is “committed” if a majority put it in their logs – won’t be forgotten
+ majority -&gt; can proceed despite minority of failed servers</li>
+      <li>servers execute entry once the leader says it’s committed</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="will-the-raft-logs-always-be-exactly-the-same-replicas">Will the Raft logs always be exactly the same replicas?</h2>
+<ul>
+  <li>no: some replicas may lag</li>
+  <li>no: we’ll see that they can have different entries!</li>
+  <li>if a server has executed a command in a given entry number:
+    <ul>
+      <li>no other server will execute a different command for that entry</li>
+      <li>i.e. the servers will agree on the command for each entry</li>
+      <li>State Machine Safety (Figure 3)</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="two-parts">Two parts</h2>
+<ul>
+  <li>electing a new leader</li>
+  <li>ensuring identical logs after failures</li>
+</ul>
+
+<h2 id="leader-election">Leader election</h2>
+<ul>
+  <li>Raft numbers the sequence of leaders
+    <ul>
+      <li>new leader -&gt; new term</li>
+      <li>a term has at most one leader; might have no leader</li>
+      <li>the numbering helps servers follow latest leader, not superseded leader</li>
+    </ul>
+  </li>
+  <li>when does Raft start a leader election?
+    <ul>
+      <li>other servers don’t hear from current leader for a while</li>
+      <li>they increment local currentTerm, become candidates, start election</li>
+    </ul>
+  </li>
+  <li>how to ensure at most one leader in a term?
+    <ul>
+      <li>(Figure 2 RequestVote RPC and Rules for Servers)</li>
+      <li>leader must get votes from a majority of servers</li>
+      <li>each server can cast only one vote per term
+ votes for first server that asks (within Figure 2 rules)</li>
+      <li>at most one server can get majority of votes for a given term
+-&gt; at most one leader even if network partition
+-&gt; election can succeed even if some servers have failed</li>
+    </ul>
+  </li>
+  <li>how does a server know that election succeeded?
+    <ul>
+      <li>winner gets yes votes from majority</li>
+      <li>others see the AppendEntries heart-beats from winner</li>
+    </ul>
+  </li>
+  <li>an election may not succeed
+    <ul>
+      <li>none gets majority</li>
+      <li>even # of live servers, two candidates each get half</li>
+      <li>less than a majority of servers are reachable</li>
+    </ul>
+  </li>
+  <li>what happens after a failed election?
+    <ul>
+      <li>another timeout, increment currentTerm, become candidate</li>
+      <li>higher term takes precedence, candidates for older terms quit</li>
+    </ul>
+  </li>
+  <li>how does Raft reduce chances of election failure due to split vote?
+    <ul>
+      <li>each server delays a random amount of time before starting candidacy</li>
+      <li>why is the random delay useful?</li>
+    </ul>
+  </li>
+  <li>what if the old leader isn’t aware a new one is elected?
+    <ul>
+      <li>a new leader elected means a majority of servers have incremented currentTerm</li>
+      <li>so the old leader (w/ old term) can’t get majority for AppendEntries</li>
+      <li>so the old leader won’t commit or execute any new log entries</li>
+      <li>thus no split brain despite partition</li>
+      <li>but a minority may accept old server’s AppendEntries so logs may diverge at the end of the old term</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="log-synchronization-after-failures">Log synchronization after failures</h2>
+
+<ul>
+  <li>how can logs disagree?
+    <ul>
+      <li>a log might be short – missing entries at end of the term
+leader of term 3 crashes before sending all AppendEntries
+        <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>S1: 3
+S2: 3 3
+S3: 3 3
+</code></pre></div>        </div>
+      </li>
+      <li>logs might have different commands in same entry!
+after a series of leader crashes, e.g.
+        <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    10 11 12 13  &lt;- log entry #
+S1:  3
+S2:  3  3  4
+S3:  3  3  5
+</code></pre></div>        </div>
+      </li>
+      <li>new leader will force its log on followers; example:
+        <ul>
+          <li>S3 is chosen as new leader for term 6</li>
+          <li>S3 sends a new command, entry 13, term 6</li>
+          <li>AppendEntries, previous entry 12, previous term 5</li>
+          <li>S2 replies false (AppendEntries step 2)</li>
+          <li>S3 decrements nextIndex[S2] to 12</li>
+          <li>S3 sends AppendEntries, prev entry 11, prev term 3</li>
+          <li>S2 deletes entry 12 (AppendEntries step 3)</li>
+          <li>similar story for S1, but have to go back one farther</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>the result of roll-back:
+    <ul>
+      <li>each live follower deletes tail of log that differs from leader</li>
+      <li>thus live followers’ logs are prefixes of leader’s log</li>
+      <li>and live followers that keep up will have logs identical to leader’s
+except they may be missing the few most recent entries</li>
+    </ul>
+  </li>
+  <li>faster rollback?
+    <ul>
+      <li>when rejecting appendEntries, return the beginning/end index of the conflicting term.</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="new-leader-must-be-up-to-date">New leader must be “up to date”</h2>
+<ul>
+  <li>could new leader roll back <em>executed</em> entries from end of previous term?
+    <ul>
+      <li>i.e. could an executed entry be missing from the new leader’s log?</li>
+      <li>this would be a disaster – violates State Machine Safety</li>
+      <li>solution: Raft won’t elect a leader that might not have an executed entry</li>
+    </ul>
+  </li>
+  <li>could we choose leader with longest log?
+    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>example:
+  S1: 5 6 7
+  S2: 5 8
+  S3: 5 8
+</code></pre></div>    </div>
+    <ul>
+      <li>first, could this scenario happen? how?
+        <ul>
+          <li>S1 leader in term 6; crash+reboot; leader in term 7; crash and stay down
+both times it crashed after only appending to its own log</li>
+          <li>S2 leader in term 8, only S2+S3 alive, then crash</li>
+        </ul>
+      </li>
+      <li>who should be next leader?
+        <ul>
+          <li>S1 has longest log, but entry 8 could have been executed !!!</li>
+          <li>so new leader can only be one of S2 or S3</li>
+          <li>i.e. the rule cannot be simply choosing the “longest log”</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>end of 5.4.1 explains “at least as up to date” voting rule
+    <ul>
+      <li>compare last entry – higher term wins</li>
+      <li>if equal terms, longer log wins</li>
+      <li>so only S2 or S3 can be leader, will force S1 to discard 6,7
+        <ul>
+          <li>ok since no majority -&gt; not executed -&gt; no client reply</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>the point:
+    <ul>
+      <li>“at least as up to date” rule ensures new leader’s log contains
+        <ul>
+          <li>all potentially executed entries</li>
+        </ul>
+      </li>
+      <li>so new leader won’t roll back any executed operation</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="a-corner-case">A corner case</h2>
+<ul>
+  <li>why “log[N].term==currentTerm” in figure 2’s Rules for Servers?
+    <ul>
+      <li>why can’t we execute any entry that’s on a majority?
+        <ul>
+          <li>how could such an entry be discarded?
+            <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>figure 8 describes an example
+S1: 1 2     1 2 4
+S2: 1 2     1 2
+S3: 1   --&gt; 1 2
+S4: 1       1
+S5: 1       1 3
+</code></pre></div>            </div>
+          </li>
+          <li>S1 was leader in term 2, sends out two copies of 2</li>
+          <li>S5 leader in term 3</li>
+          <li>S1 in term 4, sends one more copy of 2 (b/c S3 rejected op 4)</li>
+          <li>what if S5 now becomes leader?
+            <ul>
+              <li>S5 can get a majority (w/o S1)</li>
+              <li>S5 will roll back 2 and replace it with 3</li>
+            </ul>
+          </li>
+          <li>so “present on a majority” != “committed”</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>so an entry becomes committed if:
+    <ul>
+      <li>it reached a majority in the term it was initially sent out, or</li>
+      <li>if a subsequent log entry becomes committed.
+        <ul>
+          <li><em>could</em> have committed if S1 hadn’t lost term=4 leadership</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>this is a consequence of:
+    <ul>
+      <li>the “more up to date” voting rule favoring higher term, and</li>
+      <li>the leader imposing its log on followers</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="log-compaction-and-snapshots">Log compaction and snapshots</h2>
+<ul>
+  <li>problem:
+    <ul>
+      <li>log will get to be huge – much larger than state-machine state!</li>
+      <li>will use lots of memory</li>
+      <li>will take a long time to
+        <ul>
+          <li>read and re-evaluate after reboot</li>
+          <li>send to a newly added replica</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>what constrains how a server can discard old parts of log?
+    <ul>
+      <li>can’t forget un-committed operations</li>
+      <li>need to replay if crash and restart</li>
+      <li>may be needed to bring other servers up to date</li>
+    </ul>
+  </li>
+  <li>solution: service periodically creates persistent “snapshot”
+    <ul>
+      <li>copy of entire state-machine state through a specific log entry
+        <ul>
+          <li>e.g. k/v table, client duplicate state</li>
+        </ul>
+      </li>
+      <li>service writes snapshot to persistent storage (disk)</li>
+      <li>service tells Raft it is snapshotted through some entry</li>
+      <li>Raft discards log before that entry</li>
+      <li>a server can create a snapshot and discard log at any time</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="configuration-change">Configuration change</h2>
+<ul>
+  <li>configuration change (Section 6)
+    <ul>
+      <li>configuration = set of servers</li>
+      <li>every once in a while you might want to
+        <ul>
+          <li>move to an new set of servers, or</li>
+          <li>increase/decrease the number of servers</li>
+        </ul>
+      </li>
+      <li>human initiates configuration change, Raft manages it</li>
+      <li>we’d like Raft to execute correctly across configuration changes</li>
+    </ul>
+  </li>
+  <li>why doesn’t a straightforward approach work?
+    <ul>
+      <li>suppose each server has the list of servers in the current config</li>
+      <li>change configuration by telling each server the new list
+        <ul>
+          <li>using some mechanism outside of Raft</li>
+        </ul>
+      </li>
+      <li>problem: they will learn new configuration at different times</li>
+      <li>example: want to replace S3 with S4
+        <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>S1: 1,2,3  1,2,4
+S2: 1,2,3  1,2,3
+S3: 1,2,3  1,2,3
+S4:        1,2,4
+</code></pre></div>        </div>
+      </li>
+      <li>OOPS! now <em>two</em> leaders could be elected!
+        <ul>
+          <li>S2 and S3 could elect S2</li>
+          <li>S1 and S4 could elect S1</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>Raft configuration change
+    <ul>
+      <li>idea: “joint consensus” stage that includes <em>both</em> old and new configuration</li>
+      <li>leader of old group logs entry that switches to joint consensus
+        <ul>
+          <li>Cold,new – contains both configurations</li>
+        </ul>
+      </li>
+      <li>during joint consensus, leader gets AppendEntries majority in both old and new</li>
+      <li>after Cold,new commits, leader sends out Cnew
+        <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>S1: 1,2,3  1,2,3+1,2,4
+S2: 1,2,3
+S3: 1,2,3
+S4:        1,2,3+1,2,4
+</code></pre></div>        </div>
+      </li>
+      <li>no leader will use Cnew until Cold,new commits in <em>both</em> old and new.
+        <ul>
+          <li>so there’s no time at which one leader could be using Cold</li>
+          <li>and another could be using Cnew</li>
+        </ul>
+      </li>
+      <li>if crash but new leader didn’t see Cold,new
+        <ul>
+          <li>then old group will continue, no switch, but that’s OK</li>
+        </ul>
+      </li>
+      <li>if crash and new leader did see Cold,new,
+        <ul>
+          <li>it will complete the configuration change</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="an-important-aside">An important aside:</h2>
+<ul>
+  <li>can leader execute read-only operations locally?
+    <ul>
+      <li>without sending to followers in AppendEntries and waiting for commit?</li>
+      <li>very tempting, since r/o ops may dominate, and don’t change state</li>
+    </ul>
+  </li>
+  <li>why might that be a bad idea?</li>
+  <li>how could we make the idea work?</li>
+</ul>
+
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+</body>
+
+</html>

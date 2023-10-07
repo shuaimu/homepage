@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>Bitcoin (Proof-of-work) | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="Bitcoin (Proof-of-work)" />
+<meta property="og:locale" content="en_US" />
+<link rel="canonical" href="http://0.0.0.0/teaching/se/23sp/notes/bitcoin.html" />
+<meta property="og:url" content="http://0.0.0.0/teaching/se/23sp/notes/bitcoin.html" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="Bitcoin (Proof-of-work)" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"Bitcoin (Proof-of-work)","url":"http://0.0.0.0/teaching/se/23sp/notes/bitcoin.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://0.0.0.0/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>Bitcoin (Proof-of-work)</h1>
+         </header> -->
+
+  <section>
+    <h1 id="bitcoin-proof-of-work">Bitcoin (Proof-of-work)</h1>
+
+<h2 id="a-chain-of-blocks-as-a-public-ledger">A chain of blocks as a public ledger</h2>
+<ul>
+  <li>each block has a header and a body</li>
+  <li>the body has entries of transfers</li>
+  <li>asymmetric encryption scheme (public/private keys) to prevent forging</li>
+  <li>(hash of) public key as address, private key to sign</li>
+</ul>
+
+<h2 id="proof-of-work-for-consensus">Proof-of-work for consensus</h2>
+<ul>
+  <li>each block header contains the hash value of previous block</li>
+  <li>target: a number (256 bit for bitcoin) with the beginning n bits are zero.
+    <ul>
+      <li>lower than or equal to</li>
+      <li>max (easier to computer): 32 bits as 0
+        <ul>
+          <li>2^224-1 : 0x00000000FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF</li>
+        </ul>
+      </li>
+      <li>min (harder to computer): all bits as 0
+        <ul>
+          <li>can be possibly extended to more than 256 bits, so really no minimum target</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>each block also has a 4-byte random number (nonce), a participant (miner) can enumerate the nonce to meet the difficulty requirement.</li>
+  <li>on average generating each block will take 2^n tries. If the network has “hashing power” as H, and the expected time to generate next block is t. Then: t*H = 2^n.</li>
+  <li>if the desired time to generate the next block is T, then the difficulty should be set as n=log_2(T*H)</li>
+  <li>difficulty: max_target / current_target
+    <ul>
+      <li>min: 1</li>
+      <li>max: no max difficulty (greater than 2^224)</li>
+      <li>current difficulty: 12,720,005,267,390 ~= 12.7T ~= 2^44
+        <ul>
+          <li>target = max_target / difficulty ~= 2^(224-44) = 2^180</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>difficulty/target is adjusted every 2016 blocks (approximately 2 weeks given the 10 minutes period)</li>
+</ul>
+
+<h2 id="timestamp">Timestamp</h2>
+<ul>
+  <li>accepted as valid if
+    <ul>
+      <li>lower than now + 2 hours</li>
+      <li>greater than the median timestamp of previous 11 blocks</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="incentives-and-mining">Incentives and mining</h2>
+<ul>
+  <li>block reward initially 50 bitcoin for each block, plus transaction fees</li>
+  <li>block reward halves every 210,000 blocks (~4 years), 0 after 64 iterations
+    <ul>
+      <li>currently at 12.5 (2019)</li>
+    </ul>
+  </li>
+  <li>total amount: ~21 million, over 75% and below 87.5% have been mined (why?)
+    <ul>
+      <li>210000 * (50 + 25 + 12.5 + …)</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="merkle-tree">Merkle tree</h2>
+<ul>
+  <li>leaf nodes has data</li>
+  <li>non-leaf nodes has hash of children nodes</li>
+  <li>the merkle root hash (32 bytes) is in the block chain header</li>
+  <li>this enables fast verification of the chain
+    <ul>
+      <li>no need to compute hash for all transaction content.</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="forking">Forking</h2>
+<ul>
+  <li>if two miners both generate (different) next blocks, then the chain “forks”. Other clients may accept either chain.</li>
+  <li>eventually, the longer chain wins, that is, a client will replace its own chain with a new chain if the new chain is longer.</li>
+  <li>51% attack: if one controls most of the hash powers, she can always rewrite a chain, causing issues such as double spending.</li>
+  <li>to avoid frequent forking, the expected time to generate a block should not be too small. 4 minutes in bitcoin. To achieve this, the difficulty is adjusted every 2016 blocks (~2 weeks).</li>
+</ul>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+</body>
+
+</html>

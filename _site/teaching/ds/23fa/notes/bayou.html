@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>Eventual and causal consistency | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="Eventual and causal consistency" />
+<meta property="og:locale" content="en_US" />
+<link rel="canonical" href="http://0.0.0.0/teaching/ds/23fa/notes/bayou.html" />
+<meta property="og:url" content="http://0.0.0.0/teaching/ds/23fa/notes/bayou.html" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="Eventual and causal consistency" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"Eventual and causal consistency","url":"http://0.0.0.0/teaching/ds/23fa/notes/bayou.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://0.0.0.0/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>Eventual and causal consistency</h1>
+         </header> -->
+
+  <section>
+    <h1 id="eventual-and-causal-consistency">Eventual and causal consistency</h1>
+
+<h2 id="weaker-than-linearizability">Weaker than linearizability</h2>
+<ul>
+  <li>linearizability
+    <ul>
+      <li>ordering</li>
+      <li>C2I (global)</li>
+    </ul>
+  </li>
+  <li>pros and cons
+    <ul>
+      <li>easy to use</li>
+      <li>hard to implement, low performance, not available during network partitions.</li>
+    </ul>
+  </li>
+  <li>e.g. eventual consistency (generally):
+    <ul>
+      <li>accept write at any replica immediately</li>
+      <li>respond to read at any replica immediately</li>
+    </ul>
+  </li>
+  <li>anomalies
+    <ul>
+      <li>stale read</li>
+      <li>diverging write</li>
+      <li>loss of causality</li>
+    </ul>
+  </li>
+  <li>desired properties:
+    <ul>
+      <li>eventual convergence of state</li>
+      <li>preserving causality</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="a-cloud-album-as-an-example">A cloud album as an example</h2>
+<ul>
+  <li>mobile phones and cloud, album and photos
+    <ul>
+      <li>operations: add album, upload photo to album, delete photo, get photo</li>
+    </ul>
+  </li>
+  <li>design #1: all operations have to be acknowledged by cloud
+    <ul>
+      <li>strong consistency, no anomalies</li>
+      <li>potentially bad user experience, long latency, freezes when connections are bad</li>
+    </ul>
+  </li>
+  <li>design #2: each device acts as a storage server
+    <ul>
+      <li>a device caches photos/albums and modifies its local copy; read from local copy.</li>
+      <li>data is available despite periodic connectivity to cloud and other nodes.</li>
+      <li>consistency issues if two devices have conflicting operations.</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="straw-man-1-merge-storage">Straw man 1: merge storage</h2>
+<ul>
+  <li>write-write conflict, e.g., add two photos to the same album the same time</li>
+  <li>automatic conflict resolution
+    <ul>
+      <li>idea update functions: have update be a function, not a new value.</li>
+    </ul>
+  </li>
+  <li>e.g. add photo pid to album w/ aid.
+    <ul>
+      <li>read current state of storage, decide best change</li>
+    </ul>
+  </li>
+  <li>function must be deterministic
+    <ul>
+      <li>otherwise nodes will get different answers</li>
+    </ul>
+  </li>
+  <li>Challenge:
+    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>A: add pid1 to album w/ aid 
+B: add pid2 to album w/ aid
+</code></pre></div>    </div>
+    <ul>
+      <li>X syncs w/ A, then B  Y syncs w/ B, then A  Will X show pid1 in front of pid2, and Y show pid2 in front of pid1?</li>
+      <li>If update function is commutative (e.g. album is an <em>unordered</em> set of photos), then it dos not matter.</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="goal-eventual-state-convergence">Goal: eventual state convergence</h2>
+<ul>
+  <li>Idea: ordered update log
+    <ul>
+      <li>Ordered list of updates at each node</li>
+      <li>Storage state is result of applying updates in order</li>
+      <li>Syncing == ensure all nodes have same updates in log</li>
+    </ul>
+  </li>
+  <li>How can nodes agree on update order?
+    <ul>
+      <li>Update ID: &lt;time T, node ID&gt;</li>
+      <li>Assigned by node that creates the update</li>
+      <li>Ordering updates a and b:
+        <ul>
+          <li>a &lt; b if a.T &lt; b.T or (a.T = b.T and a.ID &lt; b.ID)</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>Example:
+    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>&lt;10,A&gt;: add pid1 to album aid 
+&lt;20,B&gt;: add pid2 to album aid 
+</code></pre></div>    </div>
+    <ul>
+      <li>What’s the final ordered list in aid?
+        <ul>
+          <li>the result of executing update functions in timestamp order</li>
+          <li>[..pid1, pid2] (not [..pid2, pid1])</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>What’s the status before any syncs?  i.e. content of each node’s storage state
+    <ul>
+      <li>A: pid1 at 3rd position for album aid</li>
+      <li>B: pid2 at 3rd position for album aid</li>
+      <li>This is what A/B user will see before syncing.</li>
+    </ul>
+  </li>
+  <li>Now A and B sync with each other
+    <ul>
+      <li>Both now know the full set of updates</li>
+      <li>Can each just run the new update function against its storage state?
+        <ul>
+          <li>A: pid1 at 3rd position, pid2 at 4th position</li>
+          <li>B: pid2 at 3rd position, pid1 at 3rd position</li>
+        </ul>
+      </li>
+      <li>That’s not the right answer!</li>
+    </ul>
+  </li>
+  <li>Roll back and replay
+    <ul>
+      <li>Naive way: Re-run all update functions, starting from empty storage state</li>
+      <li>Since A and B have same ordered set of updates
+        <ul>
+          <li>they will arrive at same final state</li>
+        </ul>
+      </li>
+      <li>We will optimize this in a bit</li>
+    </ul>
+  </li>
+  <li>Displayed photo positions are “tentative”
+    <ul>
+      <li>B’s user saw a photo pid2 at 3rd position, then it’s changed to 4th position</li>
+      <li>You never know if there’s some other photo from nodes you haven’t yet synced
+        <ul>
+          <li>That will change the pid1’s position yet again</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>Will update order be consistent with wall-clock time?
+    <ul>
+      <li>Maybe A went first (in wall-clock time) with timestamp &lt;10,A&gt;</li>
+      <li>Node clocks are not perfectly synchronized</li>
+      <li>So B could then generates &lt;9,B&gt;</li>
+      <li>B’s meeting gets priority, even though A asked first</li>
+    </ul>
+  </li>
+  <li>Will update order be consistent with causality?
+    <ul>
+      <li>What if A adds a photo pid1,
+        <ul>
+          <li>then B sees it,</li>
+          <li>then B deletes pid1</li>
+        </ul>
+      </li>
+      <li>Perhaps
+        <ul>
+          <li>&lt;10,A&gt; add</li>
+          <li>&lt;9,B&gt; delete – B’s clock is slow</li>
+        </ul>
+      </li>
+      <li>Now delete will be ordered before add!
+        <ul>
+          <li>Unlikely to work</li>
+          <li>Differs from wall-clock time case b/c system <em>knew</em> B had seen the add</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h1 id="lamport-logical-clocks">Lamport logical clocks</h1>
+<ul>
+  <li>Want to timestamp events s.t.
+    <ul>
+      <li>node observes E1, then generates E2, TS(E2) &gt; TS(E1)</li>
+    </ul>
+  </li>
+  <li>Thus other nodes will order E1 and E2 the same way.</li>
+  <li>Each node keeps a clock T
+    <ul>
+      <li>increments T as real time passes, one second per second</li>
+      <li>T = max(T, T’+1) if sees T’ from another node</li>
+    </ul>
+  </li>
+  <li>Note properties:
+    <ul>
+      <li>E1 then E2 on same node =&gt; TS(E1) &lt; TS(E2)</li>
+      <li>BUT it’s a partial order</li>
+      <li>TS(E1) &lt; TS(E2) does not imply E1 came before E2</li>
+    </ul>
+  </li>
+  <li>Logical clock solves add/delete causality example
+    <ul>
+      <li>When B sees &lt;10,A&gt;,
+        <ul>
+          <li>B will set its clock to 11, so</li>
+          <li>B will generate &lt;11,B&gt; for its delete</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>Irritating that there could always be a long-delayed update with lower TS
+    <ul>
+      <li>That can cause the results of my update to change</li>
+      <li>Would be nice if updates were eventually “stable”
+        <ul>
+          <li>=&gt; no changes in update order up to that point</li>
+          <li>=&gt; results can never again change – e.g. you know for sure pid1 is at position 3.</li>
+          <li>=&gt; no need to re-run update function</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>How about a fully decentralized “commit” scheme?
+    <ul>
+      <li>You want to know if update &lt;10,A&gt; is stable</li>
+      <li>Have sync always send in log order – “prefix property”</li>
+      <li>If you have seen updates w/ TS &gt; 10 from <em>every</em> node
+        <ul>
+          <li>Then you’ll never again see one &lt; &lt;10,A&gt;</li>
+          <li>So &lt;10,A&gt; is stable</li>
+        </ul>
+      </li>
+      <li>Why doesn’t Bayou do something like this? (Bayou commits updates through designated primary replica)</li>
+    </ul>
+  </li>
+  <li>How to sync?
+    <ul>
+      <li>A sending to B</li>
+      <li>Need a quick way for B to tell A what to send</li>
+      <li>A has:
+        <ul>
+          <li>&lt;-,10,X&gt;</li>
+          <li>&lt;-,20,Y&gt;</li>
+          <li>&lt;-,30,X&gt;</li>
+          <li>&lt;-,40,X&gt;</li>
+        </ul>
+      </li>
+      <li>B has:
+        <ul>
+          <li>&lt;-,10,X&gt;</li>
+          <li>&lt;-,20,Y&gt;</li>
+          <li>&lt;-,30,X&gt;</li>
+        </ul>
+      </li>
+      <li>At start of sync, B tells A “X 30, Y 20”
+        <ul>
+          <li>Sync prefix property means B has all X updates before 30, all Y before 20</li>
+        </ul>
+      </li>
+      <li>A sends all X’s updates after &lt;-,30,X&gt;, all Y’s updates after &lt;-,20,X&gt;, &amp;c</li>
+      <li>This is a version vector – it summarize log content
+        <ul>
+          <li>It’s the “F” vector in Figure 4</li>
+          <li>A’s F: [X:40,Y:20]</li>
+          <li>B’s F: [X:30,Y:20]</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>How did all this work out?
+    <ul>
+      <li>Replicas, write any copy, and sync are good ideas
+        <ul>
+          <li>Now used by both user apps <em>and</em> multi-site storage systems</li>
+        </ul>
+      </li>
+      <li>Requirement for p2p interaction is debatable
+        <ul>
+          <li>clients (phones, ipads) can just (sporadically) contact the servers</li>
+        </ul>
+      </li>
+      <li>Bayou introduced some very influential design ideas
+        <ul>
+          <li>Update functions</li>
+          <li>Ordered update log</li>
+          <li>Allowed general purpose conflict resolution</li>
+        </ul>
+      </li>
+      <li>Bayou made good use of existing ideas
+        <ul>
+          <li>Logical clock</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+</body>
+
+</html>

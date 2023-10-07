@@ -1,0 +1,545 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/yashd/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/yashd/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+
+import (
+	"fmt"
+	"raft"
+	"time"
+)
+import "labrpc"
+import "sync"
+import "labgob"
+
+
+type ShardMaster struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	IndexMap map[int]Op
+	ExpectedIndexMap map[int]MapKey
+	AppliedMap map[MapKey]Config
+
+	// Your data here.
+
+	configs []Config // indexed by config num
+}
+
+
+type MapKey struct{
+	ClientId int64
+	LogId int64
+}
+
+
+type ReqObject struct{
+	Servers map[int][]string
+	GIDs []int
+	Shard int
+	GID   int
+	Num int
+}
+
+type Op struct {
+	// Your data here.
+	Command string
+	Oper ReqObject
+	ClientId int64
+	LogId int64
+}
+
+
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+	// Your code here.
+	req:=ReqObject{
+		Servers: args.Servers,
+		GIDs:    nil,
+		Shard:   0,
+		GID:     0,
+		Num:     0,
+	}
+	oper:=Op{Command:"Join",Oper:req,LogId:args.LogId,ClientId:args.ClientId}
+	_,leaderCheck:=sm.rf.GetState()
+	if !leaderCheck{
+		reply.WrongLeader=true
+	}
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match164-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	map_key:=MapKey{ClientId:oper.ClientId,LogId:oper.LogId}
+	//fmt.Println("Sending Get Command from client:",args)
+	//index,_,isLeader:=sm.rf.Start(oper)
+	index,_,_:=sm.rf.Start(oper)
+	reply.WrongLeader=true
+
+	sm.mu.Lock()
+</FONT>	sm.ExpectedIndexMap[index]=map_key
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match164-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	sm.mu.Unlock()
+
+	count:=0
+	for count&lt;20 {
+		//for{
+		flag := -1
+		sm.mu.Lock()
+		if actual_index, ok := sm.IndexMap[index]; ok  {
+</FONT>			//fmt.Println("Successfully completed Get request from server side:", args)
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match164-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			flag=0
+			if actual_index.ClientId==map_key.ClientId && actual_index.LogId==map_key.LogId{
+				reply.WrongLeader=false
+			}else{
+				reply.WrongLeader=true
+			}
+		}
+
+		sm.mu.Unlock()
+</FONT>		//fmt.Println("Server Waiting")
+		if flag == 0 {
+			break
+		}
+		count+=1
+		time.Sleep(15*time.Millisecond)
+	}
+
+
+}
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+	// Your code here.
+
+	_,leaderCheck:=sm.rf.GetState()
+	if !leaderCheck{
+		reply.WrongLeader=true
+	}
+	req:=ReqObject{
+		Servers: nil,
+		GIDs:    args.GIDs,
+		Shard:   0,
+		GID:     0,
+		Num:     0,
+	}
+
+	oper:=Op{Command:"Leave",Oper:req,LogId:args.LogId,ClientId:args.ClientId}
+	map_key:=MapKey{ClientId:oper.ClientId,LogId:oper.LogId}
+	//fmt.Println("Sending Get Command from client:",args)
+	//index,_,isLeader:=sm.rf.Start(oper)
+	index,_,_:=sm.rf.Start(oper)
+	reply.WrongLeader=true
+
+	sm.mu.Lock()
+	sm.ExpectedIndexMap[index]=map_key
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match164-0.html#6" TARGET="0"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	sm.mu.Unlock()
+
+	count:=0
+	for count&lt;20 {
+		//for{
+		flag := -1
+		sm.mu.Lock()
+		if actual_index, ok := sm.IndexMap[index]; ok  {
+</FONT>			//fmt.Println("Successfully completed Get request from server side:", args)
+			flag=0
+			if actual_index.ClientId==map_key.ClientId && actual_index.LogId==map_key.LogId{
+				reply.WrongLeader=false
+			}else{
+				reply.WrongLeader=true
+			}
+		}
+
+		sm.mu.Unlock()
+		//fmt.Println("Server Waiting")
+		if flag == 0 {
+			break
+		}
+		count+=1
+		time.Sleep(15*time.Millisecond)
+	}
+
+}
+
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+	// Your code here.
+	_,leaderCheck:=sm.rf.GetState()
+	if !leaderCheck{
+		reply.WrongLeader=true
+	}
+
+	req:=ReqObject{
+		Servers: nil,
+		GIDs:    nil,
+		Shard:   args.Shard,
+		GID:     args.GID,
+		Num:     0,
+	}
+	oper:=Op{Command:"Move",Oper:req,LogId:args.LogId,ClientId:args.ClientId}
+	map_key:=MapKey{ClientId:oper.ClientId,LogId:oper.LogId}
+	//fmt.Println("Sending Get Command from client:",args)
+	//index,_,isLeader:=sm.rf.Start(oper)
+	index,_,_:=sm.rf.Start(oper)
+	reply.WrongLeader=true
+
+	sm.mu.Lock()
+	sm.ExpectedIndexMap[index]=map_key
+	sm.mu.Unlock()
+
+	count:=0
+	for count&lt;20 {
+		//for{
+		flag := -1
+		sm.mu.Lock()
+		if actual_index, ok := sm.IndexMap[index]; ok  {
+			//fmt.Println("Successfully completed Get request from server side:", args)
+			flag=0
+			if actual_index.ClientId==map_key.ClientId && actual_index.LogId==map_key.LogId{
+				reply.WrongLeader=false
+			}else{
+				reply.WrongLeader=true
+			}
+		}
+
+		sm.mu.Unlock()
+		//fmt.Println("Server Waiting")
+		if flag == 0 {
+			break
+		}
+		count+=1
+		time.Sleep(15*time.Millisecond)
+	}
+
+
+}
+
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+	// Your code here.
+	_,leaderCheck:=sm.rf.GetState()
+	if !leaderCheck{
+		reply.WrongLeader=true
+	}
+
+	req:=ReqObject{
+		Servers: nil,
+		GIDs:    nil,
+		Shard:   0,
+		GID:     0,
+		Num:     args.Num,
+	}
+	oper:=Op{Command:"Query",Oper:req, LogId:args.LogId,ClientId:args.ClientId}
+	map_key:=MapKey{ClientId:oper.ClientId,LogId:oper.LogId}
+	//fmt.Println("Sending Query Command from client:",args)
+	//index,_,isLeader:=sm.rf.Start(oper)
+	index,_,_:=sm.rf.Start(oper)
+	reply.WrongLeader=true
+
+	sm.mu.Lock()
+	sm.ExpectedIndexMap[index]=map_key
+	sm.mu.Unlock()
+
+	count:=0
+	for count&lt;20 {
+		//for{
+		flag := -1
+		sm.mu.Lock()
+		if actual_index, ok := sm.IndexMap[index]; ok  {
+
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match164-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			flag=0
+			if actual_index.ClientId==map_key.ClientId && actual_index.LogId==map_key.LogId{
+				reply.WrongLeader=false
+				reply.Config=sm.AppliedMap[map_key]
+</FONT><A NAME="7"></A><FONT color = #0000FF><A HREF="match164-0.html#7" TARGET="0"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				//fmt.Println("Successfully completed Query request from server side:", args,reply)
+			}else{
+				reply.WrongLeader=true
+			}
+		}
+
+		sm.mu.Unlock()
+		//fmt.Println("Server Waiting")
+		if flag == 0 {
+			break
+		}
+		count+=1
+		time.Sleep(15*time.Millisecond)
+</FONT>	}
+
+}
+
+func (sm *ShardMaster) getConfig() Config{
+
+	old_config:=sm.configs[len(sm.configs)-1]
+	new_config:=Config{
+			Num:old_config.Num+1,
+			Shards:old_config.Shards,
+	}
+	new_config.Groups=make(map[int][]string)
+	for key,value := range old_config.Groups{
+		new_config.Groups[key]=value
+	}
+	return new_config
+}
+
+func contains(gids []int, gid int) bool {
+	for index,_ := range gids {
+		gid_:=gids[index]
+		if gid_ == gid {
+			return true
+		}
+	}
+	return false
+}
+
+func (sm *ShardMaster) invalidate_shards(config Config,gids []int) Config{
+
+	for index,_ :=range config.Shards{
+		if contains(gids,config.Shards[index]){
+			config.Shards[index]=0
+		}
+	}
+	return config
+}
+
+func (sm *ShardMaster) ApplyLog(op Op,index int) {
+
+	log_type:=op.Command
+	map_key:=MapKey{ClientId:op.ClientId,LogId:op.LogId}
+	sm.mu.Lock()
+	switch log_type {
+	case "Join":
+		servers:=op.Oper.Servers
+		new_config:=sm.getConfig()
+		for index,server := range servers{
+			new_config.Groups[index]=server
+		}
+		new_config=sm.rebalance(new_config)
+		sm.AppliedMap[map_key]=new_config
+		sm.configs=append(sm.configs,new_config)
+		//fmt.Println("Joining---&gt;Returning:",sm.configs)
+	case "Leave":
+		new_config:=sm.getConfig()
+		gids:=op.Oper.GIDs
+		for index,_ := range gids {
+			gid:=gids[index]
+			delete(new_config.Groups,gid)
+		}
+		new_config=sm.invalidate_shards(new_config,gids)
+		new_config=sm.rebalance(new_config)
+		sm.AppliedMap[map_key]=new_config
+		sm.configs=append(sm.configs,new_config)
+
+	case "Query":
+		index:=op.Oper.Num
+		var new_config Config
+		if (index&lt;0 || index&gt;=len(sm.configs)){
+			last_config:=sm.configs[len(sm.configs)-1]
+			new_config=last_config
+		}else{
+			new_config= sm.configs[index]
+		}
+		//fmt.Println("QUerying for index:",index," returning:",sm.configs)
+		sm.AppliedMap[map_key]=new_config
+
+	case "Move":
+		new_config:=sm.getConfig()
+		gid:=op.Oper.GID
+		shard:=op.Oper.Shard
+		new_config.Shards[shard]=gid
+		sm.AppliedMap[map_key]=new_config
+		sm.configs=append(sm.configs,new_config)
+	}
+	sm.IndexMap[index]=op
+	//fmt.Println("Successfully applied log:",op ," at index:",index)
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match164-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	sm.mu.Unlock()
+
+}
+
+
+
+func (sm *ShardMaster) applychannelLogs() {
+	for{
+		for data_ := range sm.applyCh {
+			op_:=data_.Command.(Op)
+			sm.mu.Lock()
+			fmt.Println("Recieved from applychan:", sm.me, data_, op_.Command)
+</FONT><A NAME="1"></A><FONT color = #00FF00><A HREF="match164-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			index_:=data_.CommandIndex
+			map_key:=MapKey{ClientId:op_.ClientId,LogId:op_.LogId}
+			_,ok:=sm.AppliedMap[map_key]
+			sm.mu.Unlock()
+
+			if ok{
+				//fmt.Println("Map key already exists:",op_,map_key)
+				sm.mu.Lock()
+</FONT>				sm.IndexMap[index_]=op_
+				sm.mu.Unlock()
+			}else{
+				sm.ApplyLog(op_,index_)
+			}
+		}
+	}
+	// Your code here, if desired.
+}
+
+
+func rebalancing(config Config) Config{
+
+	count:=len(config.Groups)
+	arr:=config.Shards
+
+	if len(config.Groups)==0{
+
+		for index,_:=range arr{
+			arr[index]=0
+		}
+		config.Shards=arr
+		return config
+	}
+
+	if len(config.Groups)==1{
+		var key int
+		for k := range config.Groups {
+			key=k
+		}
+
+		for index,_:=range arr{
+			arr[index]=key
+		}
+		config.Shards=arr
+		return config
+	}
+
+	expected := make([]int, count)
+	for index,_:=range arr{
+		expected[index%count]+=1
+	}
+	//fmt.Println("Expected:",expected)
+
+	new_map:=make(map[int][]int)
+	start:=1
+	for start&lt;count+1{
+		var empty []int
+		new_map[start]=empty
+		start+=1
+	}
+
+	indexes:= make([]int, 0)
+	for index,elem:=range arr{
+		if elem&gt;len(expected) || elem==0{
+			arr[index]=0
+			indexes=append(indexes,index)
+		}else{
+			new_map[elem]=append(new_map[elem],index)
+		}
+	}
+
+	for index,elem:=range new_map{
+		if len(elem)&gt;expected[index-1]{
+			diff:=len(elem)-expected[index-1]
+			servers:=elem
+			for diff&gt;0{
+				indexes=append(indexes,servers[len(servers)-1])
+				arr[servers[len(servers)-1]]=0
+				servers = servers[0:len(servers)-1]
+				diff-=1
+			}
+			new_map[index]=servers
+		}
+	}
+	groups:=make([]int,0)
+	for index,_:=range config.Groups{
+		groups= append(groups, index)
+	}
+
+
+	for index,elem:=range new_map{
+		if len(elem)&lt;expected[index-1]{
+			diff:=expected[index-1]-len(elem)
+			servers:=elem
+			for diff&gt;0{
+				arr[indexes[len(indexes)-1]]=index
+				servers=append(servers,indexes[len(indexes)-1])
+				indexes = indexes[0:len(indexes)-1]
+				diff-=1
+			}
+			new_map[index]=servers
+		}
+	}
+	//fmt.Println(groups,config.Groups)
+	for index,elem:=range arr{
+		_,ok:=config.Groups[elem]
+		if !ok{
+			arr[index]=groups[elem-1]
+		}
+	}
+	config.Shards=arr
+	return config
+}
+
+
+func (sm *ShardMaster) rebalance(config Config) Config{
+	config=rebalancing(config)
+	return config
+}
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+	// Your code here, if desired.
+}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+	return sm.rf
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	sm := new(ShardMaster)
+	sm.me = me
+
+	sm.configs = make([]Config, 1)
+	sm.configs[0].Groups = map[int][]string{}
+
+	labgob.Register(Op{})
+	//labgob.Register(ReqObject{})
+
+	sm.applyCh = make(chan raft.ApplyMsg)
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+
+	sm.IndexMap=map[int]Op{}
+	sm.ExpectedIndexMap=map[int]MapKey{}
+	sm.AppliedMap=map[MapKey]Config{}
+
+	// Your code here.
+	go func() { sm.applychannelLogs()}()
+	return sm
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

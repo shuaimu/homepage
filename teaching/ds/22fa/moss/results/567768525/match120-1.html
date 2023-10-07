@@ -1,0 +1,525 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/Ravali5/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/Ravali5/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+
+import "raft"
+import "labrpc"
+import "sync"
+import "labgob"
+import (
+	//"fmt"
+	"strconv"
+	"time"
+	"sort"
+)
+
+
+type ShardMaster struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	// Your data here.
+
+	configs []Config // indexed by config num
+
+	applyChData map[int]chan Op
+	duplicateCheck map[string]int
+}
+
+
+type Op struct {
+	// Your data here.
+
+	//common fields for all RPC calls
+	ClientId int
+	OrderId int
+
+	//Which operation
+	Operation string
+
+	//Query arguments
+	Num int
+	QueryConfig Config
+
+	//Move arguments
+	Shard int
+	GID int
+
+	//Leave arguments
+	GIDs []int
+
+	//Join arguments
+	Servers map[int][]string
+
+}
+
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match120-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+	// Your code here.
+
+	var op Op
+
+	//op.Key = args.Key
+	//op.Value = args.Value
+
+	op.Servers = args.Servers
+
+	op.ClientId = args.ClientId
+	op.OrderId = args.OrderId
+
+	op.Operation = "Join"
+
+	uniqueId := strconv.Itoa(args.OrderId)+" "+strconv.Itoa(args.ClientId)
+
+	index,_,isLeader := sm.rf.Start(op)
+
+	if !isLeader{
+</FONT>		reply.WrongLeader = true
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match120-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		return
+	}
+
+	reply.WrongLeader = false
+	reply.Err = ""
+
+		sm.mu.Lock()
+		ch,ok := sm.applyChData[index]
+		if ok{
+			//fmt.Println("channel already present")
+		}else{
+			sm.applyChData[index] = make(chan Op)
+			ch = sm.applyChData[index]
+		}
+
+		_, ok2 := sm.duplicateCheck[uniqueId]
+</FONT>		sm.mu.Unlock()
+		if ok2{
+			return
+		}
+
+		//wait till response
+		select{
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match120-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		case chOp := &lt;- ch:
+			uid := strconv.Itoa(chOp.OrderId)+" "+strconv.Itoa(chOp.ClientId)
+			if uid == uniqueId{
+				//fmt.Println("Join is success for ",uid)
+				reply.Err = "success"
+</FONT>				return
+			}else{
+				reply.Err = "wrong commit"
+			}
+		case &lt;- time.After(1000*time.Millisecond):
+			reply.Err = "Timedout"
+		}
+
+
+
+
+	/*for{
+		val,ok := sm.applyChData[index]
+		if ok{
+			uid = strconv.Itoa(val.OrderId)+" "+strconv.Itoa(val.ClientId)
+			break
+		}
+	}
+
+	if reply.Err != "Timedout"{
+		if uid == uniqueId{
+			reply.Err = "success"
+		}else{
+			reply.Err ="wrong commit"
+		}
+	}*/
+
+}
+
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match120-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+	// Your code here.
+
+	var op Op
+
+	//op.Key = args.Key
+	//op.Value = args.Value
+
+	//op.Servers = args.Servers
+	op.GIDs = args.GIDs
+
+	op.ClientId = args.ClientId
+	op.OrderId = args.OrderId
+</FONT>
+	op.Operation = "Leave"
+
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match120-0.html#6" TARGET="0"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	uniqueId := strconv.Itoa(args.OrderId)+" "+strconv.Itoa(args.ClientId)
+
+	index,_,isLeader := sm.rf.Start(op)
+
+	if !isLeader{
+</FONT>		reply.WrongLeader = true
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match120-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		return
+	}
+
+	reply.WrongLeader = false
+	reply.Err = ""
+	
+	sm.mu.Lock()
+		ch,ok := sm.applyChData[index]
+		if ok{
+			//fmt.Println("channel already present")
+		}else{
+			sm.applyChData[index] = make(chan Op)
+			ch = sm.applyChData[index]
+		}
+
+		_, ok2 := sm.duplicateCheck[uniqueId]
+</FONT>		sm.mu.Unlock()
+		if ok2{
+			return
+		}
+
+		//wait till response
+		select{
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match120-0.html#7" TARGET="0"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		case chOp := &lt;- ch:
+			uid := strconv.Itoa(chOp.OrderId)+" "+strconv.Itoa(chOp.ClientId)
+			if uid == uniqueId{
+</FONT>				//fmt.Println(" removed ",GIDs," from config !!! .... request : ",uid)
+				reply.Err = "success"
+				return
+			}else{
+				reply.Err = "wrong commit"
+			}
+		case &lt;- time.After(1000*time.Millisecond):
+			//fmt.Println("Leave RPC timedout !! ",uniqueId)
+			reply.Err = "Timedout"
+		}
+
+}
+
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+	// Your code here.
+
+	var op Op
+
+	//op.Key = args.Key
+	//op.Value = args.Value
+
+	//op.Servers = args.Servers
+	op.Shard = args.Shard
+	op.GID = args.GID
+
+	op.ClientId = args.ClientId
+	op.OrderId = args.OrderId
+
+	op.Operation = "Move"
+
+	uniqueId := strconv.Itoa(args.OrderId)+" "+strconv.Itoa(args.ClientId)
+
+	index,_,isLeader := sm.rf.Start(op)
+
+	if !isLeader{
+		reply.WrongLeader = true
+		return
+	}
+
+	reply.WrongLeader = false
+	reply.Err = ""
+	
+	sm.mu.Lock()
+		ch,ok := sm.applyChData[index]
+		if ok{
+			//fmt.Println("channel already present")
+		}else{
+			sm.applyChData[index] = make(chan Op)
+			ch = sm.applyChData[index]
+		}
+
+		_, ok2 := sm.duplicateCheck[uniqueId]
+		sm.mu.Unlock()
+		if ok2{
+			return
+		}
+
+		//wait till response
+		select{
+		case chOp := &lt;- ch:
+			uid := strconv.Itoa(chOp.OrderId)+" "+strconv.Itoa(chOp.ClientId)
+			if uid == uniqueId{
+				//fmt.Println("Moved the shard ",args.Shard," to group ",args.GID)
+				reply.Err = "success"
+				return
+			}else{
+				reply.Err = "wrong commit"
+			}
+		case &lt;- time.After(1000*time.Millisecond):
+			reply.Err = "Timedout"
+		}
+
+}
+
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+	// Your code here.
+
+	var op Op
+
+	//op.Key = args.Key
+	//op.Value = args.Value
+
+	//op.Servers = args.Servers
+	op.Num = args.Num
+
+	op.ClientId = args.ClientId
+	op.OrderId = args.OrderId
+
+	op.Operation = "Query"
+
+	uniqueId := strconv.Itoa(args.OrderId)+" "+strconv.Itoa(args.ClientId)
+
+	index,_,isLeader := sm.rf.Start(op)
+
+	if !isLeader{
+		reply.WrongLeader = true
+		return
+	}
+
+	reply.WrongLeader = false
+	reply.Err = ""
+
+	//fmt.Println("started to raft",args.Num," ",args.ClientId," ",args.OrderId," ",sm.me)
+
+	sm.mu.Lock()
+		ch,ok := sm.applyChData[index]
+		if ok{
+			//fmt.Println("channel already present")
+		}else{
+			sm.applyChData[index] = make(chan Op)
+			ch = sm.applyChData[index]
+		}
+		sm.mu.Unlock()
+		/*_, ok2 := sm.duplicateCheck[uniqueId]
+		sm.mu.Unlock()
+		if ok2{
+			return
+		}*/
+
+		//wait till response
+		select{
+		case chOp := &lt;- ch:
+			//fmt.Println("received data from ch")
+			uid := strconv.Itoa(chOp.OrderId)+" "+strconv.Itoa(chOp.ClientId)
+			if uid == uniqueId{
+				reply.Err = "success"
+				reply.Config = chOp.QueryConfig
+				//fmt.Println("server returing config ",reply.Config," for num ",args.Num," uid : ",uniqueId)
+			}else{
+				reply.Err = "wrong commit"
+			}
+		case &lt;- time.After(1000*time.Millisecond):
+			reply.Err = "Timedout"
+		}
+
+	/*for{
+		val,ok := sm.applyChData[index]
+		if ok{
+			uid = strconv.Itoa(val.OrderId)+" "+strconv.Itoa(val.ClientId)
+			reply.Config = val.QueryConfig
+			break
+		}
+	}
+
+	if reply.Err != "Timedout"{
+		if uid == uniqueId{
+			reply.Err = "success"
+		}else{
+			reply.Err ="wrong commit"
+		}
+	}*/
+
+}
+
+
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+	// Your code here, if desired.
+}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+	return sm.rf
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	sm := new(ShardMaster)
+	sm.me = me
+	//fmt.Println("servers ",servers)
+	sm.configs = make([]Config, 1)
+	sm.configs[0].Groups = map[int][]string{}
+
+	labgob.Register(Op{})
+	sm.applyCh = make(chan raft.ApplyMsg)
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+
+	// Your code here.
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match120-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	sm.applyChData = make(map[int]chan Op)
+	sm.duplicateCheck = make(map[string]int)
+
+	go func(){
+		for{
+			logEntry := &lt;- sm.applyCh
+			//fmt.Println(logEntry)
+			cmdIndex := logEntry.CommandIndex
+</FONT>			cmdValid := logEntry.CommandValid
+			if cmdIndex != 0 && cmdValid{
+				//fmt.Println("here!!!")
+				cmd := logEntry.Command.(Op)
+				uniqueId := strconv.Itoa(cmd.OrderId)+" "+strconv.Itoa(cmd.ClientId)
+				sm.mu.Lock()
+				//fmt.Println("here!")
+				_,dup := sm.duplicateCheck[uniqueId]
+				if !dup{
+					sm.duplicateCheck[uniqueId] = 1
+
+					//create next configuration
+					var nextConfig Config
+					lastConfig := sm.configs[len(sm.configs)-1]
+
+					nextConfig.Num = lastConfig.Num + 1
+					//nextConfig.Shards = make([]int, 0 ,NShards)
+					nextConfig.Shards = lastConfig.Shards
+					//This is reflecting groups in all configs ....... Change this ...
+					//nextConfig.Groups = lastConfig.Groups
+					nextConfig.Groups = make(map[int][]string)
+					//fmt.Println("next config is ",nextConfig," for request ",uniqueId)
+
+					for gid,serverList := range(lastConfig.Groups){
+						nextConfig.Groups[gid] = serverList
+					}
+
+					if cmd.Operation == "Join"{
+						//fmt.Println("Join msg from apply ch!!!",sm.me," ",cmd.OrderId," ",cmd.ClientId)
+						for gid,serverList := range(cmd.Servers){
+							nextConfig.Groups[gid] = serverList
+						}
+						//fmt.Println("Now next Config is ",nextConfig," for request ",uniqueId)
+					}
+
+					if cmd.Operation == "Leave"{
+						//fmt.Println("Leave msg from apply ch!!!",sm.me," ",cmd.OrderId," ",cmd.ClientId)
+						for _,gid := range(cmd.GIDs){
+							delete(nextConfig.Groups,gid)
+						}
+						//fmt.Println("Now next Config after leaving groups is ",nextConfig," for request ",uniqueId)
+					}
+
+					if cmd.Operation == "Move"{
+						//fmt.Println("Move msg from apply ch!!!",sm.me," ",cmd.OrderId," ",cmd.ClientId)
+						nextConfig.Shards[cmd.Shard] = cmd.GID
+					}
+
+					if cmd.Operation == "Join" || cmd.Operation == "Leave"{
+						//shards need to be moved to balance the load.
+						var gs []int
+						for gid := range(nextConfig.Groups){
+							gs = append(gs,gid)
+						}
+						sort.Ints(gs)
+						//fmt.Println("Totsl number of groups for server ",sm.me," ",len(gs))
+						for s:=0 ; s &lt; NShards ; s++{
+							if len(gs) == 0{
+								nextConfig.Shards[s] = 0
+							}else{
+								nextConfig.Shards[s] = gs[s%len(gs)]
+							}
+						}
+					}
+
+					sm.configs = append(sm.configs,nextConfig)
+
+				}
+				if cmd.Operation == "Query"{
+					//if num is out of range return last config
+					//fmt.Println("coming here ",cmd.Num," ",sm.me)
+					last := false
+					if cmd.Num == -1{
+						last = true
+					}
+					if cmd.Num &gt; len(sm.configs){
+						last = true
+					}
+					//fmt.Println(" do i need to return last config ? ",last," for server ",sm.me)
+					if last{
+						cmd.QueryConfig = sm.configs[len(sm.configs)-1]
+						//fmt.Println(" last config is .... ",cmd.QueryConfig," for server ",sm.me)
+					}else{
+						cmd.QueryConfig = sm.configs[cmd.Num]
+						//fmt.Println(" config for num ",cmd.Num," for server ",sm.me)
+					}
+				}
+				/*if !dup{
+					kv.duplicateCheck[uniqueId] = 1
+					if cmd.Operation == "Put"{
+						kv.keyvalues[cmd.Key] = cmd.Value
+					}
+					if cmd.Operation == "Append"{
+						_,present := kv.keyvalues[cmd.Key]
+						if present{
+							kv.keyvalues[cmd.Key]+=cmd.Value
+						}else{
+							kv.keyvalues[cmd.Key] = cmd.Value
+						}
+					}
+				}
+				if cmd.Operation == "Get"{
+					cmd.Value = kv.keyvalues[cmd.Key]
+				}*/
+				//fmt.Println("here222")
+				ch, ok := sm.applyChData[cmdIndex]
+				if ok{
+					//go func(){
+						ch &lt;- cmd
+					//}()
+				}
+				sm.mu.Unlock()
+			}
+		}
+	}()
+
+	return sm
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

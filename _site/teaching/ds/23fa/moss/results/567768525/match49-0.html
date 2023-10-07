@@ -1,0 +1,545 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/swsekar/src/shardkv/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/swsekar/src/shardkv/server.go<p><PRE>
+package shardkv
+
+
+import "shardmaster"
+import "labrpc"
+import "raft"
+import "sync"
+import "labgob"
+import "log"
+import "time"
+import "bytes"
+
+
+
+type Op struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+	Op string
+	Args interface{}
+	Id	int
+	Shard int
+}
+
+type PersistentState struct {
+	LastIncludedIndex		int
+	LastIncludedTerm		int
+	Shards					map[int](map[string]string)
+	IndexOpIdMap			map[int][]int
+	LastClientReq			map[int](map[int]ApplyResult)
+	Config					shardmaster.Config
+}
+
+type ShardKV struct {
+	mu           sync.Mutex
+	me           int
+	rf           *raft.Raft
+	applyCh      chan raft.ApplyMsg
+	make_end     func(string) *labrpc.ClientEnd
+	gid          int
+	masters      []*labrpc.ClientEnd
+	maxraftstate int // snapshot if log grows this big
+
+	// Your definitions here.
+	shards		map[int](map[string]string)
+	applyMap	map[int](chan ApplyResult)
+	IndexOpIdMap	map[int][]int
+	lastClientReq	map[int](map[int]ApplyResult)
+	currentTerm		int
+	dead			bool
+	persister		*raft.Persister
+	lastAppliedIndex	int
+	lastAppliedTerm		int
+	overflowCh			chan int
+	state_mu		sync.Mutex	// controls access to just dead
+
+	config			shardmaster.Config
+	mck				shardmaster.Clerk
+}
+
+type ApplyResult struct {
+	Err Err
+	Value string
+}
+
+type FetchShardArgs struct {
+	ShardNum	int
+	ConfigNum	int
+}
+
+type FetchShardReply struct {
+	UpToDate	bool
+	Shard		map[string]string
+	LastClientReq map[int]ApplyResult
+}
+
+func (kv *ShardKV) FetchShard(args *FetchShardArgs, reply *FetchShardReply) {
+	kv.mu.Lock()
+	if (kv.config.Num &lt; args.ConfigNum) {
+		reply.UpToDate = false
+		kv.mu.Unlock()
+		return
+	}
+	reply.UpToDate = true
+	if (kv.config.Num &gt; args.ConfigNum) {
+		log.Printf("server %d %d: my config = %d, requested config = %d", kv.gid, kv.me, kv.config.Num, args.ConfigNum)
+	}
+	shardCopy := make(map[string]string)
+	for k,v := range kv.shards[args.ShardNum] {
+		shardCopy[k] = v
+	}
+	lastClientReqCopy := make(map[int]ApplyResult)
+	for k,v := range kv.lastClientReq[args.ShardNum] {
+		lastClientReqCopy[k] = v
+	}
+	//log.Printf("server %d %d: sending shard %d\n", kv.gid, kv.me, args.ShardNum)
+	reply.Shard = shardCopy
+	reply.LastClientReq = lastClientReqCopy
+	kv.mu.Unlock()
+}
+
+func (kv *ShardKV) sendFetchShard(gid int, args *FetchShardArgs, reply *FetchShardReply) {
+	for {
+		if servers, ok := kv.config.Groups[gid]; ok {
+			for si := 0; si &lt; len(servers); si++ {
+				srv := kv.make_end(servers[si])
+				//log.Printf("server %d %d: sending request to %d %d", kv.gid, kv.me, gid, si)
+				kv.mu.Unlock()
+				ok := srv.Call("ShardKV.FetchShard", args, reply)
+				kv.mu.Lock()
+				//log.Printf("server %d %d: got reply from %d %d", kv.gid, kv.me, gid, si)
+				if (ok && reply.UpToDate) {
+					return
+				}
+			}
+		}
+	}
+}
+
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match49-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *ShardKV) ApplyLog() {
+	for {
+		applyMsg := &lt;-kv.applyCh
+		kv.state_mu.Lock()
+		if (kv.dead) {
+			kv.state_mu.Unlock()
+			return
+		}
+		kv.state_mu.Unlock()
+		if (!applyMsg.CommandValid && kv.lastAppliedIndex &gt;= applyMsg.LastIncludedIndex) {
+</FONT>			// stale snapshot
+			continue
+		} else if (!applyMsg.CommandValid && kv.lastAppliedIndex &lt; applyMsg.LastIncludedIndex) {
+			kv.mu.Lock()
+			kv.readPersist(applyMsg.Snapshot)
+			kv.lastAppliedIndex = applyMsg.LastIncludedIndex
+			kv.lastAppliedTerm = applyMsg.LastIncludedTerm
+			//log.Printf("server %d: logs up to %d\n", kv.me, kv.lastAppliedIndex)
+			kv.mu.Unlock()
+			continue
+		}
+		kv.mu.Lock()
+		op,ok := applyMsg.Command.(Op)
+		if (!ok) {
+			log.Fatalf("server %d: invalid command\n", kv.me)
+		}
+		if (applyMsg.CommandIndex &lt; kv.lastAppliedIndex || applyMsg.CommandIndex &gt; kv.lastAppliedIndex + 1) {
+			//log.Printf("server %d: logs cam out of order %d-&gt;%d\n", kv.me, kv.lastAppliedIndex, applyMsg.CommandIndex)
+		}
+		kv.lastAppliedIndex = applyMsg.CommandIndex
+		kv.lastAppliedTerm = applyMsg.CommandTerm
+		if _, ok := kv.lastClientReq[op.Shard][op.Id]; ok && op.Id &gt;= 0 { // reapply of config is already handled by checking config #
+			//log.Printf("server %d: already applied op %d\n", kv.me, op.Id)
+			kv.mu.Unlock()
+			continue
+		}
+		//log.Printf("server %d: applying index %d, opId %d\n", kv.me, applyMsg.CommandIndex, op.Id)
+		appRes := &ApplyResult{}
+		appRes.Err = OK
+		appRes.Value = ""
+		if (op.Op == "Config") {
+			//log.Printf("server %d %d: new config\n", kv.gid, kv.me)
+			config,ok := op.Args.(shardmaster.Config)
+			if (!ok) {
+				log.Fatalf("server %d: invalid command\n", kv.me)
+			}
+			if (config.Num &gt; kv.config.Num) {
+				for shard,gid := range config.Shards {
+					if gid == kv.gid {
+						//log.Printf("server %d %d: add shard = %d\n", kv.gid, kv.me, shard)
+						if (kv.config.Shards[shard] == 0) {
+							kv.shards[shard] = make(map[string]string)
+							kv.lastClientReq[shard] = make(map[int]ApplyResult)
+						} else if (kv.config.Shards[shard] != kv.gid) {
+							fetchShardArgs := &FetchShardArgs{}
+							fetchShardArgs.ConfigNum = config.Num
+							fetchShardArgs.ShardNum = shard
+							fetchShardReply := &FetchShardReply{}
+							kv.sendFetchShard(kv.config.Shards[shard], fetchShardArgs, fetchShardReply)
+							kv.shards[shard] = fetchShardReply.Shard
+							kv.lastClientReq[shard] = fetchShardReply.LastClientReq
+						}
+					}
+					if gid != kv.gid {
+						if (kv.config.Shards[shard] == kv.gid) {
+							//log.Printf("server %d %d: delete shard = %d\n", kv.gid, kv.me, shard)
+							//delete(kv.shards, shard)
+						}
+					}
+				}
+				kv.config = config
+			}
+		} else if (kv.config.Shards[op.Shard] != kv.gid) {
+			//log.Printf("server %d %d: config changed %d, rejecting\n", kv.gid, kv.me, kv.config.Num)
+			appRes.Err = ErrWrongGroup
+<A NAME="10"></A><FONT color = #FF0000><A HREF="match49-1.html#10" TARGET="1"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		} else if (op.Op == "Put") {
+			args,ok := op.Args.(PutAppendArgs)
+			if (!ok) {
+				log.Fatalf("server %d: invalid command\n", kv.me)
+</FONT>			}
+			kv.shards[op.Shard][args.Key] = args.Value
+		} else if (op.Op == "Append") {
+			args,ok := op.Args.(PutAppendArgs)
+			if (!ok) {
+				log.Fatalf("server %d: invalid command\n", kv.me)
+			}
+			kv.shards[op.Shard][args.Key] = kv.shards[op.Shard][args.Key] + args.Value
+		} else if (op.Op == "Get") {
+<A NAME="8"></A><FONT color = #00FFFF><A HREF="match49-1.html#8" TARGET="1"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			args,ok := op.Args.(GetArgs)
+			if (!ok) {
+				log.Fatalf("server %d: invalid command\n", kv.me)
+			}
+			if _, ok := kv.shards[op.Shard][args.Key]; ok {
+</FONT>				appRes.Value = kv.shards[op.Shard][args.Key]
+			} else {
+				appRes.Err = ErrNoKey
+			}
+		}
+		if (op.Id &gt;= 0 && appRes.Err != ErrWrongGroup) {
+			delete(kv.lastClientReq[op.Shard], op.Id-1)
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match49-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			kv.lastClientReq[op.Shard][op.Id] = *appRes
+		}
+		if _, ok := kv.applyMap[op.Id]; ok {
+			kv.applyMap[op.Id]&lt;-*appRes
+		}
+		failedAgreementAppRes := &ApplyResult{}
+		failedAgreementAppRes.Err = ErrFailedAgree
+</FONT>		failedAgreementAppRes.Value = ""
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match49-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		for _, opId := range kv.IndexOpIdMap[applyMsg.CommandIndex] {
+			if (opId != op.Id) {
+				kv.applyMap[opId]&lt;-*failedAgreementAppRes
+			}
+		}
+		delete(kv.IndexOpIdMap, applyMsg.CommandIndex)
+		kv.mu.Unlock()
+	}
+}
+
+// return true if leader
+func (kv *ShardKV) SubmitOp(op Op) (bool, *ApplyResult) {
+</FONT><A NAME="4"></A><FONT color = #FF00FF><A HREF="match49-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	_, isleader := kv.rf.GetState()
+	if (!isleader) {
+		return false, nil
+	}
+	kv.mu.Lock()
+	//log.Printf("server %d %d: start %d", kv.gid, kv.me, op.Id)
+	if _, ok := kv.lastClientReq[op.Shard][op.Id]; ok && op.Id &gt;= 0 && kv.lastClientReq[op.Shard][op.Id].Err != ErrFailedAgree {
+</FONT><A NAME="0"></A><FONT color = #FF0000><A HREF="match49-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_8.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		applyRes := kv.lastClientReq[op.Shard][op.Id]
+		kv.mu.Unlock()
+		return true, &applyRes
+	}
+	if _, ok := kv.applyMap[op.Id]; ok {
+		// make stale request stop listening to channel
+		log.Fatalf("server %d: already waiting for reqId %d \n", kv.me, op.Id)
+	}
+	kv.applyMap[op.Id] = make(chan ApplyResult)
+	index, term, isLeader := kv.rf.Start(op)
+	if (!isLeader) {
+		close(kv.applyMap[op.Id])
+		delete(kv.applyMap, op.Id)
+		kv.mu.Unlock()
+		return false, nil
+	}
+	kv.currentTerm = term
+	kv.IndexOpIdMap[index] = append(kv.IndexOpIdMap[index], op.Id)
+	applyDoneCh := kv.applyMap[op.Id]
+	kv.mu.Unlock()
+	applyRes :=&lt;-applyDoneCh
+	kv.mu.Lock()
+	close(kv.applyMap[op.Id])
+	delete(kv.applyMap, op.Id)
+	kv.mu.Unlock()
+	//log.Printf("server %d %d: done %d", kv.gid, kv.me, op.Id)
+	return true, &applyRes
+}
+
+func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
+	// Your code here.
+	op := &Op{}
+	op.Op = "Get"
+	op.Args = *args
+	op.Id = args.RequestId
+</FONT>	op.Shard = args.Shard
+	isLeader, applyRes := kv.SubmitOp(*op)
+	if (!isLeader) {
+		reply.WrongLeader = true
+		return
+	}
+	reply.WrongLeader = false
+<A NAME="11"></A><FONT color = #00FF00><A HREF="match49-1.html#11" TARGET="1"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	reply.Err = applyRes.Err
+	reply.Value = applyRes.Value
+}
+
+func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	// Your code here.
+	op := &Op{}
+	op.Op = args.Op
+</FONT>	op.Args = *args
+	op.Id = args.RequestId
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match49-1.html#7" TARGET="1"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	op.Shard = args.Shard
+	isLeader, applyRes := kv.SubmitOp(*op)
+	if (!isLeader) {
+		reply.WrongLeader = true
+		return
+	}
+	reply.WrongLeader = false
+</FONT><A NAME="1"></A><FONT color = #00FF00><A HREF="match49-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	reply.Err = applyRes.Err
+}
+
+func (kv *ShardKV) detectTermChange() {
+	for {
+		kv.state_mu.Lock()
+		if (kv.dead) {
+			kv.state_mu.Unlock()
+			return
+		}
+		kv.state_mu.Unlock()
+		term,_ := kv.rf.GetState()
+		kv.mu.Lock()
+		if (kv.currentTerm != term) {
+			failedAgreementAppRes := &ApplyResult{}
+			failedAgreementAppRes.Err = ErrFailedAgree
+</FONT>			failedAgreementAppRes.Value = ""
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match49-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			for opId := range kv.applyMap {
+				kv.applyMap[opId]&lt;-*failedAgreementAppRes
+			}
+			kv.currentTerm = term
+		}
+		kv.mu.Unlock()
+		time.Sleep(10000 * time.Millisecond)
+	}
+}
+
+func (kv *ShardKV) readPersist(data []byte) {
+</FONT>	if data == nil || len(data) &lt; 1 { // bootstrap without any state?
+		return
+	}
+	//log.Printf("server %d %d: readPersist\n", kv.gid, kv.me)
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var persistentState PersistentState
+	err := d.Decode(&persistentState)
+	if (err != nil) {
+		log.Fatal("decode error:", err)
+	} else {
+		kv.lastAppliedIndex = persistentState.LastIncludedIndex
+		kv.lastAppliedTerm = persistentState.LastIncludedTerm
+		kv.shards = persistentState.Shards
+		kv.IndexOpIdMap = persistentState.IndexOpIdMap
+		kv.lastClientReq = persistentState.LastClientReq
+		kv.config = persistentState.Config
+	}
+}
+
+func (kv *ShardKV) detectRaftLogOverflow() {
+	for {
+		kv.state_mu.Lock()
+		if (kv.dead) {
+			kv.state_mu.Unlock()
+			// kill all goroutines waiting to send apply
+			for {
+				select {
+					case &lt;-kv.overflowCh:
+						continue
+					default:
+						return
+				}
+			}
+		}
+		kv.state_mu.Unlock()
+		&lt;-kv.overflowCh
+		kv.mu.Lock()
+		//log.Printf("server %d: raft size is %d, max = %d\n", kv.me, kv.persister.RaftStateSize(), kv.maxraftstate)
+		w := new(bytes.Buffer)
+		e := labgob.NewEncoder(w)
+		persistentState := &PersistentState{}
+		persistentState.LastIncludedIndex = kv.lastAppliedIndex
+		persistentState.LastIncludedTerm = kv.lastAppliedTerm
+		persistentState.Shards = kv.shards
+		persistentState.IndexOpIdMap = kv.IndexOpIdMap
+		persistentState.LastClientReq = kv.lastClientReq
+		persistentState.Config = kv.config
+		err := e.Encode(persistentState)
+		if err != nil {
+			log.Fatal("encode error:", err)
+		}
+		kv_data := w.Bytes()
+		kv.rf.Snapshot(kv.lastAppliedIndex, kv.lastAppliedTerm, kv_data)
+		kv.mu.Unlock()
+	}
+}
+
+func (kv *ShardKV) detectConfigChange() {
+	for {
+		kv.state_mu.Lock()
+		if (kv.dead) {
+			kv.state_mu.Unlock()
+			return
+		}
+		kv.state_mu.Unlock()
+		_, isleader := kv.rf.GetState()
+		if (isleader) {
+			kv.mu.Lock()
+			config := kv.mck.Query(-1)
+			kv.mu.Unlock()
+			if (config.Num &gt; kv.config.Num) {
+				op := &Op{}
+				op.Op = "Config"
+				op.Args = config
+				op.Id = 0 - kv.me	// try to avoid collision with client request ids
+				_, applyRes := kv.SubmitOp(*op)
+				if (applyRes.Err == ErrFailedAgree) {
+					log.Fatalf("server %d %d: failed agreement on config change\n", kv.gid, kv.me)
+				}
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+
+//
+// the tester calls Kill() when a ShardKV instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *ShardKV) Kill() {
+	kv.rf.Kill()
+	// Your code here, if desired.
+	kv.state_mu.Lock()
+	//log.Printf("server %d %d dead\n", kv.gid, kv.me)
+	kv.dead = true
+	kv.state_mu.Unlock()
+}
+
+
+//
+// servers[] contains the ports of the servers in this group.
+//
+// me is the index of the current server in servers[].
+//
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+//
+// the k/v server should snapshot when Raft's saved state exceeds
+// maxraftstate bytes, in order to allow Raft to garbage-collect its
+// log. if maxraftstate is -1, you don't need to snapshot.
+//
+// gid is this group's GID, for interacting with the shardmaster.
+//
+// pass masters[] to shardmaster.MakeClerk() so you can send
+// RPCs to the shardmaster.
+//
+// make_end(servername) turns a server name from a
+// Config.Groups[gid][i] into a labrpc.ClientEnd on which you can
+// send RPCs. You'll need this to send RPCs to other groups.
+//
+// look at client.go for examples of how to use masters[]
+// and make_end() to send RPCs to the group owning a specific shard.
+//
+// StartServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int, gid int, masters []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *ShardKV {
+	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+
+	kv := new(ShardKV)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+	kv.make_end = make_end
+	kv.gid = gid
+	kv.masters = masters
+
+	// Your initialization code here.
+	kv.shards = make(map[int](map[string]string))
+<A NAME="9"></A><FONT color = #FF00FF><A HREF="match49-1.html#9" TARGET="1"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.applyMap = make(map[int](chan ApplyResult))
+	kv.IndexOpIdMap = make(map[int][]int)
+	kv.lastClientReq = make(map[int](map[int]ApplyResult))
+</FONT>	kv.dead = false
+	kv.currentTerm = 0
+	kv.persister = persister
+	kv.overflowCh = make(chan int)
+
+	// Use something like this to talk to the shardmaster:
+	kv.mck = *shardmaster.MakeClerk(kv.masters)
+	kv.config = kv.mck.Query(-1)
+	for shard,_ := range kv.config.Shards {
+		kv.shards[shard] = make(map[string]string)
+		kv.lastClientReq[shard] = make(map[int]ApplyResult)
+	}
+
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+	labgob.Register(PutAppendArgs{})
+	labgob.Register(GetArgs{})
+	labgob.Register(shardmaster.Config{})
+
+	kv.rf.SetMaxRaft(maxraftstate, kv.overflowCh)
+	kv.readPersist(persister.ReadSnapshot())
+	go kv.ApplyLog()
+	go kv.detectTermChange()
+	go kv.detectConfigChange()
+	if (maxraftstate != -1) {
+		go kv.detectRaftLogOverflow()
+	}
+	return kv
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

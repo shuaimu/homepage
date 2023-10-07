@@ -1,0 +1,377 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/gomathi-ganesan/src/shardkv/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/gomathi-ganesan/src/shardkv/server.go<p><PRE>
+package shardkv
+
+
+import "shardmaster"
+import "labrpc"
+import "raft"
+import "sync"
+import "labgob"
+import "time"
+//import "fmt"
+
+
+
+type Op struct {
+	Operation string
+	ClientId int64
+	RequestId int64
+	Key string
+	Value string
+	Config shardmaster.Config
+	Data          map[string]string
+	ProcessedWrites map[int64]int64
+	ConfigNum int
+	Shard int
+}
+
+type OpReply struct {
+	applyMsg raft.ApplyMsg
+	err Err
+	value string
+}
+
+type ShardKV struct {
+	mu           sync.Mutex
+	me           int
+	rf           *raft.Raft
+	applyCh      chan raft.ApplyMsg
+	make_end     func(string) *labrpc.ClientEnd
+	gid          int
+	masters      []*labrpc.ClientEnd
+	maxraftstate int
+
+	isAlive bool
+	persister *raft.Persister
+	kvData map[string]string
+	processedWrites map[int]map[int64]int64
+	serversApplyCh map[int]chan OpReply
+
+	recentConfig shardmaster.Config
+	shardMetadata map[int]string
+	currShard []int
+
+	mck *shardmaster.Clerk
+	shardCount int
+}
+
+
+func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
+	//fmt.Printf("in %d: received get request \n",kv.me)
+
+	op := Op{}
+	op.Key = args.Key
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match185-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	op.Operation = "Get"
+	op.ClientId = args.ClientId
+	op.RequestId = args.RequestId
+	op.ConfigNum = args.ConfigNum
+
+	index, term, isLeader := kv.rf.Start(op)
+
+</FONT>	if (!isLeader) {
+		reply.WrongLeader = true
+		reply.Err = "WrongLeader"
+		//fmt.Printf("in %d: can't serve get because i'm not leader\n",kv.me)
+		return
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match185-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	} else if (op.ConfigNum != kv.recentConfig.Num) {
+		reply.WrongLeader = false
+		reply.Err = "ErrWrongGroup"
+		//fmt.Printf("in %d: can't serve get because config mismatch \n",kv.me)
+		return
+	}
+	//fmt.Printf("in %d: waiting for applymsg for index %d\n",kv.me, index)
+	reply.Err, reply.Value, reply.WrongLeader = kv.opCommitStatus(index, term)
+	
+}
+
+func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	//fmt.Printf("in %d: received putappend request \n",kv.me)
+
+	op := Op{}
+	op.Key = args.Key
+</FONT>	op.Value = args.Value
+	op.Operation = args.Op
+	op.ClientId = args.ClientId
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match185-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	op.RequestId = args.RequestId
+	op.ConfigNum = args.ConfigNum
+
+	index, term, isLeader := kv.rf.Start(op)
+
+	if (!isLeader) {
+		reply.WrongLeader = true
+</FONT>		reply.Err = "WrongLeader"
+		return
+	} else if (op.ConfigNum != kv.recentConfig.Num) {
+		reply.WrongLeader = false
+		reply.Err = "ErrWrongGroup"
+		return
+	}
+	//fmt.Printf("------------in %d: waiting for applymsg for index %d---------------\n",kv.me, index)
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match185-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	reply.Err, reply.Value, reply.WrongLeader = kv.opCommitStatus(index, term)
+	
+}
+
+func (kv *ShardKV) Kill() {
+	kv.rf.Kill()
+	kv.mu.Lock()
+	kv.isAlive = false
+	kv.mu.Unlock()
+</FONT>}
+
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int, gid int, masters []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *ShardKV {
+	labgob.Register(Op{})
+	labgob.Register(PutAppendArgs{})
+	labgob.Register(GetArgs{})
+	labgob.Register(shardmaster.Config{})
+
+	kv := new(ShardKV)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+	kv.make_end = make_end
+	kv.gid = gid
+	kv.masters = masters
+	kv.persister = persister
+	kv.isAlive = true
+
+	kv.mck = shardmaster.MakeClerk(kv.masters)
+	kv.shardCount = shardmaster.NShards
+	//fmt.Printf("In %d...shardcount %d and kv.gid is %d\n", kv.me, kv.shardCount, kv.gid)
+	kv.shardMetadata = make(map[int]string)
+	
+	//kv.recentConfig = kv.mck.Query(0)
+	kv.initShardData()
+
+	kv.applyCh = make(chan raft.ApplyMsg, 500)
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+
+	kv.kvData = make(map[string]string)
+	kv.processedWrites = make(map[int]map[int64]int64)
+	kv.serversApplyCh = make(map[int]chan OpReply)
+	
+	
+	go kv.checkApplyCh()
+
+	go kv.listenToShardMaster()
+	return kv
+}
+
+func (kv *ShardKV) initShardData() {
+	i := 0
+	kv.currShard = kv.currShard[:0]
+	//kv.shardMetadata = make(map[int]string)
+
+	for i &lt; shardmaster.NShards {
+		kv.shardMetadata[i] = "unknown"
+		i++
+	}
+}
+
+func (kv *ShardKV) staticAssign() {
+	for shard := range kv.recentConfig.Shards {
+		if(kv.recentConfig.Shards[shard]==kv.gid) {
+			kv.shardMetadata[shard] = "self"
+		} else {
+			kv.shardMetadata[shard] = "unknown"
+		}
+	}
+}
+
+func (kv *ShardKV) checkApplyCh() {
+	for {
+		select {
+			case applyMsg := &lt;-kv.applyCh:
+				//fmt.Printf("In %d: received applyMsg for CommandIndex %d\n", kv.me, applyMsg.CommandIndex)
+				if (applyMsg.IsSnapShot) {
+					
+				} else {
+					isCommitted := applyMsg.CommandValid
+					opReply := OpReply{}
+
+					if (isCommitted) {
+						opReply.applyMsg = applyMsg
+						op,ok := applyMsg.Command.(Op)
+						if (ok) {
+							//config := op.Config
+							if (op.Operation == "Put" || op.Operation == "Append") {
+								kv.mu.Lock()
+								if (!kv.isShardPresent(key2shard(op.Key)) || ((op.ConfigNum != kv.recentConfig.Num))) {
+									//fmt.Printf("in %d: not in my shard %d\n", kv.me, key2shard(op.Key))
+									opReply.err = ErrWrongGroup
+								} else {
+									opReply.err = OK
+									//requestId, isWriteCompleted := kv.processedWrites[op.ClientId]
+									clientId, isShard := kv.processedWrites[key2shard(op.Key)]
+									shouldUpdate := false
+									if (isShard) {
+										requestId, isWriteCompleted := clientId[op.ClientId]
+										if (!isWriteCompleted) {
+											shouldUpdate = true
+										} else {
+											if(requestId &lt; op.RequestId) {
+												shouldUpdate = true
+											}
+										}
+									} else {
+										kv.processedWrites[key2shard(op.Key)] = make(map[int64]int64)
+										shouldUpdate = true
+									}
+
+									if(shouldUpdate) {
+										shard := key2shard(op.Key)
+										kv.processedWrites[shard][op.ClientId] = op.RequestId
+										if (op.Operation == "Put")  {
+											kv.kvData[op.Key] = op.Value
+										} else {
+											kv.kvData[op.Key] += op.Value
+										}
+									}
+								}
+								kv.mu.Unlock()
+							} else if  (op.Operation == "Get") {
+								kv.mu.Lock()
+								if (!kv.isShardPresent(key2shard(op.Key)) || ((op.ConfigNum != kv.recentConfig.Num))) {
+									//fmt.Printf("in %d: not in my shard %d\n", kv.me, key2shard(op.Key))
+									opReply.err = ErrWrongGroup
+								} else {
+									opReply.err = OK
+									opReply.value = kv.kvData[op.Key]
+								}
+								kv.mu.Unlock()
+							} else if (op.Operation == "Config") {
+								//fmt.Printf("Received...config %d in %d\n", op.Config.Num, kv.me)
+								config := op.Config
+								
+								if(config.Num == kv.recentConfig.Num+1) { //Lab hint: Process re-configurations one at a time, in order.
+									kv.mu.Lock()									
+									kv.recentConfig = config
+									kv.staticAssign()
+									kv.mu.Unlock()
+								}
+							}
+						}
+					}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match185-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+					kv.mu.Lock()
+					serversApplyCh, isReady := kv.serversApplyCh[applyMsg.CommandIndex]
+					kv.mu.Unlock()
+					if (isReady) {
+						serversApplyCh &lt;- opReply
+					}
+				}
+			default:
+				kv.mu.Lock()
+				isAlive := kv.isAlive
+				kv.mu.Unlock()
+				if (!isAlive) {
+					return
+				}
+		}
+	}
+}
+
+
+func (kv *ShardKV) opCommitStatus(commitIndex int, term int) (Err, string, bool) {
+</FONT><A NAME="2"></A><FONT color = #0000FF><A HREF="match185-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.mu.Lock()
+	kv.serversApplyCh[commitIndex] = make(chan OpReply, 1)
+	serversApplyCh := kv.serversApplyCh[commitIndex]
+	kv.mu.Unlock()
+</FONT>
+	for {
+		select {
+			case opReply := &lt;-serversApplyCh:
+				applyMsg := opReply.applyMsg
+				if applyMsg.CommandTerm == term {
+					//fmt.Printf("In %d: commandindex %d...reply is %s\n", kv.me, commitIndex, opReply.err)
+					return opReply.err, opReply.value, false
+				}
+				return WrongLeader,"", true
+			// use time.After..time.Sleep() causes tests timeouts	
+			case &lt;- time.After(2500 * time.Millisecond):
+				//_, isLeader := kv.rf.GetState()
+				//time.Sleep(10 * time.Millisecond)
+				//counter += 1
+				
+				//if(counter == 250) {
+					kv.mu.Lock()
+					delete(kv.serversApplyCh, commitIndex)
+					kv.mu.Unlock()
+					applyMsg := raft.ApplyMsg{}
+					applyMsg.Command = Op{}
+					applyMsg.CommandIndex = -1
+					
+					return WrongLeader, "", true
+				//}
+		}
+	}
+}
+
+func (kv *ShardKV) isShardPresent(shard int) bool{
+	state, _ := kv.shardMetadata[shard]
+	if (state == "self") {
+		return true
+	} else {
+		return false
+	}
+}
+
+func (kv *ShardKV) listenToShardMaster() {
+	for {
+		kv.mu.Lock()
+		isAlive := kv.isAlive
+		kv.mu.Unlock()
+
+		if (!isAlive) {
+			return
+		}
+
+		if (kv.leader()) {
+			lastConfig := kv.mck.Query(-1)
+			kv.mu.Lock()
+			currentConfigNum := kv.recentConfig.Num
+			lastConfigNum := lastConfig.Num
+			//fmt.Printf("In %d: currentConfigNum %d lastConfigNum %d\n", kv.me, currentConfigNum, lastConfigNum)
+			kv.mu.Unlock()
+			if(currentConfigNum &lt; lastConfigNum) {
+				if (currentConfigNum + 1 &lt;= lastConfigNum) {
+					nextConfig := kv.mck.Query(currentConfigNum + 1)
+					op := Op{}
+					op.Operation = "Config"
+					op.Config = nextConfig
+					/*fmt.Printf("Config %d: ", nextConfig.Num)
+					for shard := range nextConfig.Shards {
+						fmt.Printf("shard %d gid %d\n", shard, nextConfig.Shards[shard])
+					}*/
+					kv.rf.Start(op)
+				}
+			}
+		}
+		time.Sleep(80 * time.Millisecond)
+	}
+}
+
+func (kv *ShardKV) leader() bool{
+	_, isLeader := kv.rf.GetState()
+	return isLeader
+}</PRE>
+</PRE>
+</BODY>
+</HTML>

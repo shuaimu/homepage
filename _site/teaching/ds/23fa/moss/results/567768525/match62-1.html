@@ -1,0 +1,273 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/mayankX/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/mayankX/src/shardkv/server.go<p><PRE>
+package shardkv
+
+// import "shardmaster"
+import (
+	"labrpc"
+	"log"
+	"time"
+)
+import "raft"
+import "sync"
+import "labgob"
+
+const Debug = 0
+const AppendEntryChannelTimeout = 600
+
+const GetOperation = "Get"
+const PutOperation = "Put"
+const AppendOperation = "Append"
+
+type Op struct {
+	OperationType  string
+	Key            string
+	Value          string
+	Id             int64
+	SequenceNumber int64
+}
+
+type ShardKV struct {
+	mu           sync.Mutex
+	me           int
+	rf           *raft.Raft
+	applyCh      chan raft.ApplyMsg
+	make_end     func(string) *labrpc.ClientEnd
+	gid          int
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match62-0.html#7" TARGET="0"><IMG SRC="../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	masters      []*labrpc.ClientEnd
+	maxraftstate int // snapshot if log grows this big
+	persister    *raft.Persister
+
+	keyValueMap       map[string]string
+	clientSequenceMap map[int64]int64
+	applyChMap        map[int]chan Op
+
+	killCh chan bool
+</FONT><A NAME="5"></A><FONT color = #FF0000><A HREF="match62-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+}
+
+func pingOperationChannel(ch chan Op, op Op) {
+	select {
+	case &lt;-ch: //consumes channel, if needed
+	default:
+	}
+	ch &lt;- op
+}
+
+func pingChannel(ch chan bool) {
+	select {
+	case &lt;-ch: //consumes channel, if needed
+	default:
+	}
+	ch &lt;- true
+</FONT>}
+
+func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
+	log.Printf("====Get RPC Called, %v", args)
+	operation := Op{
+		OperationType: GetOperation,
+		Key:           args.Key,
+	}
+	ok := kv.AppendEntry(operation)
+	log.Printf("%v Operation Result: %t", args, ok)
+	if ok {
+		reply.WrongLeader = false
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match62-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_8.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		reply.Err = OK
+	} else {
+		reply.WrongLeader = true
+	}
+}
+
+func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	log.Printf("====PutAppend RPC Called, %v", args)
+	operation := Op{
+		OperationType:  args.Op,
+		Key:            args.Key,
+		Value:          args.Value,
+		Id:             args.ClientId,
+		SequenceNumber: args.SequenceNumber,
+	}
+	ok := kv.AppendEntry(operation)
+	log.Printf("%v Operation Result: %t", args, ok)
+</FONT>	if ok {
+		reply.Err = OK
+		reply.WrongLeader = false
+	} else {
+		reply.WrongLeader = true
+	}
+}
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match62-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *ShardKV) AppendEntry(operation Op) bool {
+	logIndex, term, isLeader := kv.rf.Start(operation)
+	log.Printf("Appending entries for Operation=%d, Raft Server =&gt; [Log Index: %d, Term: %d, Leader?: %t", operation.Id, logIndex, term, isLeader)
+	if !isLeader {
+		return false
+	}
+
+	kv.mu.Lock()
+	ch, ok := kv.applyChMap[logIndex]
+</FONT>	if !ok {
+		ch = make(chan Op, 1)
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match62-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_11.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		kv.applyChMap[logIndex] = ch
+	}
+	kv.mu.Unlock()
+
+	select {
+	case channelOp := &lt;-ch:
+		return compareOperations(channelOp, operation)
+	case &lt;-time.After(time.Duration(AppendEntryChannelTimeout) * time.Millisecond):
+		return false
+	}
+}
+
+func compareOperations(op1 Op, op2 Op) bool {
+	return op1.Id == op2.Id &&
+		op1.SequenceNumber == op2.SequenceNumber &&
+		op1.OperationType == op2.OperationType &&
+		op1.Key == op2.Key &&
+		op1.Value == op2.Value
+}
+
+//
+// the tester calls Kill() when a ShardKV instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *ShardKV) Kill() {
+</FONT>	log.Printf("===========Server=%d has just been killed.", kv.me)
+	pingChannel(kv.killCh)
+	kv.rf.Kill()
+}
+
+func (kv *ShardKV) Start() {
+	for {
+		select {
+		case &lt;-kv.killCh:
+			return
+		case applyMessage := &lt;-kv.applyCh:
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match62-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_19.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			if !applyMessage.CommandValid {
+				//kv.loadSnapshot(applyMessage.SnapShot)
+				continue
+			}
+
+			operation := applyMessage.Command.(Op)
+			operationId := operation.Id
+			operationType := operation.OperationType
+			operationKey := operation.Key
+			operationValue := operation.Value
+			kv.mu.Lock()
+			maxSequenceNumber, ok := kv.clientSequenceMap[operationId]
+			if !ok || operation.SequenceNumber &gt; maxSequenceNumber {
+				log.Printf("Applying '%s' operation KV: (%s, %s)", operationType, operationKey, operationValue)
+				switch operationType {
+				case PutOperation:
+					kv.keyValueMap[operationKey] = operationValue
+				case AppendOperation:
+					kv.keyValueMap[operationKey] += operationValue
+				}
+				kv.clientSequenceMap[operationId] = operation.SequenceNumber
+			}
+
+			ch, ok := kv.applyChMap[applyMessage.CommandIndex]
+			if !ok {
+				ch = make(chan Op, 1)
+				kv.applyChMap[applyMessage.CommandIndex] = ch
+			}
+
+			maxRaftState := kv.maxraftstate
+			currentRaftState := kv.persister.RaftStateSize()
+			kv.mu.Unlock()
+
+			if maxRaftState &gt; 0 && currentRaftState &gt; maxRaftState {
+				//go kv.createSnapshot(applyMessage.CommandIndex)
+			}
+
+			//ch &lt;- operation
+			pingOperationChannel(ch, operation)
+</FONT>		}
+	}
+}
+
+//
+// servers[] contains the ports of the servers in this group.
+//
+// me is the index of the current server in servers[].
+//
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+//
+// the k/v server should snapshot when Raft's saved state exceeds
+// maxraftstate bytes, in order to allow Raft to garbage-collect its
+// log. if maxraftstate is -1, you don't need to snapshot.
+//
+// gid is this group's GID, for interacting with the shardmaster.
+//
+// pass masters[] to shardmaster.MakeClerk() so you can send
+// RPCs to the shardmaster.
+//
+// make_end(servername) turns a server name from a
+// Config.Groups[gid][i] into a labrpc.ClientEnd on which you can
+// send RPCs. You'll need this to send RPCs to other groups.
+//
+// look at client.go for examples of how to use masters[]
+// and make_end() to send RPCs to the group owning a specific shard.
+//
+// StartServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int, gid int, masters []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *ShardKV {
+	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+
+	kv := new(ShardKV)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+	kv.make_end = make_end
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match62-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.gid = gid
+	kv.masters = masters
+	kv.persister = persister
+
+	// Your initialization code here.
+	kv.keyValueMap = make(map[string]string)
+	kv.clientSequenceMap = make(map[int64]int64)
+	kv.applyChMap = make(map[int]chan Op)
+
+	// Use something like this to talk to the shardmaster:
+	// kv.mck = shardmaster.MakeClerk(kv.masters)
+
+	kv.applyCh = make(chan raft.ApplyMsg)
+</FONT><A NAME="6"></A><FONT color = #00FF00><A HREF="match62-0.html#6" TARGET="0"><IMG SRC="../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+
+	kv.killCh = make(chan bool, 1)
+
+	go kv.Start()
+
+	return kv
+</FONT>}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

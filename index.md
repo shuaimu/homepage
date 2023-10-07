@@ -24,10 +24,6 @@ Links: <a href="https://scholar.google.com/citations?user=wcbyR5UAAAAJ&hl=en">Go
 
 <hr>
 
-
-# **MongoDB Replication accepted to NSDI '21!**
-## **Cobra appeared at OSDI '20!**
-
 I am an assistant professor of [Computer Science](http://www.cs.stonybrook.edu) at [Stony Brook University](http://www.stonybrook.edu).
 My main research interests are in distributed systems and multi-core systems.
 I'm particularly interested in:
@@ -38,27 +34,90 @@ I'm particularly interested in:
 **I am looking for motivated PhD/MS/Undergrad students.** 
 If you are interested, email me a brief resume.
 
+## News ([see all](news.html))
+* Sep 2023, Awarded LARGE (Co-PI). Thanks NSF!
+* May 2023, NCC accepted to OSDI '23!
+* Feb 2023, Awarded CAREER. Thanks NSF!
+* Dec 2022, Waverunner accepted to NSDI '23!
+* Aug 2022, Viper accepted to EuroSys '23!
+<!-- * Apr 22, DepFast accepted at USENIX ATC '22! -->
+<!-- * Rolis appeared at EuroSys '22!  -->
+<!-- #### **Fail-slow Fault Tolerance appeared at HotOS '21!**  -->
+<!-- #### **MongoDB Replication appeared at NSDI '21!** -->
 
-## Courses
-* [Distributed Systems, Fall 2020, Stony Brook University](./teaching/ds/20fa/)
-* [Distributed Systems, Fall 2019, Stony Brook University](./teaching/ds/19fa/)
-* [Distributed Systems, Spring 2019, Stony Brook University](https://github.com/shuaimu/ds19spring)
-* [Computer Systems Organization, Spring 2018, NYU](./teaching/cso18spring/index.html)
 
-## Program committees 
-* NSDI 2021
-* ATC 2020
-* APSys 2019, 2020
+## Recent courses ([see all](teaching))
+<!-- * CSE-59X: Building Reliable Distributed Systems with Dafny, Spring 2023 -->
+<!-- * CSE-416, Software Engineering, Spring 2023 -->
+* [CSE-535, Distributed Systems, Fall 2023](./teaching/ds/23fa/)
+* Seminar: Distributed Systems Reading Group, Fall 2023 
+* Seminar: Formal Verification with Dafny, Fall 2023
+<!-- * Seminar: Distributed Systems Reading Group, Summer 2023  -->
+* [CSE-535, Distributed Systems, Fall 2022](./teaching/ds/22fa/)
+* [CSE-416, Software Engineering, Spring 2022](./teaching/se/22sp/)
+<!-- * [CSE-535, Distributed Systems, Fall 2020](./teaching/ds/20fa/) -->
+<!-- * [CSE-535, Distributed Systems, Fall 2019](./teaching/ds/19fa/) -->
+<!-- * [CSE-535, Distributed Systems, Spring 2019](https://github.com/shuaimu/ds19spring) -->
+<!-- * [Computer Systems Organization, Spring 2018, NYU](./teaching/cso18spring/index.html) -->
 
-## Recent publications 
+## Recent publications ([see all](pubs.html))
 
    <ul>
      <li>
+     NCC: Natural Concurrency Control for Strictly Serializable Datastores by Avoiding the Timestamp-Inversion Pitfall
+     [<a href="./pub/ncc-osdi23.pdf">paper</a>]
+     <br>
+     Haonan Lu, Shuai Mu, Siddhartha Sen, Wyatt Lloyd
+     <br>
+     OSDI 23
+     </li>
+     <li>
+     Viper: A Fast Snapshot Isolation Checker 
+     [<a href="./pub/viper-eurosys23.pdf">paper</a>]
+     <br>
+     Jian Zhang, Ye Ji, Shuai Mu, and Cheng Tan
+     <br>
+     EuroSys 23
+     </li>
+     <li>
+     Waverunner: An Elegant Approach to Hardware Acceleration of State Machine Replication
+     [<a href="./pub/waverunner-nsdi23.pdf">paper</a>]
+     <br>
+     Mohammadreza Alimadadi, Hieu Mai, Shenghsun Cho, Michael Ferdman, Peter Milder, and Shuai Mu
+     <br>
+     NSDI 23
+     </li>
+     <li>
+     DepFast: Orchestrating Code of Quorum Systems 
+     [<a href="./pub/depfast-atc22.pdf">paper</a>, <a href="https://github.com/stonysystems/depfast-ae">code</a>] 
+     <br>
+     Xuhao Luo, Weihai Shen, Shuai Mu, and Tianyin Xu
+     <br>
+     USENIX ATC 22
+     </li>
+     <li>
+     Rolis: a software approach to efficiently replicating multi-core transactions
+     [<a href="./pub/rolis-eurosys22.pdf">paper</a>, <a href="https://github.com/stonysystems/rolis">code</a>] 
+     <br>
+     Weihai Shen, Ansh Khanna, Sebastian Angel, Siddhartha Sen, and Shuai Mu
+     <br>
+     EuroSys 22
+     </li>
+     <li>
+     Fail-slow fault tolerance needs programming support
+     [<a href="./pub/depfast-hotos21.pdf">paper</a>]
+     <br>
+     Andrew Yoo, Yuanli Wang, Ritesh Sinha, Shuai Mu, and Tianyin Xu 
+     <br>
+     HotOS 21
+     </li>
+     <li>
      Fault-Tolerant Replication with Pull-Based Consensus in MongoDB
+     [<a href="./pub/mongodb-nsdi21.pdf">paper</a>]
      <br>
      Siyuan Zhou, Shuai Mu
      <br>
-     NSDI 21 (to appear)
+     NSDI 21
      </li>
      <li>
      Cobra: Making Transactional Key-Value Stores Verifiably Serializable 
@@ -68,8 +127,7 @@ If you are interested, email me a brief resume.
      <br>
      OSDI 20
      </li>
-
-     <li>
+     <!-- <li>
 On the Parallels of Raft and Paxos [<a href="./pub/raft-paxos.pdf">paper</a>]
          <br>
 Zhaoguo Wang, Changgeng Zhao, Shuai Mu, Haibo Chen, Jinyang Li <br>
@@ -81,13 +139,13 @@ Deferred Runtime Pipelining for contentious multicore software transactions
          <br>
 Shuai Mu, Sebastian Angel, Dennis Shasha <br>
          EuroSys 19
-     </li> 
-     <li>
+     </li>  -->
+     <!-- <li>
      Giza: Erasure Coding Objects across Global Data Centers
 [<a href="./pub/giza-atc17.pdf">paper</a>]
      <br>
      Yu Lin Chen, Shuai Mu, Jinyang Li, Cheng Huang, Jin Li, Aaron Ogus, Douglas Phillips<br>
-     ATC 17
+     USENIX ATC 17
      </li> 
      <li>Consolidating Concurrency Control and Consensus for Commits under Conflicts 
          [<a href="./pub/janus-osdi16.pdf">paper</a>, 
@@ -102,7 +160,7 @@ Shuai Mu, Sebastian Angel, Dennis Shasha <br>
      <li>Scaling Multicore Databases via Constrained Parallel Execution 
          [<a href="./pub/ic3-sigmod16.pdf">paper</a>,
           <a href="http://ic3.news.cs.nyu.edu/techreport16.pdf">tr</a>] 
-         <br> Zhaoguo Wang, Shuai Mu, Yang Cui, Han Yi, Haibo Chen, Jinyang Li <br> SIGMOD 16</li>
+         <br> Zhaoguo Wang, Shuai Mu, Yang Cui, Han Yi, Haibo Chen, Jinyang Li <br> SIGMOD 16</li> -->
 	  <!--
               <li>Extracting More Concurrency from Distributed Transactions 
                   [<a href="./pub/rococo-osdi14.pdf">paper</a>, 
@@ -110,27 +168,45 @@ Shuai Mu, Sebastian Angel, Dennis Shasha <br>
 	  -->
       </ul>
 
-## Students
+## Students ([see alumni](alumni.html))
 
-* Reza Alimadadi (PhD, with Mike Ferdman)
-* Xiang Liu (PhD)
-* Weihai Shen (PhD)
-* Yuhao Su (PhD)
-* Satya Jain (MS)
-* Ansh Khanna (MS)
-* Ritesh Sinha (MS)
-* Yida Wu (MS)
+<!-- * Reza Alimadadi (PhD, with Mike Ferdman) -->
+* [Weihai Shen](https://shenweihai1.github.io/) (PhD)
+* Santa Shithil (PhD)
+* Ze Tang (PhD)
+* Kumar Shivam (PhD)
+* Ayush Jain (MS)
+* Devika Sudheer (MS)
+* Nilesh Gajwani (MS)
+* Radhika Agarwal (MS)
 
-I am also privileged to work closely with other great students including:
+I am also privileged to work closely with other great students including: 
+<!-- * Xuhao Luo (PhD@UIUC, advised by Tianyin Xu) -->
+* Haoran Zhang (PhD@UPenn, advised by Vincent Liu and Sebastian Angel) 
+* Jian Zhang (PhD@Northeastern, advised by Cheng Tan)
+* Hieu Mai (PhD@SBU, advised by Mike Ferdman)
 
-* Andrew Yoo (MS@UIUC, with Tianyin Xu)
-* Yuanli Wang (MS@Minnesota)
 
-Alumni:
-* [Mrityunjay Kumar](https://www3.cs.stonybrook.edu/~mrkumar/) (MS-\> VMWare)
+## Program committees 
+* APSys 2019, 2020, 2021
+* ASPLOS 2022 (ERC)
+* EuroSys 2025
+* ICDCS 2023
+* NSDI 2021, 2023
+* SIGCOMM 2023
+* SOSP 2024 
+* USENIX ATC 2020
 
-## Bio
+<!-- ## Bio
 Prior to joining Stony Brook, I spent 4 years at [NYU](http://nyu.edu) as a visiting student/post-doc/lecturer in the [Systems Group](http://news.cs.nyu.edu). 
-I obtained my Ph.D. from <a href="http://tsinghua.edu.cn">Tsinghua University</a> and B.S. from <a href="http://cau.edu.cn">China Agricultural University</a>.
-During my graduate studies, I also had the luck to be a visiting student at <a href="http://usc.edu">USC</a> and <a href="http://sydney.edu.au">University of Sydney</a>. 
+I obtained my Ph.D. from <a href="http://tsinghua.edu.cn">Tsinghua University</a> and B.S. from <a href="http://cau.edu.cn">China Agricultural University</a>. -->
+<!-- During my graduate studies, I also had the luck to be a visiting student at <a href="http://usc.edu">USC</a> and <a href="http://sydney.edu.au">University of Sydney</a>. See a full history in my [CV](cv.pdf).  -->
+
+<!-- ## Acknowledgement
+My research group is generously supported by: 
+
+<img src="https://upload.wikimedia.org/wikipedia/commons/thumb/9/98/NSF_International_logo.svg/1920px-NSF_International_logo.svg.png" width=75px>  
+<img src="https://assets-global.website-files.com/62d96b0e9ea60fd1c96a1b50/62d96b0e9ea60f72566a1bb9_algorand-foudation-logo_black%203.svg" width=125px>  
+<img src="https://pica.zhimg.com/v2-ec450df89f9899a18d2c6db0524e9250_xll.jpg" width=75px>
+-->
 <!--(Full <a href="cv.pdf">CV</a>) -->

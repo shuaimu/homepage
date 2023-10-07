@@ -1,0 +1,289 @@
+<HTML>
+<HEAD>
+<TITLE>./github/SagaciousHugo/6.824/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github/SagaciousHugo/6.824/src/kvraft/server.go<p><PRE>
+package raftkv
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"labgob"
+	"labrpc"
+	"raft"
+	"reflect"
+	"sync"
+	"time"
+)
+
+type KVServer struct {
+	mu                sync.RWMutex
+	me                int
+	rf                *raft.Raft
+	applyCh           chan raft.ApplyMsg
+	ctx               context.Context
+	close             context.CancelFunc
+	persister         *raft.Persister
+	maxraftstate      int // snapshot if log grows this big
+	lastApplied       int
+	lastIncludedIndex int
+	database          map[string]string  // store kv data
+	lastOpResultStore map[int64]OpResult // store client last op result
+	applyWait         *Wait
+	// Your definitions here.
+}
+
+func (kv *KVServer) start(args interface{}) (result string, value string) {
+	var op OpArgs
+	if getArgs, ok := args.(GetArgs); ok {
+		op = OpArgs{
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match133-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			ClientId: getArgs.ClientId,
+			OpId:     getArgs.OpId,
+			Key:      getArgs.Key,
+			Value:    "",
+			OpType:   "Get",
+		}
+	} else if putAppendArgs, ok := args.(PutAppendArgs); ok {
+		op = OpArgs{
+			ClientId: putAppendArgs.ClientId,
+			OpId:     putAppendArgs.OpId,
+			Key:      putAppendArgs.Key,
+			Value:    putAppendArgs.Value,
+</FONT>			OpType:   putAppendArgs.Op,
+		}
+	} else {
+		return fmt.Sprintf("ErrArgsType:%+v", args), ""
+	}
+	kv.mu.RLock()
+	if lastOpResult, ok := kv.lastOpResultStore[op.ClientId]; ok && lastOpResult.OpId == op.OpId {
+		DPrintf("KVServer %d return client %d by store result = %+v\n", kv.me, op.ClientId, lastOpResult)
+		kv.mu.RUnlock()
+		return lastOpResult.Result, lastOpResult.Value
+	} else if lastOpResult.OpId &gt; op.OpId {
+		kv.mu.RUnlock()
+		return ErrOutdatedRequest, ""
+	}
+	kv.mu.RUnlock()
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match133-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	resultCh := kv.applyWait.Register(op)
+	defer kv.applyWait.Unregister(op)
+	_, _, isLeader := kv.rf.Start(op)
+	if !isLeader {
+		return ErrWrongLeader, ""
+	}
+	//DPrintf("KVServer %d start command %+v index=%d\n", kv.me, op, commandIndex)
+	t := time.NewTimer(OpTimeout)
+	select {
+	case &lt;-kv.ctx.Done():
+		return ErrKVServerClosed, ""
+	case &lt;-t.C:
+		return ErrOpTimeout, ""
+	case opResult := &lt;-resultCh:
+</FONT>		DPrintf("KVServer %d return client %d by resultCh result = %+v\n", kv.me, op.ClientId, opResult)
+		return opResult.Result, opResult.Value
+	}
+}
+
+func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
+	// Your code here.
+	reply.Result, reply.Value = kv.start(*args)
+}
+
+func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	// Your code here.
+	reply.Result, _ = kv.start(*args)
+}
+
+//
+// the tester calls Kill() when a KVServer instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *KVServer) Kill() {
+	kv.rf.Kill()
+	kv.close()
+	kv.mu.Lock()
+	kv.saveKVServerState(true)
+	kv.mu.Unlock()
+	// Your code here, if desired.
+}
+
+func (kv *KVServer) stateMachine() {
+	for {
+		select {
+		case &lt;-kv.ctx.Done():
+			DPrintf("KVServer %d stateMachine closed\n", kv.me)
+			return
+		case applyMsg := &lt;-kv.applyCh:
+			if applyMsg.CommandValid {
+				result := OpResult{}
+				if op, ok := applyMsg.Command.(OpArgs); !ok {
+					DPrintf("KVServer %d stateMachine received wrong type command %+v %v\n", kv.me, applyMsg, reflect.TypeOf(applyMsg.Command))
+				} else {
+					DPrintf("KVServer %d stateMachine received command %+v \n", kv.me, applyMsg)
+					kv.mu.Lock()
+					if applyMsg.CommandIndex == kv.lastApplied+1 {
+						kv.lastApplied++
+						if op.OpType == "Get" {
+							if lastOpResult, ok := kv.lastOpResultStore[op.ClientId]; !ok || op.OpId &gt; lastOpResult.OpId {
+								if value, ok := kv.database[op.Key]; ok {
+									result.Result = OK
+									result.Value = value
+									result.OpId = op.OpId
+									result.ClientId = op.ClientId
+								} else {
+									result.Result = ErrNoKey
+									result.Value = ""
+									result.OpId = op.OpId
+									result.ClientId = op.ClientId
+								}
+								kv.lastOpResultStore[op.ClientId] = result
+								//DPrintf("KVServer %d stateMachine execute command %+v result = %+v database= %v\n", kv.me, applyMsg, result, kv.database)
+								DPrintf("KVServer %d stateMachine execute command %+v result = %+v lastOpResultStore = %+v\n", kv.me, applyMsg, result, kv.lastOpResultStore[op.ClientId])
+								go kv.applyWait.Trigger(result)
+								kv.saveKVServerState(false)
+							}
+						} else if op.OpType == "Put" {
+							if lastOpResult, ok := kv.lastOpResultStore[op.ClientId]; !ok || op.OpId &gt; lastOpResult.OpId {
+								result.Result = OK
+								result.Value = ""
+								result.OpId = op.OpId
+								result.ClientId = op.ClientId
+								kv.database[op.Key] = op.Value
+								kv.lastOpResultStore[op.ClientId] = result
+								//DPrintf("KVServer %d stateMachine execute command %+v result = %+v database= %v\n", kv.me, applyMsg, result, kv.database)
+								DPrintf("KVServer %d stateMachine execute command %+v result = %+v \n", kv.me, applyMsg, result)
+								go kv.applyWait.Trigger(result)
+								kv.saveKVServerState(false)
+							}
+						} else if op.OpType == "Append" {
+							if lastOpResult, ok := kv.lastOpResultStore[op.ClientId]; !ok || op.OpId &gt; lastOpResult.OpId {
+								result.Result = OK
+								result.Value = ""
+								result.OpId = op.OpId
+								result.ClientId = op.ClientId
+								oldValue, _ := kv.database[op.Key]
+								kv.database[op.Key] = oldValue + op.Value
+								kv.lastOpResultStore[op.ClientId] = result
+								//DPrintf("KVServer %d stateMachine execute command %+v result = %+v database= %v\n", kv.me, applyMsg, result, kv.database)
+								go kv.applyWait.Trigger(result)
+								kv.saveKVServerState(false)
+							}
+						}
+					}
+					if kv.lastApplied+1 &lt; applyMsg.CommandIndex {
+						DPrintf("KVServer %d expect commandIndex= %d real = %+v\n", kv.me, kv.lastApplied+1, applyMsg)
+						kv.mu.Unlock()
+						kv.rf.Replay()
+					} else {
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match133-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+						kv.mu.Unlock()
+					}
+				}
+			} else if command, ok := applyMsg.Command.(string); ok {
+				if command == raft.CommandInstallSnapshot {
+					DPrintf("KVServer %d stateMachine received InstallSnapshot %+v\n", kv.me, applyMsg)
+					kv.init()
+					kv.rf.Replay()
+</FONT>				}
+			}
+		}
+	}
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Raft to
+// form the fault-tolerant key/value service.
+// me is the index of the current server in servers[].
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+// the k/v server should snapshot when Raft's saved state exceeds maxraftstate bytes,
+// in order to allow Raft to garbage-collect its log. if maxraftstate is -1,
+// you don't need to snapshot.
+// StartKVServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
+	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(OpArgs{})
+
+	kv := new(KVServer)
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match133-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+
+	// You may need initialization code here.
+	ctx, cancel := context.WithCancel(context.Background())
+	kv.ctx = ctx
+	kv.close = cancel
+	kv.applyCh = make(chan raft.ApplyMsg)
+</FONT>	kv.persister = persister
+	kv.applyWait = NewWait()
+	kv.init()
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+	// You may need initialization code here.
+	go kv.stateMachine()
+	return kv
+}
+
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match133-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *KVServer) init() {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	data := kv.persister.ReadSnapshot()
+	if len(data) == 0 {
+		kv.lastApplied = 0
+		kv.database = make(map[string]string)
+</FONT>		kv.lastOpResultStore = make(map[int64]OpResult)
+	} else {
+		r := bytes.NewBuffer(data)
+		d := labgob.NewDecoder(r)
+		kv.lastApplied = 0
+		kv.lastIncludedIndex = 0
+		kv.database = nil
+		kv.lastOpResultStore = nil
+		d.Decode(&kv.lastApplied)
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match133-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		d.Decode(&kv.lastIncludedIndex)
+		d.Decode(&kv.database)
+		d.Decode(&kv.lastOpResultStore)
+		//DPrintf("KVServer %d install snapshot database = %v \n lastOpResultStore = %v\n", kv.me, kv.database, kv.lastOpResultStore)
+		//log.Printf("KVServer %d install snapshot database = %v \n lastOpResultStore = %v\n", kv.me, kv.database, kv.lastOpResultStore)
+	}
+}
+
+func (kv *KVServer) saveKVServerState(force bool) {
+	shouldSave := kv.maxraftstate != -1 && (force || kv.persister.RaftStateSize() &gt; kv.maxraftstate)
+	if shouldSave {
+</FONT>		kv.lastIncludedIndex = kv.lastApplied
+		w := new(bytes.Buffer)
+		e := labgob.NewEncoder(w)
+		e.Encode(kv.lastApplied)
+		e.Encode(kv.lastIncludedIndex)
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match133-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		e.Encode(kv.database)
+		e.Encode(kv.lastOpResultStore)
+		snapshot := w.Bytes()
+		kv.rf.SaveSnapshot(kv.lastApplied, snapshot)
+</FONT>	}
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,156 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/jvorob/src/kvraft/client.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/jvorob/src/kvraft/client.go<p><PRE>
+package raftkv
+
+import "labrpc"
+import "crypto/rand"
+import "math/big"
+import mathrand "math/rand"
+import _ "fmt"
+import "time"
+
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match106-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_7.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+type Clerk struct {
+	servers []*labrpc.ClientEnd
+	// You will have to modify this struct.
+
+    C_id ClientId
+    R_id RequestId
+
+    leaderGuess int //who do I think is currently the leader
+}
+
+func nrand() int64 {
+	max := big.NewInt(int64(1) &lt;&lt; 62)
+	bigx, _ := rand.Int(rand.Reader, max)
+</FONT>	x := bigx.Int64()
+	return x
+}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match106-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_42.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
+	ck := new(Clerk)
+	ck.servers = servers
+	// ===
+
+    ck.C_id = (ClientId)(nrand() % 100000) // TODO: TEMP: for legibility
+    ck.R_id = 0
+	return ck
+}
+
+//
+// fetch the current value for a key.
+// returns "" if the key does not exist.
+// keeps trying forever in the face of all other errors.
+//
+// you can send an RPC with code like this:
+// ok := ck.servers[i].Call("KVServer.Get", &args, &reply)
+//
+// the types of args and reply (including whether they are pointers)
+// must match the declared types of the RPC handler function's
+// arguments. and reply must be passed as a pointer.
+//
+func (ck *Clerk) Get(key string) string {
+
+    args := new(GetArgs);
+    args.Key = key;
+    args.Req = RequestInfo{ ck.C_id, ck.R_id }
+
+    var reply *GetReply
+
+    for {
+        reply = new(GetReply);
+
+        rpc_ok := ck.servers[ck.leaderGuess].Call("KVServer.Get", args, reply);
+
+        if !rpc_ok {
+            ck.leaderGuess = mathrand.Intn(len(ck.servers))
+            DPrintf("Clk: rpc failed for %v\n", args.Req);
+            time.Sleep(20 * time.Millisecond)
+        } else if reply.Err != "" {
+            DPrintf("Clk: got back err %v, retrying %v\n", reply.Err, args.Req)
+            time.Sleep(20 * time.Millisecond)
+
+        } else if reply.WrongLeader {
+            ck.leaderGuess = mathrand.Intn(len(ck.servers))
+            time.Sleep(20 * time.Millisecond)
+        } else {
+            break
+        }
+    }
+
+    ck.R_id++;
+    DPrintf("Clk: Get %v returned: %+v\n", args.Req, reply);
+    //TODO: do this properly
+
+    return reply.Value
+}
+
+//
+// shared by Put and Append.
+//
+// you can send an RPC with code like this:
+// ok := ck.servers[i].Call("KVServer.PutAppend", &args, &reply)
+//
+// the types of args and reply (including whether they are pointers)
+// must match the declared types of the RPC handler function's
+// arguments. and reply must be passed as a pointer.
+//
+func (ck *Clerk) PutAppend(key string, value string, op string) {
+</FONT>
+    args := new(PutAppendArgs);
+    args.Key = key;
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match106-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_21.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    args.Value = value;
+    args.Op = op;
+    args.Req = RequestInfo{ ck.C_id, ck.R_id }
+
+    var reply *PutAppendReply
+
+    for {
+        reply = new(PutAppendReply);
+
+        rpc_ok := ck.servers[ck.leaderGuess].Call("KVServer.PutAppend", args, reply);
+
+        if !rpc_ok {
+            ck.leaderGuess = mathrand.Intn(len(ck.servers))
+            DPrintf("Clk: rpc failed for %v\n", args.Req);
+            time.Sleep(20 * time.Millisecond)
+        } else if reply.Err != "" {
+            DPrintf("Clk: got back err %v, retrying %v\n", reply.Err, args.Req)
+            time.Sleep(20 * time.Millisecond)
+
+        } else if reply.WrongLeader {
+</FONT>            DPrintf("Clk: got back wrong leader\n")
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match106-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_7.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+            ck.leaderGuess = mathrand.Intn(len(ck.servers))
+            time.Sleep(20 * time.Millisecond)
+        } else {
+            break
+        }
+    }
+
+    ck.R_id++;
+    DPrintf("Clk: PutAppend %v returned: %+v\n", args.Req, reply);
+}
+
+func (ck *Clerk) Put(key string, value string) {
+</FONT>	ck.PutAppend(key, value, "Put")
+}
+func (ck *Clerk) Append(key string, value string) {
+	ck.PutAppend(key, value, "Append")
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

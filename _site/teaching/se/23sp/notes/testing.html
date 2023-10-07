@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="Home" />
+<meta property="og:locale" content="en_US" />
+<link rel="canonical" href="http://0.0.0.0/teaching/se/23sp/notes/testing.html" />
+<meta property="og:url" content="http://0.0.0.0/teaching/se/23sp/notes/testing.html" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="Home" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"Home","url":"http://0.0.0.0/teaching/se/23sp/notes/testing.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://0.0.0.0/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1></h1>
+         </header> -->
+
+  <section>
+    <ul>
+  <li>Why testing is hard?
+    <ul>
+      <li>Imagine a “simple” program
+        <ul>
+          <li>take input at once</li>
+          <li>generate output at once</li>
+          <li>enumerate all input?
+            <ul>
+              <li>too much</li>
+              <li>instead, code coverage</li>
+            </ul>
+          </li>
+          <li>the program still have many conditions/branches
+            <ul>
+              <li>if
+                <ul>
+                  <li>2^N possibilities</li>
+                </ul>
+              </li>
+              <li>loop (including goto)</li>
+            </ul>
+          </li>
+        </ul>
+      </li>
+      <li>Real world program is more complex
+        <ul>
+          <li>Input/output is dynamic/non-stop</li>
+          <li>System can be more complex
+            <ul>
+              <li>multi-threading</li>
+              <li>multple components (disks, multiple nodes)</li>
+            </ul>
+          </li>
+        </ul>
+      </li>
+      <li>Phase1: select env/interface</li>
+      <li>Phase2: select test case
+        <ul>
+          <li>criteria
+            <ul>
+              <li>coverage
+                <ul>
+                  <li>each statement</li>
+                  <li>each branch</li>
+                  <li>each data structure initialized and used</li>
+                </ul>
+              </li>
+              <li>fault seeding</li>
+              <li>input domain
+                <ul>
+                  <li>each physical input</li>
+                  <li>each interface control</li>
+                  <li>random</li>
+                  <li>typical</li>
+                </ul>
+              </li>
+            </ul>
+          </li>
+        </ul>
+      </li>
+      <li>Phase 3: run test and evaluate
+        <ul>
+          <li>evaluate the test
+            <ul>
+              <li>formal methods</li>
+              <li>embedded code</li>
+            </ul>
+          </li>
+          <li>regression testing
+            <ul>
+              <li>rerun the tests again after patch!</li>
+            </ul>
+          </li>
+        </ul>
+      </li>
+      <li>Phase 4: measure test progress
+        <ul>
+          <li>structural completeness</li>
+          <li>functional completeness
+            <ul>
+              <li>think of more ways it could fail</li>
+            </ul>
+          </li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>How Google tests
+    <ul>
+      <li>Why do we test? for quality software
+        <ul>
+          <li>but who should be more responsible for quality?
+            <ul>
+              <li>developer or tester?</li>
+            </ul>
+          </li>
+          <li>So testers in Google help develpers to test, not test for them!</li>
+          <li>Organization structure
+            <ul>
+              <li>Eng Prod</li>
+              <li>product team</li>
+              <li>testers belong to both eng prod and product team</li>
+              <li>testers “oversee” the tesing progress</li>
+              <li>two different testers
+                <ul>
+                  <li>software engineer in testing</li>
+                  <li>test engineer
+                    <ul>
+                      <li>think of more ways it could fail</li>
+                    </ul>
+                  </li>
+                </ul>
+              </li>
+            </ul>
+          </li>
+          <li>Code structure
+            <ul>
+              <li>canary channel</li>
+              <li>dev channel</li>
+              <li>test channel</li>
+              <li>beta/release channel</li>
+            </ul>
+          </li>
+          <li>Do you need a tester in the beginning?
+            <ul>
+              <li>no</li>
+              <li>but it does not mean you should not write tests!</li>
+            </ul>
+          </li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>The Boeing 737 case
+    <ul>
+      <li>overview
+        <ul>
+          <li>the new/bigger engine changed the aerodynamics</li>
+          <li>pull up the nose / risk of stall</li>
+          <li>Problem found in a test flight</li>
+          <li>MCAS -&gt; automatically push down the nose
+            <ul>
+              <li>danger! push down the nose - crash</li>
+              <li>worse 1: pilots do not know</li>
+              <li>worse 2: not in the checklist</li>
+              <li>worse 3: very hard to turn off</li>
+              <li>worse 4: if not turned down in 10s, no more chance</li>
+              <li>worse 5: rely on one sensor</li>
+            </ul>
+          </li>
+        </ul>
+      </li>
+      <li>lessons
+        <ul>
+          <li>patch exisiting systems is better?</li>
+          <li>regression test is necessary</li>
+          <li>autopilot should only be conditionally trusted and can be turned off anytime</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>The Google App Engine case
+    <ul>
+      <li>overview</li>
+      <li>lessons
+        <ul>
+          <li>the implementation is correct but the worklflow is problematic</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+</body>
+
+</html>

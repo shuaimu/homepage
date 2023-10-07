@@ -1,0 +1,536 @@
+<HTML>
+<HEAD>
+<TITLE>./spring19/sahsagarstonybrook/src/shardkv/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./spring19/sahsagarstonybrook/src/shardkv/server.go<p><PRE>
+package shardkv
+
+
+// import "shardmaster"
+import (
+	"labrpc"
+	"shardmaster"
+	"strconv"
+	"strings"
+	"time"
+)
+import "raft"
+import "sync"
+import "labgob"
+
+
+
+type Op struct {
+	Operation int
+	Key       string
+	Value     string
+	Clientid  int64
+	Seqnum    int
+	NewConfig	  shardmaster.Config
+	OldConfig	  shardmaster.Config
+	ErrorString	  string
+}
+
+const (
+	G_OP = 0
+	P_OP = 1
+	A_OP = 2
+	R_OP = 3
+)
+
+type ShardKV struct {
+	mu           sync.Mutex
+	me           int
+	rf           *raft.Raft
+	applyCh      chan raft.ApplyMsg
+	make_end     func(string) *labrpc.ClientEnd
+	gid          int
+	masters      []*labrpc.ClientEnd
+	maxraftstate int // snapshot if log grows this big
+	kv_data        map[string]string
+	waitingChannel map[string]chan Op
+	clientIdSeqNum map[int64]string // all seq numbers executed are stored in this map
+	config   	shardmaster.Config
+	sm			*shardmaster.Clerk
+
+	// Shard transfer logic data members
+	reconfiguredNums	map[int]bool
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match84-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	waitingForReceiveShardsChannel	map[string]chan shardmaster.Config
+}
+
+
+func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
+	//fmt.Printf("Server Get for cliendid %v seq num %v\n", args.ClientId, args.SeqNum)
+	kv.mu.Lock()
+	//fmt.Printf("%v: Locked4\n", kv.me)
+	OP := Op{
+		Operation: G_OP,
+		Key:       args.Key,
+		Clientid:  args.ClientId,
+		Seqnum:    args.SeqNum,
+</FONT>		Value:     "",
+	}
+
+	if !kv.keyMatchingGID(OP.Key, kv.sm.Query(-1), kv.gid) {
+		reply.Err = ErrWrongGroup
+		kv.mu.Unlock()
+
+		return
+	}
+
+	//fmt.Printf("Operation DS: %v\n", op)
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match84-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	index, term, isLeader := kv.rf.Start(OP)
+
+	if isLeader == false {
+		reply.Leader = 2
+		kv.mu.Unlock()
+		//fmt.Print("Unlocked Here Get\n")
+		return
+	}
+
+	reply.Leader = 1
+
+	_, ok := kv.waitingChannel[strconv.Itoa(index)+strconv.Itoa(term)]
+	if !ok {
+		// Source Reference: RAFT Guide
+		// Discussed with Radhika Dhawan(Friend, not in Async class) that this channel needs to be buffered, hence non-blocking
+		kv.waitingChannel[strconv.Itoa(index)+strconv.Itoa(term)] = make(chan Op, 100)
+	}
+	kv.mu.Unlock()
+	//fmt.Print("Unlocked\n")
+
+	select {
+	case op := &lt;-kv.waitingChannel[strconv.Itoa(index)+strconv.Itoa(term)]:
+		if op.Seqnum != OP.Seqnum || op.Clientid != OP.Clientid {
+			reply.Leader = 2
+</FONT>		} else {
+			if op.ErrorString == ErrWrongGroup {
+				reply.Err = ErrWrongGroup
+			} else {
+				reply.Value = op.Value
+				reply.Err = OK
+			}
+		}
+		// if dies or stops being leader
+	case &lt;-time.After(500 * time.Millisecond):
+		reply.Leader = 2
+		return
+	}
+}
+
+func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	//fmt.Printf("Server Put/Append for client id %v seq num %v\n", args.ClientId, args.SeqNum)
+	kv.mu.Lock()
+	//fmt.Printf("GID: %v, SN: %v. Locked2\n", kv.gid, kv.me)
+
+	OP := Op{
+		Operation: args.Operation,
+		Key:       args.Key,
+		Clientid:  args.ClientId,
+		Seqnum:    args.SeqNum,
+		Value:     args.Value,
+	}
+
+	if !kv.keyMatchingGID(OP.Key, kv.sm.Query(-1), kv.gid) {
+		reply.Err = ErrWrongGroup
+		kv.mu.Unlock()
+
+		return
+	}
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match84-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	index, term, isLeader := kv.rf.Start(OP)
+
+	if isLeader == false {
+		reply.Leader = 2
+		kv.mu.Unlock()
+		//fmt.Print("Unlocked Here\n")
+
+		return
+	}
+
+	reply.Leader = 1
+
+	_, ok := kv.waitingChannel[strconv.Itoa(index)+strconv.Itoa(term)]
+	if !ok {
+		// Source Reference: RAFT Guide
+		// Discussed with Radhika Dhawan(Friend, not in Async class) that this channel needs to be buffered, hence non-blocking
+		kv.waitingChannel[strconv.Itoa(index)+strconv.Itoa(term)] = make(chan Op, 100)
+	}
+	//fmt.Print("Wait start\n")
+	kv.mu.Unlock()
+	//fmt.Print("Unlocked\n")
+
+	select {
+	case op := &lt;-kv.waitingChannel[strconv.Itoa(index)+strconv.Itoa(term)]:
+		//fmt.Print("channel entry received in channel\n")
+		if op.Seqnum != OP.Seqnum || op.Clientid != OP.Clientid {
+			reply.Leader = 2
+</FONT>		} else {
+			if op.ErrorString == ErrWrongGroup {
+				reply.Err = ErrWrongGroup
+			} else {
+				reply.Err = OK
+			}
+		}
+	// If dies or stops being leader
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match84-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	case &lt;-time.After(500 * time.Millisecond):
+		reply.Leader = 2
+		//fmt.Printf("Timeout")
+	}
+}
+
+//
+// the tester calls Kill() when a ShardKV instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *ShardKV) Kill() {
+	kv.rf.Kill()
+}
+
+
+//
+// servers[] contains the ports of the servers in this group.
+//
+// me is the index of the current server in servers[].
+//
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+//
+// the k/v server should snapshot when Raft's saved state exceeds
+// maxraftstate bytes, in order to allow Raft to garbage-collect its
+// log. if maxraftstate is -1, you don't need to snapshot.
+//
+// gid is this group's GID, for interacting with the shardmaster.
+//
+// pass masters[] to shardmaster.MakeClerk() so you can send
+// RPCs to the shardmaster.
+//
+// make_end(servername) turns a server name from a
+// Config.Groups[gid][i] into a labrpc.ClientEnd on which you can
+// send RPCs. You'll need this to send RPCs to other groups.
+//
+// look at client.go for examples of how to use masters[]
+// and make_end() to send RPCs to the group owning a specific shard.
+//
+// StartServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int, gid int, masters []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *ShardKV {
+</FONT>	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+
+	kv := new(ShardKV)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+	kv.make_end = make_end
+	kv.gid = gid
+	kv.masters = masters
+	kv.kv_data = make(map[string]string)
+	kv.waitingChannel = make(map[string]chan Op)
+	kv.clientIdSeqNum = make(map[int64]string)
+
+	// Your initialization code here.
+	kv.waitingForReceiveShardsChannel = make(map[string]chan shardmaster.Config)
+
+	// Use something like this to talk to the shardmaster:
+	kv.sm = shardmaster.MakeClerk(kv.masters)
+
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+
+	kv.config = kv.sm.Query(-1)
+	kv.reconfiguredNums = make(map[int]bool)
+
+	go kv.apply()
+	go kv.checkConfig()
+
+	return kv
+}
+
+
+
+func (kv *ShardKV) checkConfig() {
+	for {
+		time.Sleep(100 * time.Millisecond)
+		kv.mu.Lock()
+		//fmt.Print("Locked1")
+		// Get new config
+		if kv.config.Num == 0 {
+			kv.config = kv.sm.Query(-1)
+		}
+		newConfig:= kv.sm.Query(-1)
+		// Every replica group's leader should add a reconfiguration step in the log. Each server will try to perform migration but only first will sustain.
+
+		if kv.config.Num != newConfig.Num {
+			//fmt.Print("Not equal\n")
+
+			// make a copy of the new config
+			newNum:=newConfig.Num
+
+			newShards:=[shardmaster.NShards]int{}
+			for i, gid:=range newConfig.Shards {
+				newShards[i] = gid
+			}
+
+			newGroups:=map[int][]string{}
+			for group, servers:=range newConfig.Groups {
+				newGroups[group] = servers
+			}
+
+			newCon:=shardmaster.Config{
+				Num:newNum,
+				Shards:newShards,
+				Groups:newGroups,
+			}
+
+			// make a copy of the old config
+			oldNum:=kv.config.Num
+
+			oldShards:=[shardmaster.NShards]int{}
+			for i, gid:=range kv.config.Shards {
+				oldShards[i] = gid
+			}
+
+			oldGroups:=map[int][]string{}
+			for group, servers:=range kv.config.Groups {
+				oldGroups[group] = servers
+			}
+
+			oldCon:=shardmaster.Config{
+				Num:oldNum,
+				Shards:oldShards,
+				Groups:oldGroups,
+			}
+
+			OP := Op{
+				Operation: R_OP,
+				NewConfig: newCon,
+				OldConfig: oldCon,
+			}
+
+			kv.rf.Start(OP)
+		}
+
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match84-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		kv.mu.Unlock()
+		//fmt.Print("Unlocked")
+
+	}
+}
+
+// Continuous apply loop (Source reference: RAFT Guide).
+// keeps running endlessly to check if command has passed.
+func (kv *ShardKV) apply() {
+	for {
+		//fmt.Printf("Endless start\n")
+		applyMsg := &lt;-kv.applyCh
+		kv.mu.Lock()
+		//fmt.Print("Locked3\n")
+
+		//fmt.Printf("Locked here\n")
+		// apply index
+		objectOp := applyMsg.Command.(Op)
+</FONT>		//fmt.Printf("Operation: %v", objectOp.Operation)
+		// make a copy of the new config
+		newNum:=objectOp.NewConfig.Num
+
+		newShards:=[shardmaster.NShards]int{}
+		for i, gid:=range objectOp.NewConfig.Shards {
+			newShards[i] = gid
+		}
+
+		newGroups:=map[int][]string{}
+		for group, servers:=range objectOp.NewConfig.Groups {
+			newGroups[group] = servers
+		}
+
+		newCon:=shardmaster.Config{
+			Num:newNum,
+			Shards:newShards,
+			Groups:newGroups,
+		}
+
+		// make a copy of the old config
+		oldNum:=objectOp.OldConfig.Num
+
+		oldShards:=[shardmaster.NShards]int{}
+		for i, gid:=range objectOp.OldConfig.Shards {
+			oldShards[i] = gid
+		}
+
+		oldGroups:=map[int][]string{}
+		for group, servers:=range objectOp.OldConfig.Groups {
+			oldGroups[group] = servers
+		}
+
+		oldCon:=shardmaster.Config{
+			Num:oldNum,
+			Shards:oldShards,
+			Groups:oldGroups,
+		}
+
+		op:=Op{
+			Operation:objectOp.Operation,
+			Key:objectOp.Key,
+			Value:objectOp.Value,
+			Clientid:objectOp.Clientid,
+			Seqnum:objectOp.Seqnum,
+			NewConfig:newCon,
+			OldConfig:oldCon,
+		}
+
+		//fmt.Printf("seq num in db: %v\n", kv.clientIdSeqNum[op.Clientid])
+		//fmt.Printf("seq num in operation %v\n", op.Seqnum)
+
+		if op.Operation == R_OP {
+			_, reconfiguredNumsOK := kv.reconfiguredNums[op.NewConfig.Num]
+			// if reconfiguration is not already handled here
+			if !reconfiguredNumsOK {
+				kv.reconfiguredNums[op.NewConfig.Num] = true
+				// making copy of kv data since kv data would be changed
+				dataCopy:=map[string]string{}
+				for key, value:=range kv.kv_data{
+					dataCopy[key] = value
+				}
+				kv.mu.Unlock()
+				//fmt.Print("Unlocked\n")
+
+				// do the transfer mechanism here
+				kv.sendReceiveShardRPC(&op.OldConfig, &op.NewConfig, &dataCopy, kv.gid, kv.me)
+				//fmt.Printf("%v: Calmaled all RPC\n", kv.me)
+				kv.config = op.NewConfig
+
+				continue
+			} else {
+				kv.mu.Unlock()
+				//fmt.Print("Unlocked\n")
+
+				continue
+			}
+		}
+
+		// check here if key is in config, otherwise return WrongGroup in reply. Added an Error field in waitingChannel too.
+		if kv.keyMatchingGID(op.Key, kv.config, kv.gid) {
+			if op.Operation == G_OP {
+				// PUT VALUE IN GET CHANNEL
+				//fmt.Printf("Get operation: Key - %v, Value - %v\n", op.Key, op.Value)
+				op.Value = kv.kv_data[op.Key]
+			}
+
+			// check in the string map if the seq. num has already been executed.
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match84-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			if !strings.Contains(kv.clientIdSeqNum[op.Clientid], "-"+strconv.Itoa(op.Seqnum)+"-") {
+				kv.clientIdSeqNum[op.Clientid] += "-" + strconv.Itoa(op.Seqnum) + "-"
+
+				/*
+
+		fmt.Printf("Operation DS: %v\n", op)
+		fmt.Printf("Key %v\n", op.Key)
+		fmt.Printf("Value %v\n", op.Value)
+		fmt.Printf("Operation %v\n", op.Operation)
+		fmt.Printf("Client ID %v\n", op.Clientid)
+		fmt.Printf("Seq Num %v\n", op.Seqnum)
+*/
+				if op.Operation == P_OP {
+</FONT>					//fmt.Printf("Put operation: Key - %v, Value - %v\n", op.Key, op.Value)
+					kv.kv_data[op.Key] = op.Value
+				}
+
+				if op.Operation == A_OP {
+					//fmt.Printf("Append operation: Key - %v, Value - %v\n", op.Key, op.Value)
+					kv.kv_data[op.Key] = kv.kv_data[op.Key] + op.Value
+				}
+			}
+		} else {
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match84-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			op.ErrorString = ErrWrongGroup
+		}
+
+		_, ok := kv.waitingChannel[strconv.Itoa(applyMsg.CommandIndex)+strconv.Itoa(applyMsg.CommandTerm)]
+
+		if ok {
+			// inform anyone who's waiting on this index
+			kv.waitingChannel[strconv.Itoa(applyMsg.CommandIndex)+strconv.Itoa(applyMsg.CommandTerm)] &lt;- op
+		}
+
+		kv.mu.Unlock()
+		//fmt.Print("Unlocked\n")
+
+		//fmt.Printf("Unlocked here\n")
+	}
+}
+
+// perhaps will need to add something for at-most once logic, waise to kuch farak nahi padta shayad.
+// two procedures to construct here - send RPC and receive RPC.
+func (kv *ShardKV)	ReceiveShardsRPC(args *ReceiveShardsArgs, reply *ReceiveShardsReply) {
+</FONT>	// see if you have to put a lock/unlock here
+	// it will be responsible, i.e. have correct values for keys only for which it was the correct server earlier.
+	kv.mu.Lock()
+	for key, value:=range args.Data {
+		if kv.keyMatchingGID(key, args.OldConfig, args.GID) {
+			kv.kv_data[key] = value
+		}
+	}
+	kv.mu.Unlock()
+
+	//fmt.Printf("Exiting for %v\n", args.ServerNumber)
+}
+
+func (kv *ShardKV) sendReceiveShardRPC(oldConfig *shardmaster.Config, newConfig *shardmaster.Config, kv_data *map[string]string, kv_gid int, kv_me int) {
+	// send to all servers of the old config, new config servers if newly joined, are added will already know in their make function
+	args:=ReceiveShardsArgs{
+		Data:*kv_data,
+		OldConfig:*oldConfig,
+		NewConfig:*newConfig,
+		GID:kv_gid,
+		ServerNumber: kv_me,
+	}
+
+	var reply ReceiveShardsReply
+
+	for gid, _:=range newConfig.Groups {
+		// is checking for sending to self required?
+		if servers, ok := newConfig.Groups[gid]; ok {
+			// try each server for the shard.
+			for si := 0; si &lt; len(servers); si++ {
+				srv := kv.make_end(servers[si])
+				srv.Call("ShardKV.ReceiveShardsRPC", &args, &reply)
+			}
+		}
+	}
+}
+
+
+// Checks if the key is for this config
+func (kv *ShardKV) keyMatchingGID(key string, config shardmaster.Config, gid int) bool {
+	shard := key2shard(key)
+	shard_gid := config.Shards[shard]
+
+	if shard_gid != gid {
+		//fmt.Print("Key not matching\n")
+		return false
+	}
+
+	return true
+}</PRE>
+</PRE>
+</BODY>
+</HTML>

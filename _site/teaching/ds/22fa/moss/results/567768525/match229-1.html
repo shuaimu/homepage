@@ -1,0 +1,372 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/GouravMangla/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/GouravMangla/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+import (
+	"raft"
+	"time"
+)
+import "labrpc"
+import "sync"
+import "labgob"
+
+
+type ShardMaster struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	// Your data here.
+
+	configs []Config // indexed by config num
+	TerminateChan chan bool
+	ConnectClientRequestID map[int64] int
+	Callback map[int] chan MessageApply
+}
+
+type MessageApply struct{
+	CommandType string
+	CommandIndex int
+	ClientId int64
+	SequenceNumber int
+}
+
+type Arguments interface{}
+type Op struct {
+	Command string
+	Arg  Arguments
+	ClientId int64
+	SequenceNum int
+	// Your data here.
+}
+
+
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+	// Your code here.
+	operation := Op{
+		Command:   "Join",
+		Arg: *args,
+		ClientId:args.ClientID,
+		SequenceNum:args.SequenceNum,
+	}
+	_,reply.WrongLeader = sm.handleAllRPCs(operation)
+}
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+	// Your code here.
+	operation := Op{
+		Command:   "Leave",
+		Arg: *args,
+		ClientId:args.ClientID,
+		SequenceNum:args.SequenceNum,
+	}
+	_,reply.WrongLeader = sm.handleAllRPCs(operation)
+}
+
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+	// Your code here.
+	operation := Op{
+		Command:   "Move",
+		Arg: *args,
+		ClientId:args.ClientID,
+		SequenceNum:args.SequenceNum,
+	}
+	_,reply.WrongLeader = sm.handleAllRPCs(operation)
+}
+
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+	// Your code here.
+	operation := Op{
+		Command:   "Query",
+		Arg: *args,
+		ClientId:args.ClientID,
+		SequenceNum:args.SequenceNum,
+	}
+	reply.Config,reply.WrongLeader = sm.handleAllRPCs(operation)
+
+	_,isLeader :=sm.rf.GetState()
+	sm.mu.Lock()
+	if isLeader==true{
+		if args.Num &gt;=0 && args.Num &lt; len(sm.configs) {
+			reply.Config = sm.configs[args.Num]
+		} else {
+			reply.Config = sm.configs[len(sm.configs)-1]
+		}
+	}
+	sm.mu.Unlock()
+}
+
+func (sm *ShardMaster) handleAllRPCs(operation Op)(Config,bool){
+
+	index,_,isLeader:=sm.rf.Start(operation)
+
+
+	wrongLeader:=true
+	if isLeader==false{
+		return Config{},wrongLeader
+	}
+	sm.mu.Lock()
+	_,ok := sm.Callback[index]
+	if ok == false{
+		sm.Callback[index] = make(chan MessageApply,1)
+	}
+	sm.mu.Unlock()
+
+	select{
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match229-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	case msg:=&lt;-sm.Callback[index]:
+
+
+		sm.mu.Lock()
+		delete(sm.Callback, index)
+		sm.mu.Unlock()
+
+		if msg.CommandIndex==index && msg.CommandType==operation.Command && msg.ClientId==operation.ClientId && msg.SequenceNumber==operation.SequenceNum {
+</FONT>			wrongLeader=false
+		}else {
+			wrongLeader=true
+		}
+
+	case &lt;-time.After(time.Duration(600)*time.Millisecond):
+		wrongLeader=true
+	}
+	return Config{},wrongLeader
+
+}
+
+
+
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+	close(sm.TerminateChan)
+	// Your code here, if desired.
+}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+	return sm.rf
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	sm := new(ShardMaster)
+	sm.me = me
+
+	sm.configs = make([]Config, 1)
+	sm.configs[0].Groups = map[int][]string{}
+
+	labgob.Register(Op{})
+	labgob.Register(Config{})
+	labgob.Register(JoinArgs{})
+	labgob.Register(LeaveArgs{})
+	labgob.Register(MoveArgs{})
+	labgob.Register(QueryArgs{})
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match229-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	sm.applyCh = make(chan raft.ApplyMsg)
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+
+	// Your code here.
+
+	sm.TerminateChan=make(chan bool,1)
+	sm.ConnectClientRequestID=make(map[int64]int)
+</FONT><A NAME="0"></A><FONT color = #FF0000><A HREF="match229-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	sm.Callback=make(map[int] chan MessageApply)
+
+
+	go sm.startGoRoutineForEachServer()
+
+	return sm
+}
+
+func (sm *ShardMaster) startGoRoutineForEachServer(){
+	for true{
+		select {
+		case&lt;-sm.TerminateChan:
+			return
+		case message:= &lt;-sm.applyCh:
+
+			sm.mu.Lock()
+			operation := message.Command.(Op)
+
+			seq, present :=sm.ConnectClientRequestID[operation.ClientId]
+			if present==false || seq&lt;operation.SequenceNum{
+</FONT>
+				previouslength :=len(sm.configs)
+				previousConfiguration :=sm.configs[previouslength-1]
+				newGrp := make(map[int][]string)
+				for gid, server:= range previousConfiguration.Groups {
+					newGrp[gid] = server
+				}
+
+				newConfig := Config{
+					Num:previousConfiguration.Num+1,
+					Shards:previousConfiguration.Shards,
+					Groups:newGrp,
+				}
+
+				if(operation.Command == "Join"){
+
+					joinArg :=operation.Arg.(JoinArgs)
+					for gid, server:= range joinArg.Servers {
+						newConfig.Groups[gid] = server
+					}
+
+					if(len(newConfig.Groups)&gt;0){
+						sm.balancingNewConfiguration(&newConfig)
+					}
+
+				}else if(operation.Command=="Move"){
+
+					moveArg :=operation.Arg.(MoveArgs)
+					newConfig.Shards[moveArg.Shard] = moveArg.GID
+
+				}else if(operation.Command=="Leave"){
+
+					leaveArg :=operation.Arg.(LeaveArgs)
+					for _,gid := range leaveArg.GIDs {
+						shardInd := make([]int, 0)
+						for ind:=0;ind&lt;len(newConfig.Shards);ind++{
+							if newConfig.Shards[ind]==gid{
+								shardInd=append(shardInd,ind)
+							}
+						}
+						for ind:=0 ;ind&lt;len(shardInd);ind++{
+							newConfig.Shards[shardInd[ind]]=0
+
+						}
+						delete(newConfig.Groups,gid)
+					}
+					if(len(newConfig.Groups)&gt;0){
+						sm.balancingNewConfiguration(&newConfig)
+					}
+				}
+
+				sm.configs = append(sm.configs,newConfig)
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match229-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				sm.ConnectClientRequestID[operation.ClientId]=operation.SequenceNum
+			}
+			_,flag:=sm.Callback[message.CommandIndex]
+
+			msg:=MessageApply{
+				CommandType:  operation.Command,
+				CommandIndex: message.CommandIndex,
+				ClientId:     operation.ClientId,
+				SequenceNumber: operation.SequenceNum,
+</FONT>			}
+			if flag==true{
+
+				sm.Callback[message.CommandIndex]&lt;-msg
+			}
+			sm.mu.Unlock()
+		}
+	}
+}
+func (sm *ShardMaster) balancingNewConfiguration(config *Config) {
+
+	gidToShardsMap :=make(map[int][]int)
+	length := len(config.Groups)
+
+	for gid := range config.Groups{
+		_,flag :=gidToShardsMap[gid]
+		if flag==false{
+			gidToShardsMap[gid]=make([]int, 0)
+		}
+	}
+	for shardNum,gid := range config.Shards{
+		_,flag :=gidToShardsMap[gid]
+		if flag==false{
+			gidToShardsMap[gid]=make([]int, 0)
+		}
+		gidToShardsMap[gid]=append(gidToShardsMap[gid],shardNum)
+	}
+
+	leftShards := gidToShardsMap[0]
+	delete(gidToShardsMap,0)
+
+	minCount := NShards / length
+
+
+
+	for !sm.checkAllShardsAreBalanced(gidToShardsMap,minCount) {
+		queueArr := make([]int,0)
+		for gid:= range gidToShardsMap{
+			if len(gidToShardsMap[gid])&gt;minCount{
+				arr :=gidToShardsMap[gid][minCount:]
+				for ind :=0 ;ind&lt;len(arr);ind++{
+					queueArr = append(queueArr, arr[ind])
+				}
+				gidToShardsMap[gid] = gidToShardsMap[gid][:minCount]
+			}
+		}
+        counter :=0
+		for gid:= range gidToShardsMap{
+			for len(gidToShardsMap[gid])&lt;=minCount && counter &lt; len(queueArr){
+				gidToShardsMap[gid] = append(gidToShardsMap[gid], queueArr[counter])
+				counter++
+			}
+		}
+
+		if(len(leftShards)&gt;0) {
+			for gid := range gidToShardsMap {
+				gidToShardsMap[gid] = append(gidToShardsMap[gid], leftShards[0])
+				leftShards = leftShards[1:]
+				if(len(leftShards)==0){
+					break
+				}
+			}
+		}
+	}
+
+	sm.putAllGidtoShardArrayBackAgain(gidToShardsMap,config)
+}
+
+func (sm *ShardMaster) checkAllShardsAreBalanced(gidMap map[int][]int ,minCount int) bool{
+
+	count:=0
+	for key := range gidMap{
+		len :=len(gidMap[key])
+		if(len &gt;= minCount){
+			count=count+len
+		}else if(len&lt;minCount) {
+			return false
+		}
+	}
+	return count==NShards;
+}
+
+func (sm *ShardMaster) putAllGidtoShardArrayBackAgain(gidMap map[int][]int,config *Config) {
+	for gid, shardArr := range gidMap{
+		for ind:=0;ind&lt; len(shardArr);ind++{
+			config.Shards[shardArr[ind]]=gid
+		}
+	}
+}
+
+
+</PRE>
+</PRE>
+</BODY>
+</HTML>

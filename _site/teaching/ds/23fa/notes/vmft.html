@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>VMFT - Primary-backup replication | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="VMFT - Primary-backup replication" />
+<meta property="og:locale" content="en_US" />
+<link rel="canonical" href="http://0.0.0.0/teaching/ds/23fa/notes/vmft.html" />
+<meta property="og:url" content="http://0.0.0.0/teaching/ds/23fa/notes/vmft.html" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="VMFT - Primary-backup replication" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"VMFT - Primary-backup replication","url":"http://0.0.0.0/teaching/ds/23fa/notes/vmft.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://0.0.0.0/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>VMFT - Primary-backup replication</h1>
+         </header> -->
+
+  <section>
+    
+<h1 id="vmft---primary-backup-replication">VMFT - Primary-backup replication</h1>
+
+<h2 id="overview">Overview</h2>
+<ul>
+  <li>system layers
+    <ul>
+      <li>Physical machine, OS/hypervisor, VM, OS/VM, Systems App, App</li>
+    </ul>
+  </li>
+  <li>replication in different layers
+    <ul>
+      <li>e.g., replicating GFS master</li>
+    </ul>
+  </li>
+  <li>virtual machine basics
+    <ul>
+      <li>a stream of instruction logs</li>
+      <li>inputs / outputs</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="approaches">Approaches</h2>
+<ul>
+  <li>pause, replicate states, continue (migration)
+    <ul>
+      <li>easy to implement</li>
+      <li>but cost time, can be used in adding new replica</li>
+    </ul>
+  </li>
+  <li>state machine, replicate inputs
+    <ul>
+      <li>efficient in performance</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="correctness">Correctness</h2>
+<ul>
+  <li>Input events need to be replicated at exact point of instruction</li>
+  <li>When can primary return?
+    <ul>
+      <li>ack from F followers: tolerate F failures</li>
+      <li>otherwise?</li>
+    </ul>
+  </li>
+  <li></li>
+</ul>
+
+<h2 id="non-determinism">Non-determinism</h2>
+<ul>
+  <li>clock
+    <ul>
+      <li>record</li>
+    </ul>
+  </li>
+  <li>multi-core (different from multi-thread)
+    <ul>
+      <li>not supported in vmft</li>
+    </ul>
+  </li>
+  <li>IO race
+    <ul>
+      <li>non-blocking</li>
+      <li>DMA</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="inputoutput-consistency">Input/Output consistency</h2>
+<ul>
+  <li>exactly once over network? (TCP, UDP)</li>
+  <li>disk read</li>
+</ul>
+
+<h2 id="network-partition-and-split-brain">Network partition and “split-brain”</h2>
+<ul>
+  <li>perfect failure detector? no</li>
+  <li>atomic test and set</li>
+  <li>can lease solve the problem?</li>
+</ul>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+</body>
+
+</html>

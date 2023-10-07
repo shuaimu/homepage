@@ -1,0 +1,344 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/nitesh-idnani/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/nitesh-idnani/src/kvraft/server.go<p><PRE>
+package raftkv
+
+import (
+	"bytes"
+	"labgob"
+	"labrpc"
+	"log"
+	"raft"
+	"sync"
+	"time"
+	//	"fmt"
+)
+
+const Debug = 0
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+type Op struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+	ClerkId     int64
+	OperationId int
+	Operation   string
+	Key         string
+	Value       string
+}
+
+type KVServer struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	maxraftstate int // snapshot if log grows this big
+	persister    *raft.Persister
+	// Your definitions here.
+
+	kvMap              map[string]string
+	clerkRequestMap    map[int64]int
+	logEntryReplyChMap map[int]chan Op
+
+	isAlive bool
+}
+
+//
+// save Raft's persistent state to stable storage,
+// where it can later be retrieved after a crash and restart.
+//
+
+func (kv *KVServer) persist(lastIncludedIndex int) {
+	// Your code here (3B).
+	// Example:
+	// w := new(bytes.Buffer)
+	// e := labgob.NewEncoder(w)
+	// e.Encode(kv.xxx)
+	// e.Encode(kv.yyy)
+	// data := w.Bytes()
+	// kv.persister.SaveRaftState(data)
+
+	kv.mu.Lock()
+
+	currentSize := kv.persister.RaftStateSize()
+	sizeThreshold := int(float64(kv.maxraftstate) * 0.85)
+
+	if currentSize &lt; sizeThreshold {
+		kv.mu.Unlock()
+		return
+	}
+
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(kv.kvMap)
+	e.Encode(kv.clerkRequestMap)
+	data := w.Bytes()
+	kv.mu.Unlock()
+	kv.rf.PersistStateAndSnapshot(data, lastIncludedIndex)
+}
+
+//
+// restore previously persisted state.
+//
+func (kv *KVServer) readPersist(data []byte) {
+
+	if data == nil || len(data) &lt; 1 { // bootstrap without any state?
+		return
+	}
+	// Your code here (3B).
+	// Example:
+	// r := bytes.NewBuffer(data)
+	// d := labgob.NewDecoder(r)
+	// var xxx
+	// var yyy
+	// if d.Decode(&xxx) != nil ||
+	//    d.Decode(&yyy) != nil {
+	//   error...
+	// } else {
+	//   kv.xxx = xxx
+	//   kv.yyy = yyy
+	// }
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var kvMap map[string]string
+	var clerkRequestMap map[int64]int
+
+	if d.Decode(&kvMap) != nil || d.Decode(&clerkRequestMap) != nil {
+		// fmt.Printf("Failed to decode persistent fields\n")
+	} else {
+		kv.mu.Lock()
+		kv.kvMap = kvMap
+		kv.clerkRequestMap = clerkRequestMap
+		kv.mu.Unlock()
+	}
+}
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match104-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *KVServer) runMainLoop() {
+
+	for {
+
+		// Exit the routine if server is killed
+		kv.mu.Lock()
+		if kv.isAlive == false {
+			kv.mu.Unlock()
+			return
+		}
+		kv.mu.Unlock()
+
+		// Handle applyCh for the corresponding raft server
+		select {
+		case applyMsg := &lt;-kv.applyCh:
+			kv.mu.Lock()
+
+			if applyMsg.CommandValid == false {
+				kv.mu.Unlock()
+</FONT>				kv.readPersist(kv.persister.ReadSnapshot())
+			} else {
+
+				operationMsg := applyMsg.Command.(Op)
+				lastOperationId, ok := kv.clerkRequestMap[operationMsg.ClerkId]
+				// Check for duplicate operations
+				if !ok || operationMsg.OperationId &gt; lastOperationId {
+					if operationMsg.Operation == "Get" {
+						// fmt.Printf("Value for key %s is %s\n", operationMsg.Key, kv.kvMap[operationMsg.Key])
+					} else if operationMsg.Operation == "Put" {
+						kv.kvMap[operationMsg.Key] = operationMsg.Value
+						// fmt.Printf("Updated value for key %s is %s\n", operationMsg.Key, kv.kvMap[operationMsg.Key])
+					} else {
+						kv.kvMap[operationMsg.Key] += operationMsg.Value
+						// fmt.Printf("Updated value for key %s is %s\n", operationMsg.Key, kv.kvMap[operationMsg.Key])
+					}
+					kv.clerkRequestMap[operationMsg.ClerkId] = operationMsg.OperationId
+				}
+
+				if kv.maxraftstate != -1 {
+					go kv.persist(applyMsg.CommandIndex)
+				}
+
+				// Send the response on waiting channel
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match104-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				logEntryReplyCh, ok := kv.logEntryReplyChMap[applyMsg.CommandIndex]
+				if ok {
+					logEntryReplyCh &lt;- operationMsg
+				}
+				kv.mu.Unlock()
+			}
+		}
+	}
+}
+
+func isSame(op1 Op, op2 Op) bool {
+
+	return op1.ClerkId == op2.ClerkId &&
+		op1.OperationId == op2.OperationId &&
+</FONT>		op1.Operation == op2.Operation &&
+		op1.Key == op2.Key &&
+		op1.Value == op2.Value
+}
+
+func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
+	// Your code here.
+
+	op := Op{args.ClerkId, args.OperationId, "Get", args.Key, ""}
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match104-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_8.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	startIndex, startTerm, startLeader := kv.rf.Start(op)
+
+	// Check if server is leader or not
+	if startLeader == false {
+		reply.WrongLeader = true
+		return
+	}
+
+	// Allocate a channel waiting on the raft response
+	kv.mu.Lock()
+	ch := make(chan Op, 1)
+	kv.logEntryReplyChMap[startIndex] = ch
+	kv.mu.Unlock()
+	duration, _ := time.ParseDuration("600ms")
+	waitTimer := time.NewTimer(duration)
+	select {
+	case opReply := &lt;-ch:
+		currentTerm, _ := kv.rf.GetState()
+		// Check if the current server is still a leader
+		if currentTerm == startTerm && isSame(op, opReply) {
+			reply.WrongLeader = false
+</FONT>			kv.mu.Lock()
+			value, ok := kv.kvMap[opReply.Key]
+			if ok {
+				reply.Value = value
+			} else {
+				reply.Err = ErrNoKey
+			}
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match104-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			kv.mu.Unlock()
+		} else {
+			reply.WrongLeader = true
+		}
+	case &lt;-waitTimer.C:
+		reply.WrongLeader = true
+	}
+
+	kv.mu.Lock()
+	delete(kv.logEntryReplyChMap, startIndex)
+	kv.mu.Unlock()
+
+}
+
+func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	// Your code here.
+
+	op := Op{args.ClerkId, args.OperationId, args.Op, args.Key, args.Value}
+</FONT><A NAME="0"></A><FONT color = #FF0000><A HREF="match104-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_12.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	startIndex, startTerm, startLeader := kv.rf.Start(op)
+
+	// Check if server is leader or not
+	if startLeader == false {
+		reply.WrongLeader = true
+		return
+	}
+
+	// Allocate a channel waiting on the raft response
+	kv.mu.Lock()
+	ch := make(chan Op, 1)
+	kv.logEntryReplyChMap[startIndex] = ch
+	kv.mu.Unlock()
+	duration, _ := time.ParseDuration("600ms")
+	waitTimer := time.NewTimer(duration)
+	select {
+	case opReply := &lt;-ch:
+		currentTerm, _ := kv.rf.GetState()
+		// Check if the current server is still a leader
+		if currentTerm == startTerm && isSame(op, opReply) {
+			reply.WrongLeader = false
+		} else {
+			reply.WrongLeader = true
+		}
+	case &lt;-waitTimer.C:
+		reply.WrongLeader = true
+	}
+
+	kv.mu.Lock()
+	delete(kv.logEntryReplyChMap, startIndex)
+	kv.mu.Unlock()
+
+}
+
+//
+// the tester calls Kill() when a KVServer instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *KVServer) Kill() {
+</FONT>	kv.rf.Kill()
+	// Your code here, if desired.
+	kv.mu.Lock()
+	kv.isAlive = false
+	kv.mu.Unlock()
+	// fmt.Printf("Server %d killed\n", kv.me)
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Raft to
+// form the fault-tolerant key/value service.
+// me is the index of the current server in servers[].
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+// the k/v server should snapshot when Raft's saved state exceeds maxraftstate bytes,
+// in order to allow Raft to garbage-collect its log. if maxraftstate is -1,
+// you don't need to snapshot.
+// StartKVServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
+	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+
+	kv := new(KVServer)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+
+	// You may need initialization code here.
+
+	kv.persister = persister
+
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+	kv.kvMap = make(map[string]string)
+	kv.clerkRequestMap = make(map[int64]int)
+	kv.logEntryReplyChMap = make(map[int]chan Op)
+
+	kv.isAlive = true
+
+	kv.readPersist(persister.ReadSnapshot())
+
+	// You may need initialization code here.
+	go kv.runMainLoop()
+
+	return kv
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

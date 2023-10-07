@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>P2P and DHT | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="P2P and DHT" />
+<meta property="og:locale" content="en_US" />
+<link rel="canonical" href="http://0.0.0.0/teaching/ds/22fa/notes/chord.html" />
+<meta property="og:url" content="http://0.0.0.0/teaching/ds/22fa/notes/chord.html" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="P2P and DHT" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"P2P and DHT","url":"http://0.0.0.0/teaching/ds/22fa/notes/chord.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://0.0.0.0/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>P2P and DHT</h1>
+         </header> -->
+
+  <section>
+    <h1 id="p2p-and-dht">P2P and DHT</h1>
+
+<h2 id="peer-to-peer">Peer-to-peer</h2>
+<ul>
+  <li>Practical distributed systems in early 2000s
+    <ul>
+      <li>eMule 2000, BitTorrent 2001</li>
+    </ul>
+  </li>
+  <li>BitTorrent
+    <ul>
+      <li>tracker servers exchange info “who has the file”</li>
+      <li>client contact tracker to contact the file owners</li>
+      <li>after finish, the client report to tracker as an owner</li>
+      <li>centralized bottleneck: some servers are more important than others.</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="consistent-hashing">Consistent hashing</h2>
+<ul>
+  <li>deterministic hashing function
+    <ul>
+      <li>uniform distribution</li>
+      <li>choose m-bit in results so that the collision rate is low</li>
+      <li>each key is hashed to m bits</li>
+      <li>each server (ip, port) is also hashed to m bits</li>
+    </ul>
+  </li>
+  <li>a ring connects 0 and 2^m-1
+    <ul>
+      <li>a key (its hash) is stored on the succeeding server</li>
+      <li>if every node has the membership info, then it can route the request to the right node with one hop</li>
+    </ul>
+  </li>
+  <li>on membership change
+    <ul>
+      <li>if a node joins, it takes over some keys from its immediate successor</li>
+      <li>if a node leaves, it gives all its keys to its immediate successor.</li>
+    </ul>
+  </li>
+  <li>what about failures?
+    <ul>
+      <li>use replicas: for a key who hash is k, use k + F, k + 2F as extra replicas (F is a constant)</li>
+    </ul>
+  </li>
+  <li>if everyone has the membership, this is it
+    <ul>
+      <li>Dynamo is implemented like this</li>
+      <li>reasonable for a moderate sized system with closed membership
+        <ul>
+          <li>what about a million nodes?</li>
+          <li>what about more open network?</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="chord-a-scalable-lookup-service">Chord, a scalable lookup service</h2>
+<ul>
+  <li>no node stores the full membership</li>
+  <li>the minimum: a node only stores its predecessor and successor
+    <ul>
+      <li>with N nodes, search O(N) times.</li>
+    </ul>
+  </li>
+  <li>Idea: store multiple “fingers” on the ring, look up similar a binary search
+    <ul>
+      <li>how can we distribute the fingers?</li>
+    </ul>
+  </li>
+  <li>store m fingers, divided by increasing index of 2
+    <ul>
+      <li>e.g.,  m=3, every node (node 0, 1, 3) store three fingers
+        <ul>
+          <li>node 0: 1, 2, 4</li>
+          <li>node 1: 2, 3, 5</li>
+          <li>node 3: 4, 5, 7</li>
+        </ul>
+      </li>
+      <li>every finger has the successor and interval (range to next finger)</li>
+    </ul>
+  </li>
+  <li>search rule for k
+    <ul>
+      <li>if find a match (the immediate successor is the one), return</li>
+      <li>else, find the interval that includes k, forward the search to that successor, and repeat</li>
+    </ul>
+  </li>
+  <li>each forward will halve the search range, hence seach time is O(logN)
+    <ul>
+      <li>search node: n, i-th finger node: f, succ node: p</li>
+      <li>distance between n and f &gt;= 2^(i-1)</li>
+      <li>distance between f and p &lt;= 2^(i-1)</li>
+      <li>f to p is at most half of n to p</li>
+    </ul>
+  </li>
+  <li>membership change (join), base version
+    <ul>
+      <li>init finger table
+        <ul>
+          <li>delegate to exisiting nodes</li>
+          <li>quicker to ask a neighbor</li>
+        </ul>
+      </li>
+      <li>update fingers of other nodes</li>
+      <li>transfer keys</li>
+    </ul>
+  </li>
+  <li>dynamic stablization
+    <ul>
+      <li>a new node joins: notify immediate successor</li>
+      <li>exisiting node calibrates: ask the immediate successor about its predecessor</li>
+    </ul>
+  </li>
+</ul>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+</body>
+
+</html>

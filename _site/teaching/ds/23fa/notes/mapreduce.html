@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>MapReduce | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="MapReduce" />
+<meta property="og:locale" content="en_US" />
+<link rel="canonical" href="http://0.0.0.0/teaching/ds/23fa/notes/mapreduce.html" />
+<meta property="og:url" content="http://0.0.0.0/teaching/ds/23fa/notes/mapreduce.html" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="MapReduce" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"MapReduce","url":"http://0.0.0.0/teaching/ds/23fa/notes/mapreduce.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://0.0.0.0/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>MapReduce</h1>
+         </header> -->
+
+  <section>
+    <h1 id="mapreduce">MapReduce</h1>
+
+<h2 id="google-infrastructure">Google Infrastructure</h2>
+<ul>
+  <li>GFS : Storage</li>
+  <li>MapReduce: Computation</li>
+  <li>Chubby: Coordination</li>
+</ul>
+
+<h2 id="why-distributed-in-2003">Why Distributed? (in 2003)</h2>
+<ul>
+  <li>Storage</li>
+  <li>HDD 1TB</li>
+  <li>Google &gt; 100 billion pages, about 1PB</li>
+  <li>need &gt; 1000 machines</li>
+  <li>Computation</li>
+  <li>100 MB/s, ~100 day to process 1PB</li>
+</ul>
+
+<h2 id="the-world-before-mapreduce">The world before MapReduce</h2>
+<ul>
+  <li>Systems community</li>
+  <li>Distributed = Multi-thread</li>
+  <li>Distributed shared memory</li>
+  <li>HPC community</li>
+  <li>MPI</li>
+  <li>Fault tolerance?</li>
+</ul>
+
+<h2 id="what-about-doing-it-in-the-hard-way">What about doing it in the hard way?</h2>
+<ul>
+  <li>send-recv</li>
+  <li>coordination</li>
+  <li>debug</li>
+  <li>optimize</li>
+  <li>fault tolerance</li>
+</ul>
+
+<h2 id="mapreduce-1">MapReduce</h2>
+<ul>
+  <li>Programming framework/model</li>
+  <li>input/output on GFS</li>
+  <li>no persistence</li>
+  <li>online tasks</li>
+  <li>as a service (process) or as a library?</li>
+  <li>auto parallelism, load balance, fault tolerance.</li>
+</ul>
+
+<h2 id="concept">Concept</h2>
+<ul>
+  <li>input-&gt;map-&gt;reduce-&gt;output</li>
+  <li>input: a set of kv pairs</li>
+  <li>map (UDF): kv pair -&gt; a set of kv pairs</li>
+  <li>reduce (UDF): a set of kv pairs -&gt; kv pair</li>
+</ul>
+
+<h2 id="example-word-count">Example: word count</h2>
+<ul>
+  <li>input k: doc-name, v: doc-content</li>
+  <li>map: k: each word, v: 1</li>
+  <li>reduce: k: each word, v: word count</li>
+</ul>
+
+<h2 id="more-examples">More examples:</h2>
+<ul>
+  <li>grep</li>
+  <li>reversed links</li>
+  <li>sorting (requires extra)</li>
+</ul>
+
+<h2 id="distributed-implementation">Distributed implementation</h2>
+<ul>
+  <li>Input (in GFS) —&gt; (M) Map jobs —&gt; (R) Reduce jobs —&gt; Output (in GFS)</li>
+  <li>Map workers and Reduce workers communicate in network (RPC)
+    <ul>
+      <li>why not using external storage same as input/output?</li>
+    </ul>
+  </li>
+  <li>A master that assigns jobs to workers</li>
+  <li>UDF partition</li>
+  <li>Linked as library
+    <ul>
+      <li>C++</li>
+      <li>debug locally</li>
+      <li>bootstrap time?</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="load-balancing-and-pipelining-example">Load balancing and pipelining example</h2>
+<ul>
+  <li>M=3, R=2</li>
+  <li>flow
+    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>W1: m1-----m1 m3------m3
+W2: m2--------------------m2
+W3: ..........1.1.......1.3..1.2 r1---r1
+W4: ...........2.1.......2.3...2.2 r2---r2
+</code></pre></div>    </div>
+  </li>
+</ul>
+
+<h2 id="fault-tolerance">Fault tolerance</h2>
+<ul>
+  <li>Failure types: networks, server crashes, disk corruption, “gray” failures</li>
+  <li>Master(seldom)</li>
+  <li>Workers</li>
+  <li>Map: relaunch</li>
+  <li>Reduce: relaunch, atomic GFS functions</li>
+  <li>Slow worker = failed worker</li>
+</ul>
+
+<h2 id="performance-opt">Performance opt</h2>
+<ul>
+  <li>What is the “scarce” resource?
+    <ul>
+      <li>network</li>
+    </ul>
+  </li>
+  <li>Optimization to reduce network traffic
+    <ul>
+      <li>Combine: local reduce (commutative&amp;associative)</li>
+      <li>Locality read</li>
+    </ul>
+  </li>
+</ul>
+
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+</body>
+
+</html>

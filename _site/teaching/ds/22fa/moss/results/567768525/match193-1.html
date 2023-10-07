@@ -1,0 +1,101 @@
+<HTML>
+<HEAD>
+<TITLE>./spring19/zhangdaoshun/src/shardkv/common.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github/wqlin/mit-6.824-2018/src/shardkv/common.go<p><PRE>
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match193-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_97.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+package shardkv
+
+import "log"
+
+const (
+	OK             = "OK"
+	ErrNoKey       = "ErrNoKey"
+	ErrWrongGroup  = "ErrWrongGroup"
+	ErrWrongLeader = "ErrWrongLeader"
+)
+
+type Err string
+
+type RequestType int
+
+type IntSet map[int]struct{}
+type StringSet map[string]struct{}
+
+const Debug = 0
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+// Put or Append
+type PutAppendArgs struct {
+	RequestId       int64
+	ExpireRequestId int64
+	ConfigNum       int
+	Key             string
+	Value           string
+	Op              string // "Put" or "Append"
+}
+
+type PutAppendReply struct {
+	Err Err
+}
+
+type GetArgs struct {
+	ConfigNum int
+	Key       string
+}
+
+type GetReply struct {
+	Err   Err
+	Value string
+}
+
+func (arg *GetArgs) copy() GetArgs {
+	return GetArgs{ConfigNum: arg.ConfigNum, Key: arg.Key}
+}
+
+func (arg *PutAppendArgs) copy() PutAppendArgs {
+	return PutAppendArgs{RequestId: arg.RequestId, ExpireRequestId: arg.ExpireRequestId, ConfigNum: arg.ConfigNum, Key: arg.Key, Value: arg.Value, Op: arg.Op}
+}
+
+type ShardMigrationArgs struct {
+	Shard     int
+	ConfigNum int
+}
+
+type MigrationData struct {
+	Data  map[string]string
+	Cache map[int64]string
+}
+
+type ShardMigrationReply struct {
+	Err           Err
+	Shard         int
+	ConfigNum     int
+	MigrationData MigrationData
+}
+
+type ShardCleanupArgs struct {
+	Shard     int
+	ConfigNum int
+}
+
+func (arg *ShardCleanupArgs) copy() ShardCleanupArgs {
+	return ShardCleanupArgs{Shard: arg.Shard, ConfigNum: arg.ConfigNum}
+}
+
+type ShardCleanupReply struct {
+</FONT>	Err Err
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

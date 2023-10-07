@@ -1,0 +1,458 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/adeep24/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/adeep24/src/shardkv/server.go<p><PRE>
+package shardkv
+
+// import "shardmaster"
+import (
+	"fmt"
+	"labgob"
+	"labrpc"
+	"log"
+	"raft"
+	"runtime"
+	"shardmaster"
+	"sync"
+	"time"
+)
+
+const retryOperationTime = 150
+
+// GET :
+const (
+	GET    = "Get"
+	PUT    = "Put"
+	APPEND = "Append"
+)
+
+// DPrintfLog :
+<A NAME="9"></A><FONT color = #FF00FF><A HREF="match23-0.html#9" TARGET="0"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *ShardKV) DPrintfLog(format string) (n int, err error) {
+	if kv.debugLog &gt; 0 {
+		pc, _, line, _ := runtime.Caller(1)
+		// log.Printf("%s[%s:%d] %s", runtime.FuncForPC(pc).Name(), fn, line, format)
+		log.Printf("[%s:%d] %s", runtime.FuncForPC(pc).Name(), line, format)
+</FONT>	}
+	return
+}
+
+<A NAME="15"></A><FONT color = #FF0000><A HREF="match23-0.html#15" TARGET="0"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+type Op struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+
+	CmdIdentifier ClientReqID
+	Key           string // key of pair
+	Value         string // value of pair
+	Operation     string // operation value get append and put
+
+}
+
+type ShardKV struct {
+	mu           sync.Mutex
+	me           int
+	rf           *raft.Raft
+	applyCh      chan raft.ApplyMsg
+</FONT>	make_end     func(string) *labrpc.ClientEnd
+	gid          int
+	masters      []*labrpc.ClientEnd
+	maxraftstate int // snapshot if log grows this big
+
+	// Your definitions here.
+	mck *shardmaster.Clerk
+
+	KVMap           map[string]string
+	entryAppliedMap map[int]chan GetReply // applied thread will notify KVserver RPCGet
+	//  or RPCPutAppend that entry is commited
+
+	IdxSeenUpto int
+
+	cmdMap         map[int]Op
+	DuplicateCheck map[int64]int64
+
+	debugLog        int
+	quitApplyThread chan int
+
+	currentConfig shardmaster.Config
+}
+
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match23-0.html#7" TARGET="0"><IMG SRC="../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
+	// Your code here.
+
+	// kv.mu.Lock()
+	// kv.DPrintfLog(fmt.Sprintf("KVSERVER %d --- Client Request:[%s] key:[%s]", kv.me, args.OperationType, args.Key))
+	cmd := Op{args.Identifier, args.Key, "", args.OperationType}
+	idx, term, isLeader := kv.rf.Start(cmd)
+
+	if isLeader == false {
+		reply.WrongLeader = true
+		// kv.mu.Unlock()
+		return
+
+	}
+	kv.DPrintfLog(fmt.Sprintf("KVSERVER %d GID[%d] --- Sent to raft Request:[%s] key:[%s] idx:[%d],term:[%d],isLeader:[%v]",
+		kv.me, kv.gid, args.OperationType, args.Key, idx, term, isLeader))
+</FONT>
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match23-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.DPrintfLog(fmt.Sprintf("KVSERVER %d GID[%d] --- Identifier client[%d] counter[%d]", kv.me, kv.gid, args.Identifier.ClientNum, args.Identifier.Counter))
+	kv.mu.Lock()
+	//kv.DPrintfLog(fmt.Sprintf("KVSERVER %d --- Lock Acquired", kv.me))
+	kv.cmdMap[idx] = cmd
+	kv.entryAppliedMap[idx] = make(chan GetReply)
+	ch := kv.entryAppliedMap[idx]
+
+	kv.mu.Unlock()
+	//kv.DPrintfLog(fmt.Sprintf("KVSERVER %d --- Lock released", kv.me))
+
+	// kv.mu.Unlock()
+	// kv.mu.Lock()
+	res := GetReply{}
+	res.WrongLeader = false
+	res.Value = ""
+	select {
+	case res = &lt;-ch:
+		kv.DPrintfLog(fmt.Sprintf("KVSERVER %d GID[%d] --- Received Value[%s] succesful[%v] Request:[%s] key:[%s] ", kv.me, kv.gid, res.Value, res.WrongLeader, args.OperationType, args.Key))
+</FONT><A NAME="11"></A><FONT color = #00FF00><A HREF="match23-0.html#11" TARGET="0"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		kv.DPrintfLog(fmt.Sprintf("KVSERVER %d GID[%d] --- Request:[%s] key:[%s] Done", kv.me, kv.gid, args.OperationType, args.Key))
+
+	case &lt;-time.After(time.Duration(retryOperationTime) * time.Millisecond):
+		kv.DPrintfLog(fmt.Sprintf("KVSERVER %d GID[%d] --- Timed out no reply received from replyFromRaft function Term[%d] Index[%d] Request:[%s] key:[%s]", kv.me, kv.gid, term, idx, args.OperationType, args.Key))
+</FONT>	}
+
+	// res := &lt;-ch
+	// kv.mu.Unlock()
+
+	if res.WrongLeader == true {
+		reply.WrongLeader = false
+		reply.Value = res.Value
+		reply.Err = OK
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match23-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	} else {
+		reply.WrongLeader = true
+	}
+	// reply.Value = res
+	return
+}
+
+func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	// Your code here.
+
+	// kv.mu.Lock()
+	// kv.DPrintfLog(fmt.Sprintf("KVSERVER %d --- Client Request:[%s] key:[%s]", kv.me, args.OperationType, args.Key))
+	cmd := Op{args.Identifier, args.Key, args.Value, args.Op}
+	idx, term, isLeader := kv.rf.Start(cmd)
+
+	if isLeader == false {
+		reply.WrongLeader = true
+		// kv.mu.Unlock()
+		return
+
+	}
+	kv.DPrintfLog(fmt.Sprintf("KVSERVER %d GID[%d] --- Sent to raft Request:[%s] key:[%s] idx:[%d],term:[%d],isLeader:[%v]",
+		kv.me, kv.gid, args.Op, args.Key, idx, term, isLeader))
+</FONT>
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match23-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.DPrintfLog(fmt.Sprintf("KVSERVER %d GID[%d] --- Identifier client[%d] counter[%d]", kv.me, kv.gid, args.Identifier.ClientNum, args.Identifier.Counter))
+	kv.mu.Lock()
+	//kv.DPrintfLog(fmt.Sprintf("KVSERVER %d --- Lock Acquired", kv.me))
+	kv.cmdMap[idx] = cmd
+	kv.entryAppliedMap[idx] = make(chan GetReply)
+	ch := kv.entryAppliedMap[idx]
+
+	kv.mu.Unlock()
+	//kv.DPrintfLog(fmt.Sprintf("KVSERVER %d --- Lock released", kv.me))
+
+	// kv.mu.Unlock()
+	// kv.mu.Lock()
+	res := GetReply{}
+	res.WrongLeader = false
+	res.Value = ""
+	select {
+	case res = &lt;-ch:
+		kv.DPrintfLog(fmt.Sprintf("KVSERVER %d GID[%d] --- Received Value[%s] succesful[%v] Request:[%s] key:[%s] ", kv.me, kv.gid, res.Value, res.WrongLeader, args.Op, args.Key))
+</FONT><A NAME="12"></A><FONT color = #0000FF><A HREF="match23-0.html#12" TARGET="0"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		kv.DPrintfLog(fmt.Sprintf("KVSERVER %d GID[%d] --- Request:[%s] key:[%s] Done", kv.me, kv.gid, args.Op, args.Key))
+
+	case &lt;-time.After(time.Duration(retryOperationTime) * time.Millisecond):
+		kv.DPrintfLog(fmt.Sprintf("KVSERVER %d GID[%d] --- Timed out no reply received from replyFromRaft function Term[%d] Index[%d] Request:[%s] key:[%s]", kv.me, kv.gid, term, idx, args.Op, args.Key))
+</FONT>	}
+
+	// res := &lt;-ch
+	// kv.mu.Unlock()
+
+	if res.WrongLeader == true {
+		reply.WrongLeader = false
+		reply.Err = OK
+		// reply.Value = res.Value
+	} else {
+		reply.WrongLeader = true
+	}
+	// reply.Value = res
+	return
+}
+
+//
+// the tester calls Kill() when a ShardKV instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *ShardKV) Kill() {
+	kv.rf.Kill()
+	// Your code here, if desired.
+}
+<A NAME="14"></A><FONT color = #FF00FF><A HREF="match23-0.html#14" TARGET="0"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *ShardKV) printAllKey() {
+
+	for k, v := range kv.KVMap {
+		kv.DPrintfLog(fmt.Sprintf("KVSERVER %d GID[%d] --- key[%s] value[%s]\n", kv.me, kv.gid, k, v))
+</FONT>	}
+
+}
+func (kv *ShardKV) sendShard(shardNum int, sendToGid int) {
+
+}
+func (kv *ShardKV) waitForShard(shardNum int) {
+
+}
+func (kv *ShardKV) checkConfigThread() {
+	for {
+		kv.mu.Lock()
+		cf := kv.mck.Query(-1)
+
+		for i := 0; i &lt; 10; i++ {
+			if kv.currentConfig.Shards[i] == kv.gid && cf.Shards[i] != kv.gid {
+				//shard changed from current gid to new gid
+				kv.DPrintfLog(fmt.Sprintf("KVSERVER %d GID[%d] --- send shard[%d] to GID[%d]\n", kv.me, kv.gid, i, cf.Shards[i]))
+				kv.sendShard(i, cf.Shards[i])
+			}
+			if kv.currentConfig.Shards[i] != kv.gid && cf.Shards[i] == kv.gid {
+				kv.DPrintfLog(fmt.Sprintf("KVSERVER %d GID[%d] --- wait for shard[%d] from GID[%d]\n", kv.me, kv.gid, i, kv.currentConfig.Shards[i]))
+				kv.waitForShard(i)
+			}
+		}
+
+		kv.mu.Unlock()
+
+<A NAME="8"></A><FONT color = #00FFFF><A HREF="match23-0.html#8" TARGET="0"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		time.Sleep(time.Duration(10) * time.Millisecond)
+	}
+}
+func (kv *ShardKV) replyFromRaft() {
+	for {
+
+		select {
+		case &lt;-kv.quitApplyThread:
+			return
+		default:
+		}
+		msg := &lt;-kv.applyCh
+		kv.DPrintfLog(fmt.Sprintf("KVSERVER %d GID[%d] --- Apply Message Received for idx[%d]", kv.me, kv.gid, msg.CommandIndex))
+</FONT>		if msg.CommandIndex == -1 {
+			kv.DPrintfLog(fmt.Sprintf("KVSERVER %d GID[%d] --- recieved snapshot data", kv.me, kv.gid))
+			kv.mu.Lock()
+			//kv.DPrintfLog(fmt.Sprintf("KVSERVER %d --- Lock Acquired", kv.me))
+			// kv.readPersistSnapshot(msg.SnapshotData)
+			kv.printAllKey()
+			kv.mu.Unlock()
+			// kv.rf.HandoverSnap(msg.SnapshotData, -1)
+			//kv.DPrintfLog(fmt.Sprintf("KVSERVER %d --- Lock released", kv.me))
+
+		} else {
+			kv.DPrintfLog(fmt.Sprintf("KVSERVER %d GID[%d] --- waiting for lock", kv.me, kv.gid))
+			kv.mu.Lock()
+			//kv.DPrintfLog(fmt.Sprintf("KVSERVER %d --- Lock Acquired", kv.me))
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match23-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_7.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			kv.DPrintfLog(fmt.Sprintf("KVSERVER %d GID[%d] --- Applied in raft raftIdx[%d] validityOfCmd[%v]", kv.me, kv.gid, msg.CommandIndex, msg.CommandValid))
+			// if msg.Command.
+			var cmd Op
+			cmd = msg.Command.(Op)
+			reply := GetReply{}
+			reply.WrongLeader = true
+			insertedCmd := kv.cmdMap[msg.CommandIndex]
+			if msg.CommandIndex &gt; kv.IdxSeenUpto {
+				kv.IdxSeenUpto = msg.CommandIndex
+
+			}
+
+			val := kv.DuplicateCheck[cmd.CmdIdentifier.ClientNum]
+			ok := true
+			if val &gt;= cmd.CmdIdentifier.Counter {
+				ok = false
+			} else {
+				kv.DuplicateCheck[cmd.CmdIdentifier.ClientNum] = cmd.CmdIdentifier.Counter
+			}
+
+			if cmd.Operation == GET {
+
+				reply.Value = kv.KVMap[cmd.Key]
+				reply.WrongLeader = true
+
+				kv.DPrintfLog(fmt.Sprintf("KVSERVER %d GID[%d] --- Sending reply on channel to [%s] for key[%s] value [%s] raftIdx[%d] validityOfCmd[%v]", kv.me, kv.gid, cmd.Operation, cmd.Key, cmd.Value, msg.CommandIndex, msg.CommandValid))
+</FONT><A NAME="6"></A><FONT color = #00FF00><A HREF="match23-0.html#6" TARGET="0"><IMG SRC="../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+
+			} else if cmd.Operation == PUT {
+				if ok {
+
+					kv.KVMap[cmd.Key] = cmd.Value
+					reply.WrongLeader = true
+					reply.Value = kv.KVMap[cmd.Key]
+
+					kv.DPrintfLog(fmt.Sprintf("KVSERVER %d GID[%d] --- Sending reply on channel to [%s] for key[%s] value [%s] raftIdx[%d] validityOfCmd[%v]", kv.me, kv.gid, cmd.Operation, cmd.Key, cmd.Value, msg.CommandIndex, msg.CommandValid))
+</FONT>				} else {
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match23-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+					kv.DPrintfLog(fmt.Sprintf("KVSERVER %d GID[%d] --- Duplicate command won't Sending reply on channel to [%s] for key[%s] value [%s] raftIdx[%d] validityOfCmd[%v]", kv.me, kv.gid, cmd.Operation, cmd.Key, cmd.Value, msg.CommandIndex, msg.CommandValid))
+				}
+
+			} else {
+				if ok {
+
+					reply.WrongLeader = true
+					kv.KVMap[cmd.Key] += cmd.Value
+					reply.Value = kv.KVMap[cmd.Key]
+
+					kv.DPrintfLog(fmt.Sprintf("KVSERVER %d GID[%d] --- Sending reply on channel to [%s] for key[%s] value [%s] raftIdx[%d] validityOfCmd[%v]", kv.me, kv.gid, cmd.Operation, cmd.Key, cmd.Value, msg.CommandIndex, msg.CommandValid))
+</FONT>				} else {
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match23-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+					kv.DPrintfLog(fmt.Sprintf("KVSERVER %d GID[%d] --- Duplicate command won't Sending reply on channel to [%s] for key[%s] value [%s] raftIdx[%d] validityOfCmd[%v]", kv.me, kv.gid, cmd.Operation, cmd.Key, cmd.Value, msg.CommandIndex, msg.CommandValid))
+				}
+
+			}
+
+			// kv.DuplicateCheck[cmd.CmdIdentifier.] = true
+
+			ch, ok := kv.entryAppliedMap[msg.CommandIndex]
+			kv.mu.Unlock()
+			//kv.DPrintfLog(fmt.Sprintf("KVSERVER %d --- Lock released", kv.me))
+
+			if ok {
+				if insertedCmd.CmdIdentifier.ClientNum == cmd.CmdIdentifier.ClientNum &&
+					insertedCmd.CmdIdentifier.Counter == cmd.CmdIdentifier.Counter {
+					select {
+					case ch &lt;- reply:
+						kv.DPrintfLog(fmt.Sprintf("KVSERVER %d GID[%d] --- sent raftIdx[%d] validityOfCmd[%v]", kv.me, kv.gid, msg.CommandIndex, msg.CommandValid))
+</FONT>					default:
+<A NAME="10"></A><FONT color = #FF0000><A HREF="match23-0.html#10" TARGET="0"><IMG SRC="../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+						kv.DPrintfLog(fmt.Sprintf("KVSERVER %d GID[%d] --- cant sent clerk already retried or something raftIdx[%d] validityOfCmd[%v]", kv.me, kv.gid, msg.CommandIndex, msg.CommandValid))
+					}
+					// ch &lt;- reply
+				} else {
+
+					reply.WrongLeader = false
+					select {
+					case ch &lt;- reply:
+						kv.DPrintfLog(fmt.Sprintf("KVSERVER %d GID[%d] --- wrong command sending false to op function raftIdx[%d] validityOfCmd[%v]", kv.me, kv.gid, msg.CommandIndex, msg.CommandValid))
+</FONT>					default:
+<A NAME="16"></A><FONT color = #00FF00><A HREF="match23-0.html#16" TARGET="0"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+						kv.DPrintfLog(fmt.Sprintf("KVSERVER %d GID[%d] --- wrong command cant send  false to op function raftIdx[%d] validityOfCmd[%v]", kv.me, kv.gid, msg.CommandIndex, msg.CommandValid))
+					}
+					// ch &lt;- reply
+				}
+
+			} else {
+				kv.DPrintfLog(fmt.Sprintf("KVSERVER %d GID[%d] --- not required by op function raftIdx[%d] entryAppliedMap[%v]", kv.me, kv.gid, msg.CommandIndex, ok))
+</FONT>			}
+
+			// default:
+			// }
+
+			// kv.mu.Unlock()
+			// time.Sleep(time.Duration(10) * time.Millisecond)
+		}
+	}
+
+}
+func (kv *ShardKV) printConfig() {
+	kv.mu.Lock()
+	for i := 0; i &lt; 10; i++ {
+		kv.DPrintfLog(fmt.Sprintf("KVSERVER %d GID[%d] --- shard[%d] Gid[%d]\n", kv.me, kv.gid, i, kv.currentConfig.Shards[i]))
+	}
+	kv.mu.Unlock()
+}
+
+//
+// servers[] contains the ports of the servers in this group.
+//
+// me is the index of the current server in servers[].
+//
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+//
+// the k/v server should snapshot when Raft's saved state exceeds
+// maxraftstate bytes, in order to allow Raft to garbage-collect its
+// log. if maxraftstate is -1, you don't need to snapshot.
+//
+// gid is this group's GID, for interacting with the shardmaster.
+//
+// pass masters[] to shardmaster.MakeClerk() so you can send
+// RPCs to the shardmaster.
+//
+// make_end(servername) turns a server name from a
+// Config.Groups[gid][i] into a labrpc.ClientEnd on which you can
+// send RPCs. You'll need this to send RPCs to other groups.
+//
+// look at client.go for examples of how to use masters[]
+// and make_end() to send RPCs to the group owning a specific shard.
+//
+// StartServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int, gid int, masters []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *ShardKV {
+	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+
+	kv := new(ShardKV)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+	kv.make_end = make_end
+	kv.gid = gid
+	kv.masters = masters
+
+	// Your initialization code here.
+
+	// Use something like this to talk to the shardmaster:
+	kv.mck = shardmaster.MakeClerk(kv.masters)
+	kv.debugLog = 0
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+<A NAME="13"></A><FONT color = #00FFFF><A HREF="match23-0.html#13" TARGET="0"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.KVMap = make(map[string]string)
+	kv.entryAppliedMap = make(map[int]chan GetReply)
+	kv.cmdMap = make(map[int]Op)
+	kv.DuplicateCheck = make(map[int64]int64)
+	kv.DPrintfLog(fmt.Sprintf("KVSERVER %d GID[%d] --- Server up n running\n", kv.me, kv.gid))
+</FONT>	kv.currentConfig = kv.mck.Query(-1)
+	kv.printConfig()
+	go kv.replyFromRaft()
+
+	return kv
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

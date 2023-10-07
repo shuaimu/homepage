@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>Distributed consistency | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="Distributed consistency" />
+<meta property="og:locale" content="en_US" />
+<link rel="canonical" href="http://0.0.0.0/teaching/ds/22fa/notes/linear.html" />
+<meta property="og:url" content="http://0.0.0.0/teaching/ds/22fa/notes/linear.html" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="Distributed consistency" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"Distributed consistency","url":"http://0.0.0.0/teaching/ds/22fa/notes/linear.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://0.0.0.0/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>Distributed consistency</h1>
+         </header> -->
+
+  <section>
+    <h1 id="distributed-consistency">Distributed consistency</h1>
+
+<h2 id="distributed-consistency-1">Distributed consistency</h2>
+<ul>
+  <li>usually describes behaviors of multiple copies of data
+    <ul>
+      <li>example, replicated chunks/log entries (GFS, Raft), CPU caches</li>
+    </ul>
+  </li>
+  <li>challenges
+    <ul>
+      <li>concurrency</li>
+      <li>failures</li>
+    </ul>
+  </li>
+  <li>systems
+    <ul>
+      <li>abstract data types</li>
+      <li>key-value store (memory, registers)</li>
+    </ul>
+  </li>
+  <li>not defined by states, but by operations, example
+    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>initially x=0, y=0
+c1: put(x, 1) put(y, 1)
+c2: get(y)=? get(x)=?
+</code></pre></div>    </div>
+  </li>
+</ul>
+
+<h2 id="consistency-as-a-contract">Consistency as a “contract”</h2>
+<ul>
+  <li>clients’ expectation
+    <ul>
+      <li>knowing the system’s behavior without examining the system design</li>
+    </ul>
+  </li>
+  <li>what would a good contract?
+    <ul>
+      <li>stronger, hard to implement, easy to use</li>
+      <li>weaker, easy to implement, hard to use</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="linearizability">Linearizability</h2>
+<ul>
+  <li>definition
+    <ul>
+      <li>equivalent sequential order, one-copy data</li>
+      <li>the order matches the global completion-to-issuing (C2I) order
+        <ul>
+          <li>why not C2C or I2I?</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>linearizability is the strongest consistency in practice?</li>
+  <li>linearizability is a “local” property
+    <ul>
+      <li>putting different linearizable systems together? still linearizable</li>
+      <li>proof strategy: order and C2I</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="sequential-consistency">Sequential consistency</h2>
+<ul>
+  <li>definition
+    <ul>
+      <li>order</li>
+      <li>per-client C2I</li>
+    </ul>
+  </li>
+  <li>usage: closer to today’s multi-core memory system</li>
+  <li>example (consider the case with and without c3)
+    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>x,y=0 initially
+c1: put(x)=1        get(y)=?
+c2:      put(y)=1
+c3:                         get(y)=1  get(x)=0
+  
+</code></pre></div>    </div>
+  </li>
+</ul>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+</body>
+
+</html>

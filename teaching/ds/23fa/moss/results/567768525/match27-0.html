@@ -1,0 +1,694 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/jvorob/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/jvorob/src/kvraft/server.go<p><PRE>
+package raftkv
+
+import (
+	"labgob"
+	"labrpc"
+	"log"
+	"raft"
+	"sync"
+    "fmt"
+    "time"
+    "bytes"
+)
+
+const Debug = 1
+
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match27-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+func (kv *KVServer) Printf(format string, a ...interface{}) (n int, err error) {
+    if Debug &lt;= 0 {
+        return
+    }
+
+    // go format uses reshuffling of: Jan 2 15:04:05 2006 MST
+    // (note this is                    1 2  3  4  5    6  -7)
+    timeStr := time.Now().Format("05.000")[3:]; //drop the seconds
+</FONT>    header := fmt.Sprintf("%v KV%v ===", timeStr, kv.me);
+
+    log.Printf(header +  format,  a...);
+    return;
+}
+
+
+
+// ==========================================================
+//
+//                      STRUCTURES 
+//
+// ==========================================================
+
+
+
+type KVServer struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	maxraftstate int // snapshot if log grows this big
+
+	// Your definitions here.
+
+
+    // key is log index, value is list of all requests pending for that index
+
+    //pending map[int] ([]*PendingReq)
+    pending []*PendingReq
+
+    // ====  State Machine:
+    SM      KVStateMachine
+}
+
+
+
+
+// Represents client request as it is serialized through raft
+// Op is Get, Put, or Append
+// 
+// before Raft, this represents an incoming request
+//
+// after being 'applied' by Raft,
+<A NAME="10"></A><FONT color = #FF0000><A HREF="match27-1.html#10" TARGET="1"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+type Op struct {
+    // === KV-specific
+    Key string
+    Value string
+    Op string
+
+	// === General raft-app
+    Req RequestInfo //identifies this request by client and sequence no
+}
+
+
+type PendingReq struct {
+	// === General raft-app
+    op *Op
+
+    index int //the index and term this would go into at time of rf.Start()
+    term int
+
+    // when this request either succeeds or fails, send a pointer to it in doneCh
+    doneCh chan *PendingReq
+
+
+    // === KV-specific
+    // (to be filled in on completion by applier thread)
+    Value       string
+	WrongLeader bool
+	Err         Err
+</FONT>}
+
+
+// === This is the state machine, modified only by committed log entries on applyCh
+type KVStateMachine struct {
+    // === KV-specific
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match27-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    Keyvals map[string]string
+
+
+    // === General raft-app
+    // caches the last commited request per each client
+    // We only need to cache one: client won't send next request until last one returns
+    // If we get a request with a lower sequence number from the same client, it must be stale
+    // Ops should only enter this 
+    LastFinishedRequests map[ClientId] *Op
+
+    // The index/term of the last applyed entry to this state machine
+    LastIndex int  // starts at 0, first log index at 1
+    LastTerm int   // starts at 0, first valid term at 1
+}
+
+
+
+// == Snapshot serialization
+func EncodeSM(sm *KVStateMachine) []byte{
+    w := new(bytes.Buffer)
+    e := labgob.NewEncoder(w)
+
+    e.Encode(sm)
+    return w.Bytes()
+}
+
+func DecodeSM(data []byte) *KVStateMachine {
+    r := bytes.NewBuffer(data)
+    d := labgob.NewDecoder(r)
+
+    var sm KVStateMachine
+
+    if d.Decode(&sm) != nil {
+        panic("Error in DecodeSM");
+    } else {
+        return &sm
+    }
+}
+
+
+// ==== Interfaces to wrap RPCS into OPs
+
+
+// This will paper over filling in the reply object at the end of the thing
+type ReplyInterface interface {
+</FONT>    populate(wrongLeader bool, err Err, value string)
+}
+
+// Takes a completed op, populates the passed-in reply object
+// according to whether or not it's a GetReply or PutAppendReply
+func (reply *GetReply) populate(wrongLeader bool, err Err, value string) {
+<A NAME="11"></A><FONT color = #00FF00><A HREF="match27-1.html#11" TARGET="1"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+   reply.WrongLeader = wrongLeader;
+   reply.Err = err;
+   reply.Value = value;
+}
+func (reply *PutAppendReply) populate(wrongLeader bool, err Err, value string) {
+   reply.WrongLeader = wrongLeader;
+   reply.Err = err;
+</FONT>   // no value
+}
+
+
+// ==========================================================
+//
+//                       HELPER VERBS
+//
+// ==========================================================
+// should be called from within mutex?
+
+
+// given a request, checks against cached requests
+// results: nothing|stale|cache hit
+// if cache hit, returns op,""
+// if cache miss, returns nil, ""
+// if stale, returns nil, "Error: Stale"
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match27-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (sm *KVStateMachine) checkCachedRequest(req RequestInfo) (*Op, Err) {
+    //MUST BE CALLED WITHIN MUTEX
+
+    cachedOp := sm.LastFinishedRequests[req.C_id];
+
+    // cache miss, return nil
+    if cachedOp == nil { return nil, "" }
+
+    // Assert clientid matches
+    if cachedOp.Req.C_id != req.C_id {
+        panic(fmt.Sprintf("Error: cachedOp for different C_id: cach:%v, new req:%v", cachedOp, req));
+    }
+
+
+    // valid cache hit
+    if req.R_id == cachedOp.Req.R_id {
+        return cachedOp, ""
+
+    // cache holds outdated entry, is a miss
+    } else if req.R_id &gt; cachedOp.Req.R_id {
+        return nil, ""
+
+    // cache entry newer than request, so request is stale and should fail
+    } else {
+        staleStr := Err(fmt.Sprintf("Error: Incoming request stale, req %v already committed", cachedOp))
+</FONT><A NAME="1"></A><FONT color = #00FF00><A HREF="match27-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        return nil,staleStr
+    }
+
+}
+
+
+// If raft's state size is bigger than maxRaftState, send Raft a new snapshot
+func (kv *KVServer) checkIfRaftNeedsSnapshot() {
+    // MUST BE CALLED FROM WITHIN MUTEX
+
+    // -1 means snapshotting disabled
+    if kv.maxraftstate &lt; 0 {
+        return;
+    }
+
+    lim := kv.maxraftstate
+    size := kv.rf.GetStateSize();
+
+
+    if float64(size) &gt; float64(lim) * 0.9 {
+        kv.Printf("Raft state getting big: size %v/ lim %v", size, lim);
+
+        // Save a copy of state machine, install to Raft
+        var SMCopy KVStateMachine = kv.SM
+
+        snap := raft.Snapshot {
+            LastIndex: SMCopy.LastIndex,
+            LastTerm: SMCopy.LastTerm,
+            Data: EncodeSM(&SMCopy),
+        }
+        kv.rf.NotifyNewSnapshot(&snap);
+    }
+
+}
+
+
+// ==========================================================
+//
+//              FUNCTIONS TO HANDLE APPLYCH MSGS
+//
+// ==========================================================
+
+// Waits on applyCh: when message available, delegates to handleApply
+func (kv *KVServer) ApplierThread() {
+    var msg raft.ApplyMsg
+    for {
+        msg = &lt;-kv.applyCh; //
+
+        kv.mu.Lock();
+</FONT><A NAME="8"></A><FONT color = #00FFFF><A HREF="match27-1.html#8" TARGET="1"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        kv.handleApply(&msg);
+        kv.mu.Unlock();
+
+        //TODO: don't reacquire lock repeatedly
+    }
+}
+
+
+// Raft just sent a committed command
+// Apply it to statemachine, update request cache
+// notify any pending requests that are now completed or dead
+func (kv *KVServer) handleApply(msg *raft.ApplyMsg) {
+    // MUST BE CALLED FROM WITHIN MUTEX
+
+    // Non-log-affecting commands handled separately
+    if !msg.CommandValid {
+        kv.handleNonLogApply(msg)
+        return
+    }
+
+    op := msg.Command.(Op) // all applied commands are Op, no pointers
+    index := msg.CommandIndex
+</FONT>    term := msg.CommandTerm
+    kv.Printf("Op applied: i%v t%v: op%+v", index, term, op)
+
+    // Apply the operation to the state machine, and cache the result
+    // (idempotent)
+<A NAME="9"></A><FONT color = #FF00FF><A HREF="match27-1.html#9" TARGET="1"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    kv.SM.applyOpToStateMachine(msg);
+
+
+    // == Notify pending requests
+    if len(kv.pending) &gt; 0 {
+
+        kv.Printf("NOTIFYING: %v pending requests, just committed %v, i%v", len(kv.pending), op.Req, index);
+
+        for i, v := range(kv.pending){
+            // We'll be deleting some throughout this loop, and I'm just nil-ing them out for now
+            if v == nil { continue; }
+
+            // Fill in some blank values just to be safe (I don't think I initted these at creation)
+            v.Value = ""
+</FONT>            v.Err = ""
+<A NAME="14"></A><FONT color = #FF00FF><A HREF="match27-1.html#14" TARGET="1"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+            v.WrongLeader = false  // We'll only tell them to retry leader from the main handler
+
+            doneFlag := false
+
+
+
+            // Test pending req against cache: (it may have been complete (e.g., just now))
+            cachedOp, errStale := kv.SM.checkCachedRequest(v.op.Req);
+
+            // cache hit, return it (probably it's the just-applied op)
+            if cachedOp != nil {
+                kv.Printf("Finalizing request: %v (found %v cached)", v.op.Req, cachedOp.Req);
+</FONT>                v.Value = cachedOp.Value
+                doneFlag = true
+
+            // if the request is outdated (in cache), error (something newer already in cache)
+            } else if errStale != "" {
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match27-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_9.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                kv.Printf("Pending Request %v Stale (cache), failing", cachedOp.Req);
+                v.Err = errStale
+                doneFlag = true
+
+            // === Test if request is outdated and needs to be destroyed
+
+            // if the request is outdated by index, different error
+            // (NOTE: check this last so if index == and we're here, then cache check failed
+            //  so entry at index != this one)
+            } else if kv.SM.LastIndex &gt;= v.index {
+                kv.Printf("Pending Request %v at i%v, FAIL, another op committed at i%v",
+                                v.op.Req, v.index, kv.SM.LastIndex)
+                v.Err = "Error: Another request committed at newer index"
+                doneFlag = true
+
+            // Check if outdated by term (our partition may have ran ahead, so index wont save us, look at term)
+            } else if kv.SM.LastTerm &gt; v.term {
+                kv.Printf("Pending Request %v at i%v t%v, FAIL, another op committed at newer term t%v",
+                                v.op.Req, v.index, v.term, kv.SM.LastTerm)
+                v.Err = "Error: Another request committed at newer term"
+                doneFlag = true
+            }
+
+            if doneFlag {
+                // Complete the pending request, delete from pend list
+                v.doneCh &lt;- v;
+                kv.pending[i] = nil
+            }
+
+        }
+
+        //delete all nil entries from the slice
+        //god this is so ugly but whatever
+        newSlice := make([](*PendingReq), 0, len(kv.pending))
+        for _, v := range(kv.pending) {
+            if v != nil {
+                newSlice = append(newSlice, v)
+            }
+        }
+        kv.pending = newSlice
+    }
+
+    // ==== Done notifying pending requests
+    kv.checkIfRaftNeedsSnapshot() // will send snapshot if size too big
+}
+
+
+
+// === KV-Specific: this actually defines the semantics of the app
+// Applies to put or append to state machine
+// If cache has already seen request, don't apply to state machine
+// Updates cached requests
+func (sm *KVStateMachine) applyOpToStateMachine(msg *raft.ApplyMsg) {
+</FONT>    // MUST BE CALLED FROM WITHIN MUTEX
+    if !msg.CommandValid {
+        panic("ERROR: applyOpToStateMachine should only be called with valid log msgs");
+    }
+
+    op := msg.Command.(Op) // all applied commands are Op, no pointers
+    index := msg.CommandIndex
+    term := msg.CommandTerm
+
+    // Update index and term (even if we don't put it into effect)
+    sm.LastIndex = index
+    sm.LastTerm = term
+
+    // Check if we've already applied this request to state machine 
+    cacheResult, err := sm.checkCachedRequest(op.Req);
+
+    // If cache hit, or stale request, noop (we've already applied it)
+    if cacheResult != nil || err != "" {
+        //kv.Printf("Skipping apply op: already cached", op.Op);
+        return;
+    }
+
+    // Actually apply change
+    switch op.Op {
+    case "Put":
+        sm.Keyvals[op.Key] = op.Value
+        op.Value = "Put: " + sm.Keyvals[op.Key]
+    case "Append":
+        sm.Keyvals[op.Key] = sm.Keyvals[op.Key] + op.Value
+        op.Value = "Append: " + sm.Keyvals[op.Key]
+    case "Get":
+        op.Value = sm.Keyvals[op.Key]
+    default:
+        panic(fmt.Sprintf("ERROR: Unrecognized op type %v", op.Op))
+    }
+
+    // Update request cache (not quite cache but you know what I mean)
+    sm.LastFinishedRequests[op.Req.C_id] = &op;
+}
+
+
+// Called for applyMsgs that aren't normal committed log entries
+// These are things like snapshot requests and step-down notifications
+func (kv *KVServer) handleNonLogApply(msg *raft.ApplyMsg) {
+    // MUST BE CALLED FROM WITHIN MUTEX
+
+    //kv.Printf("Got non-log applyMsg: %+v\n", msg)
+
+    switch msg.MsgType {
+    case raft.StepDownMsg:
+        kv.Printf("Raft leader stepped down: clearing %v pending messages", len(kv.pending))
+
+        // Kill all pending requests: we failed to leader
+        for _, v := range(kv.pending){
+            v.Value = ""
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match27-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+            v.Err = "Error: We stepped down as leader"
+            v.WrongLeader = true
+
+            v.doneCh &lt;- v;
+        }
+
+        // wipe the list
+        kv.pending = make([](*PendingReq), 0)
+
+
+    // === We are being told to reinitialize our state
+    case raft.LoadSnapshotMsg:
+        kv.Printf("Loading Snapshot")
+        snap := msg.Command.(raft.Snapshot)
+
+        // Snapshots can be sent at any time by InstallRPC or load from persist
+        newSM := DecodeSM(snap.Data);
+        kv.Printf("Decoded SM from snapshot: %+v", newSM)
+        // quick sanity check
+        if newSM.LastIndex != snap.LastIndex || newSM.LastTerm != snap.LastTerm {
+            panic("Error: snapshot and snapshot-date index/term mismatch")
+        }
+
+        // install the snapshot I guess (discards our own stuff)
+        kv.SM = *newSM;
+
+        // Kill all pending requests, installsnapshot means we're not leader
+        for _, v := range(kv.pending){
+            v.Value = ""
+            v.Err = "Error: We stepped down as leader"
+</FONT>            v.WrongLeader = true
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match27-1.html#7" TARGET="1"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+
+            v.doneCh &lt;- v;
+        }
+        // wipe the list
+        kv.pending = make([](*PendingReq), 0)
+
+
+    default:
+        panic(fmt.Sprintf("Error: unrecognized MsgType %v in handleNonLogApply", msg.MsgType))
+    }
+}
+
+
+// ==========================================================
+//
+//             INCOMING CLIENT-REQUEST HANDLERS
+//
+// ==========================================================
+
+
+// =============== Unified request handler
+
+// handles either kind of request, the ReplyObj interface handles both getreply and putappend reply
+func (kv *KVServer) handleRequest(op *Op, reply ReplyInterface) {
+    // op is the flattened form of the incoming request
+    kv.mu.Lock();
+    // CANT DEFER UNLOCK: SOME PATHS DONT NEED IT
+    // BE CAREFUL TO UNLOCK AT ALL RETURNS
+
+    kv.Printf("got op: k'%v' v'%v' op'%v' req'%v'", op.Key, op.Value, op.Op, op.Req);
+</FONT>
+
+    // ==== First we check if we can reply immediately:
+    // - either we have a valid cached request, 
+    // - or we have cached a newer request from the same client, so this req is outdated
+<A NAME="15"></A><FONT color = #FF0000><A HREF="match27-1.html#15" TARGET="1"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    cachedOp, errStale := kv.SM.checkCachedRequest(op.Req);
+
+    // cache hit, we can just return that
+    if cachedOp != nil {
+        kv.Printf("response cached, returning cachedOp %v", cachedOp);
+        reply.populate(false, "", cachedOp.Value); // not wrongleader, no err
+</FONT>        kv.mu.Unlock();
+        return;
+    }
+
+    // if the request is outdated, error (something newer already in cache)
+    if errStale != "" {
+        // we don't know if it's the wrong leader, so just put false for now
+        kv.Printf("incoming request stale, newer request exists");
+        reply.populate(false, errStale, "");
+<A NAME="16"></A><FONT color = #00FF00><A HREF="match27-1.html#16" TARGET="1"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        kv.mu.Unlock();
+        return;
+    }
+
+
+    // ===== Request not cached, need to submit to start
+    // NOTE: can't send pointers through raft
+    index, term, is_leader := kv.rf.Start(*op);
+
+    // if not the leader, return err
+    if !is_leader {
+        reply.populate(true, "", ""); //WrongLeader is true
+</FONT><A NAME="5"></A><FONT color = #FF0000><A HREF="match27-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        kv.mu.Unlock();
+        return;
+    }
+
+    // ===== Setup a pendingReq object, wait on it to finish
+    pend := &PendingReq{
+        op: op,
+        index: index,
+        term: term,
+        doneCh: make(chan *PendingReq, 1),
+        //remaining fields will be filled by applier
+    }
+
+
+    //insert request into kv data structure
+    kv.pending = append(kv.pending, pend)
+
+    // Sleep until request completed or failed
+    kv.mu.Unlock()
+    &lt;-pend.doneCh
+
+    // ==== Our request is ready (or errored)
+    // return results (don't need kv lock for this, we're the only ones using pend)
+
+    // applier will have filled in the values, just copy them to return obj
+    reply.populate(pend.WrongLeader, pend.Err, pend.Value);
+</FONT>
+    kv.Printf("sending reply to %v: %+v", op.Req, reply);
+    return;
+}
+
+
+
+
+
+// ==========================================================
+//
+//            Application-Specific RPC Wrappers
+//
+// ==========================================================
+
+// == Wrap incoming RPCs into consistent format
+
+// kvserver: handle incoming Get request
+func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
+    op :=  &Op{
+        Key: args.Key,
+        Value:"",
+        Op: "Get",
+        Req: args.Req,
+    }
+
+<A NAME="12"></A><FONT color = #0000FF><A HREF="match27-1.html#12" TARGET="1"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    kv.handleRequest(op, reply);
+}
+
+// kvserver: handle incoming PutAppend request
+func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+    op := &Op{
+        Key: args.Key,
+        Value: args.Value,
+</FONT>        Op: args.Op,
+        Req: args.Req,
+    }
+
+    kv.handleRequest(op, reply);
+}
+
+
+// ==========================================================
+//
+//                          INIT
+//
+// ==========================================================
+
+func NewBlankStateMachine() KVStateMachine {
+    SM := KVStateMachine{
+        Keyvals: make(map[string]string),
+        LastFinishedRequests:  make(map[ClientId]*Op),
+        LastTerm: 0,
+    }
+    return SM
+}
+
+
+// the k/v server should snapshot when Raft's saved state exceeds maxraftstate bytes,
+// in order to allow Raft to garbage-collect its log. if maxraftstate is -1,
+// you don't need to snapshot.
+// StartKVServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
+	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+
+	kv := new(KVServer)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+
+	// You may need initialization code here.
+    kv.SM = NewBlankStateMachine()
+
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+
+	// You may need initialization code here.
+    go kv.ApplierThread();
+
+	return kv
+}
+
+
+
+
+func (kv *KVServer) Kill() {
+    kv.Printf("help I'm being killed" )
+    kv.mu.Lock()
+    defer kv.mu.Unlock()
+
+    kv.Printf("got kill lock" )
+	kv.rf.Kill()
+
+
+    // clean up pending requests with errors
+<A NAME="13"></A><FONT color = #00FFFF><A HREF="match27-1.html#13" TARGET="1"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    for _, v := range(kv.pending) {
+        v.Err = "ERROR: raft killed"
+        v.doneCh &lt;- v
+    }
+
+    kv.pending = kv.pending[:0]
+</FONT>    //TODO: notify applierthread to slurp up remainder
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

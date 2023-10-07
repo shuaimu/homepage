@@ -1,0 +1,585 @@
+<HTML>
+<HEAD>
+<TITLE>./spring19/rohitbassi/src/shardmaster/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./spring19/rohitbassi/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+//import "fmt"
+import "raft"
+import "labrpc"
+import "sync"
+import "labgob"
+import "sort"
+import "time"
+//import "encoding/gob"
+
+
+type ShardMaster struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	// Your data here.
+	//same as lab3
+	callbackCh map[int64]chan Result //  storing the id of clinets,result -&gt; request transfer
+	//clientcindex map[int64]int64 
+	
+	clientcindex map[int64]int64 // for recording requestId of every clients to chek the duplicatcy
+
+	configs []Config // indexed by config num
+}
+
+
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match74-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+type Op struct {
+	// Your data here.
+	//paramteres for join : servers
+	Servers map[int][]string 
+	//paramters for leave: GID	
+	GIDs    []int
+	//paramters for move: Shard and GID            	
+	Shard   int              	
+	GID     int   
+	//paramter for query:NUM           	
+	Num     int              	
+
+	ClientId	int64
+	//check whether it is join,leave,move,query
+	TypeInfo		string
+	Index		int64
+}
+
+type Result struct {
+	Index int64
+	Value 	Config
+</FONT>}
+type ShardPair struct {
+	GID int
+	Counter int
+}
+
+func (sm *ShardMaster) call1(args *JoinArgs) bool {
+	//args:=&Op{}
+	//check for isleader status- calling raft
+_, _, isLeader := sm.rf.Start(Op{Servers: args.Servers, ClientId: args.ClientId, TypeInfo: "Join",Index: args.Index})
+return isLeader
+}
+
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+	// Your code here.
+	var isLeader= sm.call1(args)
+	if !isLeader{
+		reply.WrongLeader = true
+
+	}else{
+		reply.WrongLeader = false
+
+				//checking for that clinetid if it is present or not!
+		 _, ok := sm.callbackCh[args.ClientId]; //ok stores the bool value
+		 //if it true then it is present , if false then it is not
+		if !ok {
+			//make a channel then 
+			ch := make(chan Result, 1)
+			sm.callbackCh[args.ClientId] = ch
+		}
+		select {
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match74-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		case res := &lt;- sm.callbackCh[args.ClientId]:
+			if res.Index == args.Index {
+				reply.Err = OK
+			}
+		case &lt;- time.After(2 * time.Second):
+			reply.Err = "Timeout"
+</FONT>		}
+
+	}
+}
+
+
+
+func (sm *ShardMaster) call2(args *LeaveArgs) bool {
+	//args:=&Op{}
+	//check for isleader status- calling raft
+_, _, isLeader := sm.rf.Start(Op{GIDs: args.GIDs, ClientId: args.ClientId, TypeInfo: "Leave",Index: args.Index})
+return isLeader
+}
+
+
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+	// Your code here.
+		var isLeader= sm.call2(args)
+	if !isLeader{
+		reply.WrongLeader = true
+
+	}else{
+		reply.WrongLeader = false
+
+				//checking for that clinetid if it is present or not!
+		 _, ok := sm.callbackCh[args.ClientId]; //ok stores the bool value
+		 //if it true then it is present , if false then it is not
+		if !ok {
+			//make a channel then 
+			ch := make(chan Result, 1)
+			sm.callbackCh[args.ClientId] = ch
+		}
+		select {
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match74-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		case res := &lt;- sm.callbackCh[args.ClientId]:
+			if res.Index == args.Index {
+				reply.Err = OK
+			}
+		case &lt;- time.After(2 * time.Second):
+			reply.Err = "Timeout"
+</FONT>		}
+
+	}
+}
+
+
+func (sm *ShardMaster) call3(args *MoveArgs) bool {
+	//args:=&Op{}
+	//check for isleader status- calling raft
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match74-1.html#7" TARGET="1"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+_, _, isLeader := sm.rf.Start(Op{Shard: args.Shard,GID: args.GID, ClientId: args.ClientId, TypeInfo: "Move",Index: args.Index})
+</FONT>return isLeader
+}
+
+
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+	// Your code here.
+			var isLeader= sm.call3(args)
+	if !isLeader{
+		reply.WrongLeader = true
+
+	}else{
+		reply.WrongLeader = false
+
+				//checking for that clinetid if it is present or not!
+		 _, ok := sm.callbackCh[args.ClientId]; //ok stores the bool value
+		 //if it true then it is present , if false then it is not
+		if !ok {
+			//make a channel then 
+			ch := make(chan Result, 1)
+			sm.callbackCh[args.ClientId] = ch
+		}
+		select {
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match74-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		case res := &lt;- sm.callbackCh[args.ClientId]:
+			if res.Index == args.Index {
+				reply.Err = OK
+			}
+		case &lt;- time.After(2 * time.Second):
+			reply.Err = "Timeout"
+</FONT>		}
+
+	}
+}
+
+
+
+func (sm *ShardMaster) call4(args *QueryArgs) bool {
+	//args:=&Op{}
+	//check for isleader status- calling raft
+_, _, isLeader := sm.rf.Start(Op{Num: args.Num, ClientId: args.ClientId, TypeInfo: "Query",Index: args.Index})
+return isLeader
+}
+
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+	// Your code here.
+				var isLeader= sm.call4(args)
+	if !isLeader{
+		reply.WrongLeader = true
+
+	}else{
+		reply.WrongLeader = false
+
+				//checking for that clinetid if it is present or not!
+		 _, ok := sm.callbackCh[args.ClientId]; //ok stores the bool value
+		 //if it true then it is present , if false then it is not
+		if !ok {
+			//make a channel then 
+			ch := make(chan Result, 1)
+			sm.callbackCh[args.ClientId] = ch
+		}
+		select {
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match74-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		case res := &lt;- sm.callbackCh[args.ClientId]:
+			if res.Index == args.Index {
+				reply.Err = OK
+				reply.Config = res.Value
+			}
+		case &lt;- time.After(2 * time.Second):
+			reply.Err = "Timeout"
+</FONT>		}
+
+	}
+}
+
+
+
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+	// Your code here, if desired.
+}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+	return sm.rf
+}
+
+
+type gidcountdict []ShardPair
+type configtest []Config
+
+func (sm *ShardMaster) starthere() {
+	for {
+		msg := &lt;- sm.applyCh
+
+
+			command := msg.Command.(Op)
+			result := Result{Index: command.Index}
+			// startfunc.Println(command)
+			//{map[2:[a b c]] [] 0 0 0 2059034964223319155 Join 6}
+			//check for the cammand type!
+			switch command.TypeInfo {
+		case "Join"://if join
+			//check for the duplication!!
+			test:= sm.IsDuplicated(command.ClientId,command.Index)
+			if test{
+				break
+			}else{
+			var Servers map[int][]string = command.Servers
+			//fmt.Println(Servers)
+			//map[2:[a b c]]
+			//map[503:[3a 3b 3c]]
+			// fmt.Println(config)//{1 [1 1 1 1 1 1 1 1 1 1] map[1:[x y z]]}
+
+			var newConfig *Config
+			//	Num    int              // config number
+			//Shards [NShards]int     // shard -&gt; gid
+			//Groups map[int][]string // gid -&gt; servers[]
+			newConfig = &sm.configs[len(sm.configs)-1]
+			// fmt.Println(newConfig)
+<A NAME="9"></A><FONT color = #FF00FF><A HREF="match74-1.html#9" TARGET="1"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			newConfig1 := *newConfig
+			//groups is of this type
+			newConfig1.Groups = make(map[int][]string)
+			for k, v := range newConfig.Groups {
+				newConfig1.Groups[k] = v
+</FONT>			}
+			//fmt.Println(newConfig1)
+			for GID, servers := range Servers {
+				// newConfig:= *newConfig
+				// fmt.Println(newConfig)
+				// fmt.Println(GID)
+				//gid -&gt; servers[]
+				newConfig1.Groups[GID] = servers
+				// sm.ReBalanceShards(newConfig1,GID)
+			}
+			// fmt.Println(*newConfig)
+		//	sm.updateConfig1(newConfig1)
+		
+			 config  :=newConfig1
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match74-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				groupNum := len(config.Groups)
+	//fmt.Println(groupNum)//2
+	//creating a channel
+	list2 := make(chan int, NShards)
+//	fmt.Println("------")
+//fmt.Println(config)//{1 [1 1 1 1 1 1 1 1 1 1] map[1:[x y z] 2:[a b c]]}
+//fmt.Println(NShards)//10
+//config: NUm,SHARDS,Groups
+list1:=make(map[int][] int)//that list which containg groups of config
+for i:=0;i&lt;NShards;i++{
+	gid:=config.Shards[i]
+	if _,ok:=config.Groups[gid];ok {
+		list1[gid]=append(list1[gid],i)
+	}else{
+		list2 &lt;-i
+	}
+
+}
+	//fmt.Println(list1)//map[2:[0 1 2 3 4]]
+	//fmt.Println(list2)//jo group of config mein ni hai vo moving shard mei bhj rahe hain hum
+	// sort by each GID's shard count desc
+	var kvs gidcountdict
+	for gid,_:= range config.Groups {
+		length := 0
+		if _, ok := list1[gid]; ok {
+			length = len(list1[gid])
+			//fmt.Println(length)
+		}
+		kvs = append(kvs, ShardPair{gid, length})
+	}
+	//sorting can be done in 3 ways:
+	//1. simple sort
+	//2.sort.slicetable
+	//3.sort.interface
+	sort.SliceStable(kvs, func(i, j int) bool {
+</FONT>    return kvs[i].Counter &gt; kvs[j].Counter
+})
+	
+	// expected := NShards / groupNum
+	for i := 0; i &lt; len(kvs); i++ {
+		expected := NShards / groupNum
+
+		// re-balance shard
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match74-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		for k := 0; kvs[i].Counter &gt; expected; k++ {
+			kvs[i].Counter --
+			//fmt.Println(kvs[i])
+			//fmt.Println(list1[kvs[i].GID][k])
+			list2 &lt;- list1[kvs[i].GID][k]
+
+			// fmt.Println(config)
+		}
+		for kvs[i].Counter &lt; expected {
+			kvs[i].Counter ++
+			thisShard := &lt;- list2
+			config.Shards[thisShard] = kvs[i].GID
+			//fmt.Println(config)
+		}
+	}
+		config.Num += 1
+	sm.configs = append(sm.configs, config)
+</FONT>			
+		}
+		case "Leave"://if leave
+			//check for the duplicate
+				test:= sm.IsDuplicated(command.ClientId,command.Index)
+			if test{
+				break
+			}else{
+			var GIDs []int = command.GIDs
+			//fmt.Println(GIDs)//[1]
+		
+			var newConfig *Config
+			newConfig = &sm.configs[len(sm.configs)-1]
+			// fmt.Println(newConfig)
+			// newConfig.Num += 1
+			newConfig1 := *newConfig
+			newConfig1.Groups = make(map[int][]string)
+			for k, v := range newConfig.Groups {
+				//adding 'v' in k GId
+				newConfig1.Groups[k] = v
+			}
+<A NAME="10"></A><FONT color = #FF0000><A HREF="match74-1.html#10" TARGET="1"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			for _, GID := range GIDs {
+				//deleting the gid from the groups
+				//fmt.Println(newConfig1.Groups)//map[1:[x y z] 2:[a b c]]
+				delete(newConfig1.Groups, GID)
+				//fmt.Println(GID)//1
+				//fmt.Println(newConfig1.Groups)//map[2:[a b c]]
+				
+			}
+			sm.updateConfig1(newConfig1)
+		}
+		case "Move"://if move
+			//check for duplicacy
+			test:= sm.IsDuplicated(command.ClientId,command.Index)
+</FONT>			if test{
+				break
+			}else{
+			
+			var newConfig *Config
+			newConfig = &sm.configs[len(sm.configs)-1]
+			// fmt.Println(newConfig)
+			
+			newConfig1 := *newConfig
+			newConfig1.Groups = make(map[int][]string)
+			for k, v := range newConfig.Groups {
+				newConfig1.Groups[k] = v
+			}
+			//Shard-&gt;gid
+			//fmt.Println(newConfig1)
+<A NAME="8"></A><FONT color = #00FFFF><A HREF="match74-1.html#8" TARGET="1"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			newConfig1.Shards[command.Shard] = command.GID
+			//fmt.Println(newConfig1.Shards)//[503 503 504 504 504 503 503 503 503 503]
+			newConfig1.Num += 1// Move should increase Config.Num
+			sm.configs = append(sm.configs, newConfig1) 
+			//fmt.Println(sm.configs)
+		}
+		case "Query":
+			//t:=command.Num
+			//fmt.Println("**",t,"**")
+			
+				var newConfig *Config
+</FONT>				if command.Num&lt;0{
+			newConfig = &sm.configs[len(sm.configs) - 1]
+			}else{
+				newConfig = &sm.configs[command.Num]
+			}
+				newConfig1 := *newConfig
+			newConfig1.Groups = make(map[int][]string)
+			for k, v := range newConfig.Groups {
+				newConfig1.Groups[k] = v
+			}
+			result.Value=newConfig1
+		
+		}
+
+			select {
+			case sm.callbackCh[command.ClientId] &lt;- result:
+				
+			default:
+				
+			}
+
+		
+		
+	}
+}
+
+
+// func (rf *ShardMaster) commit(){
+// 	//fmt.Println(len(rf.matchIndex))
+
+// for N:=rf.commitIndex+1 ;N&lt;len(rf.log);N++{
+// 	count:=0
+
+// 	for i:=0;i&lt;len(rf.matchIndex);i++{
+// 		if rf.matchIndex[i] &gt;=N {
+// 			count++
+// 		}
+// 	}
+
+// 	first:= count &gt;=len(rf.matchIndex)/2 
+
+// 	second:=rf.log[N].Term ==rf.currentTerm
+// 	if first &&second {
+// 		rf.commitIndex=N
+		
+// 	}
+//  }
+// }
+
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	sm := new(ShardMaster)
+	sm.me = me
+
+	sm.configs = make([]Config, 1)
+	sm.configs[0].Groups = map[int][]string{}
+
+	labgob.Register(Op{})
+	sm.applyCh = make(chan raft.ApplyMsg)
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+
+	// Your code here.
+	sm.callbackCh = make(map[int64]chan Result)
+	sm.clientcindex = make(map[int64]int64)
+
+	go sm.starthere()
+	return sm
+}
+
+
+
+func (sm *ShardMaster) updateConfig1 (config Config) {
+	groupNum := len(config.Groups)
+	//fmt.Println(groupNum)//2
+	//creating a channel
+	list2 := make(chan int, NShards)
+//	fmt.Println("------")
+//fmt.Println(config)//{1 [1 1 1 1 1 1 1 1 1 1] map[1:[x y z] 2:[a b c]]}
+//fmt.Println(NShards)//10
+//config: NUm,SHARDS,Groups
+list1:=make(map[int][] int)//that list which containg groups of config
+for i:=0;i&lt;NShards;i++{
+	gid:=config.Shards[i]
+	if _,ok:=config.Groups[gid];ok {
+		list1[gid]=append(list1[gid],i)
+	}else{
+		list2 &lt;-i
+	}
+
+}
+	//fmt.Println(list1)//map[2:[0 1 2 3 4]]
+	//fmt.Println(list2)//jo group of config mein ni hai vo moving shard mei bhj rahe hain hum
+	// sort by each GID's shard count desc
+	var kvs gidcountdict
+	for gid,_:= range config.Groups {
+		length := 0
+		if _, ok := list1[gid]; ok {
+			length = len(list1[gid])
+			//fmt.Println(length)
+		}
+		kvs = append(kvs, ShardPair{gid, length})
+	}
+	//sorting can be done in 3 ways:
+	//1. simple sort
+	//2.sort.slicetable
+	//3.sort.interface
+	sort.SliceStable(kvs, func(i, j int) bool {
+		//check for the reverse decreasing order
+    return kvs[i].Counter &gt; kvs[j].Counter
+})
+
+	// expected := NShards / groupNum
+	for i := 0; i &lt; len(kvs); i++ {
+		expected := NShards / groupNum
+
+		// re-balance shard
+		for k := 0; kvs[i].Counter &gt; expected; k++ {
+			kvs[i].Counter --
+			//fmt.Println(kvs[i])
+			//fmt.Println(list1[kvs[i].GID][k])
+			list2 &lt;- list1[kvs[i].GID][k]
+
+			// fmt.Println(config)
+		}
+		for kvs[i].Counter &lt; expected {
+			kvs[i].Counter ++
+			thisShard := &lt;- list2
+			config.Shards[thisShard] = kvs[i].GID
+			//fmt.Println(config)
+		}
+	}
+		config.Num += 1
+	sm.configs = append(sm.configs, config)
+}
+
+func (sm *ShardMaster) IsDuplicated(clientId int64, requestId int64) bool {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	// fmt.Println("---")
+	if value, ok := sm.clientcindex[clientId]; ok && value &gt;= requestId {
+		return true
+	}else{
+	
+	return false
+}
+}
+
+</PRE>
+</PRE>
+</BODY>
+</HTML>

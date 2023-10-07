@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>Optimistic concurrency control (OCC) | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="Optimistic concurrency control (OCC)" />
+<meta property="og:locale" content="en_US" />
+<link rel="canonical" href="http://0.0.0.0/teaching/ds/22fa/notes/si.html" />
+<meta property="og:url" content="http://0.0.0.0/teaching/ds/22fa/notes/si.html" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="Optimistic concurrency control (OCC)" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"Optimistic concurrency control (OCC)","url":"http://0.0.0.0/teaching/ds/22fa/notes/si.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://0.0.0.0/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>Optimistic concurrency control (OCC)</h1>
+         </header> -->
+
+  <section>
+    
+<h2 id="optimistic-concurrency-control-occ">Optimistic concurrency control (OCC)</h2>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>T1:
+Begin_tx
+v&lt;-R(C)  # remember read version c#=1
+v'&lt;-R(S) # remember read version s#=1
+write v-10 to C (in T1's write-buffer)
+write v'+10 to S (in T1's write-buffer)
+Commit_tx
+Lock(C)
+Lock(S)
+validate C# still 1
+validate S# still 1
+write (C=90), version 2
+write (S=110), version 2
+unlock(C)
+unlock(S)
+</code></pre></div></div>
+<ul>
+  <li>Note: OCC has no deadlock problem</li>
+</ul>
+
+<h1 id="snapshot-isolation">Snapshot isolation</h1>
+
+<h2 id="overview">Overview</h2>
+<ul>
+  <li>A transaction
+    <ul>
+      <li>reads a “snapshot” of database image</li>
+      <li>can commit only if there are no write-write conflict</li>
+    </ul>
+  </li>
+  <li>protocol:
+    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code> begin_tx : T is assigned a start timestamp T.sts
+ Read: T reads the biggest version i such that i &lt; = T.sts
+ Write: buffers writes, T.wset += {C}
+ commit_tx: T is assigned a commit timestamp T.cts
+          checks for all T' such that T'.cts \in [T.sts, T.cts] whether T'.wset and T.wset overlaps
+          write item with version T.cts
+</code></pre></div>    </div>
+  </li>
+</ul>
+
+<h2 id="recall-our-earlier-bad-interleaving">Recall our earlier bad interleaving:</h2>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>T1: Read(C) Read(S) Write(C, 90)                Write(S, 110)
+T3:                              Read(C) Read(S)
+
+T3 reads old value of C and S (due to T3.sts &lt; T1.cts)
+</code></pre></div></div>
+
+<h2 id="does-snapshot-isolation-implement-serializability-no">Does snapshot isolation implement serializability? No</h2>
+<ul>
+  <li>The write-skew problem
+    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>R_1(A), R_2(B), W_1(B), W_2(A), C_1(A), C_2(B)
+</code></pre></div>    </div>
+  </li>
+  <li>non-serializable interleaving but, possible under SI</li>
+</ul>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+</body>
+
+</html>

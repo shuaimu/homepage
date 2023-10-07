@@ -1,0 +1,329 @@
+<HTML>
+<HEAD>
+<TITLE>./spring19/naveenanto-stonybrook/src/shardkv/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./spring19/naveenanto-stonybrook/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+import (
+	"bytes"
+	"fmt"
+	"raft"
+	"time"
+)
+import "labrpc"
+import "sync"
+import "labgob"
+
+type ShardMaster struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	// Your data here.
+
+	configs []Config // indexed by config num
+
+	lastSeenRequest  map[int64]int
+	receivedCommands sync.Map
+	lastAppliedIndex int
+	quit             chan bool
+}
+
+type Op struct {
+	// Your data here.
+	Servers  map[int][]string
+	GIDs     []int
+	Shard    int
+	GID      int
+	Num      int
+	Op       string
+	UID      int
+	ClientNo int64
+}
+
+type ApplyMessageResponse struct {
+	config Config
+	term   int
+}
+
+const WAIT_TIME int = 500
+
+func (sm *ShardMaster) LockMe() {
+	//DPrintf("Trying to aquire Lock")
+	sm.mu.Lock()
+	//DPrintf("Aquired Lock")
+}
+
+func (sm *ShardMaster) UnlockMe() {
+	sm.mu.Unlock()
+	//DPrintf("Unlocked")
+}
+
+func (sm *ShardMaster) handleRPC(op Op) (wrongLeader bool, err Err, config Config) {
+	_, isLeader := sm.rf.GetState()
+
+	sm.LockMe()
+	if isLeader && sm.isDuplicateRequest(op) {
+		wrongLeader = false
+		//fmt.Println("Duplicate")
+		//value = kv.lastSeenRequest[op.ClientNo].Value
+		if op.Op == "Query" {
+			if op.Num == -1 || op.Num &gt;= len(sm.configs) {
+				config = sm.configs[len(sm.configs)-1]
+			} else {
+				config = sm.configs[op.Num]
+			}
+		}
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match194-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		sm.UnlockMe()
+		return
+	}
+	index, term, isLeader := sm.rf.Start(op)
+	sm.UnlockMe()
+
+	if !isLeader {
+		wrongLeader = true
+		return
+	}
+
+	wrongLeader = false
+</FONT><A NAME="0"></A><FONT color = #FF0000><A HREF="match194-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	channel := make(chan ApplyMessageResponse)
+	sm.LockMe()
+	_, ok := sm.receivedCommands.Load(index)
+	if ok {
+		fmt.Println("Duplicate received")
+	}
+	sm.receivedCommands.Store(index, channel)
+	sm.UnlockMe()
+
+	select {
+	case appliedMessage := &lt;-channel:
+		sm.LockMe()
+		currentTerm := appliedMessage.term
+		if currentTerm == term {
+			err = ""
+</FONT><A NAME="1"></A><FONT color = #00FF00><A HREF="match194-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			config = appliedMessage.config
+		} else {
+			//fmt.Println(appliedMessage.err)
+			wrongLeader = true
+		}
+		sm.receivedCommands.Delete(index)
+		sm.UnlockMe()
+	case &lt;-time.After(time.Duration(WAIT_TIME) * time.Millisecond):
+		sm.LockMe()
+		wrongLeader = true
+		sm.receivedCommands.Delete(index)
+		sm.UnlockMe()
+</FONT>	}
+
+	//appliedOp := appliedMessage.msg.Command.(Op)
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match194-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	return
+}
+
+func (sm *ShardMaster) isDuplicateRequest(op Op) bool {
+	id, ok := sm.lastSeenRequest[op.ClientNo]
+	return ok && op.UID &lt;= id
+}
+
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+</FONT>	// Your code here.
+	op := Op{Op: "Join", Servers: args.Servers, ClientNo: args.ClientNo, UID: args.UID}
+	reply.WrongLeader, reply.Err, _ = sm.handleRPC(op)
+	return
+}
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+	// Your code here.
+	op := Op{Op: "Leave", GIDs: args.GIDs, ClientNo: args.ClientNo, UID: args.UID}
+	reply.WrongLeader, reply.Err, _ = sm.handleRPC(op)
+	return
+}
+
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+	// Your code here.
+	op := Op{Op: "Move", Shard: args.Shard, GID: args.GID, ClientNo: args.ClientNo, UID: args.UID}
+	reply.WrongLeader, reply.Err, _ = sm.handleRPC(op)
+	return
+}
+
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+	// Your code here.
+	op := Op{Op: "Query", Num: args.Num, ClientNo: args.ClientNo, UID: args.UID}
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match194-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	reply.WrongLeader, reply.Err, reply.Config = sm.handleRPC(op)
+	return
+}
+
+func (sm *ShardMaster) applierLoop() {
+	for {
+		//fmt.Println("Waiting for channel on", kv.me)
+		select {
+		case msg := &lt;-sm.applyCh:
+
+			responseMessage := ApplyMessageResponse{}
+</FONT>			//fmt.Println("Received msg from Raft:", msg.CommandIndex)
+
+			sm.LockMe()
+			//kv.rf.LockMe()
+			if msg.UseSnapshot {
+				sm.DecodeSnapshot(msg.Command.([]byte))
+				sm.lastAppliedIndex = msg.CommandIndex
+				//kv.takeSnapshotIfNeeded(msg.CommandIndex)
+			} else {
+				sm.lastAppliedIndex = msg.CommandIndex
+				op := msg.Command.(Op)
+
+				if sm.isDuplicateRequest(op) {
+					if op.Op == "Query" {
+						if op.Num == -1 || op.Num &gt;= len(sm.configs) {
+							responseMessage.config = sm.configs[len(sm.configs)-1]
+						} else {
+							responseMessage.config = sm.configs[op.Num]
+						}
+					}
+				} else {
+					sm.applyToStateMachine(op, &responseMessage)
+				}
+
+				channel, ok := sm.receivedCommands.Load(msg.CommandIndex)
+				sm.takeSnapshotIfNeeded(msg.CommandIndex)
+
+				if ok {
+					channel.(chan ApplyMessageResponse) &lt;- responseMessage
+				}
+			}
+			sm.UnlockMe()
+		case &lt;-sm.quit:
+			return
+		}
+	}
+}
+
+func (sm *ShardMaster) applyToStateMachine(op Op, responseMessage *ApplyMessageResponse) {
+	//fmt.Println(op)
+	switch op.Op {
+	case "Join":
+		lastConfig := sm.configs[len(sm.configs)-1].Clone()
+		lastConfig.Num++
+		lastConfig.Join(op.Servers)
+		sm.configs = append(sm.configs, lastConfig)
+		break
+	case "Leave":
+		lastConfig := sm.configs[len(sm.configs)-1].Clone()
+		lastConfig.Num++
+		lastConfig.Leave(op.GIDs)
+		sm.configs = append(sm.configs, lastConfig)
+		break
+	case "Move":
+		lastConfig := sm.configs[len(sm.configs)-1].Clone()
+		lastConfig.Num++
+		lastConfig.Move(op.GID, op.Shard)
+		sm.configs = append(sm.configs, lastConfig)
+		break
+	default:
+		if op.Num == -1 || op.Num &gt;= len(sm.configs) {
+			responseMessage.config = sm.configs[len(sm.configs)-1]
+		} else {
+			responseMessage.config = sm.configs[op.Num]
+		}
+	}
+	sm.lastSeenRequest[op.ClientNo] = op.UID
+}
+
+func (sm *ShardMaster) EncodeSnapshot() []byte {
+	snapBuffer := new(bytes.Buffer)
+	snapEncoder := labgob.NewEncoder(snapBuffer)
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match194-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	snapEncoder.Encode(sm.configs)
+	snapEncoder.Encode(sm.lastSeenRequest)
+	snapEncoder.Encode(sm.lastAppliedIndex)
+	return snapBuffer.Bytes()
+}
+
+func (sm *ShardMaster) DecodeSnapshot(data []byte) {
+	if data == nil || len(data) &lt; 1 { // bootstrap without any state?
+		return
+</FONT>	}
+	//fmt.Println("Reading from snapshot", kv.me)
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var configs []Config
+	var lastSeenRequest map[int64]int
+	var lastAppliedIndex int
+	if d.Decode(&configs) != nil ||
+		d.Decode(&lastSeenRequest) != nil ||
+		d.Decode(&lastAppliedIndex) != nil {
+		fmt.Println("Error decoding from persistent state-kv")
+	} else {
+		sm.configs = configs
+		sm.lastSeenRequest = lastSeenRequest
+		sm.lastAppliedIndex = lastAppliedIndex
+	}
+}
+
+func (sm *ShardMaster) takeSnapshotIfNeeded(index int) {
+	//raftSize := kv.persistor.RaftStateSize()
+	//if kv.maxraftstate &gt; 0 && raftSize &gt;= int(float64(kv.maxraftstate)*0.95) {
+	//	kv.rf.SaveSnapshot(index, kv.EncodeSnapshot())
+	//}
+}
+
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (sm *ShardMaster) Kill() {
+	//fmt.Println("Master dying")
+	sm.rf.Kill()
+	// Your code here, if desired.
+}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+	return sm.rf
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	sm := new(ShardMaster)
+	sm.me = me
+
+	sm.configs = make([]Config, 1)
+	sm.configs[0].Groups = map[int][]string{}
+
+	labgob.Register(Op{})
+	sm.applyCh = make(chan raft.ApplyMsg)
+	sm.lastSeenRequest = make(map[int64]int)
+	sm.quit = make(chan bool)
+
+	sm.DecodeSnapshot(persister.ReadSnapshot())
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+	go sm.applierLoop()
+
+	return sm
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

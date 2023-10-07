@@ -1,0 +1,447 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/mrityunjaykumar911/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/mrityunjaykumar911/src/kvraft/server.go<p><PRE>
+package raftkv
+
+import (
+	"bytes"
+	"labgob"
+	"labrpc"
+	"log"
+	"raft"
+	"sync"
+	"time"
+)
+
+
+func getApplyChanTimeout() time.Duration {
+	ms := time.Duration(ConstWaitForChannelTimeout) * time.Millisecond
+	return ms
+}
+
+func getNextGetPutTimeout() time.Duration {
+	ms := time.Duration(ConstWaitForAnotherPut) * time.Millisecond
+	return ms
+}
+
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match15-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+const Debug = 0
+const Debug2 = 0
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		format = "[KV-SERVER] " + format
+		log.Printf(format, a...)
+	}
+	return
+}
+
+func SPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug2 &gt; 0 {
+		format = "[KV-SERVER] " + format
+		log.Printf(format, a...)
+	}
+	return
+}
+
+type Op struct {
+</FONT><A NAME="8"></A><FONT color = #00FFFF><A HREF="match15-1.html#8" TARGET="1"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+	UniqueRequestID int
+	DBOperationType OpType
+	Key string
+	Value string
+	ClientUUID int64
+}
+
+type ServerReplyArgs struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+	UniqueRequestID int
+	DBOperationType OpType
+	Key string
+	Value string
+	ClientUUID int64
+	CommandIndex int
+	CurrentTerm int
+}
+
+type KVServer struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+</FONT>
+	maxraftstate int // snapshot if log grows this big
+
+	// Your definitions here.
+	bMap map[string]string
+	//oneMessage chan string
+	requestMapPool map[int64] int
+	requestChanPool map[int] chan ServerReplyArgs
+	killAll chan bool
+	persister *raft.Persister
+}
+
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match15-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_11.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
+	// Your code here.
+	DPrintf("Server[%v] Get args[%v]",kv.me,args)
+	term, isLeader := kv.rf.GetState()
+	DPrintf("[GetState] term[%v] isLeader[%v]",term,isLeader)
+	if !isLeader{
+		DPrintf("Requested Server Not a leader")
+		reply.WrongLeader = true
+		reply.Err = Failure
+		return
+	}
+	op := Op{args.UniqueReqUUID,GetOp,args.Key,"",args.ClientUUID}
+
+	SPrintf("First time GetArgs")
+	DPrintf("[KVServer-Get] kv Server[%v] sent this [%v]",kv.me,op)
+	//kv.mu.Lock()
+	index, term, isLeaderTrue := kv.rf.Start(op)
+	//kv.mu.Unlock()
+	if !isLeader{
+		reply.WrongLeader = true
+		reply.Err = Failure
+		DPrintf("Requested Server Not a leader")
+		return
+	}
+	DPrintf("[KVServer-Get] kv Start Return index=[%v] term[%v] isLeader[%v] OP[%v]",index, term, isLeaderTrue,op)
+
+	// wait for channel indication
+	kv.mu.Lock()
+	_,ok := kv.requestChanPool[index]
+	if !ok {
+		kv.requestChanPool[index] = make(chan ServerReplyArgs,1)
+	}
+	DPrintf("[DB-DEBUG-before]"+kv.String())
+	requestChan:= kv.requestChanPool[index]
+	kv.mu.Unlock()
+
+	status,timeout:= kv.WaitForTimeoutOrReply(requestChan,index,term,op)
+	DPrintf("[KVServer-Get] After WaitForTimeoutOrReply status[%v]",status)
+	// search kv.bMap for this data
+	DPrintf("[DB-DEBUG-after]"+kv.String())
+	if status{
+</FONT>		kv.mu.Lock()
+		value, ok := kv.bMap[args.Key]
+		kv.mu.Unlock()
+		if ok {
+			reply.Err = Success
+			DPrintf("[KVServer-Get] Found Value OP[%v]",op)
+			reply.WrongLeader = false
+			reply.Value = value
+		}else{
+			reply.Err = KeyNotFound
+			DPrintf("[KVServer-Get] NotFound Value OP[%v]",op)
+			reply.WrongLeader = false
+			reply.Value = ""
+		}
+	}else{
+		if timeout{
+			// TODO no retry in TimeoutException
+			reply.Err = TimeoutException
+		}else{
+			reply.Err = Failure
+		}
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match15-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_11.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		DPrintf("[KVServer-Get] Failure OP[%v]",op)
+		reply.WrongLeader = true
+		reply.Value = ""
+	}
+}
+
+func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	// Your code here.
+	// register this PutAppend Entry
+	DPrintf("Server[%v] PutAppend args[%v]",kv.me,args)
+	term, isLeader := kv.rf.GetState()
+	DPrintf("[GetState] term[%v] isLeader[%v]",term,isLeader)
+	if !isLeader{
+		reply.WrongLeader = true
+		reply.Err = Failure
+		DPrintf("Requested Server Not a leader")
+		return
+	}
+	op := Op{args.UniqueReqUUID,args.Op,args.Key,args.Value,args.ClientUUID}
+
+	SPrintf("First time PutAppendArgs")
+	DPrintf("[kv-PutAppend] kv Server[%v] sent this [%v]",kv.me,op)
+	//kv.mu.Lock()
+	index, term, isLeader := kv.rf.Start(op)
+	//kv.mu.Unlock()
+	if !isLeader{
+		reply.WrongLeader = true
+		reply.Err = Failure
+		DPrintf("Requested Server Not a leader")
+		return
+	}
+	DPrintf("[KVServer-PutAppend] kv Server[%v] Start Return index=[%v] term[%v] isLeader[%v] OP[%v]",kv.me,index, term, isLeader,op)
+
+	kv.mu.Lock()
+	_,ok := kv.requestChanPool[index]
+	if !ok {
+		kv.requestChanPool[index] = make(chan ServerReplyArgs,1)
+	}
+	DPrintf("[DB-DEBUG-before]"+kv.String())
+	requestChan:= kv.requestChanPool[index]
+	kv.mu.Unlock()
+
+	status,timeout:= kv.WaitForTimeoutOrReply(requestChan,index,term,op)
+</FONT><A NAME="7"></A><FONT color = #0000FF><A HREF="match15-1.html#7" TARGET="1"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.mu.Lock()
+	SPrintf("[KVServer-PutAppend] kv Server[%v] After WaitForTimeoutOrReply status[%v] reply[%v]",kv.me,status,reply)
+	DPrintf("[DB-DEBUG-after]"+kv.String())
+	kv.mu.Unlock()
+	if status{
+		reply.Err = Success
+		reply.WrongLeader = false
+		return
+	}else{
+		reply.WrongLeader = true
+</FONT>		if timeout{
+			// TODO no retry in TimeoutException
+			reply.Err = TimeoutException
+		}else{
+			reply.Err = Failure
+		}
+		return
+	}
+}
+
+//
+// the tester calls Kill() when a KVServer instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *KVServer) Kill() {
+	kv.rf.Kill()
+	// Your code here, if desired.
+}
+
+func (kv *KVServer) String() string{
+	//return fmt.Sprintf("Server[%v] DB: [%v]",kv.me,kv.bMap)
+	return ""
+}
+
+<A NAME="9"></A><FONT color = #FF00FF><A HREF="match15-1.html#9" TARGET="1"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *KVServer) WaitForTimeoutOrReply(requestChanPool chan ServerReplyArgs,index int, term int, op Op)(ret bool,timeout bool) {
+	select {
+		case &lt;-time.After(getApplyChanTimeout()):
+</FONT>			DPrintf("[WaitForTimeoutOrReply] kv Server[%v] getApplyChanTimeout occurred no apply indication",kv.me)
+			return false,true
+		case message := &lt;- requestChanPool:
+			currentTerm, isLeader := kv.rf.GetState()
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match15-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			if currentTerm==term && message.UniqueRequestID == op.UniqueRequestID && message.ClientUUID==op.ClientUUID && message.Key==op.Key && message.Value==op.Value && message.CommandIndex==index{
+				if !isLeader {
+					DPrintf("kv Server[%v] Not a leader or Term Mismatch",kv.me)
+					return false,false
+				}
+				return true,false
+			}else{
+				DPrintf("[WaitForTimeoutOrReply] kv Server[%v]  &lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt; Reply Mismatch &gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;",kv.me)
+				return false,false
+			}
+	}
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Raft to
+// form the fault-tolerant key/value service.
+// me is the index of the current server in servers[].
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+// the k/v server should snapshot when Raft's saved state exceeds maxraftstate bytes,
+// in order to allow Raft to garbage-collect its log. if maxraftstate is -1,
+// you don't need to snapshot.
+// StartKVServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
+</FONT>	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+
+	kv := new(KVServer)
+	kv.mu.Lock()
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+	DPrintf("Start Server[%v] from clean DB -----------&gt;&gt;&gt;&gt;-----------&gt;&gt;&gt;&gt;-----------&gt;&gt;&gt;&gt;-----------&gt;&gt;&gt;&gt; MAX[%v]",kv.me,maxraftstate)
+	kv.bMap = make(map[string]string)
+	kv.requestMapPool = make(map[int64] int)
+	kv.persister = persister
+	// You may need initialization code here.
+
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+	// requestUUID does not work
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match15-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.requestChanPool = make(map[int] chan ServerReplyArgs)
+
+	kv.readPersistKV(kv.persister.ReadSnapshot())// read from persister
+	kv.mu.Unlock()
+
+	go func() {
+		for applyChanMSG := range  kv.applyCh {
+			DPrintf("Server[%v] applyChanMSG from raft",kv.me)
+			if applyChanMSG.CommandValid == false {
+				//DPrintf("Server[%v] applyChanMSG update KV Server before lock",kv.me)
+				kv.mu.Lock()
+				//DPrintf("Server[%v] applyChanMSG update KV Server acquired lock [start]",kv.me)
+				kv.readPersistKV(applyChanMSG.Data)
+				//DPrintf("Server[%v] applyChanMSG update KV Server acquired lock [end]",kv.me)
+				kv.mu.Unlock()
+				//DPrintf("Server[%v] applyChanMSG update KV Server released lock [end]",kv.me)
+			} else {
+				SPrintf("[ApplyChan] Server[%v] ToExec applyChanMSG Index=[%v]", kv.me, applyChanMSG.CommandIndex)
+</FONT>				op := applyChanMSG.Command.(Op)
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match15-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_27.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				kv.mu.Lock()
+				counterRet := kv.requestMapPool[op.ClientUUID]
+				processedStatus:= counterRet &gt;= op.UniqueRequestID
+				kv.mu.Unlock()
+				DPrintf("[ApplyChan] " + kv.String())
+				rArgs := ServerReplyArgs{op.UniqueRequestID,
+					op.DBOperationType,
+					op.Key,
+					op.Value,
+					op.ClientUUID,
+					applyChanMSG.CommandIndex,
+					applyChanMSG.CurrentTerm}
+
+				DPrintf("[ApplyChan] Server[%v] before switch", kv.me)
+				switch op.DBOperationType {
+				case PutOp:
+					DPrintf("[ApplyChan] Server[%v] PutTYPE key=[%v] value[%v]", kv.me, op.Key, op.Value)
+					if !processedStatus {
+						kv.mu.Lock()
+						if val, ok := kv.bMap[op.Key]; ok {
+							DPrintf("[WaitForTimeoutOrReply-replace] Server[%v] Key=[%v] Prev Value=[%v] New Value=[%v]", kv.me, op.Key, val, op.Value)
+						} else {
+							DPrintf("[WaitForTimeoutOrReply-normal] Server[%v] Key=[%v] New insert ?", kv.me, op.Key)
+						}
+						kv.bMap[op.Key] = op.Value
+						kv.requestMapPool[op.ClientUUID] = op.UniqueRequestID
+						kv.mu.Unlock()
+					}
+					kv.mu.Lock()
+					chanOp, ok := kv.requestChanPool[applyChanMSG.CommandIndex]
+					if ok {
+						chanOp &lt;- rArgs
+					}
+					kv.mu.Unlock()
+					DPrintf("Server[%v] ---", kv.me)
+
+				case AppendOp:
+					DPrintf("[ApplyChan] Server[%v] AppendTYPE key=[%v] value[%v]", kv.me, op.Key, op.Value)
+					if !processedStatus {
+						kv.mu.Lock()
+						if val, ok := kv.bMap[op.Key]; ok {
+							DPrintf("[WaitForTimeoutOrReply-append] Server[%v] Key=[%v] Prev Value=[%v] New Value=[%v]", kv.me, op.Key, val, val+op.Value)
+							kv.bMap[op.Key] += op.Value
+						} else {
+							DPrintf("[WaitForTimeoutOrReply-new] Server[%v] Key=[%v] New Append ?", kv.me, op.Key)
+							kv.bMap[op.Key] = op.Value
+						}
+						kv.requestMapPool[op.ClientUUID] = op.UniqueRequestID
+						kv.mu.Unlock()
+					}
+					kv.mu.Lock()
+					chanOp, ok := kv.requestChanPool[applyChanMSG.CommandIndex]
+					if ok {
+						chanOp &lt;- rArgs
+					}
+					kv.mu.Unlock()
+					DPrintf("Server[%v] ---", kv.me)
+
+				case GetOp:
+					DPrintf("[ApplyChan] Server[%v] GetType key=[%v]", kv.me, op.Key)
+					kv.mu.Lock()
+					if val, ok := kv.bMap[op.Key]; ok {
+						DPrintf("[WaitForTimeoutOrReply-Get] Server[%v] value[%v] present", kv.me, val)
+					} else {
+						DPrintf("[WaitForTimeoutOrReply-Get] Server[%v] value missing", kv.me)
+					}
+					chanOp, ok := kv.requestChanPool[applyChanMSG.CommandIndex]
+					if ok {
+						chanOp &lt;- rArgs
+					}
+					kv.mu.Unlock()
+					DPrintf("Server[%v] ---", kv.me)
+				}
+				raftStateSize:= kv.persister.RaftStateSize()
+				if kv.maxraftstate != -1 && raftStateSize &gt;= kv.maxraftstate {
+					SPrintf("[checkSnapShotRequired] Server[%v] has log size[%v] &lt;&lt; Trim Now &gt;&gt; SnapShotIndex[%v]",kv.me,raftStateSize,applyChanMSG.CommandIndex)
+					kv.saveSnapShotNow(applyChanMSG.CommandIndex)
+</FONT>				}
+			}
+		}
+	}()
+
+	// You may need initialization code here.
+
+	return kv
+}
+
+func (kv *KVServer) saveSnapShotNow (index int){
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	kv.mu.Lock()
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match15-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	e.Encode(kv.bMap)
+	e.Encode(kv.requestMapPool)
+	data := w.Bytes()
+	SPrintf("Server[%v] Sending saveSnapShotNow Len=[%v]",kv.me,len(data))
+	go func() {
+		kv.rf.RaftSnapShotSaver(index, data)
+	}()
+	kv.mu.Unlock()
+}
+
+//
+// restore previously persisted state KV Server
+//
+func (kv *KVServer) readPersistKV(data []byte) {
+	if data == nil || len(data) &lt; 1 { // bootstrap without any state?
+		return
+</FONT>	}
+	// Your code here (3A), inspired from 2C
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var bMap map[string] string
+	var requestMapPool map[int64] int
+	d.Decode(&bMap)
+	d.Decode(&requestMapPool)
+	kv.bMap = bMap
+	kv.requestMapPool = requestMapPool
+	DPrintf("\n\n\n&lt;&lt;&lt;&lt;================ [START]  =================&gt;&gt;&gt;&gt;")
+	DPrintf("[KVSERVER] Server[%v]",kv.me)
+	DPrintf("&lt;&lt;&lt;&lt;================ [START]  =================&gt;&gt;&gt;&gt;\n\n\n")
+}</PRE>
+</PRE>
+</BODY>
+</HTML>

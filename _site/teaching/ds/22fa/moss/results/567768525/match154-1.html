@@ -1,0 +1,455 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/anshkhannasbu/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/anshkhannasbu/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+
+import "raft"
+import "labrpc"
+import "sync"
+import "labgob"
+import "time"
+import "strconv"
+import "log"
+
+
+type ShardMaster struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	// Your data here.
+
+	configs []Config // indexed by config num
+	rpcMapComm map[string]string
+	rpcMapUncomm map[string]string
+	groups []int
+}
+
+
+type Op struct {
+	// Your data here.
+	OpType string
+	RpcId int64
+	ClientId int64
+	JoinArgs JoinArgs
+	LeaveArgs LeaveArgs
+	MoveArgs MoveArgs
+	QueryArgs QueryArgs
+}
+
+const Debug = 0
+
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+func (sm *ShardMaster) processOp(op Op) (bool){
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match154-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	rpckey := getKey(op)
+
+	sm.mu.Lock()
+	
+	sm.initMaps()
+
+	_, ok1 := sm.rpcMapUncomm[rpckey]
+	_, ok2 := sm.rpcMapComm[rpckey]
+
+	if !ok1 && !ok2 {
+		_, _, done := sm.rf.Start(op)
+</FONT>		if !done{
+			sm.mu.Unlock()
+			return done
+		}
+		sm.rpcMapUncomm[rpckey] = "done"
+	}
+
+	sm.mu.Unlock()
+	
+	return true
+}
+
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match154-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func(sm *ShardMaster) isLeader() (int, bool){
+	a,b := sm.rf.GetState()
+	return a,b
+}
+
+
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+</FONT>	// Your code here.
+
+	op := Op{}
+	op.OpType = "Join"
+	op.ClientId = args.ClientId
+	op.RpcId = args.RpcId
+	op.JoinArgs = *args
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match154-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	opDone := sm.processOp(op)
+	rpckey := getKey(op)
+
+	if !opDone{
+		reply.WrongLeader = true
+		return
+	}
+
+	for {
+		time.Sleep(10*time.Millisecond)
+		_, isLeader := sm.isLeader()
+		if !isLeader{
+			reply.WrongLeader = true
+</FONT>			return
+		}
+
+		sm.mu.Lock()
+		_, ok := sm.rpcMapComm[rpckey]
+		sm.mu.Unlock()
+
+		if ok {
+			return
+		}
+	}
+}
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+	// Your code here.
+	op := Op{}
+	op.OpType = "Leave"
+	op.ClientId = args.ClientId
+	op.RpcId = args.RpcId
+	op.LeaveArgs = *args
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match154-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	opDone := sm.processOp(op)
+	rpckey := getKey(op)
+
+	if !opDone{
+		reply.WrongLeader = true
+		return
+	}
+
+	for {
+		time.Sleep(10*time.Millisecond)
+		_, isLeader := sm.isLeader()
+		if !isLeader{
+			reply.WrongLeader = true
+</FONT>			return
+		}
+
+		sm.mu.Lock()
+		_, ok := sm.rpcMapComm[rpckey]
+		sm.mu.Unlock()
+
+		if ok {
+			return
+		}
+	}
+
+}
+
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+	// Your code here.
+	op := Op{}
+	op.OpType = "Move"
+	op.ClientId = args.ClientId
+	op.RpcId = args.RpcId
+	op.MoveArgs = *args
+
+	opDone := sm.processOp(op)
+	rpckey := getKey(op)
+
+	if !opDone{
+		reply.WrongLeader = true
+		return
+	}
+
+	for {
+		time.Sleep(10*time.Millisecond)
+		_, isLeader := sm.isLeader()
+		if !isLeader{
+			reply.WrongLeader = true
+			return
+		}
+
+		sm.mu.Lock()
+		_, ok := sm.rpcMapComm[rpckey]
+		sm.mu.Unlock()
+
+		if ok {
+			return
+		}
+	}
+}
+
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+	// Your code here.
+	op := Op{}
+	op.OpType = "Query"
+	op.ClientId = args.ClientId
+	op.RpcId = args.RpcId
+	op.QueryArgs = *args
+
+	opDone := sm.processOp(op)
+	rpckey := getKey(op)
+
+	if !opDone{
+		reply.WrongLeader = true
+		return
+	}
+
+	for {
+		time.Sleep(10*time.Millisecond)
+		_, isLeader := sm.isLeader()
+		if !isLeader{
+			reply.WrongLeader = true
+			return
+		}
+
+		sm.mu.Lock()
+		_, ok := sm.rpcMapComm[rpckey]
+		sm.mu.Unlock()
+
+		if ok {
+			sm.mu.Lock()
+			x := args.Num
+			if x == -1{
+				x = len(sm.configs) - 1
+			}
+			reply.Config = copyConfig(sm.configs[x], true)
+			sm.mu.Unlock()
+			return
+		}
+	}
+}
+
+func dummyOp() Op{
+	op := Op{}
+	return op
+}
+
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match154-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (sm *ShardMaster) initRPCMap(log []raft.LogEntry, commitIdx int){
+	sm.rpcMapUncomm = make(map[string]string)
+	for i := 0; i &lt; len(log); i++ {
+		rop, ok := log[i].Command.(Op)
+		var op Op
+		if !ok {
+			op = dummyOp()
+		} else{
+			op = rop
+</FONT><A NAME="6"></A><FONT color = #00FF00><A HREF="match154-0.html#6" TARGET="0"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		}
+		key := getKey(op)
+		_, ok2 := sm.rpcMapComm[key]
+		if !ok2 {
+			sm.rpcMapUncomm[key] = "done"
+</FONT>		}
+	}
+}
+
+func(sm *ShardMaster) initMaps(){
+	raftlog, commitIdx := sm.rf.GetLogAndCommit()
+	sm.initRPCMap(raftlog, commitIdx)
+}
+
+
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+	// Your code here, if desired.
+}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match154-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	return sm.rf
+}
+
+func getKey(op interface{}) string{
+	nop := op.(Op)
+	return strconv.FormatInt(nop.ClientId, 10) + "$" + strconv.FormatInt(int64(nop.RpcId), 10)
+</FONT>}
+
+func(sm *ShardMaster) updateRpcMap(nop interface{}){
+	op := nop.(Op)
+	key := getKey(op)
+	sm.rpcMapComm[key] = key
+}
+
+func copyConfig(cfg Config, notInc bool) Config {
+	ncfg := Config{}
+	ncfg.Groups = map[int][]string{}
+	for k,v := range cfg.Groups {
+		ncfg.Groups[k] = make([]string, len(v))
+		copy(ncfg.Groups[k], v)
+	}
+	for i := 0; i &lt; len(cfg.Shards); i++ {
+		ncfg.Shards[i] = cfg.Shards[i]
+	}
+	ncfg.Num = cfg.Num
+
+	if !notInc{
+		ncfg.Num++
+	}
+
+	return ncfg
+}
+
+func(sm *ShardMaster) joinExec(cfg Config, nop interface{}) Config{
+	op := nop.(Op)
+	joinArgs := op.JoinArgs
+	newGrp := joinArgs.Servers
+	for k,v := range newGrp {
+		cfg.Groups[k] = v
+		sm.groups = append(sm.groups, k)
+	}
+	return cfg
+}
+
+func(sm *ShardMaster) leaveExec(cfg Config, nop interface{}) Config{
+	op := nop.(Op)
+	leaveArgs := op.LeaveArgs
+	remGids := leaveArgs.GIDs
+
+	for i := 0; i &lt; len(remGids); i++ {
+		delete(cfg.Groups, remGids[i])
+		for j := 0; j &lt; len(sm.groups); j++ {
+			if sm.groups[j] == remGids[i] {
+				sm.groups = append(sm.groups[:j], sm.groups[j+1:]...)
+				break
+			}
+		}
+	}
+	return cfg
+}
+
+func(sm *ShardMaster) moveExec(cfg Config, nop interface{}) Config{
+	op := nop.(Op)
+	moveArgs := op.MoveArgs
+	cfg.Shards[moveArgs.Shard] = moveArgs.GID
+	return cfg
+}
+
+func(sm *ShardMaster) reassingExec(cfg Config) Config{
+	numGroups := len(cfg.Groups)
+	if numGroups == 0 {
+		for i := 0; i &lt; len(cfg.Shards); i++ {
+			cfg.Shards[i] = 0
+		}
+	} else{
+		for i := 0; i &lt; len(cfg.Shards); i++ {
+			cfg.Shards[i] = sm.groups[i%numGroups]
+		}
+	}
+	return cfg
+}
+
+
+func(sm *ShardMaster) updateValue(nop interface{}){
+	op := nop.(Op)
+
+	lst := len(sm.configs) - 1
+	lstCfg := sm.configs[lst]
+
+	ncfg := copyConfig(lstCfg, false)
+
+	if op.OpType == "Query"{
+		return
+	}
+
+	if op.OpType == "Join" {
+		ncfg = sm.joinExec(ncfg, nop)
+		ncfg = sm.reassingExec(ncfg)
+	}
+	if op.OpType == "Leave" {
+		ncfg = sm.leaveExec(ncfg, nop)
+		ncfg = sm.reassingExec(ncfg)
+	}
+
+	if op.OpType == "Move" {
+		ncfg = sm.moveExec(ncfg, nop)	
+	}
+
+	sm.configs = append(sm.configs, ncfg)
+}
+
+func(sm *ShardMaster) applyOp(nop interface{}){
+	op := nop.(Op)
+
+	sm.mu.Lock()
+	sm.updateValue(op)
+	sm.updateRpcMap(op)
+	sm.mu.Unlock()
+
+}
+
+func(sm *ShardMaster) listenToCommit(){
+	go func(){
+		for {
+			select {
+			case msg := (&lt;-sm.applyCh):
+				_, ok := msg.Command.(Op)
+				if !ok{
+					continue
+				}
+				sm.applyOp(msg.Command)
+			}
+		}
+	}()
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	sm := new(ShardMaster)
+	sm.me = me
+
+	sm.configs = make([]Config, 1)
+	sm.groups = make([]int, 0)
+	sm.configs[0].Groups = map[int][]string{}
+
+	labgob.Register(Op{})
+	sm.applyCh = make(chan raft.ApplyMsg)
+	sm.rpcMapComm = make(map[string]string)
+	sm.rpcMapUncomm = make(map[string]string)
+	sm.listenToCommit()
+
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+
+
+	// Your code here.
+
+	return sm
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

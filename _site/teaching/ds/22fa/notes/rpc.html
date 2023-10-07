@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>RPC | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="RPC" />
+<meta property="og:locale" content="en_US" />
+<link rel="canonical" href="http://0.0.0.0/teaching/ds/22fa/notes/rpc.html" />
+<meta property="og:url" content="http://0.0.0.0/teaching/ds/22fa/notes/rpc.html" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="RPC" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"RPC","url":"http://0.0.0.0/teaching/ds/22fa/notes/rpc.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://0.0.0.0/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>RPC</h1>
+         </header> -->
+
+  <section>
+    <h1 id="rpc">RPC</h1>
+
+<h2 id="overview">Overview</h2>
+<ul>
+  <li>What is wrong with handweaving the network code?
+    <ul>
+      <li>abstraction</li>
+      <li>error/failure handling</li>
+      <li>performance</li>
+    </ul>
+  </li>
+  <li>basic building block to make distributed programming easier
+    <ul>
+      <li>make a remote call similar to a local call</li>
+      <li>e.g. <code class="language-plaintext highlighter-rouge">server.add(3, 5), proxy.add(3, 5)</code></li>
+    </ul>
+  </li>
+  <li>As a library
+    <ul>
+      <li>e.g. gRPC, go-rpc, json-rpc</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="inside-rpc">Inside RPC</h2>
+<ul>
+  <li>function register
+    <ul>
+      <li>protocol file -&gt; compile -&gt; source code (client/server) -&gt; put in your repo</li>
+    </ul>
+  </li>
+  <li>marshalling (serialization) and unmarshalling
+    <ul>
+      <li>data structure &lt;—&gt; bytes</li>
+    </ul>
+  </li>
+  <li>network connections
+    <ul>
+      <li>hard to deal (buffer, async calls, error codes)</li>
+      <li>(optional) read C10k problem</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="challenge-failures">Challenge: failures</h2>
+<ul>
+  <li>network delays, message reorder/loss</li>
+  <li>practice: set timeout (and retry) on clients</li>
+</ul>
+
+<h2 id="at-least-once">At least once</h2>
+<ul>
+  <li>usually unsafe: trade, withdraw/deposit</li>
+  <li>safe for read-only requests</li>
+  <li>pro: simple implementation</li>
+</ul>
+
+<h2 id="at-most-once">At most once</h2>
+<ul>
+  <li>clients use a globally unique xid for each request</li>
+  <li>servers keep a buffer of previous results</li>
+  <li>keep a window of outstanding requests and force ordering
+    <ul>
+      <li>clients use sequentially increasing xid</li>
+      <li>servers block on “holes”</li>
+    </ul>
+  </li>
+  <li>alternative: write the buffer to durable storage and never delete</li>
+</ul>
+
+<h2 id="exactly-once">Exactly once?</h2>
+<ul>
+  <li>“eventually”</li>
+  <li>no liveness guarantee with asynchronous network</li>
+  <li>two generals problem</li>
+</ul>
+
+<h2 id="rpc-performnace">RPC performnace</h2>
+<ul>
+  <li>highly concurrent code, how?</li>
+  <li>two classic approaches: threads vs event</li>
+  <li>threads
+    <ul>
+      <li>pro: easy to understand/maintain, automatic stack management</li>
+      <li>con: cost (C10K), pre-emptive thread scheduling</li>
+    </ul>
+  </li>
+  <li>event
+    <ul>
+      <li>pro: fast, no pre-emptive thread sheduling, no “thread safe” (with data partitioning).</li>
+      <li>con: harder to read/write, stack ripping (function scope, automatic variables, control structures, debugging stack), harder to “evolve”</li>
+    </ul>
+  </li>
+  <li>a sweet spot: userspace thread (fiber, stackful coroutine)
+    <ul>
+      <li>create stack in userspace</li>
+      <li>switch between them on users’ call</li>
+      <li>use very similar to threads but with a much lower cost</li>
+    </ul>
+  </li>
+  <li>stackless coroutine
+    <ul>
+      <li>started as syntax sugar, “glue” callback into calling function
+        <ul>
+          <li>async/await</li>
+          <li>major difference: nested yield?</li>
+        </ul>
+      </li>
+      <li>compiler support for stack variables</li>
+    </ul>
+  </li>
+</ul>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+</body>
+
+</html>

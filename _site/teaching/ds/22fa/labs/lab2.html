@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>Lab 2: Fault-tolerant Key/Value Service | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="Lab 2: Fault-tolerant Key/Value Service" />
+<meta property="og:locale" content="en_US" />
+<link rel="canonical" href="http://0.0.0.0/teaching/ds/22fa/labs/lab2.html" />
+<meta property="og:url" content="http://0.0.0.0/teaching/ds/22fa/labs/lab2.html" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="Lab 2: Fault-tolerant Key/Value Service" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"Lab 2: Fault-tolerant Key/Value Service","url":"http://0.0.0.0/teaching/ds/22fa/labs/lab2.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://0.0.0.0/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>Lab 2: Fault-tolerant Key/Value Service</h1>
+         </header> -->
+
+  <section>
+    <h1 id="lab-2-fault-tolerant-keyvalue-service">Lab 2: Fault-tolerant Key/Value Service</h1>
+
+<hr />
+
+<h3 id="introduction">Introduction</h3>
+
+<p>In this lab you will build a fault-tolerant key/value storage service using your Raft library from the previous lab. You key/value service will be a replicated state machine, consisting of several key/value servers that use Raft to maintain replication. Your key/value service should continue to process client requests as long as a majority of the servers are alive and can communicate, in spite of other failures or network partitions.</p>
+
+<p>The service supports three operations: <tt>Put(key, value)</tt>, <tt>Append(key, arg)</tt>, and <tt>Get(key)</tt>. It maintains a simple database of key/value pairs. <tt>Put()</tt> replaces the value for a particular key in the database, <tt>Append(key, arg)</tt> appends arg to key’s value, and <tt>Get()</tt> fetches the current value for a key. An <tt>Append</tt> to a non-existent key should act like <tt>Put</tt>.</p>
+
+<p>Your service must provide strong consistency to applications calls to the Get/Put/Append methods. Here’s what we mean by strong consistency. If called one at a time, the Get/Put/Append methods should act as if the system had only one copy of its state, and each call should observe the modifications to the state implied by the preceding sequence of calls. For concurrent calls, the return values and final state must be the same as if the operations had executed one at a time in some order. Calls are concurrent if they overlap in time, for example if client X calls <tt>Put()</tt>, then client Y calls <tt>Append()</tt>, and then client X’s call returns. Furthermore, a call must observe the effects of all calls that have completed before the call starts (so we are technically asking for linearizability).</p>
+
+<p>Strong consistency is convenient for applications because it means that, informally, all clients see the same state and they all see the latest state. Providing strong consistency is relatively easy for a single server. It is harder if the service is replicated, since all servers must choose the same execution order for concurrent requests, and must avoid replying to clients using state that isn’t up to date.</p>
+
+<!-- This lab has two parts. In part A, you will implement the service without worrying that the Raft log can grow without bound. In part B, you will implement snapshots (Section 7 in the paper), which will allow Raft to garbage collect old log entries. Please submit each part by the respective deadline. -->
+
+<p>This lab doesn’t require you to write much code, but you will most likely spend a substantial amount of time thinking and staring at debugging logs to figure out why your implementation doesn’t work. Debugging will be more challenging than in the Raft lab because there are more components that work asynchronously of each other. Start early.
+<!-- *   You should reread the [extended Raft paper](/teaching/ds/22fa/readings/raft.pdf), in particular Sections 7 and 8\. For a wider perspective, have a look at Chubby, Raft Made Live, Spanner, Zookeeper, Harp, Viewstamped Replication, and [Bolosky et al.](http://static.usenix.org/event/nsdi11/tech/full_papers/Bolosky.pdf) -->
+<!-- *   You are allowed to add fields to the Raft <tt>ApplyMsg</tt>, and to add fields to Raft RPCs such as <tt>AppendEntries</tt>. But be sure that your code continues to pass the Lab 2 tests. --></p>
+
+<h3 id="getting-started">Getting Started</h3>
+
+<div class="important">
+
+Get the latest lab software.
+
+<pre>
+$ git checkout -b lab-kv-solution
+$ git fetch --all
+$ git rebase upstream/lab-kv-22fa 
+</pre>
+
+</div>
+
+<p>We supply you with skeleton code and tests in <tt>src/kv</tt>. You will need to modify <tt>kv/server.cc/h</tt>. Don’t change other files.</p>
+
+<p>To get up and running, execute the following commands:</p>
+
+<pre>
+$ python3 waf configure build --enable-raft-test # same build command
+$ build/deptran_server -f config/kv_lab_test.yml # different run command
+...
+</pre>
+
+<!-- ### Part A: Key/value service without log compaction -->
+
+<p>Each of your key/value servers (“kvservers”) will have an associated Raft peer. Clients send <tt>Put()</tt>, <tt>Append()</tt>, and <tt>Get()</tt> RPCs to the kvserver whose associated Raft is the leader. The kvserver code submits the Put/Append/Get operation to Raft, so that the Raft log holds a sequence of Put/Append/Get operations. All of the kvservers execute operations from the Raft log in order, applying the operations to their key/value databases; the intent is for the servers to maintain identical replicas of the key/value database.</p>
+
+<p>A client sometimes doesn’t know which kvserver is the Raft leader. If the client sends an RPC to the wrong kvserver, or if it cannot reach the kvserver, the client should re-try by sending to a different kvserver. If the key/value service commits the operation to its Raft log (and hence applies the operation to the key/value state machine), the leader reports the result to the client by responding to its RPC. If the operation failed to commit (for example, if the leader was replaced), the server reports an error, and the client retries with a different server.</p>
+
+<div class="todo">
+
+Your first task is to implement a solution that works when there are no dropped messages, and no failed servers. You'll need to implement the Get/Put/Append functions in the server. These functions should submit log entries by using the <tt>Start()</tt> function you implemented in the previous lab. In the kvserver you can call `GetRaftServer` function to get the associated Raft server.  
+
+<!-- You'll need to add RPC-sending code to the Clerk Put/Append/Get methods in <tt>client.go</tt>, and implement <tt>PutAppend()</tt> and <tt>Get()</tt> RPC handlers in <tt>server.go</tt>. These handlers should enter an <tt>Op</tt> in the Raft log using <tt>Start()</tt>; you should fill in the <tt>Op</tt> struct definition in <tt>server.go</tt> so that it describes a Put/Append/Get operation. Each server should execute <tt>Op</tt> commands as Raft commits them, i.e. as they appear on the <tt>applyCh</tt>. An RPC handler should notice when Raft commits its <tt>Op</tt>, and then reply to the RPC. -->
+
+You have completed this task when you **reliably** pass the first test in the test suite: "One client". You may also find that you can pass the "concurrent clients" test, depending on how sophisticated your implementation is.
+
+</div>
+
+<p>Your kvservers should not directly communicate; they should only interact with each other through the Raft log.</p>
+
+<ul>
+  <li>After calling <tt>Start()</tt>, your kvservers will need to wait for Raft to complete agreement. Commands that have been agreed upon arrive on the <code class="language-plaintext highlighter-rouge">OnNextCommand</code> function call. You should think carefully about how to arrange your code so that it will keep processing the nextcommands, while <tt>Put/Append()</tt> and <tt>Get()</tt> handlers submit commands to the Raft log using <tt>Start()</tt>.</li>
+  <li>For kvservers, <tt>Put/Append/Get/OnNextCommand</tt> are all called in the same thread; this is the same thread as the RaftServer RPC handling; thread-blocking calls in any of these will block others. So be careful when you trigger such calls. You can use coroutines in this thread.</li>
+  <li>For the <tt>Put/Get/Append</tt> operations, return KV_SUCCESS if successful, KV_NOTLEADER if the server is not a leader, or KV_TIMEOUT in any other case. <br />
+<!-- *   Your solution needs to handle the case in which a leader has called Start() for a Clerk's RPC, but loses its leadership before the request is committed to the log. In this case you should arrange for the Clerk to re-send the request to other servers until it finds the new leader. One way to do this is for the server to detect that it has lost leadership, by noticing that a different request has appeared at the index returned by Start(), or that Raft's term has changed. If the ex-leader is partitioned by itself, it won't know about new leaders; but any client in the same partition won't be able to talk to a new leader either, so it's OK in this case for the server and client to wait indefinitely until the partition heals. -->
+<!-- *   You will probably have to modify your Clerk to remember which server turned out to be the leader for the last RPC, and send the next RPC to that server first. This will avoid wasting time searching for the leader on every RPC, which may help you pass some of the tests quickly enough. --></li>
+  <li>A kvserver should not complete a <tt>Get()</tt> RPC if it is not part of a majority (so that it does not serve stale data). Return KV_TIMEOUT in this case. A simple solution is to enter every <tt>Get()</tt> (as well as each <tt>Put()</tt> and <tt>Append()</tt>) in the Raft log. You don’t have to implement the optimization for read-only operations that is described in Section 8.
+<!-- *   It's best to add locking from the start because the need to avoid deadlocks sometimes affects overall code design. Check that your code is race-free using <tt>go test -race</tt>. --></li>
+</ul>
+
+<!-- In the face of unreliable connections and server failures, a <tt>Client</tt> may send an RPC multiple times until it finds a kvserver that replies positively. If a leader fails just after committing an entry to the Raft log, the <client may not receive a reply, and thus may re-send the request to another leader. Each call to <tt>Client.Put()</tt> or <tt>Client.Append()</tt> should result in just a single execution, so you will have to ensure that the re-send doesn't result in the servers executing the request twice. -->
+
+<!-- Add code to cope with duplicate <tt>Clerk</tt> requests, including situations where the <tt>Clerk</tt> sends a request to a kvserver leader in one term, times out waiting for a reply, and re-sends the request to a new leader in another term. The request should always execute just once. Your code should pass the <tt>go test -run 3A</tt> tests. -->
+
+<!-- *   You will need to uniquely identify client operations to ensure that the key/value service executes each one just once. -->
+<!-- *   Your scheme for duplicate detection should free server memory quickly, for example by having each RPC imply that the client has seen the reply for its previous RPC. It's OK to assume that a client will make only one call into a Clerk at a time. -->
+
+<p>Your code should now pass the tests, like this:</p>
+
+<pre>
+$ build/deptran_server -f config/kv_lab_test.yml 
+TEST 1: Basic kv operations
+TEST 1 Passed
+TEST 2: Concurrent kv operations
+TEST 2 Passed
+TEST 3: Progress with a majority
+TEST 3 Passed
+TEST 4: No progress with a minority
+TEST 4 Passed
+TEST 5: Kv operations through re-election
+TEST 5 Passed
+TEST 6: Progress with a majority and concurrent requests
+TEST 6 Passed
+TEST 7: Progress with a majority writing the same key
+TEST 7 Passed
+TEST 8: Progress with a majority testing linearizability
+TEST 8 Passed
+TEST 9: Progress in unreliable net
+TEST 9 Passed
+ALL TESTS PASSED
+</pre>
+
+<!-- The numbers after each <tt>Passed</tt> are real time in seconds, number of peers, number of RPCs sent (including client RPCs), and number of key/value operations executed (<tt>Clerk</tt> Get/Put/Append calls). -->
+
+<hr />
+
+<p>Please post questions on <a href="http://piazza.com">Piazza</a>.</p>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+</body>
+
+</html>

@@ -71,6 +71,7 @@ function withdrawBalance() {
 * attack/ recursive withdraw
 
 ```
+// msg.sender has a default function that looks like this.
 function () {
   // To be called by a vulnerable contract with a withdraw function.
   // This will double withdraw.

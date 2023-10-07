@@ -1,0 +1,549 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/RonakKhandelwal/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/RonakKhandelwal/src/kvraft/server.go<p><PRE>
+package raftkv
+
+import (
+	"bytes"
+	"labgob"
+	"labrpc"
+	"log"
+	"raft"
+	"sync"
+	"time"
+)
+
+<A NAME="8"></A><FONT color = #00FFFF><A HREF="match73-1.html#8" TARGET="1"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if false {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+type Op struct {
+</FONT>	Operation   string
+	Key         string
+	Value       string
+	ClientId    int64
+	OperationId int
+}
+
+type OpWrapper struct {
+	entry           Op
+	responseChannel chan raft.ApplyMsg
+	indexChannel    chan int
+}
+
+type ResponseChannelQuery struct {
+	Type    string
+	Args    raft.ApplyMsg
+	Index   int
+	Channel chan raft.ApplyMsg
+}
+
+type KVServer struct {
+	mu                     sync.Mutex
+	me                     int
+	persister              *raft.Persister
+	rf                     *raft.Raft
+	applyCh                chan raft.ApplyMsg
+	centralChannel         chan OpWrapper
+	processResponseChannel chan ResponseChannelQuery
+	kvstore                map[string]string
+	indexChannelMap        sync.Map //[int]chan raft.ApplyMsg
+	maxraftstate           int      // snapshot if log grows this big
+	lastSeen               map[int64]int
+	massMurderer           chan bool
+}
+
+/*
+Start of Long Running go routines
+*/
+
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match73-1.html#7" TARGET="1"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *KVServer) performOperation(op Op) bool {
+	index, _, isLeader := kv.rf.Start(op)
+	if !isLeader {
+		DPrintf("The peer %d was not the leader", kv.me)
+		return false
+</FONT>	}
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match73-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	ch := make(chan raft.ApplyMsg, 1)
+	kv.mu.Lock()
+	kv.indexChannelMap.Store(index, ch)
+	kv.mu.Unlock()
+
+	defer func() {
+		kv.mu.Lock()
+</FONT>		DPrintf("Deleting the key from tme map")
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match73-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_7.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		if ch, ok := kv.indexChannelMap.Load(index); ok {
+			if c, ok := ch.(chan raft.ApplyMsg); ok {
+				//Close the channel
+				close(c)
+			}
+		}
+
+		kv.indexChannelMap.Delete(index)
+		kv.mu.Unlock()
+	}()
+
+	select {
+	case msg := &lt;-ch:
+		{
+			//Compare the operations and then proceed
+			if real, ok := msg.Command.(Op); ok {
+				if real.OperationId == op.OperationId && real.Operation == op.Operation {
+					return true
+				}
+			}
+			DPrintf("Recieved message but some issue parsing the contents")
+			return false
+		}
+	case &lt;-time.After(RequestTimeoutInMilliSeconds * time.Millisecond):
+		return false
+	}
+}
+func (kv *KVServer) GrandCentral() {
+	for {
+		select {
+		case &lt;-kv.massMurderer:
+			return
+		case op := &lt;-kv.centralChannel:
+</FONT>			{
+				//Send this to raft server
+				index, _, isLeader := kv.rf.Start(op.entry)
+				go func(index int, isLeader bool, op OpWrapper) {
+					op.indexChannel &lt;- index
+					if isLeader {
+						//send to process response channel
+						DPrintf("%d peer Successfully started the process %+v", kv.me, op.entry)
+						resp := ResponseChannelQuery{
+							Type:    "Put",
+							Index:   index,
+							Channel: op.responseChannel,
+						}
+						kv.processResponseChannel &lt;- resp
+					} else {
+						smg := raft.ApplyMsg{
+							CommandValid: false,
+							Command:      nil,
+							CommandIndex: -1,
+						}
+						op.responseChannel &lt;- smg
+					}
+				}(index, isLeader, op)
+			}
+		}
+	}
+}
+
+func (kv *KVServer) ResponseRoutine() {
+	for {
+		select {
+		case &lt;-kv.massMurderer:
+			return
+		case msg := &lt;-kv.processResponseChannel:
+			{
+				switch msg.Type {
+				case "Put":
+					{
+						if nil != msg.Channel && -1 != msg.Index {
+							kv.indexChannelMap.Store(msg.Index, msg.Channel)
+						}
+					}
+				case "Execute":
+					{
+						if ch, ok := kv.indexChannelMap.Load(msg.Index); ok {
+							if c, ok := ch.(chan raft.ApplyMsg); ok {
+								go func(msg ResponseChannelQuery) {
+									//Not going to block the whole process and still send the response if correctly executed.
+									c &lt;- msg.Args
+									resp := ResponseChannelQuery{
+										Type:  "Remove",
+										Index: msg.Index,
+									}
+									kv.processResponseChannel &lt;- resp
+								}(msg)
+							}
+						}
+					}
+				case "Remove":
+					{
+						kv.indexChannelMap.Delete(msg.Index)
+					}
+				case "CancelAll":
+					{
+						kv.indexChannelMap.Range(func(key, value interface{}) bool {
+							go func(value interface{}) {
+								if c, ok := value.(chan raft.ApplyMsg); ok {
+									smg := raft.ApplyMsg{
+										CommandValid: false,
+										Command:      nil,
+										CommandIndex: -1,
+									}
+									c &lt;- smg
+								}
+							}(value)
+							return true
+						})
+					}
+				}
+			}
+		}
+	}
+
+}
+
+func (kv *KVServer) ArrivalStation() {
+	for {
+		select {
+		case &lt;-kv.massMurderer:
+			return
+		case msg := &lt;-kv.applyCh:
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match73-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			if smg, ok := msg.Command.(Op); ok && msg.CommandValid {
+				kv.mu.Lock()
+				if smg.OperationId &gt; kv.lastSeen[smg.ClientId] {
+</FONT>					val, ok := kv.kvstore[smg.Key]
+					if smg.Operation == "Append" {
+						DPrintf("Appending shiz")
+						if ok {
+							val = val + smg.Value
+						} else {
+							val = smg.Value
+						}
+					} else if smg.Operation == "Put" {
+						DPrintf("Putting shiz")
+						val = smg.Value
+					}
+
+					kv.kvstore[smg.Key] = val
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match73-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+					kv.lastSeen[msg.Command.(Op).ClientId] = msg.Command.(Op).OperationId
+				}
+				if ch, ok1 := kv.indexChannelMap.Load(msg.CommandIndex); ok1 {
+					go func(msg raft.ApplyMsg, ch chan raft.ApplyMsg) {
+						ch &lt;- msg
+					}(msg, ch.(chan raft.ApplyMsg))
+</FONT>				}
+				if kv.maxraftstate != -1 && kv.persister.RaftStateSize() &gt; kv.maxraftstate {
+					go kv.initiateSnapshotProcedure(msg.CommandIndex)
+				}
+				kv.mu.Unlock()
+				//switch smg.Operation {
+				//case "Get":
+				//	kv.mu.Lock()
+				//	var op Op
+				//	if val, ok := kv.kvstore[smg.Key]; ok {
+				//		smg.Value = val
+				//		op = Op{
+				//			Operation:   smg.Operation,
+				//			Key:         smg.Key,
+				//			Value:       val,
+				//			ClientId:    smg.ClientId,
+				//			OperationId: smg.OperationId,
+				//		}
+				//	} else {
+				//		//Key does not exists
+				//		op = Op{
+				//			Operation:   smg.Operation,
+				//			Key:         smg.Key,
+				//			Value:       "",
+				//			ClientId:    smg.ClientId,
+				//			OperationId: smg.OperationId,
+				//		}
+				//	}
+				//	msg.Command = op
+				//	kv.mu.Unlock()
+				//case "Append":
+				//	kv.mu.Lock()
+				//	//Don't reapply
+				//	if val, ok := kv.lastSeen[smg.ClientId]; !(ok && val == smg.OperationId) {
+				//		if val, ok := kv.kvstore[smg.Key]; ok {
+				//			kv.kvstore[smg.Key] = val + smg.Value
+				//		} else {
+				//			kv.kvstore[smg.Key] = smg.Value
+				//		}
+				//	} else {
+				//		DPrintf("REPEAT APPEND REQUEST NO MEED TO PERFORM IT AGAIN")
+				//	}
+				//	kv.mu.Unlock()
+				//case "Put":
+				//	kv.mu.Lock()
+				//	if val, ok := kv.lastSeen[smg.ClientId]; !(ok && val == smg.OperationId) {
+				//		kv.kvstore[smg.Key] = smg.Value
+				//	}
+				//	kv.mu.Unlock()
+				//default:
+				//}
+			} else if !msg.CommandValid {
+				//We just got the snapshot
+				DPrintf("Got Command invaid from the raft reading the snapshot")
+				go kv.installSnapshot(msg.Command.([]byte))
+				//This continue is important sice post this step we are just moving ahead assuming that the msg is of tupe OP
+				continue
+			}
+
+		}
+
+		//Since the command has been executed we keep mark the entry in the last seen
+
+		//resp := ResponseChannelQuery{
+		//	Type:    "Execute",
+		//	Args:    msg,
+		//	Index:   msg.CommandIndex,
+		//	Channel: nil,
+		//}
+		//DPrintf("%d peer Sending to response server %+v", kv.me, msg.Command.(Op))
+		//
+		//go func(resp ResponseChannelQuery) {
+		//	kv.processResponseChannel &lt;- resp
+		//}(resp)
+	}
+}
+
+func (kv *KVServer) initiateSnapshotProcedure(index int) {
+	kv.mu.Lock()
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	_ = e.Encode(kv.kvstore)
+	_ = e.Encode(kv.lastSeen)
+	snapshot := w.Bytes()
+	kv.mu.Unlock()
+	kv.rf.PerformSnapshotting(snapshot, index)
+}
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match73-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *KVServer) AcceptRequest(clientId int64, operationId int) bool {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	if val, ok := kv.lastSeen[clientId]; ok {
+		if val &lt; operationId {
+			return true
+		} else {
+			return false
+		}
+	} else {
+		return true
+	}
+}
+
+func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
+	_, isLeader := kv.rf.GetState()
+</FONT><A NAME="4"></A><FONT color = #FF00FF><A HREF="match73-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	if !isLeader {
+		reply.WrongLeader = true
+		reply.Err = WrongLeaderError
+		return
+	}
+
+	if !kv.AcceptRequest(args.ClientId, args.OperationId) {
+		reply.WrongLeader = false
+		reply.Err = RepeatRequestError
+		DPrintf("Repeated Request %+v", args)
+		return
+	}
+
+	op := Op{
+		Operation:   "Get",
+</FONT>		Key:         args.Key,
+		ClientId:    args.ClientId,
+		OperationId: args.OperationId,
+	}
+
+	if kv.performOperation(op) {
+		kv.mu.Lock()
+		val, ok := kv.kvstore[args.Key]
+		if ok {
+			reply.Value = val
+		} else {
+			reply.Value = ""
+		}
+		reply.WrongLeader = false
+		reply.Err = ""
+		kv.mu.Unlock()
+		return
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match73-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	} else {
+		reply.WrongLeader = false
+		reply.Err = TimeOutError
+		return
+	}
+}
+
+func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	//Need to send the event to raft server
+
+	_, isLeader := kv.rf.GetState()
+	if !isLeader {
+		reply.WrongLeader = true
+		reply.Err = WrongLeaderError
+		return
+	}
+
+	if !kv.AcceptRequest(args.ClientId, args.OperationId) {
+		reply.WrongLeader = false
+		reply.Err = RepeatRequestError
+		DPrintf("Repeated Request %+v", args)
+		return
+	}
+
+	op := Op{
+		Operation:   args.Op,
+</FONT>		Key:         args.Key,
+		Value:       args.Value,
+		ClientId:    args.ClientId,
+		OperationId: args.OperationId,
+	}
+
+	if kv.performOperation(op) {
+		reply.WrongLeader = false
+		reply.Err = ""
+		return
+
+	} else {
+		reply.WrongLeader = false
+		reply.Err = TimeOutError
+		return
+	}
+	//c := make(chan raft.ApplyMsg)
+	//indexCh := make(chan int)
+	//opWrapper := OpWrapper{
+	//	entry:           op,
+	//	responseChannel: c,
+	//	indexChannel:    indexCh,
+	//}
+	//
+	//kv.centralChannel &lt;- opWrapper
+	//index := &lt;-indexCh
+	//if index == -1 {
+	//	reply.WrongLeader = true
+	//	reply.Err = WrongLeaderError
+	//	return
+	//}
+	//select {
+	//case msg := &lt;-c:
+	//	if msg.Command != nil && msg.CommandValid {
+	//		op := msg.Command.(Op)
+	//		if op.OperationId == args.OperationId && op.ClientId == args.ClientId {
+	//			reply.WrongLeader = false
+	//			reply.Err = ""
+	//			return
+	//		} else {
+	//			//Wrong leader
+	//			reply.WrongLeader = true
+	//			reply.Err = WrongLeaderError
+	//			return
+	//		}
+	//	}
+	//case &lt;-time.After(RequestTimeoutInMilliSeconds * time.Millisecond):
+	//	resp := ResponseChannelQuery{
+	//		Type:  "Remove",
+	//		Index: index,
+	//	}
+	//	kv.processResponseChannel &lt;- resp
+	//
+	//	reply.WrongLeader = false
+	//	reply.Err = TimeOutError
+	//	return
+	//}
+}
+
+func (kv *KVServer) installSnapshot(data []byte) {
+	if data == nil || len(data) &lt; 1 {
+		return
+	}
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var kvstore map[string]string
+	var lastseen map[int64]int
+	if d.Decode(&kvstore) != nil ||
+		d.Decode(&lastseen) != nil {
+		DPrintf("SERVER: Error parsing the data from the storage")
+	} else {
+		DPrintf("%d Server Installing snapshot", kv.me)
+		kv.kvstore = kvstore
+		kv.lastSeen = lastseen
+	}
+}
+
+//
+// the tester calls Get() when a KVServer instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *KVServer) Kill() {
+	kv.rf.Kill()
+	for i := 0; i &lt; 9; i++ {
+		kv.massMurderer &lt;- true
+	}
+	// Your code here, if desired.
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Raft to
+// form the fault-tolerant key/value service.
+// me is the index of the current server in servers[].
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+// the k/v server should snapshot when Raft's saved state exceeds maxraftstate bytes,
+// in order to allow Raft to garbage-collect its log. if maxraftstate is -1,
+// you don't need to snapshot.
+// StartKVServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
+	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+
+	kv := new(KVServer)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+
+	// You may need initialization code here.
+	kv.lastSeen = make(map[int64]int)
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.centralChannel = make(chan OpWrapper)
+	kv.kvstore = make(map[string]string)
+	kv.indexChannelMap = sync.Map{}
+	kv.processResponseChannel = make(chan ResponseChannelQuery)
+	kv.installSnapshot(persister.ReadSnapshot())
+	kv.persister = persister
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+	kv.massMurderer = make(chan bool, 10)
+
+	//Start the daddy goroutines
+	//go kv.GrandCentral()
+	go kv.ArrivalStation()
+	//go kv.ResponseRoutine()
+
+	// You may need initialization code here.
+
+	return kv
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

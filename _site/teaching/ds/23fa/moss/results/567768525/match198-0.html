@@ -1,0 +1,136 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/akundhuru/src/kvraft/client.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/akundhuru/src/kvraft/client.go<p><PRE>
+package raftkv
+
+import "labrpc"
+import "crypto/rand"
+import "math/big"
+import "time"
+
+
+type Clerk struct {
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match198-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_9.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	servers []*labrpc.ClientEnd
+	// You will have to modify this struct.
+	lastLeaderId int //To remember the last leader
+	clientId int64
+	opIndex int64
+}
+
+func nrand() int64 {
+	max := big.NewInt(int64(1) &lt;&lt; 62)
+	bigx, _ := rand.Int(rand.Reader, max)
+</FONT>	x := bigx.Int64()
+	return x
+}
+
+func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
+	ck := new(Clerk)
+	ck.servers = servers
+	// You'll have to add code here.
+	// Initialize the clerk structure elements.
+	ck.lastLeaderId = 0
+	ck.clientId = nrand()
+	ck.opIndex = 0
+	return ck
+}
+
+//
+// fetch the current value for a key.
+// returns "" if the key does not exist.
+// keeps trying forever in the face of all other errors.
+//
+// you can send an RPC with code like this:
+// ok := ck.servers[i].Call("KVServer.Get", &args, &reply)
+//
+// the types of args and reply (including whether they are pointers)
+// must match the declared types of the RPC handler function's
+// arguments. and reply must be passed as a pointer.
+//
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match198-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_12.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (ck *Clerk) Get(key string) string {
+	// You will have to modify this function.
+	//DPrintf("Get(%s): Value: ...", key)
+	ck.opIndex ++
+
+	var result string
+	leaderId := ck.lastLeaderId
+	for {
+		args := GetArgs{key, ck.clientId, ck.opIndex}
+		reply := GetReply{}
+		ok := ck.servers[leaderId].Call("KVServer.Get", &args, &reply)
+</FONT>		if(!reply.WrongLeader && ok){
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match198-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_13.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			if reply.Err == OK {
+				result = reply.Value
+				break
+			} else if reply.Err == ErrNoKey {
+				result = ""
+				break
+			}
+		}
+		if reply.Err != TimeOut {
+			leaderId = (leaderId + 1) % len(ck.servers)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	ck.lastLeaderId = leaderId
+
+	//DPrintf("Get(%s): End[%v]...", key, result)
+	return result
+</FONT>}
+
+//
+// shared by Put and Append.
+//
+// you can send an RPC with code like this:
+// ok := ck.servers[i].Call("KVServer.PutAppend", &args, &reply)
+//
+// the types of args and reply (including whether they are pointers)
+// must match the declared types of the RPC handler function's
+// arguments. and reply must be passed as a pointer.
+//
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match198-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_25.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (ck *Clerk) PutAppend(key string, value string, op string) {
+	// You will have to modify this function.
+	//DPrintf("PutAppend(%s, %s, %s): Start...", key, value, op)
+	ck.opIndex ++
+	leaderId := ck.lastLeaderId
+	for {
+		args := PutAppendArgs{key, value, op, ck.clientId, ck.opIndex}
+		reply := PutAppendReply{}
+		ok := ck.servers[leaderId].Call("KVServer.PutAppend", &args, &reply)
+		if ok && !reply.WrongLeader && reply.Err == OK {
+			break
+		}
+		if reply.Err != TimeOut {
+			leaderId = (leaderId + 1) % len(ck.servers)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	ck.lastLeaderId = leaderId
+
+	//DPrintf("PutAppend(%s, %s, %s): End...", key, value, op)
+	return
+</FONT>}
+
+func (ck *Clerk) Put(key string, value string) {
+	ck.PutAppend(key, value, "Put")
+}
+
+func (ck *Clerk) Append(key string, value string) {
+	ck.PutAppend(key, value, "Append")
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>
