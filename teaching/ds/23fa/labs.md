@@ -18,10 +18,8 @@ Distributed systems labs for C++ lovers.
 <!-- [Lab 1 - MapReduce](labs/lab1.html) -->
 
 - [Lab 1 - Replicated State Machine](labs/lab1.html) (Due Oct 8 23:59pm)
-- Lab 2 - Fault-tolerant Key-value Store
-<!-- - (labs/lab2.html) (Due ~~Oct 23~~ Oct 30) -->
-- Lab 3 - Sharded Key-value Store
-<!-- - ](labs/lab3.html) (Due ~~Nov 13~~ Dec 11)  -->
+- [Lab 2 - Fault-tolerant Key-value](labs/lab2.html) (Due Oct 29 23:59pm)
+- [Lab 3 - Sharded Key-value Store](labs/lab3) (Due Nov 19 23:59pm)
 - Lab 4 - Distributed Transactions
 
 <!-- [Lab 2 - Fault-tolerant Key-value Store](labs/lab2.html)  -->

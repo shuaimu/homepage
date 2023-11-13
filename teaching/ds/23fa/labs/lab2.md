@@ -31,7 +31,7 @@ Get the latest lab software.
 <pre>
 $ git checkout -b lab-kv-solution
 $ git fetch --all
-$ git rebase upstream/lab-kv-22fa 
+$ git rebase upstream/lab-kv-23 
 </pre>
 
 </div>

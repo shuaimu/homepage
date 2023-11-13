@@ -124,21 +124,35 @@ T5:                                       R(A)=1, R(B)=1
 <ul>
   <li>Read uncommitted
     <ul>
-      <li>disallows cycles consisting only of write-write edges</li>
+      <li>disallows cycles consisting only of ww edges
+        <ul>
+          <li>ww implies commit-start order because of long write locks.</li>
+        </ul>
+      </li>
     </ul>
   </li>
   <li>Read committed/repeatable read
     <ul>
-      <li>disallow cycles consisting of write-write/write-read edges</li>
+      <li>disallow cycles consisting of ww or wr edges</li>
     </ul>
   </li>
   <li>Snapshot isolation, disallows:
     <ul>
-      <li>write-write/write-read edges without corresponding start edges</li>
-      <li>cycles containing a single read-write edge</li>
+      <li>wr or ww without commit-start</li>
+      <li>cycles consisting of only commit-start, wr, ww edges
+        <ul>
+          <li>wr or ww implies commit-start</li>
+        </ul>
+      </li>
+      <li>cycles containing a single rw edge
+        <ul>
+          <li>rw imples either commit-start or concurrent</li>
+        </ul>
+      </li>
     </ul>
   </li>
 </ul>
+
 
   </section>
 

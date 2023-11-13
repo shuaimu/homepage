@@ -31,9 +31,9 @@ The schedule is tentative and subject to change.
 | Sep 11 | [RPC, Coroutine](notes/rpc.md)                                      | Skim [Coroutine](readings/cooperative.pdf)                                                     |
 | Sep 13 | [Primary-Backup Replication](notes/vmft.md)                         | Read [VM Fault tolerance](readings/vm-ft.pdf)                                                  |
 |        | Session II: Consensus                                               |                                                                                                |
-| Sep 18 | [Raft](notes/raft)                                               | Read [Raft](readings/raft.pdf)                                                                 |
-| Sep 20 | [Raft](notes/raft)(cont'd) [Paxos](notes/paxos)               | Read [Paxos made simple](readings/paxos.pdf) and [Paxos made live](readings/paxos-google.pdf)  |
-| Sep 25 | No class (cancelled)                                     |                                                                                                |
+| Sep 18 | [Raft](notes/raft)                                                  | Read [Raft](readings/raft.pdf)                                                                 |
+| Sep 20 | [Raft](notes/raft)(cont'd) [Paxos](notes/paxos)                     | Read [Paxos made simple](readings/paxos.pdf) and [Paxos made live](readings/paxos-google.pdf)  |
+| Sep 25 | No class (cancelled)                                                |                                                                                                |
 | Sep 27 | [Paxos](notes/paxos.md)(cont'd)                                     |                                                                                                |
 | Oct 02 | Raft and Paxos (cont'd)                                             | Read [MongoDB Replication](readings/mongodb.pdf)                                               |
 | Oct 04 | [Byzantine failures](notes/byz.md)                                  | Read [PBFT](readings/pbft.pdf) and [Byzantine Paxos](readings/byzpaxos.pdf)                    |
@@ -41,23 +41,23 @@ The schedule is tentative and subject to change.
 | Oct 11 | Midterm                                                             |                                            |
 |        | Session III: Consistency                                            |                                                                                                |
 | Oct 16 | [Linearizability](notes/linear.md)                                  | Skim [Linearizability](readings/linearizability.pdf)                                           |
-| Oct 21 | Eventual Consistency                                                | Read [Dynamo](readings/dynamo.pdf)                                                             |
-| Oct 23 | [Causal Consistency](notes/cops.md)                                 | Skim [COPS](readings/cops.pdf)                                                                 |
-| Oct 25 | Fork-join Consistency                                                                   | Skim [Depot](readings/depot.pdf)   |
+| Oct 18 | Eventual Consistency                                                | Read [Dynamo](readings/dynamo.pdf)                                                             |
+| Oct 23 | [Causal Consistency](notes/cops.md)                                 | Read [COPS](readings/cops.pdf)                                                                 |
+| Oct 25 | Fork-join Consistency                                               | Skim [Depot](readings/depot.pdf)   |
 |        | Session IV: Transaction                                             |                                                                                               |
-| Oct 30 | [Serializability](notes/serializability.md)                        |  Skim [Concurrency control](readings/franklin97concurrency.pdf)                   |
-| Nov 01 | [2PL and 2PC](notes/spanner.md)                                    |  Read [Spanner](readings/spanner.pdf)                                                          |
-| Nov 06 | [2PL and 2PC](notes/spanner.md)                                    |  Read [Spanner](readings/spanner.pdf)                                                          |
-| Nov 08 | [OCC and Snapshot Isolation](notes/si.md)                          |  Read [Percolator](readings/percolator.pdf)                                                    |
-| Nov 13 |  [More Isolation Levels](notes/isolations.md)                       |  Read [Critique](readings/si.pdf)                                |
-| Nov 15 | Voluntary Presentation                                              |                                                                                                |
+| Oct 30 | [Serializability](notes/serializability.md)                         |  Skim [Concurrency control](readings/franklin97concurrency.pdf)                   |
+| Nov 01 | [2PL and 2PC](notes/spanner.md)                                     |  Read [Spanner](readings/spanner.pdf)                                                          |
+| Nov 06 | [OCC and Snapshot Isolation](notes/si.md)                           |  Read [Percolator](readings/percolator.pdf)                                                    |
+| Nov 08 |  [More Isolation Levels](notes/isolations)                       |  Read [Critique](readings/si.pdf)                                |
 |        | Session V: Blockchain                                               |                                                                                                |
-| Nov 20 | [Proof-of-work](notes/bitcoin.md)                                   |  Read [Bitcoin](readings/bitcoin.pdf)                                                          |
-| Nov 22 |  No class (Thanksgiving)                                            |                                                                                                |
-| Nov 24 | [Proof-of-stake](notes/algorand.md)                                 |  Read [Algorand](readings/algorand.pdf)                                                        |
-| Nov 29 | Stellar                                |  Read [Stellar](readings/stellar.pdf)                                                        |
-| Dec 04 | [Storage Network](notes/filecoin.md)                                |  Skim [Filecoin](readings/filecoin.pdf)                                                        |
-| Dec 06 | [Smart Contract](notes/eth.md)                                      |                                                                                                |
-| Dec 11 | Voluntary Presentation                                              |                                                                                                |
+| Nov 13 | [Proof-of-work](notes/bitcoin.md)                                   |  Read [Bitcoin](readings/bitcoin.pdf)                                                          |
+| Nov 15 | Permissioned chain                                |  Read [Hyperledger Fabric](readings/fabric.pdf)                                                |
+| Nov 20 | Permissionless BFT                                |  Skim [Stellar](readings/stellar.pdf) and [Algorand](readings/algorand.pdf)                                                                                              |
+| Nov 22 | Presentation: Meta's day                                                        |                                                                                                |
+| Nov 27 | Web3                                                        |    Skim [Filecoin](readings/filecoin.pdf) and IPFS(readings/ipfs.pdf)                                                                                                |
+| Nov 29 | Presentation                                                        |                                                                                                |
+| Dec 04 | Presentation                                                        |                                                                                                |
+| Dec 06 | Presentation                                                        |                                                                                                |
+| Dec 11 | Final                                                               |                                                                                                |
 
 [SBU calendar](https://www.stonybrook.edu/commcms/registrar/calendars/_ucalcontent/fall23summer24.php)

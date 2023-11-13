@@ -44,9 +44,14 @@
   
 # Graph 
 * Read uncommitted 
-  * disallows cycles consisting only of write-write edges
+  * disallows cycles consisting only of ww edges
+    * ww implies commit-start order because of long write locks.
 * Read committed/repeatable read
-  * disallow cycles consisting of write-write/write-read edges
+  * disallow cycles consisting of ww or wr edges
 * Snapshot isolation, disallows:
-  * write-write/write-read edges without corresponding start edges
-  * cycles containing a single read-write edge
+  * wr or ww without commit-start
+  * cycles consisting of only commit-start, wr, ww edges
+    * wr or ww implies commit-start
+  * cycles containing a single rw edge
+    * rw imples either commit-start or concurrent 
+    

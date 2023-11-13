@@ -14,7 +14,7 @@ Stony Brook University <br>
 
 Office: New Computer Science RM-351 <br>
 Email: shuai at cs stonybrook edu<br>
-Links: <a href="https://scholar.google.com/citations?user=wcbyR5UAAAAJ&hl=en">Google Scholar</a>, <a href="https://calendar.google.com/calendar/embed?src=shuai%40cs.stonybrook.edu&ctz=America%2FNew_York">Calendar</a>
+Links: <a href="cv.pdf">CV</a>, <a href="https://scholar.google.com/citations?user=wcbyR5UAAAAJ&hl=en">Google Scholar</a>, <a href="https://calendar.google.com/calendar/embed?src=shuai%40cs.stonybrook.edu&ctz=America%2FNew_York">Calendar</a>
     </div>
     <div class="col-sm">
       <img src="./photo/photo.jpg" height="200" class="img-thumbnail float-right">
@@ -65,7 +65,7 @@ If you are interested, email me a brief resume.
    <ul>
      <li>
      NCC: Natural Concurrency Control for Strictly Serializable Datastores by Avoiding the Timestamp-Inversion Pitfall
-     [<a href="./pub/ncc-osdi23.pdf">paper</a>]
+     [<a href="./pub/ncc-osdi23.pdf">paper</a>, <a href="https://arxiv.org/pdf/2305.14270.pdf">tr</a>]
      <br>
      Haonan Lu, Shuai Mu, Siddhartha Sen, Wyatt Lloyd
      <br>
@@ -171,6 +171,7 @@ Shuai Mu, Sebastian Angel, Dennis Shasha <br>
 ## Students ([see alumni](alumni.html))
 
 <!-- * Reza Alimadadi (PhD, with Mike Ferdman) -->
+* Zihao Zhang (Post-doc)
 * [Weihai Shen](https://shenweihai1.github.io/) (PhD)
 * Santa Shithil (PhD)
 * Ze Tang (PhD)
