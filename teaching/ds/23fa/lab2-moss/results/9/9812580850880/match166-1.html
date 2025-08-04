@@ -1,0 +1,159 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-JayaramKrovvidi/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-raycursive/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+#include &lt;sstream&gt;
+
+using rrr::Coroutine;
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match166-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+string debugMultiStr(const MultiStringMarshallable& m) {
+</FONT>  std::ostringstream ss;
+  for (int i=0; i&lt;m.data_.size(); i++) {
+    ss &lt;&lt;i&lt;&lt;":"&lt;&lt; m.data_[i] &lt;&lt; "; ";
+  }
+  return ss.str();
+}
+
+
+int KvServer::sendCommand(const uint64_t& op_id, shared_ptr&lt;MultiStringMarshallable&gt;&& cmd, std::function&lt;bool()&gt; cb) {
+  auto& raft_ = this-&gt;GetRaftServer();
+  Log_debug("kv[%d]: send %s", raft_.loc_id_, debugMultiStr(*cmd).c_str());
+  uint64_t index, term;
+  bool isleader;
+  auto cmd_m = dynamic_pointer_cast&lt;Marshallable&gt;(cmd);
+  // wait for the log to be committed
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  wait_ev_[op_id] = ev;
+  if (!raft_.Start(cmd_m, &index, &term)){
+    ev-&gt;Set(1);
+    return KV_NOTLEADER;
+  }
+
+  ev-&gt;Wait(1250000);
+  wait_ev_.erase(op_id);
+  raft_.GetState(&isleader, &term);
+  if (!isleader) {
+    ev-&gt;Set(1);
+    return KV_NOTLEADER;
+  }
+  if (ev-&gt;IsReady() && cb()) {
+    return KV_SUCCESS;
+  }
+  return KV_TIMEOUT;
+}
+
+void place(shared_ptr&lt;MultiStringMarshallable&gt;& s) {}
+
+template &lt;typename T, typename... Ts&gt;
+void place(shared_ptr&lt;MultiStringMarshallable&gt;& s, T arg, Ts... args) {
+  s-&gt;data_.emplace_back(std::forward&lt;T&gt;(arg));
+  place(s, std::forward&lt;Ts&gt;(args)...);
+}
+
+int KvServer::Put(const uint64_t& oid,
+                  const string& k,
+                  const string& v) {
+  /*
+  Your are recommended to use MultiStringMarshallable as the format
+  for the log entries. Here is an example how you can use it.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  */
+  /* your code here */
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  place(s, to_string(oid), "put", k, v);
+  return sendCommand(oid, std::move(s));
+}
+
+int KvServer::Append(const uint64_t& oid,
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  place(s, to_string(oid), "append", k, v);
+  return sendCommand(oid, std::move(s));
+}
+
+int KvServer::Get(const uint64_t& oid,
+                  const string& k,
+                  string* v) {
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  place(s, to_string(oid), "get", k);
+  return sendCommand(oid, std::move(s), [&v, this, k] {
+    auto it = kv_store_.find(k);
+    if (it == kv_store_.end()) {
+      return false;
+    }
+    *v = it-&gt;second;
+    return true;
+  });
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  auto cmd = (MultiStringMarshallable*)(&m);
+  /* your code here */
+  Log_debug("[%d]: cb receive: %s", GetRaftServer().loc_id_, debugMultiStr(*cmd).c_str());
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match166-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  auto op_id = stol(cmd-&gt;data_[0]);
+  auto op = cmd-&gt;data_[1];
+  auto k = cmd-&gt;data_[2];
+</FONT>  if (op != "get") {
+    auto v = cmd-&gt;data_[3];
+    if (op == "put") {
+      kv_store_[k] = v;
+    } else {
+      if (kv_store_.find(k) == kv_store_.end()) {
+        kv_store_[k] = v;
+      } else {
+        kv_store_[k] += v;
+      }
+    }
+  }
+  if (wait_ev_.find(op_id) != wait_ev_.end()) {
+    wait_ev_[op_id]-&gt;Set(1);
+  }
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

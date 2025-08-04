@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>GFS | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="GFS" />
+<meta property="og:locale" content="en_US" />
+<link rel="canonical" href="http://0.0.0.0/teaching/sf/25sp/notes/gfs.html" />
+<meta property="og:url" content="http://0.0.0.0/teaching/sf/25sp/notes/gfs.html" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="GFS" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"GFS","url":"http://0.0.0.0/teaching/sf/25sp/notes/gfs.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://0.0.0.0/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>GFS</h1>
+         </header> -->
+
+  <section>
+    <h1 id="gfs">GFS</h1>
+<h2 id="goals-shared-storage">Goals (shared storage)</h2>
+<ul>
+  <li>capacity
+    <ul>
+      <li>e.g., 1000 servers, 300TB</li>
+    </ul>
+  </li>
+  <li>performance</li>
+  <li>fault tolerance
+    <ul>
+      <li>map-reduce</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="approach">Approach</h2>
+<ul>
+  <li>filesystem-like API
+    <ul>
+      <li>proprietary library (write/read/append)</li>
+      <li>not POSIX</li>
+    </ul>
+  </li>
+  <li>single master (metadata)
+    <ul>
+      <li>(filename, offset) -&gt; chunk</li>
+    </ul>
+  </li>
+  <li>chunk size: 64MB. why not smaller, such as 4KB(hdd), 4MB (ssd)?</li>
+  <li>3-way replication</li>
+</ul>
+
+<h2 id="how-gfs-works">How GFS works</h2>
+<ul>
+  <li>client communicates with master to retrieve data locations</li>
+  <li>client buffers information locally</li>
+  <li>client sends to data servers</li>
+</ul>
+
+<h2 id="performance">Performance</h2>
+<ul>
+  <li>why single master and 64 MB sufficient?
+    <ul>
+      <li>workload: large files; sequential read/write</li>
+    </ul>
+  </li>
+  <li>not a good design if
+    <ul>
+      <li>small files (aggregate)</li>
+      <li>random accesses (buffer)</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="consistency">Consistency</h2>
+<ul>
+  <li>correctness: outcome = expectation
+    <ul>
+      <li>concurrency</li>
+      <li>failures</li>
+    </ul>
+  </li>
+  <li>tradeoff
+    <ul>
+      <li>weak consistency: easier to implement, hard to use</li>
+      <li>strong consistency: hard to implement, easy to use</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="case-1-strawman-inconsistent-with-concurrency">Case 1 (strawman, inconsistent with concurrency)</h2>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>S1: C1  C2
+S2: C2  C1
+</code></pre></div></div>
+
+<h2 id="case-2-consistent-with-concurrency">Case 2 (consistent with concurrency)</h2>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>S1(P): C1 C2 C1-id C2-id      
+S2   : C2 C1             S1-id-C1 S1-id-C2
+</code></pre></div></div>
+<h2 id="case-3-consistent-but-undefined">Case 3 (consistent but undefined)</h2>
+<ul>
+  <li>a write operation breaks into many smaller write operations</li>
+</ul>
+
+<h2 id="case-4-inconsistent-with-failures">Case 4 (inconsistent with failures)</h2>
+<ul>
+  <li>follower fails</li>
+  <li>primary fails</li>
+  <li>two primary? (what about serial numbers?)
+    <ul>
+      <li>leases to avoid two masters</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="case-5-more-consistency-anomaly">Case 5 (more consistency anomaly)</h2>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>S1(P): C1 C2 C2-id C1-id C3-read
+S2   : C2 C1                     S1-id-C2 C3-read S1-id-C1 C3-read
+</code></pre></div></div>
+
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+</body>
+
+</html>

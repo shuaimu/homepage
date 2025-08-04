@@ -1,0 +1,200 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-krishnahegde100/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-Dhavall07/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+namespace janus {
+
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  // Log_info("calling the shard master");
+  // for(auto it:gid_server_map){
+  //   for(auto its:it.second){
+  //     Log_info("key %d -- values %d",it.first,its);
+  //   }
+  // }
+  // Log_info("################################");
+  lastConfig = configNum;
+  configNum += 1;
+
+  
+  ShardConfig obj;
+  obj.number = configNum;
+
+  if(configNum &gt; 1){
+    obj.group_servers_map_ = configs_.rbegin()-&gt;second.group_servers_map_;
+  }
+
+  for(auto it:gid_server_map){
+    obj.group_servers_map_[it.first] = it.second;
+  }
+
+  
+  Log_info("Inserted confignum %d", configNum);
+
+  // join logic with shard map//
+    vector&lt;uint64_t&gt; svrs;
+    for(auto it:obj.group_servers_map_){
+      svrs.push_back(it.first);
+    }
+    
+    int n = svrs.size();
+
+    if(n==1){
+      int x = svrs[0];
+      obj.shard_group_map_ = {{1,x},{2,x},{3,x},{4,x},{5,x},{6,x},{7,x},{8,x},{9,x},{10,x}};
+    }
+    else if(n==2){
+      int x = svrs[0];
+      int y = svrs[1];
+      obj.shard_group_map_ = {{1,x},{2,x},{3,x},{4,x},{5,x},{6,y},{7,y},{8,y},{9,y},{10,y}};
+    }
+    else if(n==3){
+      int x = svrs[0];
+      int y = svrs[1];
+      int z = svrs[2];
+      obj.shard_group_map_ = {{1,x},{2,x},{3,x},{4,x},{5,z},{6,y},{7,y},{8,y},{9,z},{10,z}};
+    }
+    else if(n==4){
+      int x = svrs[0];
+      int y = svrs[1];
+      int z = svrs[2];
+      int a = svrs[3];
+      obj.shard_group_map_ = {{1,x},{2,x},{3,x},{4,a},{5,z},{6,y},{7,y},{8,y},{9,z},{10,a}};
+    }
+    else{
+      int x = svrs[0];
+      int y = svrs[1];
+      int z = svrs[2];
+      int a = svrs[3];
+      int b = svrs[4];
+      obj.shard_group_map_ = {{1,x},{2,x},{3,b},{4,a},{5,z},{6,y},{7,y},{8,b},{9,z},{10,a}};
+    }
+
+    for(auto it:obj.shard_group_map_){
+      Log_info("shard map, key %d == %d",it.first,it.second);
+    }
+
+  /**************************************/
+  configs_[configNum] = obj;
+
+  *ret = KV_SUCCESS;
+  
+
+  defer-&gt;reply();
+}
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match155-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+
+  ShardConfig lstConfigObj = configs_.rbegin()-&gt;second;
+</FONT>
+  Log_info("called leave from server for configNum %d",configs_.rbegin()-&gt;first);
+
+  for(auto i:gids){
+   
+    // for(auto servers:lstConfigObj.group_servers_map_[i]){
+    //   Log_info("leave %d -----&gt; %d", i, servers);
+    // }
+    lstConfigObj.group_servers_map_.erase(i);
+  }
+
+  ShardConfig obj;
+  obj.number = configs_.rbegin()-&gt;first;
+  obj.group_servers_map_ = lstConfigObj.group_servers_map_;
+
+  // map implementation  //
+    vector&lt;uint64_t&gt; svrs;
+    for(auto it:obj.group_servers_map_){
+      svrs.push_back(it.first);
+    }
+    
+    int n = svrs.size();
+
+    if(n==1){
+      int x = svrs[0];
+      obj.shard_group_map_ = {{1,x},{2,x},{3,x},{4,x},{5,x},{6,x},{7,x},{8,x},{9,x},{10,x}};
+    }
+    else if(n==2){
+      int x = svrs[0];
+      int y = svrs[1];
+      obj.shard_group_map_ = {{1,x},{2,x},{3,x},{4,x},{5,x},{6,y},{7,y},{8,y},{9,y},{10,y}};
+    }
+    else if(n==3){
+      int x = svrs[0];
+      int y = svrs[1];
+      int z = svrs[2];
+      obj.shard_group_map_ = {{1,x},{2,x},{3,x},{4,x},{5,z},{6,y},{7,y},{8,y},{9,z},{10,z}};
+    }
+    else if(n==4){
+      int x = svrs[0];
+      int y = svrs[1];
+      int z = svrs[2];
+      int a = svrs[3];
+      obj.shard_group_map_ = {{1,x},{2,x},{3,x},{4,a},{5,z},{6,y},{7,y},{8,y},{9,z},{10,a}};
+    }
+    else{
+      int x = svrs[0];
+      int y = svrs[1];
+      int z = svrs[2];
+      int a = svrs[3];
+      int b = svrs[4];
+      obj.shard_group_map_ = {{1,x},{2,x},{3,b},{4,a},{5,z},{6,y},{7,y},{8,b},{9,z},{10,a}};
+    }
+  /**********************/
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match155-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  configs_[configNum] = obj;
+
+  *ret = KV_SUCCESS;
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+</FONT>  // your code here
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+  // your code here
+  Log_info("called query");
+  if(config_no ==-1 or config_no &gt; configNum){
+    Log_info("calling for the highest config %d", configNum);
+    *config = configs_[configNum];
+  }
+  else{
+    Log_info("calling for the current config %d", config_no);
+    *config = configs_[config_no];
+  }
+
+  *ret = KV_SUCCESS;
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match155-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  // your code here
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+</FONT>  uint32_t id = sp_log_svr_-&gt;site_id_;
+  return cli;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

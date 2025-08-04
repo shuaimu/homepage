@@ -1,0 +1,703 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-gaurav-aggarwall/src/deptran/raft/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-prajjawal05/src/deptran/raft/server.cc<p><PRE>
+
+
+#include "server.h"
+// #include "paxos_worker.h"
+#include "exec.h"
+#include "frame.h"
+#include "coordinator.h"
+#include "../classic/tpc_command.h"
+
+#define SECONDSTOMICRO 1000000
+
+SleepTimer::SleepTimer() : end_(), isStopped() {
+  stop();
+}
+
+void SleepTimer::start(int time_micro) {
+    isStopped = false;
+    gettimeofday(&end_, nullptr);
+    add(time_micro);
+}
+
+void SleepTimer::addOnce(int time_micro) {
+  if(isStopped) {
+    return;
+  }
+
+  if(this-&gt;getTimeLeft() &lt;= 0) {
+    add(time_micro);
+    return;
+  }
+
+  int extra_time = time_micro - this-&gt;getTimeLeft();
+  if(extra_time &gt; 0) {
+    add(extra_time);
+  }
+}
+
+void SleepTimer::add(int time_micro) {
+    end_.tv_usec = time_micro + end_.tv_usec;
+    if(end_.tv_usec &gt;= SECONDSTOMICRO) {
+       end_.tv_usec = end_.tv_usec % SECONDSTOMICRO;
+       end_.tv_sec += 1;
+    }
+}
+
+void SleepTimer::stop() {
+    isStopped = true;
+    end_.tv_sec = 0;
+    end_.tv_usec = 0;
+}
+
+int SleepTimer::getTimeLeft() {
+  struct timeval curr_time;
+  gettimeofday(&curr_time, nullptr);
+
+  if(isStopped) {
+    return 0;
+  }
+
+  return (end_.tv_sec - curr_time.tv_sec) * 1000000 + end_.tv_usec - curr_time.tv_usec;
+}
+
+bool SleepTimer::hasTimeLeft() {
+  struct timeval curr_time;
+  gettimeofday(&curr_time, nullptr);
+  int time_left = getTimeLeft();
+  
+  if(time_left &lt;= 0) {
+    return false;
+  } 
+
+  return true;
+}
+
+bool SleepTimer::isRunning() {
+  return !isStopped;
+}
+
+namespace janus {
+
+RaftServer::RaftServer(Frame * frame) {
+  frame_ = frame ;
+  server_type = FOLLOWER;
+  voted_for = -1;
+  election_timer = new SleepTimer();
+
+  /* RaftTestConfig::committed_cmds[i].push_back(-1); is done when initialising RaftTestConfig */
+  commit_index = 0;
+  last_applied = 0;
+  setup_done = false;
+
+  for(int i=0; i&lt;NSERVERS; i++) {
+    next_index[i]= 1;
+    match_index[i] = 0;
+  }
+  logs.push_back(LogData(
+    -1, -1
+  ));
+  /* election_timeout in the range of 400-500ms */
+  election_timeout = 800000 + (rand() % 101)*1000;
+  /* Your code here for server initialization. Note that this function is 
+     called in a different OS thread. Be careful about thread safety if 
+     you want to initialize variables here. */
+}
+
+RaftServer::~RaftServer() {
+  Log_debug("Things are going wrong, Let's take it all the way down");
+  /* Your code here for server teardown */
+  // this-&gt;thread_pool_g-&gt;release();
+}
+
+/* leader can step down only if 
+1. it receives a heartbeat
+2. it calls someone else for heartbeat and sees higher term
+*/
+void RaftServer::StartElection() {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_); //always started in a coroutine
+    this-&gt;term += 1;
+    this-&gt;server_type = CANDIDATE;
+    this-&gt;voted_for = this-&gt;site_id_;
+
+    if(commo()-&gt;rpc_par_proxies_.size() == 0) {
+      Log_debug("[%d] Server seems disconnected, no need to request vote else will keep waiting", this-&gt;site_id_);
+      this-&gt;server_type = FOLLOWER;
+      this-&gt;ResetElectionTimer();
+      return;
+    }
+
+    vector&lt;uint64_t&gt; terms = {};
+    for(int j=0; j&lt;logs.size(); j++) {
+      terms.push_back(logs[j].term);
+    }
+
+    for(int i=0; i&lt;NSERVERS; i++) {
+      next_index[i]= logs.size();
+      match_index[i] = 0;
+    }
+
+    Log_debug("[%d] before requesting vote server had %d logs.", this-&gt;site_id_, logs.size());
+
+    auto voteResp = commo()-&gt;SendRequestVote(0, this-&gt;site_id_, 
+                          this-&gt;term, this-&gt;site_id_, this-&gt;next_index, terms);
+    voteResp-&gt;Wait();
+
+    if(voteResp-&gt;HasMajority()) {
+      this-&gt;server_type = LEADER;
+      this-&gt;StartHeartbeat();
+      this-&gt;StopElectionTimer();
+      return;
+    } 
+
+    this-&gt;server_type = FOLLOWER;
+    this-&gt;term = voteResp-&gt;GetMaxTerm();
+    this-&gt;voted_for = -1;
+    this-&gt;ResetElectionTimer();
+  
+    return;    
+}
+
+void RaftServer::StartElectionTimer() {
+  this-&gt;election_timer-&gt;start(election_timeout);
+  Coroutine::CreateRun([this]() {
+    while(true) {
+      if(!this-&gt;election_timer-&gt;isRunning()) {
+        break;
+      }
+      Coroutine::Sleep(this-&gt;election_timer-&gt;getTimeLeft());
+      if(!this-&gt;election_timer-&gt;hasTimeLeft()) {
+        this-&gt;StartElection();
+      }
+    }
+  });
+}
+
+void RaftServer::StopElectionTimer() {
+  this-&gt;election_timer-&gt;stop();
+}
+
+void RaftServer::ResetElectionTimer() {
+  if(!this-&gt;election_timer-&gt;isRunning()) {
+    StartElectionTimer();
+    return;
+  }
+  this-&gt;election_timer-&gt;addOnce(election_timeout);
+}
+
+void RaftServer::Setup() {
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_); 
+  /* Your code here for server setup. Due to the asynchronous nature of the 
+     framework, this function could be called after a RPC handler is triggered. 
+     Your code should be aware of that. This function is always called in the 
+     same OS thread as the RPC handlers. */
+  StartElectionTimer();
+  SyncRpcExample();
+}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match156-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+bool RaftServer::Start(shared_ptr&lt;Marshallable&gt; &cmd,
+                       uint64_t *index,
+                       uint64_t *term) {
+    
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+
+  if(server_type != LEADER) {
+    return false;
+  }
+  /* Your code here. This function can be called from another OS thread. */
+
+  *index = logs.size();
+  *term = this-&gt;term;
+</FONT>
+  auto sp_m = dynamic_pointer_cast&lt;TpcCommitCommand&gt;(cmd);
+  logs.push_back(LogData(
+    this-&gt;term,
+    sp_m-&gt;tx_id_
+  ));
+  this-&gt;setup_done = true;
+  return true;
+}
+
+void RaftServer::GetState(bool *is_leader, uint64_t *term) {
+  /* Your code here. This function can be called from another OS thread. */
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+  bool getting_leader_state = server_type == LEADER ? true : false;
+  *is_leader = getting_leader_state;
+  *term = this-&gt;term;
+  LogData last_log = this-&gt;logs[this-&gt;logs.size() - 1];
+  Log_debug("Server: %d is currently leader: %d. The logs size is: %d, last (data, term) is: (%d, %d), and the commit Index is: %d, last applied is: %d", this-&gt;site_id_, getting_leader_state, this-&gt;logs.size(), last_log.data, last_log.term, this-&gt;commit_index, this-&gt;last_applied);  
+}
+
+void RaftServer::GetVote(uint64_t *term, bool_t *vote, uint64_t candidate_id, uint64_t last_index, uint64_t last_term) {
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+
+  uint64_t incoming_term = *term;
+
+  *term = this-&gt;term;
+
+
+  if(incoming_term &lt; this-&gt;term) {
+    *vote = false;
+    return;
+  }
+
+  if(incoming_term == this-&gt;term) {
+    /* Already voted for someone else */
+    if(this-&gt;voted_for != -1 && this-&gt;voted_for != candidate_id) {
+      *vote = false;
+      return;
+    } else {
+      *vote = true;
+    }
+  }
+
+  if(incoming_term &gt; this-&gt;term) {
+    *vote = true;
+  }
+
+  if(this-&gt;server_type == LEADER) {
+    this-&gt;ResetElectionTimer();	
+  }
+  this-&gt;term = incoming_term;
+  // Note: self is not being called
+  this-&gt;server_type = FOLLOWER;
+  this-&gt;voted_for = candidate_id;
+  
+  uint64_t last_svr_index = this-&gt;logs.size() - 1;
+  uint64_t last_svr_term = this-&gt;logs[last_svr_index].term;
+
+  Log_debug("[%d] called %d for vote. server index: %d term: %d. caller index: %d, term: %d", candidate_id, this-&gt;site_id_, last_svr_index, last_svr_term, last_index, last_term);
+
+  if(last_svr_term &gt; last_term) {
+    *vote = false;
+    return;
+  }
+  if(last_svr_term == last_term && last_svr_index &gt; last_index) {
+    *vote = false;
+    return;
+  }
+
+  this-&gt;ResetElectionTimer();
+  return;
+}
+
+void RaftServer::StartHeartbeat() {
+  this-&gt;setup_done = false;
+  Coroutine::CreateRun([this]() {
+    while(true) {
+      Coroutine::Sleep(HEARTBEAT_INTERVAL);
+      if(this-&gt;server_type != LEADER) {
+        break;
+      }
+        this-&gt;BroadcastEntriesNew();
+    }
+  });
+}
+
+// @todo: do we need to care about the quorum here, I think not
+// note: 0 is acting weirdly
+void RaftServer::HandleHeartbeat(uint64_t term_) {
+  return;
+}
+
+void RaftServer::UpdateLeaderCommit() {
+  if(server_type != LEADER || !setup_done) {
+    return;
+  }
+
+  for(int i=logs.size()-1; i&gt;commit_index; i--) {
+    int num = 0;
+
+    for(int j=0; j&lt;NSERVERS; j++) {
+      if(j == this-&gt;site_id_) {
+        continue;
+      }
+      if(match_index[j] &gt;= i) {
+        num++;
+      }
+    }
+
+    if(num + 1 &gt; floor(NSERVERS/2)) {
+      this-&gt;commit_index = i;
+      Log_debug("[%d] Updated leader commit index to %d", this-&gt;site_id_, i);
+      break;
+    }
+  }
+
+  
+  if(this-&gt;last_applied &gt;= commit_index) {
+    Log_debug("[%d] No new logs where last_applied is: %d and commit_index is: %d", this-&gt;site_id_, last_applied, commit_index);
+    return;
+  }
+
+  Log_debug("[%d] Applying logs where last_applied is: %d and commit_index is: %d", this-&gt;site_id_, last_applied, commit_index);
+
+  for(int i=this-&gt;last_applied + 1; i&lt;=commit_index; i++){
+    auto cmdptr = new TpcCommitCommand();
+    auto vpd_p = std::make_shared&lt;VecPieceData&gt;();
+    vpd_p-&gt;sp_vec_piece_data_ = std::make_shared&lt;vector&lt;shared_ptr&lt;SimpleCommand&gt;&gt;&gt;();
+    cmdptr-&gt;tx_id_ = logs[i].data;
+    cmdptr-&gt;cmd_ = vpd_p;
+    app_next_(*cmdptr);
+  }
+
+  this-&gt;last_applied = commit_index;
+  Log_debug("[%d] Applied logs, and the applied index now is: %d", this-&gt;site_id_, last_applied);
+
+  return;
+}
+void RaftServer::BroadcastEntriesNew() {
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+  vector&lt;uint64_t&gt; terms = {};
+  vector&lt;txid_t&gt; all_data = {};
+
+  for(int j=0; j&lt;logs.size(); j++) {
+    terms.push_back(logs[j].term);
+    all_data.push_back(logs[j].data);
+  }
+
+  // commo()-&gt;SendEmptyAppendEntriesTemp(0, this-&gt;site_id_, this-&gt;term);
+  if(commo()-&gt;rpc_par_proxies_.size() == 0) {
+    Log_debug("[%d] Server seems disconnected, do not send message anywhere else will keep waiting", this-&gt;site_id_);
+    return;
+  }
+
+  auto proxies = commo()-&gt;rpc_par_proxies_[0];
+
+  int64_t higher_term_observed = -1;
+
+  for(auto& proxy : proxies) {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+
+    siteid_t target_site_id = proxy.first;
+    if (target_site_id == this-&gt;site_id_) {
+      continue;
+    }
+
+    int start = next_index[target_site_id];
+    vector&lt;uint64_t&gt; terms_for_curr = vector&lt;uint64_t&gt;(terms.begin() + start, terms.end());
+    vector&lt;txid_t&gt; all_data_for_curr = vector&lt;txid_t&gt;(all_data.begin() + start, all_data.end());
+
+    uint64_t prev_log_index = next_index[target_site_id]-1;
+    uint64_t prev_log_term = terms[prev_log_index];
+
+
+    auto resp = commo()-&gt;SendAppendEntriesNew(0, this-&gt;site_id_, target_site_id, this-&gt;term, prev_log_index, prev_log_term, terms_for_curr, all_data_for_curr, this-&gt;commit_index, !this-&gt;setup_done);
+    resp-&gt;Wait();
+
+    Log_debug("[%d] Wait over for: %d", this-&gt;site_id_, target_site_id);
+
+    auto response = resp-&gt;results;
+    
+    auto result = response.second;
+
+    uint64_t server_term = result.second.first;
+    bool_t accepted = result.first;
+
+    Log_debug("[%d] Checking append entries response for: %d", this-&gt;site_id_, target_site_id);
+    
+    if(accepted) {
+      next_index[target_site_id] = logs.size();
+      match_index[target_site_id] = next_index[target_site_id] - 1;
+      Log_debug("[%d] Acceptance came from: %d, updated next_index to: %d", this-&gt;site_id_, target_site_id, next_index[target_site_id]);
+      continue;
+    }
+
+    /* Note: not accepted if either:
+    a. term mismatch.
+    b. prev_index is empty 
+    c. term mismatch in log entry
+    d. server is disconnected (term: -1)
+    */
+
+    Log_debug("[%d] Rejection came from: %d", this-&gt;site_id_, target_site_id);
+    uint64_t index_to_start = result.second.second;
+
+    if(index_to_start == 0) {
+      continue;
+    }
+
+    if(server_term &gt; this-&gt;term) {
+      higher_term_observed = server_term;
+    }
+
+    next_index[target_site_id] = index_to_start;
+
+  }
+
+  if(higher_term_observed != -1) {
+      ResetElectionTimer();
+      this-&gt;term = higher_term_observed;
+      this-&gt;voted_for = -1;
+      this-&gt;server_type = FOLLOWER;
+  }
+  UpdateLeaderCommit();
+  return;
+}
+
+void RaftServer::BroadcastEntries() {
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+  vector&lt;uint64_t&gt; terms = {};
+  vector&lt;txid_t&gt; all_data = {};
+
+  for(int j=0; j&lt;logs.size(); j++) {
+    terms.push_back(logs[j].term);
+    all_data.push_back(logs[j].data);
+  }
+
+  // commo()-&gt;SendEmptyAppendEntriesTemp(0, this-&gt;site_id_, this-&gt;term);
+  if(commo()-&gt;rpc_par_proxies_.size() == 0) {
+    Log_debug("[%d] Server seems disconnected, do not send message anywhere else will keep waiting", this-&gt;site_id_);
+    return;
+  }
+  
+  auto resp = commo()-&gt;SendAppendEntries(0, this-&gt;site_id_, this-&gt;term, this-&gt;next_index, terms, all_data, commit_index);
+  resp-&gt;Wait();
+
+  for(auto responses: resp-&gt;results) {
+    siteid_t target_id = responses.first;
+    auto result = responses.second;
+
+    uint64_t server_term = result.second.first;
+
+    bool_t accepted = result.first;
+
+    Log_debug("[%d] Checking append entries response for: %d", this-&gt;site_id_, target_id);
+    
+    if(accepted) {
+      next_index[target_id] = logs.size();
+      match_index[target_id] = next_index[target_id] - 1;
+      Log_debug("[%d] Acceptance came from: %d, updated next_index to: %d", this-&gt;site_id_, target_id, next_index[target_id]);
+      continue;
+    }
+
+    /* Note: not accepted if either:
+    a. term mismatch.
+    b. prev_index is empty 
+    c. term mismatch in log entry
+    d. server is disconnected (term: -1)
+    */
+
+    Log_debug("[%d] Rejection came from: %d", this-&gt;site_id_, target_id);
+    uint64_t index_to_start = result.second.second;
+
+    if(index_to_start == 0) {
+      continue;
+    }
+
+    if(server_term &gt; this-&gt;term) {
+      ResetElectionTimer();
+      this-&gt;term = server_term;
+      this-&gt;voted_for = -1;
+      this-&gt;server_type = FOLLOWER;
+      break;
+    }
+
+    next_index[target_id] = index_to_start;
+  }
+  UpdateLeaderCommit();
+  return;
+}
+
+void RaftServer::ApplyStateMachine() {  
+  if(this-&gt;last_applied + 1 &lt;= commit_index) {
+    Log_debug("[%d] Applying logs where last_applied is: %d and commit_index is: %d", this-&gt;site_id_, last_applied, commit_index);
+  }
+
+  for(int i=this-&gt;last_applied + 1; i&lt;=commit_index; i++){
+    auto cmdptr = new TpcCommitCommand();
+    auto vpd_p = std::make_shared&lt;VecPieceData&gt;();
+    vpd_p-&gt;sp_vec_piece_data_ = std::make_shared&lt;vector&lt;shared_ptr&lt;SimpleCommand&gt;&gt;&gt;();
+    cmdptr-&gt;tx_id_ = logs[i].data;
+    cmdptr-&gt;cmd_ = vpd_p;
+    app_next_(*cmdptr);
+  }
+
+  this-&gt;last_applied = commit_index;
+  Log_debug("[%d] Applied logs, and the applied index now is: %d", this-&gt;site_id_, last_applied);
+}
+
+void RaftServer::HandleLogEntry(const siteid_t& leader,
+                                          const uint64_t& prev_log_index,
+                                          const uint64_t& prev_log_term,
+                                          const vector&lt;uint64_t&gt;& terms,
+                                          const vector&lt;txid_t&gt;& all_data,
+                                          const uint64_t& leader_commit,
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match156-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                          const bool_t& paused,
+                                          uint64_t* term,
+                                          uint64_t* next_index,
+                                          bool_t* followerAppendOK) {                                            
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+
+  Log_debug("[%d] Have an applied index: %d, let's see where this goes", this-&gt;site_id_, last_applied);
+</FONT>  if(this-&gt;server_type == LEADER) { 
+    Log_warn("[%d] Leader received a heartbeat from follower: %d", this-&gt;site_id_, leader);
+  }
+
+  uint64_t incoming_term = *term;
+  *term = this-&gt;term;
+  
+  if(incoming_term &lt; this-&gt;term) {
+    Log_debug("[%d] incoming term is less, returning", this-&gt;site_id_);
+    *followerAppendOK = false;
+    return;
+  }
+
+  this-&gt;ResetElectionTimer();
+  this-&gt;server_type = FOLLOWER; 
+
+  Log_debug("[%d] Received a request from leader: %d with logs_size: %d", this-&gt;site_id_, leader, terms.size()+prev_log_index+1);
+  uint64_t curr_index = this-&gt;logs.size();
+
+  if(terms.size() != 0) {
+    Log_debug("[%d] Received a log request from leader: %d", this-&gt;site_id_, leader);
+    for(int i=0; i&lt;all_data.size(); i++) {
+	    Log_debug("[%d] by leader: %d for %d at %d", this-&gt;site_id_, leader, all_data[i], i+prev_log_index+1);
+	  }
+    if(logs.size()&gt;5) {
+      for(int i=logs.size()-5; i&lt;logs.size(); i++) {
+	      Log_debug("[%d] Already present %d at %d", this-&gt;site_id_, logs[i].data, i);
+	    }
+    }
+  }
+
+  *followerAppendOK = true;
+  
+  if(incoming_term &gt; this-&gt;term) {
+    this-&gt;term = incoming_term;
+    this-&gt;voted_for = -1;
+  }
+
+  // if prev_log_index is empty
+  if(logs.size()-1 &lt; prev_log_index) {
+      *followerAppendOK = false;
+      *next_index = logs.size();
+      Log_debug("[%d] prev_log_index is empty. logs.size: %d and prev_log_index: %d, returning wuth curr_index: %d", this-&gt;site_id_, logs.size(), prev_log_index, curr_index);
+      return;
+  }
+  
+  Log_debug("[%d] Last position: %d has data: %d and term: %d.", this-&gt;site_id_, this-&gt;logs.size()-1, this-&gt;logs[curr_index-1].data, this-&gt;logs[curr_index-1].term);
+  Log_debug("[%d] Request contains Prev Log Index: %d and Prev_log_term: %d.", this-&gt;site_id_, prev_log_index, prev_log_term);
+
+  // if there is a mismatch in the prev term, prev_index will decrease
+  if(this-&gt;logs[prev_log_index].term != prev_log_term) {
+    Log_debug("[%d] there is a mismatch in the terms, will remove logs", this-&gt;site_id_);
+    *followerAppendOK = false;
+    uint64_t bad_term = this-&gt;logs[prev_log_index].term;
+    uint64_t total_logs = this-&gt;logs.size();
+    while(this-&gt;logs[total_logs-1].term == bad_term) {
+      total_logs--;
+    }
+    *next_index = total_logs;
+    return;
+  }
+
+  if(paused) {
+    return;
+  }
+
+  if(terms.size() != 0) {
+    if(logs.size()-1 &gt; prev_log_index) {
+      Log_debug("[%d] Clearing the logs", this-&gt;site_id_);
+    }
+    // clearing the logs, so that the last index is prev_log_index
+    while(logs.size()-1 &gt; prev_log_index){
+      logs.pop_back();
+    }
+
+     // inserting the logs (may override)
+    for(int i=0; i&lt;terms.size(); i++) {
+      logs.push_back(LogData(
+        terms[i],
+        all_data[i]
+      ));
+    }
+
+    Log_debug("[%d] Inserted the logs, final size is: %d", this-&gt;site_id_, this-&gt;logs.size());
+  }
+
+  this-&gt;commit_index = leader_commit &lt; logs.size() - 1 ? leader_commit : logs.size() - 1;
+
+  Log_debug("[%d] Final commmit index: %d, leader_commit: %d", this-&gt;site_id_, this-&gt;commit_index, leader_commit);
+
+  *followerAppendOK = true;
+  
+  if(this-&gt;last_applied &gt;= commit_index) {
+    Log_debug("[%d] No new logs where last_applied is: %d and commit_index is: %d", this-&gt;site_id_, last_applied, commit_index);
+    return;
+  }
+
+  Log_debug("[%d] Applying logs where last_applied is: %d and commit_index is: %d", this-&gt;site_id_, last_applied, commit_index);
+
+  for(int i=this-&gt;last_applied + 1; i&lt;=commit_index; i++){
+    auto cmdptr = new TpcCommitCommand();
+    auto vpd_p = std::make_shared&lt;VecPieceData&gt;();
+    vpd_p-&gt;sp_vec_piece_data_ = std::make_shared&lt;vector&lt;shared_ptr&lt;SimpleCommand&gt;&gt;&gt;();
+    cmdptr-&gt;tx_id_ = logs[i].data;
+    cmdptr-&gt;cmd_ = vpd_p;
+    app_next_(*cmdptr);
+  }
+
+  this-&gt;last_applied = commit_index;
+  Log_debug("[%d] Applied logs, and the applied index now is: %d", this-&gt;site_id_, last_applied);
+
+  return;
+}
+
+void RaftServer::SyncRpcExample() {
+  /* This is an example of synchronous RPC using coroutine; feel free to 
+     modify this function to dispatch/receive your own messages. 
+     You can refer to the other function examples in commo.h/cc on how 
+     to send/recv a Marshallable object over RPC. */
+}
+
+/* Do not modify any code below here */
+
+void RaftServer::Disconnect(const bool disconnect) {
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+  verify(disconnected_ != disconnect);
+  // global map of rpc_par_proxies_ values accessed by partition then by site
+  static map&lt;parid_t, map&lt;siteid_t, map&lt;siteid_t, vector&lt;SiteProxyPair&gt;&gt;&gt;&gt; _proxies{};
+  if (_proxies.find(partition_id_) == _proxies.end()) {
+    _proxies[partition_id_] = {};
+  }
+  RaftCommo *c = (RaftCommo*) commo();
+  if (disconnect) {
+    verify(_proxies[partition_id_][loc_id_].size() == 0);
+    verify(c-&gt;rpc_par_proxies_.size() &gt; 0);
+    auto sz = c-&gt;rpc_par_proxies_.size();
+    _proxies[partition_id_][loc_id_].insert(c-&gt;rpc_par_proxies_.begin(), c-&gt;rpc_par_proxies_.end());
+    c-&gt;rpc_par_proxies_ = {};
+    verify(_proxies[partition_id_][loc_id_].size() == sz);
+    verify(c-&gt;rpc_par_proxies_.size() == 0);
+  } else {
+    verify(_proxies[partition_id_][loc_id_].size() &gt; 0);
+    auto sz = _proxies[partition_id_][loc_id_].size();
+    c-&gt;rpc_par_proxies_ = {};
+    c-&gt;rpc_par_proxies_.insert(_proxies[partition_id_][loc_id_].begin(), _proxies[partition_id_][loc_id_].end());
+    _proxies[partition_id_][loc_id_] = {};
+    verify(_proxies[partition_id_][loc_id_].size() == 0);
+    verify(c-&gt;rpc_par_proxies_.size() == sz);
+  }
+  disconnected_ = disconnect;
+}
+
+bool RaftServer::IsDisconnected() {
+  return disconnected_;
+}
+
+} // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

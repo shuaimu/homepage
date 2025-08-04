@@ -1,0 +1,90 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-js0753/src/shardkv/client.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-imtoobose/src/shardkv/client.cc<p><PRE>
+
+
+#include "client.h"
+#include "server.h"
+#include "shardmaster/client.h"
+
+namespace janus {
+
+int ShardKvClient::Op(const string& key, function&lt;int(uint32_t*)&gt; func) {
+  const auto servers = GetServers(key);
+  uint64_t t1 = Time::now();
+  const auto nServers = servers.size();
+  leader_idx_ = servers.at(servers_idx_);
+  
+  while (true) {
+    uint64_t t2 = Time::now();
+    if (t2 - t1 &gt; 10000000) {
+      return KV_TIMEOUT;
+    }
+
+    uint32_t ret = 0;
+    int r1; 
+    r1 = func(&ret);
+    if (r1 == ETIMEDOUT || ret == KV_TIMEOUT) {
+      servers_idx_ = (servers_idx_+1) % nServers;
+      leader_idx_ = servers.at(servers_idx_);
+      return KV_TIMEOUT;
+    }
+
+    if (ret == KV_SUCCESS) {
+      return KV_SUCCESS;
+    }
+
+    if (ret == KV_NOTLEADER) {
+      servers_idx_ = (servers_idx_ + 1) % nServers;
+      leader_idx_ = servers.at(servers_idx_);
+    }
+  }
+}
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match68-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_11.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+int ShardKvClient::Put(const string& k, const string& v) {
+  return Op(k, [&](uint32_t* r)-&gt;int{
+    return Proxy(leader_idx_).Put(GetNextOpId(), k, v, r);
+</FONT>  });
+}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match68-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_22.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+int ShardKvClient::Append(const string& k, const string& v) {
+  return Op(k, [&](uint32_t* r)-&gt;int{
+    return Proxy(leader_idx_).Append(GetNextOpId(), k, v, r);
+  });
+}
+
+int ShardKvClient::Get(const string& k, string* v) {
+  return Op(k, [&](uint32_t* r)-&gt;int{
+    return Proxy(leader_idx_).Get(GetNextOpId(), k, r, v);
+</FONT>  });
+}
+
+ShardKvProxy &ShardKvClient::Proxy(siteid_t site_id)
+{
+  verify(commo_);
+  auto p = (ShardKvProxy *)commo_-&gt;rpc_proxies_.at(site_id);
+  return *p;
+}
+
+std::vector&lt;uint32_t&gt; ShardKvClient::GetServers(const string &key)
+{
+  ShardConfig config;
+  shardMasterClient-&gt;Query(-1, &config);
+  const auto shardGroup = config.shard_group_map_.at(Key2Shard(key));
+  const auto servers = config.group_servers_map_.at(shardGroup);
+  // Log_info("getting servers for key %s key2shard %d shard %d config %s", key.c_str(), Key2Shard(key), shardGroup, config.toString().c_str());
+  return servers;
+}
+
+} // namesapce janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

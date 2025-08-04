@@ -1,0 +1,174 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-gkulhare/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-Pritish1/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+namespace janus {
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match166-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  RaftServer& raft = GetRaftServer();
+</FONT>  //raft.mtx_.lock();
+  if(raft.state != LEADER){
+    *ret = KV_NOTLEADER;
+    //raft.mtx_.unlock();
+    defer-&gt;reply();
+    return;
+  }
+  map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt; gid_map = gid_server_map;
+
+  Log_info("JOIN CALLED =&gt; %d", raft.loc_id_);
+  for(auto& j : gid_map){
+    cout&lt;&lt;j.first&lt;&lt;" : ";
+    for(auto& k : j.second)
+      cout&lt;&lt;k&lt;&lt;" ";
+    cout&lt;&lt;endl;
+  }
+  int lastConfigNumber = configs_.size() &gt; 0 ? (configs_.end())-&gt;first : 0;
+  int newConfigNumber = lastConfigNumber + 1;
+  Log_info("%d JOIN new config number =&gt; %d", raft.loc_id_, newConfigNumber);
+  ShardConfig newShardConfig;
+  newShardConfig.number = newConfigNumber;
+  vector&lt;uint32_t&gt; gids;
+  map&lt;uint32_t, uint32_t&gt; newShardMap;
+  if(configs_.size() &gt; 0){
+    auto oldConfig = configs_[lastConfigNumber];
+    map&lt;uint32_t, vector&lt;uint32_t&gt;&gt; oldGrpServerMap = oldConfig.group_servers_map_;
+    map&lt;uint32_t, uint32_t&gt; oldShardMap = oldConfig.shard_group_map_;
+    for(auto& i : oldConfig.group_servers_map_){
+      if(i.first &gt; 0)
+        gids.push_back(i.first);
+    }
+    for(auto& i : gid_map){
+      gids.push_back(i.first);
+      oldGrpServerMap[i.first] = i.second;
+    }
+    // for(int i=1;i&lt;=10;i++){
+    //   Log_info("%d shard_map %d : %d", raft.loc_id_, i, oldShardMap[i]);
+    // }
+    newShardConfig.group_servers_map_ = oldGrpServerMap;
+    newShardConfig.shard_group_map_ = oldShardMap;
+    configs_[newConfigNumber] = newShardConfig;
+  } else {
+    for(auto& i : gid_map){
+        //Log_info("GID %d pushing", i.first);
+        gids.push_back(i.first);
+    }
+    for(int i=1;i&lt;=10;i++){
+      newShardMap[i] = gids[0];
+      //Log_info("%d shard_map %d : %d", raft.loc_id_, i, newShardMap[i]);
+    }
+    newShardConfig.group_servers_map_ = gid_map;
+    newShardConfig.shard_group_map_ = newShardMap;
+    configs_[newConfigNumber] = newShardConfig;
+  }
+  latestConfig = newConfigNumber;
+  *ret = KV_SUCCESS;
+  //raft.mtx_.unlock();
+  defer-&gt;reply();
+  return;
+}
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match166-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  RaftServer& raft = GetRaftServer();
+</FONT>  //raft.mtx_.lock();
+  if(raft.state != LEADER){
+    *ret = KV_NOTLEADER;
+    //raft.mtx_.unlock();
+    defer-&gt;reply();
+    return;
+  }
+  Log_info("LEAVE CALLED =&gt; %d", raft.loc_id_);
+  int lastConfigNumber = configs_.size() &gt; 0 ? (configs_.end())-&gt;first : 0;
+  int newConfigNumber = lastConfigNumber + 1;
+  auto oldConfig = configs_[lastConfigNumber];
+  map&lt;uint32_t, vector&lt;uint32_t&gt;&gt; oldGrpServerMap = oldConfig.group_servers_map_;
+  map&lt;uint32_t, uint32_t&gt; oldShardMap = oldConfig.shard_group_map_;
+
+  vector&lt;uint32_t&gt; oldgids;
+  for(auto& i : oldGrpServerMap){
+      oldgids.push_back(i.first);
+  }
+  for(auto& i : gids){
+    if(oldGrpServerMap.find(i) != oldGrpServerMap.end())
+      oldGrpServerMap.erase(oldGrpServerMap.find(i));
+  }
+  map&lt;uint32_t, uint32_t&gt; newShardMap;
+  if(oldGrpServerMap.find(oldShardMap[1]) != oldGrpServerMap.end()){
+    newShardMap = oldShardMap;
+  } else {
+    for(int i=1;i&lt;=10;i++){
+      newShardMap[i] = oldGrpServerMap.begin()-&gt;first;
+      //Log_info("%d : %d", i, newShardMap[i]);
+    }
+  }
+  ShardConfig newShardConfig;
+  newShardConfig.number = newConfigNumber;
+  newShardConfig.group_servers_map_ = oldGrpServerMap;
+  newShardConfig.shard_group_map_ = newShardMap;
+  configs_[newConfigNumber] = newShardConfig;
+  latestConfig = newConfigNumber;
+  *ret = KV_SUCCESS;
+  //raft.mtx_.unlock();
+  
+  defer-&gt;reply();
+  return;
+}
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match166-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+  // your code here
+  RaftServer& raft = GetRaftServer();
+</FONT>  //raft.mtx_.lock();
+  if(raft.state != LEADER){
+    *ret = KV_NOTLEADER;
+    //raft.mtx_.unlock();
+    defer-&gt;reply();
+    return;
+  }
+  Log_info("%d QUERY config number =&gt; %d", raft.loc_id_, config_no);
+  if(configs_.find(config_no) == configs_.end()){
+    *ret = KV_SUCCESS;
+    *config = configs_[latestConfig];
+  } else {
+    *ret = KV_SUCCESS;
+    *config = configs_[config_no];;
+  }
+  //raft.mtx_.unlock();
+  defer-&gt;reply();
+  return;
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  // your code here
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  return cli;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

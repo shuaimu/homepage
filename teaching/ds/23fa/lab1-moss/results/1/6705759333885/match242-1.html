@@ -1,0 +1,302 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-MITsVision/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-ajayhegde96/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+
+void RaftServiceImpl::HandleRequestVote(const int64_t& term,
+                                        const int64_t& candidateId,
+                                        const int64_t& lastLogIdx,
+                                        const int64_t& lastLogTerm,
+                                        int64_t* curTerm,
+                                        bool_t *voteGranted,
+                                        rrr::DeferredReply* defer) {
+  /* Your code here */
+  *curTerm = 0;
+  *voteGranted = false;
+
+  Log_info("[ReqVoteRPC] Server id %d earlier voted for %d, new requestor term:%d & voter curTerm %d", this-&gt;svr_-&gt;site_id_, this-&gt;svr_-&gt;votedFor, term, this-&gt;svr_-&gt;curTerm);
+  int64_t svr_lastlogidx = this-&gt;svr_-&gt;logentries[this-&gt;svr_-&gt;logentries.size() - 1].logidx;
+  int64_t svr_lastlogterm = this-&gt;svr_-&gt;logentries[svr_lastlogidx].term;
+  Log_debug("Server %d lastlogidx %d, lastlogterm %d, Requestor LLidx %d, LLTm %d", this-&gt;svr_-&gt;site_id_, svr_lastlogidx, svr_lastlogterm, lastLogIdx, lastLogTerm);
+
+  if((term &lt; this-&gt;svr_-&gt;curTerm))
+  {
+      Log_debug("[ReqVoteRPC] Server ID:%d, Term %d is out of date or Vote already given to some other server", candidateId, term);
+      Log_debug("[ReqVoteRPC] Voter's ID:%d, Current term %d & votedFor %d", this-&gt;svr_-&gt;site_id_, this-&gt;svr_-&gt;curTerm, this-&gt;svr_-&gt;votedFor);
+      *voteGranted = false;
+      *curTerm = this-&gt;svr_-&gt;curTerm;
+      this-&gt;svr_-&gt;ResetElectionTimer();
+  }
+
+  else if(this-&gt;svr_-&gt;curTerm &lt; term)
+  {
+      Log_debug("Server %d is becoming a follower", this-&gt;svr_-&gt;site_id_); //Rules of Servers 5.1
+      this-&gt;svr_-&gt;DemoteToFollower(term);
+    svr_lastlogidx = this-&gt;svr_-&gt;logentries[this-&gt;svr_-&gt;logentries.size() - 1].logidx;
+    svr_lastlogterm = this-&gt;svr_-&gt;logentries[svr_lastlogidx].term;
+    if((svr_lastlogterm &lt; lastLogTerm) ||(svr_lastlogterm == lastLogTerm && svr_lastlogidx &lt;= lastLogIdx))
+    {
+    Log_debug("[ReqVoteRPC]Server Cur Term &lt; Requestor term, hence granting Vote");
+
+    *voteGranted = true;
+    this-&gt;svr_-&gt;votedFor = candidateId;
+    this-&gt;svr_-&gt;curTerm = term;
+    this-&gt;svr_-&gt;ResetElectionTimer();
+
+    }
+  }
+
+  svr_lastlogidx = this-&gt;svr_-&gt;logentries[this-&gt;svr_-&gt;logentries.size() - 1].logidx;
+  svr_lastlogterm = this-&gt;svr_-&gt;logentries[svr_lastlogidx].term;
+
+  if((this-&gt;svr_-&gt;curTerm == term) && (this-&gt;svr_-&gt;votedFor == -1 || this-&gt;svr_-&gt;votedFor == candidateId) &&
+    ((svr_lastlogterm &lt; lastLogTerm) ||(svr_lastlogidx &lt;= lastLogIdx && svr_lastlogterm == lastLogTerm)))
+  {
+    *voteGranted = true;
+
+    this-&gt;svr_-&gt;votedFor = candidateId;
+
+    this-&gt;svr_-&gt;curTerm = term;
+    Log_debug("[ReqVoteRPC] VotedFor:%d VoteGranted %d", this-&gt;svr_-&gt;votedFor, *voteGranted);
+    Log_debug("Last Log Entries: Candidate Last Log Idx %d, last Log Term %d | Server %d Last Log Idx %d, Last Log Term %d", 
+    lastLogIdx, lastLogTerm, this-&gt;svr_-&gt;site_id_, this-&gt;svr_-&gt;logentries[lastLogIdx].logidx, this-&gt;svr_-&gt;logentries[lastLogIdx].term);
+    this-&gt;svr_-&gt;ResetElectionTimer(); //Resetting timer as Voted for a candidate this term.
+  }
+
+  *curTerm = this-&gt;svr_-&gt;curTerm;
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleAppendEntries(const int64_t& term,
+                                          const int64_t& leaderId,
+                                          const int64_t& prevLogIdx,
+                                          const int64_t& prevLogTerm,
+                                          const MarshallDeputy& md_cmd,
+                                          const int64_t& logidx,
+                                          const int64_t& logterm,
+                                          //const string& log,
+                                          const int64_t& commitIdx,
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match242-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                          int64_t* curTerm,
+                                          bool_t *followerAppendOK,
+                                          int64_t* logMismatchIdx,
+                                          int64_t* logMismatchTerm,
+                                          rrr::DeferredReply* defer) {
+  /* Your code here */
+  std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(md_cmd).sp_data_;
+</FONT>  *curTerm = 0;
+  *followerAppendOK = false;
+  *logMismatchIdx = -1;
+  *logMismatchTerm = -1;
+
+  Log_debug("[AppendRPC] Server id %d, server state %d", this-&gt;svr_-&gt;site_id_, this-&gt;svr_-&gt;svr_state);
+  Log_debug("PrevlogIdx %d, prevLogTerm %d Server %d Term %d & Server Log size %d", prevLogIdx, prevLogTerm, this-&gt;svr_-&gt;site_id_, this-&gt;svr_-&gt;logentries[prevLogIdx].term, this-&gt;svr_-&gt;logentries.size());
+  Log_debug("AppendRPC Inside Method Thread ID:%ld", this_thread::get_id());
+  if(term &lt; this-&gt;svr_-&gt;curTerm)
+  {
+    Log_debug("[AppendRPC] Leader Term %d & Voter's Current term %d", term, this-&gt;svr_-&gt;curTerm);
+    *followerAppendOK = false;
+    *curTerm = this-&gt;svr_-&gt;curTerm; 
+
+    this-&gt;svr_-&gt;ResetElectionTimer();
+  
+  }
+
+  else if(this-&gt;svr_-&gt;curTerm &lt; term)
+  {
+    Log_debug("[AppendRPC]Server Cur Term &lt; Requestor term, hence becoming a follower");
+    this-&gt;svr_-&gt;DemoteToFollower(term);
+    this-&gt;svr_-&gt;ResetElectionTimer();
+
+  }
+
+  //Truncate Extra logs if any before inserting new
+  else if((prevLogIdx + 1) &lt; this-&gt;svr_-&gt;logentries.size())
+  {
+    Log_debug("[Mismatch case]Logentries Size truncated from %d to %d", this-&gt;svr_-&gt;logentries.size(), prevLogIdx + 1);
+
+    this-&gt;svr_-&gt;logentries.resize(prevLogIdx + 1);
+
+  }
+
+  else if(!((prevLogIdx &lt;= 0)|| ((prevLogIdx &lt; this-&gt;svr_-&gt;logentries.size()) && (this-&gt;svr_-&gt;logentries[prevLogIdx].term == prevLogTerm))))
+  {
+    Log_debug("Log Entries not matching");
+
+    Log_debug("PrevlogIdx %d, prevLogTerm %d Server %d Term %d & Server Log size %d", prevLogIdx, prevLogTerm, this-&gt;svr_-&gt;site_id_, this-&gt;svr_-&gt;logentries[prevLogIdx].term, this-&gt;svr_-&gt;logentries.size());
+
+    *followerAppendOK = false;
+
+    *logMismatchIdx = 1;
+    this-&gt;svr_-&gt;ResetElectionTimer();
+  }
+
+  else
+  {
+    this-&gt;svr_-&gt;ResetElectionTimer();
+
+    *followerAppendOK = true;
+    *curTerm = this-&gt;svr_-&gt;curTerm;
+
+    Log_debug("PrevLogTerm == Term for server %d with cur term %d",this-&gt;svr_-&gt;site_id_, this-&gt;svr_-&gt;curTerm);
+
+    if(logidx !=0)
+    {
+      this-&gt;svr_-&gt;loge.cmd_id = cmd;
+      this-&gt;svr_-&gt;command = cmd;
+      this-&gt;svr_-&gt;loge.logidx = logidx;
+      this-&gt;svr_-&gt;loge.term = logterm;
+      this-&gt;svr_-&gt;logentries.push_back(this-&gt;svr_-&gt;loge);
+    
+    }
+
+    else
+    {
+
+      this-&gt;svr_-&gt;loge.cmd_id = cmd;
+      this-&gt;svr_-&gt;command = cmd;
+      this-&gt;svr_-&gt;loge.logidx = prevLogIdx + 1;
+      this-&gt;svr_-&gt;loge.term = logterm;
+      this-&gt;svr_-&gt;logentries.push_back(this-&gt;svr_-&gt;loge);
+
+    }
+    //auto& command = dynamic_cast&lt;TpcCommitCommand&&gt;(*this-&gt;svr_-&gt;loge.cmd_id);
+    Log_debug("LogEntries for Server %d, LogIdx %d, LogTerm %d", this-&gt;svr_-&gt;site_id_,this-&gt;svr_-&gt;loge.logidx, this-&gt;svr_-&gt;loge.term/*, command.tx_id_, this-&gt;svr_-&gt;loge.cmd_id*/);
+    Log_debug("Leader Commit Index: %d Server %d commit Idx %d", commitIdx, this-&gt;svr_-&gt;site_id_, this-&gt;svr_-&gt;commitIdx);
+    if(commitIdx &gt; this-&gt;svr_-&gt;commitIdx)
+    {
+      int64_t ci = min(commitIdx, this-&gt;svr_-&gt;logentries[this-&gt;svr_-&gt;logentries.size() - 1].logidx);
+      for(int i=this-&gt;svr_-&gt;commitIdx + 1;i&lt;=ci; i++)
+      {
+        this-&gt;svr_-&gt;app_next_(*this-&gt;svr_-&gt;logentries[i].cmd_id);
+        Log_debug("Server %d committed entry at %d", this-&gt;svr_-&gt;site_id_, i);
+      }
+      this-&gt;svr_-&gt;commitIdx = ci;
+      Log_debug("Updated Server %d commit Idx %d", this-&gt;svr_-&gt;site_id_, this-&gt;svr_-&gt;commitIdx);
+    }
+  }
+
+  *curTerm = this-&gt;svr_-&gt;curTerm;
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleEmptyAppendEntries(const int64_t& term,
+                                          const int64_t& leaderId,
+                                          const int64_t& prevLogIdx,
+                                          const int64_t& prevLogTerm,
+                                          //const MarshallDeputy& md_cmd,
+                                          const string& log,
+                                          const int64_t& commitIdx,
+                                          int64_t* curTerm,
+                                          bool_t *followerAppendOK,
+                                          int64_t* logMismatchIdx,
+                                          int64_t* logMismatchTerm,
+                                          rrr::DeferredReply* defer) {
+  /* Your code here */
+  *curTerm = 0;
+  *followerAppendOK = false;
+  *logMismatchIdx = -1;
+  *logMismatchTerm = -1;
+
+  Log_debug("[EmptyAppendRPC] Leader Term:%d, Server id %d, server State %d with curterm: %d", term, this-&gt;svr_-&gt;site_id_, this-&gt;svr_-&gt;svr_state, this-&gt;svr_-&gt;curTerm);
+  Log_debug("PrevlogIdx %d, prevLogTerm %d Server %d Term %d & Server Log size %d", prevLogIdx, prevLogTerm, this-&gt;svr_-&gt;site_id_, this-&gt;svr_-&gt;logentries[prevLogIdx].term, this-&gt;svr_-&gt;logentries.size());
+
+  if((term &lt; this-&gt;svr_-&gt;curTerm))
+  {
+    Log_debug("[EmptyAppendRPC] Term is out of date or Vote already given to some other server");
+    Log_debug("[EmptyAppendRPC] Voter's Current term %d & votedFor  %d", this-&gt;svr_-&gt;curTerm, this-&gt;svr_-&gt;votedFor);
+
+    *followerAppendOK = false;
+    *curTerm = this-&gt;svr_-&gt;curTerm;
+
+    this-&gt;svr_-&gt;ResetElectionTimer();
+
+  }
+
+  else if(this-&gt;svr_-&gt;curTerm &lt; term)
+  {
+    Log_debug("[Heartbeat]Server Cur Term &lt; Requestor term, hence becoming a follower");
+    this-&gt;svr_-&gt;DemoteToFollower(term);
+
+  }
+
+
+  else if(!((prevLogIdx &lt;= 0)|| ((prevLogIdx &lt; this-&gt;svr_-&gt;logentries.size()) && (this-&gt;svr_-&gt;logentries[prevLogIdx].term == prevLogTerm))))
+  {
+    Log_debug("Log Entries not matching");
+
+    *followerAppendOK = false;
+
+    *logMismatchIdx = 1;
+    this-&gt;svr_-&gt;ResetElectionTimer();
+
+  }
+
+  else if(this-&gt;svr_-&gt;svr_state != Server_State::LEADER)
+  {
+
+    this-&gt;svr_-&gt;curTerm = term;
+    this-&gt;svr_-&gt;votedFor = -1;
+    *followerAppendOK = true;
+
+    if(this-&gt;svr_-&gt;svr_state == Server_State::CANDIDATE)
+    {
+      this-&gt;svr_-&gt;DemoteToFollower(this-&gt;svr_-&gt;curTerm);
+    }
+    this-&gt;svr_-&gt;ResetElectionTimer();
+
+    Log_debug("Leader Commit Index: %d Server %d commit Idx %d", commitIdx, this-&gt;svr_-&gt;site_id_, this-&gt;svr_-&gt;commitIdx);
+    if(commitIdx &gt; this-&gt;svr_-&gt;commitIdx && this-&gt;svr_-&gt;commitIdx &lt; (this-&gt;svr_-&gt;logentries.size() - 1))
+    {
+
+      int64_t ci = min(commitIdx, this-&gt;svr_-&gt;logentries[this-&gt;svr_-&gt;logentries.size() - 1].logidx);
+      for(int i=this-&gt;svr_-&gt;commitIdx + 1;i&lt;=ci; i++)
+      {
+        this-&gt;svr_-&gt;app_next_(*this-&gt;svr_-&gt;logentries[i].cmd_id);
+        Log_debug("Server %d committed entry at %d", this-&gt;svr_-&gt;site_id_, i);
+      }
+      this-&gt;svr_-&gt;commitIdx = ci;
+
+    }
+
+  }
+
+  *curTerm = this-&gt;svr_-&gt;curTerm;
+
+  defer-&gt;reply();
+}
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match242-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("receive an rpc: %s from server ID:%d", req.c_str(), this-&gt;svr_-&gt;site_id_);
+</FONT>  *res = "world";
+  defer-&gt;reply();
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

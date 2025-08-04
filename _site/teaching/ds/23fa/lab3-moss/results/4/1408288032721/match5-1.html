@@ -1,0 +1,270 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-vbelagali/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-vbelagali/src/shardkv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+int64_t ShardKvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+#define KV_TIMEOUT_TIME 5000000
+
+int ShardKvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+    // lab_shard: fill in your code
+    uint64_t myOid = oid;
+
+    RaftServer& raftServer = GetRaftServer();
+    bool is_leader;
+    uint64_t term;
+
+    Log_debug("[%d] Received PUT %d", raftServer.site_id_, myOid);
+
+    raftServer.GetState(&is_leader, &term);
+    if(!is_leader) {
+      Log_debug("[%d] Received PUT %d but I'm not a leader", raftServer.site_id_, myOid);
+      return KV_NOTLEADER;
+    }
+
+    int currOpIndex = opIndex_++;
+
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(myOid));
+    s-&gt;data_.push_back(to_string(currOpIndex));
+    s-&gt;data_.push_back("put");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);
+
+    Log_debug("[%d] send PUT to RAFT %d, %d", raftServer.site_id_, myOid, currOpIndex);
+
+    uint64_t index;
+    auto m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+    if (!raftServer.Start(m, &index, &term)) {
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match5-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      return KV_NOTLEADER;
+    }
+    // block here for onNextCommand
+    auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    {
+      lock_guard&lt;mutex&gt; lg(event_mutex_);
+      event_map_[to_string(currOpIndex)] = ev;
+    }
+
+    ev-&gt;Wait(KV_TIMEOUT_TIME);
+
+    {
+      lock_guard&lt;mutex&gt; lg(event_mutex_);
+      event_map_.erase(to_string(currOpIndex));
+    }
+
+    if (ev-&gt;status_ == Event::DONE) {
+      Log_debug("[%d] PUT successful %d", raftServer.site_id_, myOid);
+</FONT>      return KV_SUCCESS;
+    }
+    Log_debug("[%d] PUT timeout %d", raftServer.site_id_, myOid);
+    return KV_TIMEOUT;
+  //  });
+}
+
+int ShardKvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+    // lab_shard: fill in your code
+    uint64_t myOid = oid;
+
+    RaftServer& raftServer = GetRaftServer();
+    bool is_leader;
+    uint64_t term;
+
+    Log_debug("[%d] Received APPEND %d", raftServer.site_id_, myOid);
+
+    raftServer.GetState(&is_leader, &term);
+    if(!is_leader) {
+      return KV_NOTLEADER;
+    }
+
+    int currOpIndex = opIndex_++;
+
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(myOid));
+    s-&gt;data_.push_back(to_string(currOpIndex));
+    s-&gt;data_.push_back("append");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);
+
+    uint64_t index;
+    auto m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+    if (!raftServer.Start(m, &index, &term)) {
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match5-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      return KV_NOTLEADER;
+    }
+    // block here for onNextCommand
+    auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    {
+      lock_guard&lt;mutex&gt; lg(event_mutex_);
+      event_map_[to_string(currOpIndex)] = ev;
+    }
+
+    ev-&gt;Wait(KV_TIMEOUT_TIME);
+
+    {
+      lock_guard&lt;mutex&gt; lg(event_mutex_);
+      event_map_.erase(to_string(currOpIndex));
+    }
+
+    if (ev-&gt;status_ == Event::DONE) {
+      Log_debug("[%d] APPEND successful %d", raftServer.site_id_, myOid);
+</FONT>      return KV_SUCCESS;
+    }
+    Log_debug("[%d] APPEND timeout %d", raftServer.site_id_, myOid);
+    return KV_TIMEOUT;
+}
+
+int ShardKvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+    // lab_shard: fill in your code
+    uint64_t myOid = oid;
+    string key = k;
+
+    RaftServer& raftServer = GetRaftServer();
+    bool is_leader;
+    uint64_t term;
+
+    Log_debug("[%d] Received GET %d", raftServer.site_id_, myOid);
+
+    raftServer.GetState(&is_leader, &term);
+    if(!is_leader) {
+      return KV_NOTLEADER;
+    }
+
+    int currOpIndex = opIndex_++;
+
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(myOid));
+    s-&gt;data_.push_back(to_string(currOpIndex));
+    s-&gt;data_.push_back("get");
+    s-&gt;data_.push_back(k);
+
+    uint64_t index;
+    auto m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+    if (!raftServer.Start(m, &index, &term)) {
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match5-0.html#3" TARGET="0"><IMG SRC="../../../bitmaps/tm_3_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      return KV_NOTLEADER;
+    }
+    // block here for onNextCommand
+    auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    {
+      lock_guard&lt;mutex&gt; lg(event_mutex_);
+      event_map_[to_string(currOpIndex)] = ev;
+    }
+
+    ev-&gt;Wait(KV_TIMEOUT_TIME);
+
+    {
+      lock_guard&lt;mutex&gt; lg(event_mutex_);
+      event_map_.erase(to_string(currOpIndex));
+    }
+
+    if (ev-&gt;status_ == Event::DONE) {
+</FONT>      lock_guard&lt;mutex&gt; lg(kv_mutex_);
+      if (kv_store_.find(key) != kv_store_.end()) {
+        string ret;
+        for (auto& st: kv_store_[key]) {
+          ret += st;
+        }
+        *v = ret;
+      }
+      Log_debug("[%d] GET successful %d", raftServer.site_id_, myOid);
+      return KV_SUCCESS;
+    }
+    Log_debug("[%d] GET timeout %d", raftServer.site_id_, myOid);
+    return KV_TIMEOUT;
+}
+
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match5-0.html#4" TARGET="0"><IMG SRC="../../../bitmaps/tm_4_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void ShardKvServer::OnNextCommand(Marshallable& m) {
+    // lab_shard: fill in your code
+  auto v = (MultiStringMarshallable*)(&m);
+  /* your code here */
+  assert(3 &lt;= v-&gt;data_.size());
+  string oidStr = v-&gt;data_.at(0);
+  string eventIndexStr = v-&gt;data_.at(1);
+</FONT>  string key = v-&gt;data_.at(3);
+
+  {
+    lock_guard&lt;mutex&gt; lg(kv_mutex_);
+    if ("put" == v-&gt;data_.at(2)) {
+      string value = v-&gt;data_.at(4);
+      kv_store_[key] = vector&lt;string&gt;{value};
+    }
+    else if ("append" == v-&gt;data_.at(2)) {
+      string value = v-&gt;data_.at(4);
+      if (kv_store_.find(key) != kv_store_.end()) {
+        kv_store_[key].push_back(value);
+      }
+      else {
+        kv_store_[key] = vector&lt;string&gt;{value};
+      }
+    }
+    else {
+      // get - noop
+    }
+  }
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match5-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  RaftServer& raftServer = GetRaftServer();
+  bool is_leader;
+  uint64_t term;
+
+  raftServer.GetState(&is_leader, &term);
+  if(!is_leader) {
+    return;
+  }
+
+  Log_debug("OnNextCommand:: checking and setting event");
+
+  {
+    lock_guard&lt;mutex&gt; lg(event_mutex_);
+    auto itr = event_map_.find(eventIndexStr);
+    if (itr != event_map_.end()) {
+      if(!itr-&gt;second-&gt;IsTimeout()) {
+        itr-&gt;second-&gt;Set(1);
+</FONT>      }
+    }
+  }
+}
+
+shared_ptr&lt;ShardKvClient&gt; ShardKvServer::CreateClient(Communicator* comm) {
+  auto cli = make_shared&lt;ShardKvClient&gt;();
+  cli-&gt;commo_ = comm;
+  verify(cli-&gt;commo_ != nullptr);
+  static uint32_t id = 0;
+  id++;
+  cli-&gt;cli_id_ = id; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

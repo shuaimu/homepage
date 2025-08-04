@@ -1,0 +1,325 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-shivani232/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-shivani232/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+const int KV_SUCCESS = 0;
+const int KV_TIMEOUT = 1;
+const int KV_NOTLEADER = 2;
+
+namespace janus {
+
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, 
+                                  uint32_t* ret, 
+                                  rrr::DeferredReply* defer) {
+  // your code here
+
+  // ******** Print Req
+
+  // Log_info(" !!!! Join Req: gid_server_map:");
+  // for (auto i = gid_server_map.begin(); i != gid_server_map.end(); i++){
+  //   Log_info(" Group: %d Servers:", i-&gt;first);
+  //   for (auto s : i-&gt;second)
+  //   {
+  //     Log_info("%d ",s);
+  //   }
+  // }
+  //***********************
+
+
+
+  
+
+  int32_t cfg_size = configs_.size();
+  map&lt;uint32_t, uint32_t&gt; shard_group;
+  map&lt;uint32_t, vector&lt;uint32_t&gt;&gt; g_svr;
+  int32_t new_grp_id = gid_server_map.begin()-&gt;first;
+  
+
+  Log_info("New gid",new_grp_id);
+
+  if(cfg_size == 0){
+    shard_group = {{1, 1}, {2,1}, {3, 1}, {4, 1}, {5, 1}, {6, 1}, {7, 1}, {8, 1}, {9, 1}, {10, 1}};
+    g_svr = gid_server_map;
+  }else{
+
+    shard_group = configs_[uint32_t(cfg_size)].shard_group_map_;
+    g_svr = configs_[uint32_t(cfg_size)].group_servers_map_;
+
+    // if grp already exists do nothing
+    if(g_svr.find(new_grp_id) != g_svr.end()){
+      *ret = KV_SUCCESS;
+      defer-&gt;reply();
+      return;
+
+    }
+
+    // populate the group server map
+    for (auto i = gid_server_map.begin(); i != gid_server_map.end(); i++){
+      
+      g_svr[i-&gt;first] = i-&gt;second;
+      
+    }
+
+    // redistribute the shards
+
+    // create a group-&gt;shards map
+    map&lt;uint32_t, vector&lt;uint32_t&gt;&gt; group_shards;
+
+    // populate it with previous config
+    for (auto it = shard_group.begin(); it != shard_group.end(); it++){
+      group_shards[it-&gt;second].push_back(it-&gt;first);
+    }
+
+    // Min shards per group in the new config
+    int shards_per_group = 10 / (group_shards.size() + 1);
+    int count = 0;
+    vector&lt;uint32_t&gt; new_group_shards;
+  
+
+    for (auto it = group_shards.begin(); it != group_shards.end();it++){
+
+      int curr_shards = it-&gt;second.size();
+      while(curr_shards &gt; shards_per_group && count&lt; shards_per_group){
+        
+        new_group_shards.push_back(
+          it-&gt;second.back());
+        it-&gt;second.pop_back();
+        count++;
+
+        if(count == shards_per_group){
+          break;
+        }
+      }
+
+      if(count == shards_per_group){
+          break;
+        }
+    }
+
+    // assign new group to the new_group_shards in the configuration
+    for (auto shard: new_group_shards){
+      shard_group[shard] = new_grp_id;
+    }
+  }
+
+   // ******** Print Before
+  // auto num = configs_[cfg_size].number;
+  // auto before_gsvr = configs_[cfg_size].group_servers_map_;
+  // auto before_sg = configs_[cfg_size].shard_group_map_;
+
+  //  Log_info(" !!!! Join Cfg before cfg_size: %d num:%d",cfg_size,num);
+  // for (auto i = before_gsvr.begin(); i != before_gsvr.end(); i++){
+  //   Log_info(" Group: %d Servers:", i-&gt;first);
+  //   for (auto s : i-&gt;second)
+  //   {
+  //     Log_info("%d ",s);
+  //   }
+  // }
+
+  // Log_info(" !!!! Join Cfg SG before cfg_size: %d ",cfg_size);
+  // for (auto i = before_sg.begin(); i != before_sg.end(); i++){
+  //   Log_info(" Shard: %d Group: %d", i-&gt;first, i-&gt;second);
+    
+  // }
+  //***********************
+        
+  
+  ShardConfig cfg;
+  cfg.number = cfg_size + 1;
+  cfg.shard_group_map_ = shard_group;
+  cfg.group_servers_map_ = g_svr;
+  configs_[cfg_size + 1] = cfg;
+
+
+   // ******** Print After
+  cfg_size = configs_.size();
+  auto num = configs_[cfg_size].number;
+  auto before_gsvr = configs_[cfg_size].group_servers_map_;
+  auto before_sg = configs_[cfg_size].shard_group_map_;
+
+  Log_info(" !!!! Join Cfg after cfg_size: %d num:%d",cfg_size,num);
+  for (auto i = before_gsvr.begin(); i != before_gsvr.end(); i++){
+    Log_info(" Group: %d Servers:", i-&gt;first);
+    for (auto s : i-&gt;second)
+    {
+      Log_info("%d ",s);
+    }
+  }
+
+  Log_info(" !!!! Join Cfg SG before cfg_size: %d ",cfg_size);
+  for (auto i = before_sg.begin(); i != before_sg.end(); i++){
+    Log_info(" Shard: %d Group: %d", i-&gt;first, i-&gt;second);
+    
+  }
+  //***********************
+        
+
+  *ret = KV_SUCCESS;
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+
+  
+  // ******** Print Req
+
+  Log_info(" !!!! Leave Req: gids:");
+  for (auto g : gids){
+    
+      Log_info("%d ",g);
+    
+  }
+  //***********************
+
+   // ******** Print Before
+  auto cfg_size = configs_.size();
+  auto num = configs_[cfg_size].number;
+  auto before_gsvr = configs_[cfg_size].group_servers_map_;
+  auto before_sg = configs_[cfg_size].shard_group_map_;
+
+  Log_info(" !!!! Leave Cfg before cfg_size: %d ",cfg_size);
+  for (auto i = before_gsvr.begin(); i != before_gsvr.end(); i++){
+    Log_info(" Group: %d Servers:", i-&gt;first);
+    for (auto s : i-&gt;second)
+    {
+      Log_info("%d ",s);
+    }
+  }
+
+  Log_info(" !!!! Leave Cfg SG before cfg_size: %d ",cfg_size);
+  for (auto i = before_sg.begin(); i != before_sg.end(); i++){
+    Log_info(" Shard: %d Group: %d", i-&gt;first, i-&gt;second);
+    
+  }
+  //***********************
+
+
+
+
+
+
+
+  auto shard_group = configs_[configs_.size()].shard_group_map_;
+  // create a group-&gt;shards map
+  map&lt;uint32_t, vector&lt;uint32_t&gt;&gt; group_shards;
+  // populate it with previous config
+  for (auto it = shard_group.begin(); it != shard_group.end(); it++){
+    group_shards[it-&gt;second].push_back(it-&gt;first);
+  }
+
+  vector&lt;uint32_t&gt; free_shards;
+
+  // remove the leaving groups entries from group shards and add the shards to the free shards list
+  for(auto g: gids){
+    auto shards = group_shards[g];
+    for(auto s: shards){
+      free_shards.push_back(s);
+    }
+    group_shards.erase(g);
+  }
+
+  int num_groups = group_shards.size();
+  int shards_per_group = 10 / num_groups;
+  int rem = 10 % num_groups;
+  int max_group_size = shards_per_group + rem;
+
+
+   for (auto it = group_shards.begin(); it != group_shards.end();it++){
+
+    while(it-&gt;second.size()&lt;max_group_size && free_shards.size()){
+      auto shard = free_shards.back();
+      it-&gt;second.push_back(shard);
+      shard_group[shard] = it-&gt;first;
+      free_shards.pop_back();
+      if(!free_shards.size()){
+        break;
+      }
+    }
+    if(!free_shards.size()){
+      break;
+    }
+   }
+
+   auto g_svr = configs_[configs_.size()].group_servers_map_;
+   for(auto group: gids){
+     g_svr.erase(group);
+   }
+
+   ShardConfig cfg;
+   cfg.number = configs_.size() + 1;
+   cfg.shard_group_map_ = shard_group;
+   cfg.group_servers_map_ = g_svr;
+   configs_[configs_.size() + 1] = cfg;
+
+
+   // ******** Print After
+  cfg_size = configs_.size();
+  num = configs_[cfg_size].number;
+  before_gsvr = configs_[cfg_size].group_servers_map_;
+  before_sg = configs_[cfg_size].shard_group_map_;
+
+  Log_info(" !!!! Leave Cfg after cfg_size: %d num: %d",cfg_size,num);
+  for (auto i = before_gsvr.begin(); i != before_gsvr.end(); i++){
+    Log_info(" Group: %d Servers:", i-&gt;first);
+    for (auto s : i-&gt;second)
+    {
+      Log_info("%d ",s);
+    }
+  }
+
+  Log_info(" !!!! Leave Cfg SG before cfg_size: %d ",cfg_size);
+  for (auto i = before_sg.begin(); i != before_sg.end(); i++){
+    Log_info(" Shard: %d Group: %d", i-&gt;first, i-&gt;second);
+    
+  }
+  //***********************
+
+   *ret = KV_SUCCESS;
+   defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match125-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_8.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+  // your code here
+  int last_config = configs_.size();
+  if (config_no == -1 || config_no &gt;last_config){
+    *config = configs_[last_config];
+  }else{
+    *config = configs_[config_no];
+  }
+
+    *ret = KV_SUCCESS;
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  // your code here
+
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+</FONT>  uint32_t id = sp_log_svr_-&gt;site_id_;
+  return cli;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

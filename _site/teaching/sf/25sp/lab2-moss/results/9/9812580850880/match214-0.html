@@ -1,0 +1,174 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-AlexandraJeong/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-AlexandraJeong/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match214-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  /* your code here */
+  if(!GetRaftServer().is_leader_){
+</FONT>    return KV_NOTLEADER;
+  }
+
+  // formatting command as Marshallable
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  shared_ptr&lt;Marshallable&gt; cmd = s;
+
+  // sending command to raft server
+  uint64_t index = -1, term = -1;
+  GetRaftServer().Start(cmd, &index, &term);
+
+  //Coroutine::CreateRun([this, oid, k, v](){
+    for(int i = 0; i &lt; 50; i++){
+      Coroutine::Sleep(KV_TIMEOUT_DURATION/50);
+      auto cmd_id = std::find(processed_cmds_.begin(), processed_cmds_.end(), to_string(oid));
+      if (cmd_id != processed_cmds_.end()) {
+        processed_cmds_.erase(cmd_id);
+        //Print("Successfully put (%s, %s)", k.c_str(), v.c_str());
+        return KV_SUCCESS;
+      }
+    }
+    return KV_TIMEOUT;
+  //});
+}
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+  if(!GetRaftServer().is_leader_){
+    return KV_NOTLEADER;
+  }
+
+  // formatting command as Marshallable
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("append");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  shared_ptr&lt;Marshallable&gt; cmd = s;
+
+  // sending command to raft server
+  uint64_t index = -1, term = -1;
+  GetRaftServer().Start(cmd, &index, &term);
+
+  //Coroutine::CreateRun([this, oid, k, v](){
+    for(int i = 0; i &lt; 50; i++){
+      Coroutine::Sleep(KV_TIMEOUT_DURATION/50);
+      auto cmd_id = std::find(processed_cmds_.begin(), processed_cmds_.end(), to_string(oid));
+      if (cmd_id != processed_cmds_.end()) {
+        processed_cmds_.erase(cmd_id);
+        //Print("Successfully appended (%s, %s)", k.c_str(), v.c_str());
+        return KV_SUCCESS;
+      }
+    }
+    return KV_TIMEOUT;
+  //});
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+  /* your code here */
+  if(!GetRaftServer().is_leader_){
+    return KV_NOTLEADER;
+  }
+
+  // formatting command as Marshallable
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("get");
+  s-&gt;data_.push_back(k);
+  shared_ptr&lt;Marshallable&gt; cmd = s;
+
+  // sending command to raft server
+  uint64_t index = -1, term = -1;
+  GetRaftServer().Start(cmd, &index, &term);
+  
+  //Coroutine::CreateRun([this, s, k, v](){
+    for(int i = 0; i &lt; 50; i++){
+      Coroutine::Sleep(KV_TIMEOUT_DURATION/50);
+      auto cmd_id = std::find(processed_cmds_.begin(), processed_cmds_.end(), to_string(oid));
+      if (cmd_id != processed_cmds_.end()) {
+        processed_cmds_.erase(cmd_id);
+        if(GetRaftServer().is_leader_){
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match214-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+          *v = state_[k];
+        }
+        //Print("Successfully got %s = %s", k.c_str(), v-&gt;c_str());
+        return KV_SUCCESS;
+      }
+    }
+    return KV_TIMEOUT;
+  //});
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  auto v = (MultiStringMarshallable*)(&m);
+  /* your code here */
+  string oid = v-&gt;data_[0].c_str();
+</FONT>  string type = v-&gt;data_[1].c_str();
+  string key = v-&gt;data_[2].c_str();
+  //Print("(%ld) Recieved command (%s, %s, %s)", GetRaftServer().id_, oid.c_str(), type.c_str(), key.c_str());
+  if(type == "put"){
+    string arg = v-&gt;data_[3].c_str();
+    state_[key] = arg;
+
+  }else if(type == "append"){
+    string arg = v-&gt;data_[3].c_str();
+    if (state_.find(key) != state_.end()) {
+      state_[key] += arg;
+    }else{
+      state_[key] = arg;
+    }
+
+  }
+  processed_cmds_.push_back(oid);
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

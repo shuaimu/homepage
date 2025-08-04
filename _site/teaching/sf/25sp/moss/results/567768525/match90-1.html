@@ -1,0 +1,640 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/adeep24/src/shardkv/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/adeep24/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+import (
+	"fmt"
+	"labgob"
+	"labrpc"
+	"log"
+	"math"
+	"raft"
+	"runtime"
+	"sync"
+	"time"
+)
+
+const retryOperationTime = 500
+const (
+	Join  = "Join"
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match90-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	Leave = "Leave"
+	Query = "Query"
+	Move  = "Move"
+)
+
+func (sm *ShardMaster) DPrintfLog(format string) (n int, err error) {
+	if sm.debugLog &gt; 0 {
+		pc, _, line, _ := runtime.Caller(1)
+		// log.Printf("%s[%s:%d] %s", runtime.FuncForPC(pc).Name(), fn, line, format)
+		log.Printf("[%s:%d] %s", runtime.FuncForPC(pc).Name(), line, format)
+	}
+	return
+}
+
+// ShardMaster :
+type ShardMaster struct {
+	mu      sync.Mutex
+</FONT>	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	// Your data here.
+
+	configs       []Config // indexed by config num
+	lastConfigNum int
+
+	entryAppliedMap map[int]chan OpReply // applied thread will notify SHARDMASTER RPCGet
+	//  or RPCPutAppend that entry is commited
+	debugLog        int
+	DuplicateCheck  map[int64]int64
+	quitApplyThread chan int //to kill shard master gracilously
+	cmdMap          map[int]ClientReqID
+}
+
+type Op struct {
+	// Your data here.
+
+	Type       string
+	Operation  interface{}
+	Identifier ClientReqID
+}
+
+type OpReply struct {
+	IsValid bool
+	config  Config
+}
+
+func (sm *ShardMaster) printMasterStatus(idx int) {
+	// sm.mu.Lock()
+	sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- confiqNumber[%d]", sm.me, idx))
+	for i := 0; i &lt; NShards; i++ {
+		sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- shard[%d] GID[%d]", sm.me, i, sm.configs[idx].Shards[i]))
+	}
+	// sm.mu.Unlock()
+}
+
+// Join :
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+	// Your code here.
+	// sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- Request:[%s]  Done", sm.me, Join))
+	// temp := JoinArgs{Identifier: args.Identifier, Servers: args.Servers}
+	cmd := Op{Join, JoinArgs{args.Servers, args.Identifier}, args.Identifier}
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match90-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	idx, term, isLeader := sm.rf.Start(cmd)
+	if isLeader == false {
+		reply.WrongLeader = true
+		return
+	}
+	sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- Sent to raft Request:[%s] idx:[%d],term:[%d],isLeader:[%v]",
+		sm.me, cmd.Type, idx, term, isLeader))
+</FONT>
+	sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- Identifier client[%d] counter[%d]", sm.me, args.Identifier.ClientNum, args.Identifier.Counter))
+
+	sm.mu.Lock()
+	sm.entryAppliedMap[idx] = make(chan OpReply)
+	ch := sm.entryAppliedMap[idx]
+	sm.cmdMap[idx] = args.Identifier
+	sm.mu.Unlock()
+
+	res := OpReply{}
+	res.IsValid = false
+
+	select {
+	case res = &lt;-ch:
+		// sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- Received Value[%s] succesful[%v] Request:[%s] key:[%s] ", sm.me))
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match90-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- Request:[%s]  Done", sm.me, cmd.Type))
+
+	case &lt;-time.After(time.Duration(retryOperationTime) * time.Millisecond):
+		sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- Timed out no reply received from replyFromRaft function Term[%d] Index[%d] ", sm.me, term, idx))
+</FONT>	}
+
+	if res.IsValid == true {
+		reply.WrongLeader = false
+	} else {
+		reply.WrongLeader = true
+	}
+
+}
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+	// Your code here.
+
+	cmd := Op{Leave, LeaveArgs{args.GIDs, args.Identifier}, args.Identifier}
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match90-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	idx, term, isLeader := sm.rf.Start(cmd)
+	if isLeader == false {
+		reply.WrongLeader = true
+		return
+	}
+	sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- Sent to raft Request:[%s] idx:[%d],term:[%d],isLeader:[%v]",
+		sm.me, cmd.Type, idx, term, isLeader))
+</FONT>
+<A NAME="9"></A><FONT color = #FF00FF><A HREF="match90-0.html#9" TARGET="0"><IMG SRC="../../bitmaps/tm_4_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- Identifier client[%d] counter[%d]", sm.me, args.Identifier.ClientNum, args.Identifier.Counter))
+
+	sm.mu.Lock()
+	sm.entryAppliedMap[idx] = make(chan OpReply)
+</FONT>	ch := sm.entryAppliedMap[idx]
+	sm.cmdMap[idx] = args.Identifier
+	sm.mu.Unlock()
+
+	res := OpReply{}
+	res.IsValid = false
+
+	select {
+	case res = &lt;-ch:
+		// sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- Received Value[%s] succesful[%v] Request:[%s] key:[%s] ", sm.me))
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match90-0.html#6" TARGET="0"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- Request:[%s] Done", sm.me, cmd.Type))
+
+	case &lt;-time.After(time.Duration(retryOperationTime) * time.Millisecond):
+		sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- Timed out no reply received from replyFromRaft function Term[%d] Index[%d] ", sm.me, term, idx))
+</FONT>	}
+
+	if res.IsValid == true {
+		reply.WrongLeader = false
+	} else {
+		reply.WrongLeader = true
+	}
+
+}
+
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+	// Your code here.
+
+	cmd := Op{Move, MoveArgs{args.Shard, args.GID, args.Identifier}, args.Identifier}
+
+	idx, term, isLeader := sm.rf.Start(cmd)
+	if isLeader == false {
+		reply.WrongLeader = true
+		return
+	}
+	sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- Sent to raft Request:[%s] idx:[%d],term:[%d],isLeader:[%v]",
+		sm.me, cmd.Type, idx, term, isLeader))
+
+	sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- Identifier client[%d] counter[%d]", sm.me, args.Identifier.ClientNum, args.Identifier.Counter))
+
+	sm.mu.Lock()
+	sm.entryAppliedMap[idx] = make(chan OpReply)
+	ch := sm.entryAppliedMap[idx]
+	sm.cmdMap[idx] = args.Identifier
+	sm.mu.Unlock()
+
+	res := OpReply{}
+	res.IsValid = false
+
+	select {
+	case res = &lt;-ch:
+		// sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- Received Value[%s] succesful[%v] Request:[%s] key:[%s] ", sm.me))
+		sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- Request:[%s]  Done", sm.me, cmd.Type))
+
+	case &lt;-time.After(time.Duration(retryOperationTime) * time.Millisecond):
+		sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- Timed out no reply received from replyFromRaft function Term[%d] Index[%d] ", sm.me, term, idx))
+	}
+
+	if res.IsValid == true {
+		reply.WrongLeader = false
+	} else {
+		reply.WrongLeader = true
+	}
+}
+
+// Query :
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+	// Your code here.
+
+	cmd := Op{Query, QueryArgs{args.Num, args.Identifier}, args.Identifier}
+
+	idx, term, isLeader := sm.rf.Start(cmd)
+	if isLeader == false {
+		reply.WrongLeader = true
+		return
+	}
+	sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- Sent to raft Request:[%s] idx:[%d],term:[%d],isLeader:[%v]",
+		sm.me, cmd.Type, idx, term, isLeader))
+
+	sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- Identifier client[%d] counter[%d]", sm.me, args.Identifier.ClientNum, args.Identifier.Counter))
+
+	sm.mu.Lock()
+	sm.entryAppliedMap[idx] = make(chan OpReply)
+	ch := sm.entryAppliedMap[idx]
+	sm.cmdMap[idx] = args.Identifier
+	sm.mu.Unlock()
+
+	res := OpReply{}
+	res.IsValid = false
+
+	select {
+	case res = &lt;-ch:
+		// sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- Received Value[%s]  ", sm.me))
+		sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- Request:[%s]  Done", sm.me, cmd.Type))
+
+	case &lt;-time.After(time.Duration(retryOperationTime) * time.Millisecond):
+		sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- Timed out no reply received from replyFromRaft function Term[%d] Index[%d] ", sm.me, term, idx))
+	}
+
+	if res.IsValid == true {
+		reply.WrongLeader = false
+		reply.Config = res.config
+	} else {
+		reply.WrongLeader = true
+
+	}
+}
+func (sm *ShardMaster) executeMove(msg raft.ApplyMsg) OpReply {
+	reply := OpReply{}
+	reply.IsValid = true
+	cmd := msg.Command.(Op)
+	args := cmd.Operation.(MoveArgs)
+	sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- Move for shard[%d] to GID[%d] ", sm.me, args.Shard, args.GID))
+
+	newConfig := Config{}
+	oldConfig := sm.configs[sm.lastConfigNum]
+	sm.lastConfigNum++
+
+	newConfig.Num = sm.lastConfigNum
+	newConfig.Groups = make(map[int][]string)
+
+	for k, v := range oldConfig.Groups {
+		newConfig.Groups[k] = v
+	}
+
+	for shardNum, gid := range oldConfig.Shards {
+		if shardNum == args.Shard {
+			newConfig.Shards[shardNum] = args.GID
+
+		} else {
+			newConfig.Shards[shardNum] = gid
+		}
+
+	}
+	sm.configs = append(sm.configs, newConfig)
+
+	return reply
+}
+func (sm *ShardMaster) executeQuery(msg raft.ApplyMsg) OpReply {
+	reply := OpReply{}
+	reply.IsValid = true
+	cmd := msg.Command.(Op)
+	args := cmd.Operation.(QueryArgs)
+	sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- Query for[%d] ", sm.me, args.Num))
+	if args.Num == -1 {
+		reply.config = sm.configs[len(sm.configs)-1]
+		sm.printMasterStatus(len(sm.configs) - 1)
+	} else {
+		reply.config = sm.configs[args.Num]
+		sm.printMasterStatus(args.Num)
+	}
+
+	return reply
+
+}
+func (sm *ShardMaster) executeLeave(msg raft.ApplyMsg) OpReply {
+
+	cmd := msg.Command.(Op)
+	args := cmd.Operation.(LeaveArgs)
+	// val := sm.DuplicateCheck[args.Identifier.ClientNum]
+	reply := OpReply{}
+	reply.IsValid = true
+
+	newConfig := Config{}
+	oldConfig := sm.configs[sm.lastConfigNum]
+	sm.lastConfigNum++
+
+	newConfig.Num = sm.lastConfigNum
+	newConfig.Groups = make(map[int][]string)
+	for k, v := range oldConfig.Groups { // copying old servers
+		str := make([]string, len(v))
+		copy(str, v)
+		newConfig.Groups[k] = str
+	}
+
+	GIDneedsToBeDeleted := make(map[int]bool)
+	for _, k := range args.GIDs { // removing servers given in args
+		sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- deleting[%d]", sm.me, k))
+		delete(newConfig.Groups, k)
+		GIDneedsToBeDeleted[k] = true
+	}
+
+	if len(newConfig.Groups) &gt; 0 {
+		for i := 0; i &lt; NShards; i++ {
+			// sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- shard[%d] gid[%d] ?[%v]", sm.me, i, newConfig.Shards[i], GIDneedsToBeDeleted[newConfig.Shards[i]]))
+			if GIDneedsToBeDeleted[oldConfig.Shards[i]] == true {
+
+				newConfig.Shards[i] = 0
+			} else {
+				newConfig.Shards[i] = oldConfig.Shards[i]
+			}
+
+		}
+
+		// below this redistribute shard with minimal reassigns
+		newNumberOfReplicas := len(newConfig.Groups)
+		maxShardGIDcanHave := int(math.Ceil(10 / float64(newNumberOfReplicas)))
+		minShardGIDcanHave := int(math.Floor(10 / float64(newNumberOfReplicas)))
+		// shardCountForEachGid := make(map[int]int)
+
+		for {
+			temp := sm.returnsMinMaxInAShardSystem(newConfig)
+			if temp.isZero {
+				for k := range newConfig.Groups {
+					newConfig.Shards[temp.maxShard] = k
+					break
+				}
+			} else {
+				// sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- temp.minVal[%d] temp.maxVal[%d]", sm.me, temp.minVal, temp.maxVal))
+				if temp.minVal == minShardGIDcanHave && temp.maxVal == maxShardGIDcanHave {
+					break
+				}
+				newConfig.Shards[temp.maxShard] = temp.minGID
+			}
+		}
+
+	} else {
+		for i := 0; i &lt; NShards; i++ {
+			newConfig.Shards[i] = 0
+		}
+	}
+
+	sm.configs = append(sm.configs, newConfig)
+	return reply
+}
+
+type minMaxGIDshard struct {
+	isZero   bool
+	minShard int
+	minGID   int
+	maxShard int
+	maxGID   int
+	minVal   int
+	maxVal   int
+}
+
+func (sm *ShardMaster) returnsMinMaxInAShardSystem(curr Config) minMaxGIDshard {
+	shardCountForEachGid := make(map[int]int)
+	temp := minMaxGIDshard{}
+	for i := 0; i &lt; NShards; i++ {
+		// sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- shardnum[%d], GID[%d]", sm.me, i, curr.Shards[i]))
+		if curr.Shards[i] == 0 {
+			temp.isZero = true
+			temp.maxShard = i
+			temp.minShard = i
+
+			return temp
+			// return i, i, true
+		}
+
+		shardCountForEachGid[curr.Shards[i]]++
+	}
+	minVal := 111
+	minGID := -1
+	maxVal := -1
+	maxGID := -1
+
+	for k := range curr.Groups {
+		if shardCountForEachGid[k] &gt; maxVal {
+			maxVal = shardCountForEachGid[k]
+			maxGID = k
+		}
+
+		if shardCountForEachGid[k] &lt; minVal {
+			minVal = shardCountForEachGid[k]
+			minGID = k
+		}
+	}
+
+	temp.maxGID = maxGID
+	temp.minGID = minGID
+	temp.minVal = minVal
+	temp.maxVal = maxVal
+
+	for i := 0; i &lt; NShards; i++ {
+		if curr.Shards[i] == maxGID {
+			temp.maxShard = i
+		}
+		if curr.Shards[i] == minGID {
+			temp.minShard = i
+		}
+
+	}
+	return temp
+}
+func (sm *ShardMaster) executeJoin(msg raft.ApplyMsg) OpReply {
+	cmd := msg.Command.(Op)
+	args := cmd.Operation.(JoinArgs)
+	// val := sm.DuplicateCheck[args.Identifier.ClientNum]
+	reply := OpReply{}
+	reply.IsValid = true
+
+	newConfig := Config{}
+	oldConfig := sm.configs[sm.lastConfigNum]
+	sm.lastConfigNum++
+	newConfig.Num = sm.lastConfigNum
+	newConfig.Groups = make(map[int][]string)
+
+	for k, v := range oldConfig.Groups { // copying old servers
+		str := make([]string, len(v))
+		copy(str, v)
+		newConfig.Groups[k] = str
+	}
+	for k, v := range args.Servers { // adding new servers
+		sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- adding[%d], names[%v]", sm.me, k, v))
+		str := make([]string, len(v))
+		copy(str, v)
+		newConfig.Groups[k] = str
+	}
+
+	for i := 0; i &lt; NShards; i++ {
+		newConfig.Shards[i] = oldConfig.Shards[i]
+	}
+
+	// below this redistribute shard with minimal reassigns
+	newNumberOfReplicas := len(newConfig.Groups)
+	maxShardGIDcanHave := int(math.Ceil(10 / float64(newNumberOfReplicas)))
+	minShardGIDcanHave := int(math.Floor(10 / float64(newNumberOfReplicas)))
+	sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- newNumberOfReplicas[%d] maxShardGIDcanHave[%d] minShardGIDcanHave[%d]", sm.me, newNumberOfReplicas, maxShardGIDcanHave, minShardGIDcanHave))
+
+	for i := 0; i &lt; NShards; i++ {
+		newConfig.Shards[i] = oldConfig.Shards[i]
+	}
+
+	for {
+		temp := sm.returnsMinMaxInAShardSystem(newConfig)
+		if temp.isZero {
+			for k := range args.Servers {
+				newConfig.Shards[temp.maxShard] = k
+				break
+			}
+		} else {
+			// sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- temp.minVal[%d] temp.maxVal[%d]", sm.me, temp.minVal, temp.maxVal))
+			if temp.minVal == minShardGIDcanHave && temp.maxVal == maxShardGIDcanHave {
+				break
+			}
+			newConfig.Shards[temp.maxShard] = temp.minGID
+		}
+	}
+
+	sm.configs = append(sm.configs, newConfig)
+	// sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- printing from join", sm.me))
+	// sm.printMasterStatus(sm.lastConfigNum)
+
+	return reply
+}
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match90-0.html#7" TARGET="0"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (sm *ShardMaster) waitingFromRaft() {
+	for {
+		select {
+		case &lt;-sm.quitApplyThread:
+			return
+		default:
+		}
+
+		msg := &lt;-sm.applyCh
+		sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- acquiring lock", sm.me))
+</FONT>		sm.mu.Lock()
+		sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- Apply Message Received for idx[%d]", sm.me, msg.CommandIndex))
+		cmd := msg.Command.(Op)
+		val := sm.DuplicateCheck[cmd.Identifier.ClientNum]
+		ok := true
+		insertedCmd := sm.cmdMap[msg.CommandIndex]
+<A NAME="10"></A><FONT color = #FF0000><A HREF="match90-0.html#10" TARGET="0"><IMG SRC="../../bitmaps/tm_0_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		if val &gt;= cmd.Identifier.Counter { // checks for duplicate if it is then doesnt execute it
+			ok = false
+		} else {
+			sm.DuplicateCheck[cmd.Identifier.ClientNum] = cmd.Identifier.Counter
+</FONT>		}
+
+		reply := OpReply{}
+		// sm.mu.Lock()
+		if ok {
+			// sm.mu.Lock()
+			if cmd.Type == Join {
+				reply = sm.executeJoin(msg)
+
+			} else if cmd.Type == Leave {
+				reply = sm.executeLeave(msg)
+
+			} else if cmd.Type == Query {
+				reply = sm.executeQuery(msg)
+
+			} else if cmd.Type == Move {
+				reply = sm.executeMove(msg)
+			}
+			// sm.mu.Unlock()
+		} else {
+<A NAME="8"></A><FONT color = #00FFFF><A HREF="match90-0.html#8" TARGET="0"><IMG SRC="../../bitmaps/tm_3_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- duplicate command for idx[%d] ClientNum[%d] Counter[%d]", sm.me, msg.CommandIndex, cmd.Identifier.ClientNum, cmd.Identifier.Counter))
+		}
+		ch, ok := sm.entryAppliedMap[msg.CommandIndex]
+</FONT>		sm.mu.Unlock()
+
+		if ok {
+			if insertedCmd.ClientNum == cmd.Identifier.ClientNum &&
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match90-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				insertedCmd.Counter == cmd.Identifier.Counter {
+
+				select {
+				case ch &lt;- reply:
+					sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- sent raftIdx[%d] validityOfCmd[%v]", sm.me, msg.CommandIndex, msg.CommandValid))
+</FONT>				default:
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match90-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+					sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- cant sent clerk already retried or something raftIdx[%d] validityOfCmd[%v]", sm.me, msg.CommandIndex, msg.CommandValid))
+				}
+				// ch &lt;- reply
+			} else {
+
+				reply.IsValid = false
+				select {
+				case ch &lt;- reply:
+					sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- wrong command sending false to op function raftIdx[%d] validityOfCmd[%v]", sm.me, msg.CommandIndex, msg.CommandValid))
+</FONT>				default:
+<A NAME="11"></A><FONT color = #00FF00><A HREF="match90-0.html#11" TARGET="0"><IMG SRC="../../bitmaps/tm_1_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+					sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- wrong command cant send  false to op function raftIdx[%d] validityOfCmd[%v]", sm.me, msg.CommandIndex, msg.CommandValid))
+				}
+				// ch &lt;- reply
+			}
+
+		} else {
+			sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- not required by op function raftIdx[%d] entryAppliedMap[%v]", sm.me, msg.CommandIndex, ok))
+</FONT>		}
+
+	}
+}
+
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+	// Your code here, if desired.
+}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+	return sm.rf
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	sm := new(ShardMaster)
+	sm.me = me
+
+	sm.configs = make([]Config, 1)
+	sm.configs[0].Groups = map[int][]string{}
+
+	labgob.Register(Op{})
+	labgob.Register(ClientReqID{})
+	labgob.Register(JoinArgs{})
+	labgob.Register(LeaveArgs{})
+	labgob.Register(QueryArgs{})
+	labgob.Register(MoveArgs{})
+
+	sm.applyCh = make(chan raft.ApplyMsg)
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+
+	// Your code here.
+	sm.entryAppliedMap = make(map[int]chan OpReply)
+	sm.quitApplyThread = make(chan int)
+	sm.debugLog = 0
+	sm.lastConfigNum = 0
+<A NAME="12"></A><FONT color = #0000FF><A HREF="match90-0.html#12" TARGET="0"><IMG SRC="../../bitmaps/tm_2_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	sm.cmdMap = make(map[int]ClientReqID) // to check if inserted command is same as recieved command then only reply otherwise dont you think of replying
+	sm.DuplicateCheck = make(map[int64]int64)
+	sm.DPrintfLog(fmt.Sprintf("SHARDMASTER %d --- Started", sm.me))
+</FONT>	go sm.waitingFromRaft()
+	return sm
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

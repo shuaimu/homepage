@@ -1,0 +1,233 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-himanshu-ckh/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-himanshu-ckh/src/deptran/raft/service.cc<p><PRE>
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+
+void RaftServiceImpl::HandleRequestVote(const uint64_t& candidateId,
+                                        const uint64_t& term,
+                                        const uint64_t& lastLogIndex,
+                                        const uint64_t& lastLogTerm,
+                                        bool_t* vote_granted,
+                                        uint64_t* currentTerm,
+                                        rrr::DeferredReply* defer) {
+  /* Your code here */
+  //currentTerm term
+  //vote_granted -&gt; if vote is granted or not
+
+  /*Implementation -&gt; 
+  1. Reply false if term &lt; currentTerm (§5.1)
+  2. If votedFor is null or candidateId, and candidate’s log is at least as up-to-date as receiver’s log, grant vote (§5.2, §5.4)
+  */
+  if (svr_-&gt;currentTerm &gt; term) {
+    // cout&lt;&lt;"Inside the before if"&lt;&lt;endl;
+    *vote_granted = false;
+    *currentTerm = svr_-&gt;currentTerm;
+  }else {
+    // cout&lt;&lt;"Inside log in first else" &lt;&lt;endl;
+    if (svr_-&gt;votedInCurrentTerm &lt; term) {
+      // cout&lt;&lt;"Inside log in first if" &lt;&lt;endl;
+      if(lastLogTerm &gt; svr_-&gt;logs.back().term || (lastLogTerm == svr_-&gt;logs.back().term && lastLogIndex &gt;= svr_-&gt;logs.back().index)) {
+        Log_info("Voting for current Term %d, for the leader %d", term, candidateId);
+        *vote_granted = true;
+        *currentTerm = term;
+        svr_-&gt;currentTerm = term;
+        svr_-&gt;votedFor = candidateId;
+        svr_-&gt;votedInCurrentTerm = term;
+      }
+    } 
+    else {
+      Log_info("Server %d received vote from candidate %d in term %d, already voted for %d", svr_-&gt;loc_id_, candidateId, term, svr_-&gt;votedFor);
+      *vote_granted = candidateId == svr_-&gt;votedFor;
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match233-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      *currentTerm = term;
+    }
+  }
+  defer-&gt;reply();
+}
+
+
+void RaftServiceImpl::HandleAppendEntries(const vector&lt;MarshallDeputy&gt;& md_cmd,
+                                          const uint64_t& isHeartBeat,
+                                          const uint64_t& leaderId,
+                                          const uint64_t& currentTerm,
+</FONT>                                          const uint64_t& prevLogTerm,
+                                          const uint64_t& prevLogIndex,
+                                          const uint64_t& leaderCommit,
+                                          bool_t *followerAppendOK,
+                                          uint64_t* termToSendBack,
+                                          rrr::DeferredReply* defer) {
+  /* Your code here */
+  /* 
+  1. Reply false if term &lt; currentTerm (§5.1)
+  2. Reply false if log doesn’t contain an entry at prevLogIndex
+  whose term matches prevLogTerm (§5.3)
+  3. If an existing entry conflicts with a new one (same index
+  but different terms), delete the existing entry and all that
+  follow it (§5.3)
+  4. Append any new entries not already in the log
+  5. If leaderCommit &gt; commitIndex, set commitIndex =
+  min(leaderCommit, index of last new entry)
+   */
+
+  vector&lt;shared_ptr&lt;Marshallable&gt;&gt; cmds;
+  bool_t voteGranted = false;
+  uint64_t term = svr_-&gt;currentTerm;
+  for(int i=0; i&lt;md_cmd.size(); i++) {
+    //Log_info("Creating the commands");
+    shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(md_cmd[i]).sp_data_;
+    cmds.push_back(cmd);
+  }
+
+  // std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(md_cmd).sp_data_;
+  if(svr_-&gt;currentTerm &gt; currentTerm) {
+    voteGranted = false;
+    *followerAppendOK = false;
+    term = svr_-&gt;currentTerm;
+    *termToSendBack = svr_-&gt;currentTerm;
+  } else {
+      svr_-&gt;leaderId = leaderId;
+      Log_info("Server %d has Log size %d and the prevLogIndex is %d", svr_-&gt;loc_id_, svr_-&gt;logs.size(), prevLogIndex);
+      if(svr_-&gt;logs.size() &gt; prevLogIndex) {
+        if(svr_-&gt;logs.at(prevLogIndex).term != prevLogTerm) {
+          Log_info("The server %d is sending a negative ack for term %d to leader %d", svr_-&gt;loc_id_, currentTerm, leaderId);
+          voteGranted = false;
+          term = currentTerm;
+          *followerAppendOK = false;
+        // *termToSendBack = svr_-&gt;currentTerm;
+        } else {
+          /* Need to implement this logic -&gt; 
+          //Read the paper again for handle commit index
+          */
+        //Log_info("The Size of command for Server %d is %d", svr_-&gt;loc_id_, cmds.size());
+          int serverLogSize = svr_-&gt;logs.size();
+          for (int i = prevLogIndex + 1; i &lt; serverLogSize; i++) {
+            svr_-&gt;logs.erase(svr_-&gt;logs.begin() + i);
+          }
+
+          for(int j=0; j&lt;cmds.size(); j++) {
+            int serverlastIndex = svr_-&gt;logs.size() - 1;
+            // Log_info("Appending entries for the new Commands");
+            RaftServer::log newLogEntry;
+            newLogEntry.index = serverlastIndex + 1;
+            newLogEntry.term = currentTerm;
+            newLogEntry.command = cmds.at(j);
+            //Log_info("Appending entries for server %d at index %d", svr_-&gt;loc_id_, newLogEntry.index);
+            //Add the new Log entry to the server
+            svr_-&gt;logs.push_back(newLogEntry);
+          }
+
+          //Add code here to commit values if leader has already committed 
+           if (leaderCommit &gt; svr_-&gt;commitIndex) {
+            Log_info("CommitIndex is %d from leader %d to me %d, for term %d and server Commit index is %d and servers logs size is %d", leaderCommit, leaderId, svr_-&gt;loc_id_, currentTerm, svr_-&gt;commitIndex, svr_-&gt;logs.size());
+
+            for (int i = svr_-&gt;commitIndex + 1; i &lt;= min(leaderCommit, svr_-&gt;logs.size() - 1); i++) {
+              if (!(svr_-&gt;logs.at(i).term == 0)) {
+                svr_-&gt;app_next_(*svr_-&gt;logs.at(i).command.get());
+              }
+            }
+            svr_-&gt;commitIndex = min(leaderCommit, svr_-&gt;logs.size()-1);
+            Log_info("After commiting to follower, Set commit index to %d for server %d for term %d", svr_-&gt;commitIndex, svr_-&gt;loc_id_, currentTerm);
+          }
+
+          term = currentTerm;
+          voteGranted = true;
+        }
+      }
+      // RaftServer::log newLogEntry;
+      // newLogEntry.index = serverlastIndex + 1;
+      // newLogEntry.term = currentTerm;
+      // newLogEntry.command = cmd;
+      // Log_info("The server %d has the serverLastIndex %d", svr_-&gt;loc_id_, serverlastIndex);
+
+      // //Add the new Log entry to the server
+      // svr_-&gt;logs.push_back(newLogEntry);    
+    
+      // Log_info("The Server %d, now have an entry at lastLogIndex is %d and lastLogTerm is %d", svr_-&gt;loc_id_, svr_-&gt;logs.back().index, svr_-&gt;logs.back().term);
+     
+  }
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match233-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  *followerAppendOK = voteGranted;
+  *termToSendBack  = term;
+  defer-&gt;reply();
+}
+
+
+void RaftServiceImpl::HandleAppendEntriesHeartBeat(const uint64_t& isHeartBeat,
+                                          const uint64_t& leaderId,
+                                          const uint64_t& currentTerm,
+</FONT>                                          const uint64_t& prevLogTerm,
+                                          const uint64_t& prevLogIndex,
+                                          const uint64_t& leaderCommit,
+                                          bool_t *followerAppendOK,
+                                          uint64_t *termToSendBack,
+                                          rrr::DeferredReply* defer) {
+
+                                  
+  
+  if(isHeartBeat == 1 ) {
+    Log_info("Heart Beat received from leader %d, to me %d for current Term %d", leaderId, svr_-&gt;loc_id_, currentTerm);
+    svr_-&gt;mtx_.lock();
+    int sTerm = svr_-&gt;currentTerm;
+    svr_-&gt;mtx_.unlock();
+    if(currentTerm &gt;= sTerm) {
+
+      svr_-&gt;mtx_.lock();
+      svr_-&gt;state = RaftServer::State::follower;
+      svr_-&gt;currentTerm = currentTerm;
+      *followerAppendOK = true;
+      *termToSendBack = currentTerm;
+      svr_-&gt;heartBeatRecevied = 1;
+      svr_-&gt;requestTimout = std::rand() % (500) + 700;
+      svr_-&gt;mtx_.unlock();
+
+      //If the leader Commit is more that means the leader has commited some value, we need to commit as well depending on the case
+      if (leaderCommit &gt; svr_-&gt;commitIndex && svr_-&gt;logs.size() &gt; prevLogIndex && svr_-&gt;logs.at(prevLogIndex).term == prevLogTerm) {
+        Log_info("CommitIndex is %d from leader %d to me %d, for term %d and server Commit index is %d and servers logs size is %d", leaderCommit, leaderId, svr_-&gt;loc_id_, currentTerm, svr_-&gt;commitIndex, svr_-&gt;logs.size());
+        for (int i = svr_-&gt;commitIndex + 1; i &lt;= min(leaderCommit, svr_-&gt;logs.size() - 1); i++) {
+          if (!(svr_-&gt;logs.at(i).term == 0)) {
+            svr_-&gt;app_next_(*svr_-&gt;logs.at(i).command.get());
+          }
+        }
+        svr_-&gt;commitIndex = min(leaderCommit, svr_-&gt;logs.size()-1);
+        Log_info("After commiting to follower, Set commit index to %d for server %d for term %d", svr_-&gt;commitIndex, svr_-&gt;loc_id_, currentTerm);
+      }
+    } else {
+      *followerAppendOK = false;
+      *termToSendBack = svr_-&gt;currentTerm;
+    }
+  }
+
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("receive an rpc: %s", req.c_str());
+  *res = "world";
+  defer-&gt;reply();
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

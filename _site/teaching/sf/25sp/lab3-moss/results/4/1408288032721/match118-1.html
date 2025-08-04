@@ -1,0 +1,374 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-ameya-zope/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-priyankaborwanker/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+namespace janus {
+
+
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+  
+  //Log_info("In join");
+  ShardConfig shconfig;
+  shconfig.number = configs_.size()+1;
+  if(configs_.size()==0 || configs_.size()&gt;0 && configs_[configs_.size()].group_servers_map_.size()==0)
+  {
+    for(uint64_t i = 0;i&lt;10;i++)
+    {
+      shconfig.shard_group_map_[i+1] = gid_server_map.begin()-&gt;first;
+      //Log_info("%d", gid_server_map.begin()-&gt;first);
+    }
+    uint64_t ele = gid_server_map.begin()-&gt;first;
+    shconfig.group_servers_map_[gid_server_map.begin()-&gt;first] = gid_server_map.begin()-&gt;second;
+    //Log_info("shconfig contains numb of groups: %d", shconfig.group_servers_map_.size());
+  }
+  else{
+    for(uint64_t i = 0;i&lt;10;i++)
+    {
+      shconfig.shard_group_map_[i+1] = configs_[configs_.size()].shard_group_map_[i+1];
+    }
+    shconfig.group_servers_map_ = configs_[configs_.size()].group_servers_map_;
+  }
+  for(auto i : gid_server_map)
+  {
+    //Log_info("Inserting %d size of shconfiggroupservermap: %d", i.first, shconfig.group_servers_map_.size());
+    if(shconfig.group_servers_map_.find(i.first)==shconfig.group_servers_map_.end())
+    {
+      uint64_t max_shards_held_by_group = 10;
+      if(shconfig.group_servers_map_.size()!=0)
+      {
+        //max_shards_held_by_group = ceil(10/shconfig.group_servers_map_.size()); 
+        if(max_shards_held_by_group%shconfig.group_servers_map_.size()==0)
+        {
+          max_shards_held_by_group = max_shards_held_by_group/shconfig.group_servers_map_.size();
+        }
+        else{
+          max_shards_held_by_group = max_shards_held_by_group/shconfig.group_servers_map_.size()+1;
+        }
+        //Log_info("max shards--&gt; %d ceil --&gt; %d", (10/shconfig.group_servers_map_.size()),max_shards_held_by_group);
+      }
+
+      if(max_shards_held_by_group%2==0)
+      {
+        //Log_info("Max shards by one group");
+        //only one element is there, convert half of those groups 
+        unordered_map&lt;int,int&gt; mp;
+        uint64_t element;
+        for(auto w : shconfig.shard_group_map_)
+        {
+          if(mp.find(w.second)==mp.end())
+          {
+            mp[w.second]=1;
+          }
+          else{
+            mp[w.second]++;
+          }
+          if(mp[w.second]==max_shards_held_by_group)
+          {
+            element = w.second;
+            //Log_info("Max shards held by e lement: %d", element);
+            break;
+          }
+        }
+        uint64_t count = 0;
+        for(auto w : shconfig.shard_group_map_)
+        {
+          if(w.second == element)
+          {
+            //Log_info("Setting shard %d : changing groups from %d --&gt; %d", w.first, w.second, i.first);
+            w.second = i.first;
+            shconfig.shard_group_map_[w.first] = i.first;
+            ////Log_info("Setting shard %d : changing groups from %d --&gt; %d", w.first, w.second, i.first);
+            count++;
+          }
+          if(count==max_shards_held_by_group/2)
+          {
+            break;
+          }
+        }
+      }
+      else{
+        //Log_info("In else part %d ",max_shards_held_by_group);
+        unordered_map&lt;int,int&gt; mp;
+        vector&lt;uint64_t&gt; element;
+        for(auto w : shconfig.shard_group_map_)
+        {
+          if(mp.find(w.second)==mp.end())
+          {
+            mp[w.second]=1;
+          }
+          else{
+            mp[w.second]++;
+          }
+          if(mp[w.second]==max_shards_held_by_group)
+          {
+            element.push_back(w.second);
+            if(element.size()==2)
+            {
+              break;
+            }
+          }          
+        }
+        uint64_t element1 = element[0], element2 = element[1];
+        uint64_t count = 0;
+        uint64_t nc = max_shards_held_by_group;
+        //Log_info("%d",nc/2);
+        for(auto w : shconfig.shard_group_map_)
+        {
+          if(w.second == element1)
+          {
+            w.second = i.first;
+            shconfig.shard_group_map_[w.first] = i.first;
+            count++;
+          }
+          if(count==nc/2)
+          {
+            break;
+          }
+        }
+        count = 0;
+        for(auto w : shconfig.shard_group_map_)
+        {
+          if(w.second == element2)
+          {
+            w.second = i.first;
+            shconfig.shard_group_map_[w.first] = i.first;
+            count++;
+          }
+          if(count==((nc/2)+1))
+          {
+            break;
+          }
+        }
+      }
+      shconfig.group_servers_map_[i.first] = i.second; 
+      //Log_info("Inserting %d size of groupserversmap: %d",i.first, shconfig.group_servers_map_.size());
+
+    }   
+  }
+  for(uint64_t i = 0;i&lt;10;i++)
+  {
+    //Log_info("Shard %d in group %d", i+1, shconfig.shard_group_map_[i+1]);
+  }
+  uint64_t number_of_groups = shconfig.group_servers_map_.size();
+  //Log_info("shconfig number: %d num of groups: %d", shconfig.number, number_of_groups);
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match118-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  configs_[shconfig.number] = shconfig;
+  *ret = KV_SUCCESS;
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+</FONT>  // your code here
+  //Log_info("In leave,");
+  ShardConfig shconfig;
+  map&lt;uint32_t, ShardConfig&gt;::iterator itr;
+  itr = configs_.end();
+  --itr;
+  shconfig.number = itr-&gt;first + 1;
+  shconfig.group_servers_map_ = itr-&gt;second.group_servers_map_;
+  shconfig.shard_group_map_ = itr-&gt;second.shard_group_map_;
+  
+  for(uint64_t i = 0; i &lt; gids.size(); i++)
+  {
+    //Log_info("Erasing gid %d", gids[i]);
+    shconfig.group_servers_map_.erase(gids[i]);
+    for(uint64_t j = 1;j&lt;=10;j++)
+    {
+      if(shconfig.shard_group_map_[j]==gids[i])
+      {
+        shconfig.shard_group_map_[j] = -1;
+      }
+    }
+    //Log_info("Size of shconfig.group_servers_map_: %d", shconfig.group_servers_map_.size());
+  }
+  for(uint64_t i = 0;i&lt;10;i++)
+  {
+    //Log_info("Shard %d in group %d", i+1, shconfig.shard_group_map_[i+1]);
+  }
+  //
+
+  bool flag = true;
+  while(flag)
+  {
+    //find minimum occurring element which is not -1
+    unordered_map&lt;uint64_t, uint64_t&gt; mp;
+    for(uint64_t i = 0;i&lt;10;i++)
+    {
+      if(shconfig.shard_group_map_[i+1]!=-1)
+      {
+        mp[shconfig.shard_group_map_[i+1]]++;
+      }
+    }
+    //find minimum occurring element
+    int min_count = 11, res = 0;
+    for (auto i : mp) {
+        if (min_count &gt;= i.second) {
+            res = i.first;
+            min_count = i.second;
+        }
+    }
+    //replace any -1 with this res
+    for(uint64_t i = 0;i&lt;10;i++)
+    {
+      if(shconfig.shard_group_map_[i+1]==-1)
+      {
+        shconfig.shard_group_map_[i+1] = res;
+        //Log_info("Setting shard %d : changing groups to %d",i+1,res);
+        break;
+      }
+    }
+
+    flag = false;
+    for(uint64_t i = 0;i&lt;10;i++)
+    {
+      if(shconfig.shard_group_map_[i+1]==-1)
+      {
+        flag = true;
+      }
+    }
+  }
+
+
+  // uint64_t number_of_groups = shconfig.group_servers_map_.size();
+  // uint64_t k = number_of_groups;
+  // uint64_t n_s = 10;
+  // uint64_t g;
+  // uint64_t p = 1;
+
+  // for(auto i : shconfig.group_servers_map_)
+  // {
+  //   g = n_s / k;//2--&gt;//2
+  //   uint64_t y = p;
+
+  //   for(; p&lt; y + g; p++)//1,2 --&gt; 3,4 --&gt; 5,6,7 --&gt; 8,9,10
+  //   {
+  //     //{1,1}, {2,1}
+  //     shconfig.shard_group_map_[p] = i.first;
+  //     //Log_info("shard --&gt; %d group --&gt; %d", itr, i.first);
+  //   }
+  //   n_s -= g;//8
+  //   k--;//3
+  // }
+
+  configs_[shconfig.number] = shconfig;
+  *ret = KV_SUCCESS;
+  defer-&gt;reply();
+}
+/*
+10/6 = 1
+9/5 = 1
+8/4 = 2
+6/3 = 2
+4/2 = 2
+2/1 = 2
+
+10/7 = 1
+9/6 = 1
+8/5 = 1
+7/6 = 1
+6/5 = 1
+5/4 = 1
+4/3 = 1
+3/2 = 1
+2/1 = 2
+1 2 3 4 5 6 7 8 9 10 --&gt; shards
+1 1 1 1 1 1 1 1 1 1 --&gt; groups(1)
+1 1 1 1 1 2 2 2 2 2 --&gt; groups(2)
+1 1 1 2 2 2 3 3 3 3 --&gt; not the least tranfer --&gt; 6 changes
+1 1 1 3 3 3 2 2 2 2 --&gt; 3 changes
+1 1 1 3 3 3 4 4 2 2 --&gt; 2 changes
+1 1 5 5 3 3 4 4 2 2 --&gt; 2 changes
+1 6 6 5 3 3 4 4 2 2 
+1 6 6 5 3 7 4 4 2 2
+
+Splitting
+1 1 1 1 1 1 1 1 1 1 --&gt; split largest group 
+1 1 1 1 1 2 2 2 2 2 --&gt; split middle of two equal size group 
+1 1 1 3 3 3 2 2 2 2 --&gt; split largest group 
+1 1 1 3 3 3 2 2 4 4 --&gt; split middle of two equal size largest groups
+1 1 5 5 3 3 2 2 4 4 --&gt; split 
+1 6 6 5 3 3 2 2 4 4  1 2 1 2 2 2
+1 6 7 5 3 3 2 2 4 4  1 1 1 1 2 2 2
+1 6 7 5 3 8 2 2 4 4  1 1 1 1 1 1 2 2
+1 6 7 5 3 8 2 9 4 4  1 1 1 1 1 1 1 1 2
+1 6 7 5 3 8 2 9 4 10 1 1 1 1 1 1 1 1 1 1 
+
+Insertion
+1 2 3 4 5 6 7 8 9 10 --&gt; SHARDS
+
+1 1 1 1 1 1 1 1 1 1 --&gt; split in half, only one had maximum
+1 1 1 1 1 2 2 2 2 2 --&gt; middle of the two maximums
+1 1 1 3 3 3 2 2 2 2 --&gt; split in half
+1 1 1 3 3 3 2 2 4 4 --&gt; middle of teo max
+1 1 5 5 3 3 2 2 4 4 --&gt; 
+1 6 6 5 3 3 2 2 4 4 --&gt; 
+1 6 6 5 3 3 2 7 7 4 --&gt; 
+1 6 7 5 3 8 2 2 4 4 --&gt;
+1 6 7 5 3 8 2 9 4 4  
+1 6 7 5 3 8 2 9 4 10 
+
+Deletion
+1 6 7 5 3 8 2 9 4 10
+1 6 7 5 3 8 2 9 4 4
+1 6 7 5 3 8 2 2 4 4
+1 6 7 5 3 3 2 2 4 4 
+1 6 6 5 3 3 2 2 4 4 
+1 1 5 5 3 3 2 2 4 4
+1 1 1 3 3 3 2 2 4 4
+1 1 1 3 3 3 2 2 2 2
+1 1 1 1 1 2 2 2 2 2
+1 1 1 1 1 1 1 1 1 1 
+*/
+
+
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  //Log_info("In move");
+  *ret = KV_SUCCESS;
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match118-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+  // your code here
+  if(config_no == -1 || configs_.find(config_no)==configs_.end())
+</FONT>  {
+    *config = std::prev(configs_.end())-&gt;second;
+  }
+  else{
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match118-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    *config = configs_[config_no];
+  }
+  *ret = KV_SUCCESS;
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  // your code here
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+</FONT>  uint32_t id = sp_log_svr_-&gt;site_id_;
+  return cli;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

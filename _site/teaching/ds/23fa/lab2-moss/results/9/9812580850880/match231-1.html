@@ -1,0 +1,152 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-kanavtalwar/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-raunaqpahwa/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  RaftServer& server = GetRaftServer();
+  string s_oid = to_string(oid);
+  auto cmd = MakeMarshallable(s_oid, "put", k, v);
+  uint64_t index = 0, term = 0;
+  if (waiting.find(s_oid) != waiting.end()) {
+    return KV_TIMEOUT;
+  }
+  shared_ptr&lt;BoxEvent&lt;KVOperationReply&gt;&gt; event = Reactor::CreateSpEvent&lt;BoxEvent&lt;KVOperationReply&gt;&gt;();
+  waiting[s_oid] = event;
+  bool result = server.Start(cmd, &index, &term);
+  if (!result) {
+    waiting.erase(s_oid);
+    return KV_NOTLEADER;
+  }
+  if (!event-&gt;IsReady()) {
+    event-&gt;Wait(800000);
+  }
+  int operationResult = waiting[s_oid]-&gt;Get().status;
+  waiting.erase(s_oid);
+  return operationResult;
+}
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  RaftServer& server = GetRaftServer();
+  string s_oid = to_string(oid);
+  auto cmd = MakeMarshallable(s_oid, "append", k, v);
+  uint64_t index = 0, term = 0;
+  if (waiting.find(s_oid) != waiting.end()) {
+    return KV_TIMEOUT;
+  }
+  shared_ptr&lt;BoxEvent&lt;KVOperationReply&gt;&gt; event = Reactor::CreateSpEvent&lt;BoxEvent&lt;KVOperationReply&gt;&gt;();
+  waiting[s_oid] = event;
+  bool result = server.Start(cmd, &index, &term);
+  if (!result) {
+    waiting.erase(s_oid);
+    return KV_NOTLEADER;
+  }
+  if (!event-&gt;IsReady()) {
+    event-&gt;Wait(800000);
+  }
+  int operationResult = waiting[s_oid]-&gt;Get().status;
+  waiting.erase(s_oid);
+  return operationResult;
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+  RaftServer& server = GetRaftServer();
+  string s_oid = to_string(oid);
+  auto cmd = MakeMarshallable(s_oid, "get", k, *v);
+  uint64_t index = 0, term = 0;
+  if (waiting.find(s_oid) != waiting.end()) {
+    return KV_TIMEOUT;
+  }
+  shared_ptr&lt;BoxEvent&lt;KVOperationReply&gt;&gt; event = Reactor::CreateSpEvent&lt;BoxEvent&lt;KVOperationReply&gt;&gt;();
+  waiting[s_oid] = event;
+  bool result = server.Start(cmd, &index, &term);
+  if (!result) {
+    waiting.erase(s_oid);
+    return KV_NOTLEADER;
+  }
+  if (!event-&gt;IsReady()) {
+    event-&gt;Wait(800000);
+  }
+  int operationResult = waiting[s_oid]-&gt;Get().status;
+  *v = waiting[s_oid]-&gt;Get().value;
+  waiting.erase(s_oid);
+  return operationResult;
+}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match231-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_7.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  auto v = (MultiStringMarshallable*)(&m);
+  string s_oid = v-&gt;data_ .at(0);
+  string operation = v-&gt;data_.at(1);
+  string key = v-&gt;data_.at(2);
+  string value = v-&gt;data_.at(3);
+</FONT>  if (operation == "put") {
+    store[key] = value;
+  } else if (operation == "append") {
+    store[key] += value;
+  }
+  if (waiting.find(s_oid) == waiting.end()) {
+    return;
+  }
+  KVOperationReply& reply = waiting[s_oid]-&gt;Get();
+  reply.status = KV_SUCCESS;
+  if (operation == "get") {
+    reply.value = store[key];
+  }
+  waiting[s_oid]-&gt;Set(reply);
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+shared_ptr&lt;Marshallable&gt; KvServer::MakeMarshallable(string& s_oid, string operation, const string& k, const string& v) {
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(s_oid);
+  s-&gt;data_.push_back(operation);
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  return s;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

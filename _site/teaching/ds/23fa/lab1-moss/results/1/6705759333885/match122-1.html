@@ -1,0 +1,146 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-a-preet/src/deptran/raft/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-a-preet/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+
+void RaftServiceImpl::HandleRequestVote(const uint64_t& term,
+                                        const uint64_t& candidateId,
+                                        const uint64_t& lastLogIndex,
+                                        const uint64_t& lastLogTerm,
+                                        bool_t *vote_granted,
+                                        rrr::DeferredReply* defer) {
+  /* Your code here */
+  // Log_info("receive an rpc: request vote");
+  svr_-&gt;recieved_rcp_ = true;
+  *vote_granted = false;
+  uint64_t svr_last_log_index = svr_-&gt;log_-&gt;size()-1;
+  uint64_t svr_last_log_term = svr_-&gt;log_terms_-&gt;back();
+  if (term&lt;*svr_-&gt;term_) {
+    defer-&gt;reply();
+    return;
+  }
+  if(term&gt;*svr_-&gt;term_) {
+    *svr_-&gt;term_ = term;
+    *svr_-&gt;voted_for_ = (uint64_t)NULL;
+  }
+  if (*svr_-&gt;voted_for_==(uint64_t)NULL || *svr_-&gt;voted_for_==candidateId) {
+    if (lastLogTerm&gt;svr_last_log_term || (lastLogTerm==svr_last_log_term && lastLogIndex&gt;=svr_last_log_index)) {
+      // Log_info("%lu vote for %lu", svr_-&gt;loc_id_, candidateId);
+      *svr_-&gt;voted_for_ = candidateId;
+      *vote_granted = true;
+      *svr_-&gt;term_ = term;
+    }
+  }
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleAppendEntries(const uint64_t& term,
+                                          const uint64_t& prevLogIndex,
+                                          const uint64_t& prevLogTerm,
+                                          const vector&lt;MarshallDeputy&gt;& entries,
+                                          const vector&lt;uint64_t&gt;& entry_terms,
+                                          const uint64_t& leaderCommit,
+                                          uint64_t *svr_term,
+                                          bool_t *success,
+                                          rrr::DeferredReply* defer) {
+
+  /* Your code here */
+  // Log_info("receive an rpc: append entries");
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(svr_-&gt;mtx_);
+  *success = false;
+  *svr_term = *svr_-&gt;term_;
+  // Log_info("%d", *svr_-&gt;is_leader_);
+  if (term&lt;*svr_-&gt;term_) {
+    defer-&gt;reply();
+    return;
+  }
+
+  if (term&gt;*svr_-&gt;term_) {
+    *svr_-&gt;term_ = term;
+    *svr_-&gt;is_leader_ = false;
+  }
+
+  svr_-&gt;recieved_rcp_ = true;
+  if (prevLogIndex&gt;=svr_-&gt;log_-&gt;size() || (*svr_-&gt;log_terms_)[prevLogIndex]!=prevLogTerm) {
+    defer-&gt;reply();
+    return;
+  }
+
+  *success = true;
+  if (entries.empty()) {
+    if(leaderCommit&gt;svr_-&gt;commit_index_) {
+      svr_-&gt;commit_index_ = std::min(leaderCommit, svr_-&gt;log_-&gt;size()-1);
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match122-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_11.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      if (svr_-&gt;commit_index_&gt;svr_-&gt;last_applied_) {
+        auto old_last_applied = svr_-&gt;last_applied_;
+        svr_-&gt;last_applied_ = svr_-&gt;commit_index_;
+        for (int i=old_last_applied+1; i&lt;=svr_-&gt;last_applied_; i++) {
+          if((*svr_-&gt;log_)[i]==nullptr) continue;
+          if ((*svr_-&gt;log_)[i]-&gt;sp_data_!=nullptr) {
+            svr_-&gt;app_next_(*(*svr_-&gt;log_)[i]-&gt;sp_data_);
+</FONT>          }
+        }
+      }
+    }
+    defer-&gt;reply();
+    return;
+  }
+
+
+  if ((*svr_-&gt;log_terms_)[prevLogIndex]==prevLogTerm) {
+    // Log_info("prevLogIndex: %lu, prevLogTerm: %lu", prevLogIndex, prevLogTerm);
+    svr_-&gt;log_-&gt;erase(svr_-&gt;log_-&gt;begin()+prevLogIndex+1, svr_-&gt;log_-&gt;end());
+    svr_-&gt;log_terms_-&gt;erase(svr_-&gt;log_terms_-&gt;begin()+prevLogIndex+1, svr_-&gt;log_terms_-&gt;end());
+    for (int i=0; i&lt;entries.size(); i++) {
+      MarshallDeputy* cmd = new MarshallDeputy(entries[i].sp_data_);
+      svr_-&gt;log_-&gt;push_back(cmd);
+      svr_-&gt;log_terms_-&gt;push_back(entry_terms[i]);
+    }
+    svr_-&gt;commit_index_ = std::min(leaderCommit, svr_-&gt;log_-&gt;size()-1);
+    if (svr_-&gt;commit_index_&gt;svr_-&gt;last_applied_) {
+      auto old_last_applied = svr_-&gt;last_applied_;
+      svr_-&gt;last_applied_ = svr_-&gt;commit_index_;
+      for (int i=old_last_applied+1; i&lt;=svr_-&gt;last_applied_; i++) {
+        if((*svr_-&gt;log_)[i]==nullptr) continue;
+        if ((*svr_-&gt;log_)[i]-&gt;sp_data_!=nullptr) {
+          svr_-&gt;app_next_(*(*svr_-&gt;log_)[i]-&gt;sp_data_);
+        }
+      }
+    }
+    // Log_info("commit index: %lu", svr_-&gt;commit_index_);
+  }
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("receive an rpc: %s", req.c_str());
+  *res = "world";
+  defer-&gt;reply();
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

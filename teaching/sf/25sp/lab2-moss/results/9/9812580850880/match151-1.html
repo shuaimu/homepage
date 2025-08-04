@@ -1,0 +1,193 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-HOD101s/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-yskot1999/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match151-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+shared_ptr&lt;Marshallable&gt; KvServer::cmdToSend(uint64_t oid, string cmdType, string k, string v)
+</FONT><A NAME="1"></A><FONT color = #00FF00><A HREF="match151-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+{
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back(cmdType);
+    s-&gt;data_.push_back(k);
+</FONT>    if (cmdType == "put" || cmdType == "append")
+        s-&gt;data_.push_back(v);
+    return dynamic_pointer_cast&lt;Marshallable&gt;(s);
+}
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  /* 
+  Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  */
+  /* your code here */
+  // Coroutine::CreateRun([this, oid, k, v](){
+    bool val;
+    uint64_t index, term;
+    Log_info("PUT called by server %d", GetRaftServer().loc_id_);
+    auto cmd = cmdToSend(oid, "put", k, v);
+    val = GetRaftServer().Start(cmd, &index, &term);
+    putValToReturn = val == 1 ? KV_SUCCESS : KV_NOTLEADER;
+    //if (valToReturn == KV_SUCCESS) keyValStore[k] = v;
+    Log_info("log put before sleep");
+    if (putValToReturn == KV_SUCCESS) {
+      // auto &ev = tempPutWait;
+      tempPutWait.Set(0);
+      Log_info("value before put wait is : %d", tempPutWait.value_);
+      int val = tempPutWait.value_;
+      tempPutWait.WaitUntilGreaterOrEqualThan(1, 800000);
+      int ret = tempPutWait.value_;
+      if (tempPutWait.value_ == 0) {
+        putValToReturn = KV_TIMEOUT;
+      }
+    }
+    else if (putValToReturn == KV_NOTLEADER) {
+      Log_info("looking for a special case !!");
+    }
+    //Log_info("WAit put : %d", tempWait.WaitUntilGreaterOrEqualThan(1, 100000) == 1);
+    Log_info("log put after sleep");
+  // });
+  Log_info("last put is : %d", putValToReturn);
+  return putValToReturn;
+}
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+  // Coroutine::CreateRun([this, oid, k, v](){
+    int flag = 0;
+    //vector&lt;MarshallDeputy&gt; logs = GetRaftServer().logEntryMessages;
+    bool val;
+    uint64_t index, term;
+    Log_info("APPEND called by server %d", GetRaftServer().loc_id_);
+    string typeOfCmd = "";
+    // if (keyValStore.count(k) &gt; 0) {
+    //   typeOfCmd = "append";
+    //   keyValStore[k]+= v;
+    // } else {
+    //   typeOfCmd = "put";
+    //   keyValStore[k] = v;    }
+    auto cmd = cmdToSend(oid, "append", k, v);
+    val = GetRaftServer().Start(cmd, &index, &term);
+    appendValToReturn = val == 1 ? KV_SUCCESS : KV_NOTLEADER;
+    Log_info("log append before sleep");
+    //Log_info("value append is : %d", tempWait.value_);
+    //Log_info("WAit append : %d", tempWait.WaitUntilGreaterOrEqualThan(2, 100000) == 1);
+    if (appendValToReturn == KV_SUCCESS) {
+      // auto &ev = tempAppendWait;
+      tempAppendWait.Set(0);
+      Log_info("value before append wait for server %d is : %d", GetRaftServer().loc_id_,tempAppendWait.value_);
+      tempAppendWait.WaitUntilGreaterOrEqualThan(1, 800000);
+      if (tempAppendWait.value_ == 0) {
+        appendValToReturn = KV_TIMEOUT;
+      }
+    }
+    else if (appendValToReturn == KV_NOTLEADER) {
+      Log_info("looking for a special append case !!");
+    }
+    Log_info("log append after sleep for server %d", GetRaftServer().loc_id_);
+  // });
+  Log_info("last is : %d", appendValToReturn);
+  return appendValToReturn;
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+  /* your code here */
+  // Coroutine::CreateRun([this, oid, k, v](){
+    int flag = 0;
+    bool val;
+    uint64_t index, term;
+    Log_info("GET called by server %d", GetRaftServer().loc_id_);
+    auto cmd = cmdToSend(oid, "get", k, "empty");
+    val = GetRaftServer().Start(cmd, &index, &term);
+    getValToReturn = val == 1 ? KV_SUCCESS : KV_NOTLEADER;
+    Log_info("get return value over here %d!!!", getValToReturn);
+    //Log_info("log before sleep");
+    //Log_info("value is : %d", tempWait.value_);
+    // Log_info("WAit : %d", tempWait.WaitUntilGreaterOrEqualThan(3, 100000) == 1);
+      //auto &ev = tempGetWait;
+      tempGetWait.Set(0);
+      Log_info("value before get wait for get server %d is : %d", GetRaftServer().loc_id_, tempGetWait.value_);
+      tempGetWait.WaitUntilGreaterOrEqualThan(1,800000);
+      if (tempGetWait.value_ == 0) {
+        Log_info("Why am I here!!!");
+        getValToReturn = KV_TIMEOUT;
+      }
+      Log_info("event value for get server %d is : %d", GetRaftServer().loc_id_, tempGetWait.value_);
+    //Log_info("log after sleep");
+    //Log_info("value is : %s", keyValStore[k].c_str());
+    *v = keyValStore[k];
+  // });
+  Log_info("last get is : %d", getValToReturn);
+  return getValToReturn;
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  auto v = (MultiStringMarshallable*)(&m);
+  Log_info("Commited cmd for server %d is :: %s",GetRaftServer().loc_id_,v-&gt;data_[1].c_str());
+  OIDs.push_back(v-&gt;data_[0]);
+  if (v-&gt;data_[1] == "put") {
+    keyValStore[v-&gt;data_[2]] = v-&gt;data_[3];
+    tempPutWait.Set(1);
+  } else if (v-&gt;data_[1] == "append") {
+    if (keyValStore.count(v-&gt;data_[2]) &gt; 0) keyValStore[v-&gt;data_[2]]+=v-&gt;data_[3];
+    else keyValStore[v-&gt;data_[2]] = v-&gt;data_[3];
+    tempAppendWait.Set(1);
+  } else {
+    Log_info("Its a get Command");
+    tempGetWait.Set(1);
+  }
+  /* your code here */
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

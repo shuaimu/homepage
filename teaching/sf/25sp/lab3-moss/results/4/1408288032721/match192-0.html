@@ -1,0 +1,252 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-Sirneij/src/shardkv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-Sirneij/src/shardkv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus
+{
+  int64_t ShardKvServer::GetNextOpId()
+  {
+    Log_info("ShardKvServer::GetNextOpId");
+    verify(sp_log_svr_);
+    int64_t ret = sp_log_svr_-&gt;site_id_;
+    ret = ret &lt;&lt; 32;
+    ret = ret + op_id_cnt_++;
+    return ret;
+  }
+
+  /**
+   * @brief Put a key-value pair into the map.
+   *
+   * @param oid The operation ID.
+   * @param k The key.
+   * @param v The value.
+   * @return int KV_SUCCESS if successful, KV_TIMEOUT if timed out, KV_NOTLEADER if not leader.
+   */
+  int ShardKvServer::Put(const uint64_t &oid,
+                         const string &k,
+                         const string &v)
+  {
+    // lab_shard: fill in your code
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(shardkv_mutex_);
+    std::string oid_str = std::to_string(oid);
+
+    // Check if there's an existing event for this operation
+    if (outstanding_requests_.find(oid_str) != outstanding_requests_.end())
+    {
+      // Event already exists.
+      // Log_info("An event for oid %s already exists.", oid_str.c_str());
+      return KV_SUCCESS;
+    }
+    uint64_t index, term;
+    bool is_leader;
+
+    auto cmd = make_shared&lt;MultiStringMarshallable&gt;();
+    cmd-&gt;data_.push_back(oid_str);
+    cmd-&gt;data_.push_back("put");
+    cmd-&gt;data_.push_back(k);
+    cmd-&gt;data_.push_back(v);
+
+    std::shared_ptr&lt;Marshallable&gt; ret = cmd;
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match192-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    is_leader = GetRaftServer().Start(ret, &index, &term);
+
+    // Log_info("ShardKvServer::Put -&gt; is_leader %d", is_leader);
+
+    if (!is_leader)
+    {
+      // Log_info("ShardKvServer::Put -&gt; KV_NOTLEADER");
+      return KV_NOTLEADER;
+    }
+
+    // Create a new event for this operation
+    auto event = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    outstanding_requests_[oid_str] = event;
+</FONT>
+    // Wait for the event to be signaled or timeout
+    event-&gt;Wait(1000000);                 // Wait for 1 second
+    outstanding_requests_.erase(oid_str); // Clean up
+
+    // Check if the event timed out
+    if (event-&gt;status_ == Event::TIMEOUT)
+    {
+      return KV_TIMEOUT;
+    }
+
+    kv_store_[k] = v;
+    return KV_SUCCESS;
+  }
+
+  /**
+   * @brief Append a value to the value of a key.
+   *
+   * @param oid The operation ID.
+   * @param k The key of the operation.
+   * @param v The value to append.
+   * @return int KV_SUCCESS if the operation is successful, KV_NOTLEADER if the server is not the leader, KV_TIMEOUT if the operation times out.
+   */
+  int ShardKvServer::Append(const uint64_t &oid,
+                            const string &k,
+                            const string &v)
+  {
+    // lab_shard: fill in your code
+    // Log_info("ShardKvServer::Append -&gt; {key: %s, value: %s}", k.c_str(), v.c_str());
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(shardkv_mutex_);
+    std::string oid_str = std::to_string(oid);
+
+    // Check if there's an existing event for this operation
+    if (outstanding_requests_.find(oid_str) != outstanding_requests_.end())
+    {
+      // Event already exists.
+      // Log_info("An event for oid %s already exists.", oid_str.c_str());
+      return KV_SUCCESS;
+    }
+
+    uint64_t index, term;
+    bool is_leader;
+
+    auto cmd = make_shared&lt;MultiStringMarshallable&gt;();
+    cmd-&gt;data_.push_back(oid_str);
+    cmd-&gt;data_.push_back("append");
+    cmd-&gt;data_.push_back(k);
+    cmd-&gt;data_.push_back(v);
+
+    std::shared_ptr&lt;Marshallable&gt; ret = cmd;
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match192-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    is_leader = GetRaftServer().Start(ret, &index, &term);
+
+    if (!is_leader)
+    {
+      return KV_NOTLEADER;
+    }
+
+    // Create a new event for this operation
+    auto event = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    outstanding_requests_[oid_str] = event;
+</FONT>
+    // Wait for the event to be signaled or timeout
+    event-&gt;Wait(1000000);                 // Wait for 1 second
+    outstanding_requests_.erase(oid_str); // Clean up
+
+    // Check if the event timed out
+    if (event-&gt;status_ == Event::TIMEOUT)
+    {
+      return KV_TIMEOUT;
+    }
+
+    kv_store_[k] += v;
+    return KV_SUCCESS;
+  }
+
+  /**
+   * @brief Get the value of a key.
+   *
+   * @param oid The operation ID.
+   * @param k The key.
+   * @param v The value.
+   * @return int KV_SUCCESS if successful, KV_TIMEOUT if timed out, KV_NOTLEADER if not leader.
+   */
+  int ShardKvServer::Get(const uint64_t &oid,
+                         const string &k,
+                         string *v)
+  {
+    // lab_shard: fill in your code
+    // Log_info("ShardKvServer::Get -&gt; %s", k.c_str());
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(shardkv_mutex_);
+    std::string oid_str = std::to_string(oid);
+
+    // Check if there's an existing event for this operation
+    if (outstanding_requests_.find(oid_str) != outstanding_requests_.end())
+    {
+      // Event already exists.
+      // Log_info("An event for oid %s already exists.", oid_str.c_str());
+      return KV_SUCCESS;
+    }
+
+    uint64_t index, term;
+    bool is_leader;
+
+    auto cmd = make_shared&lt;MultiStringMarshallable&gt;();
+    cmd-&gt;data_.push_back(oid_str);
+    cmd-&gt;data_.push_back("get");
+    cmd-&gt;data_.push_back(k);
+
+    std::shared_ptr&lt;Marshallable&gt; ret = cmd;
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match192-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    is_leader = GetRaftServer().Start(ret, &index, &term);
+
+    if (!is_leader)
+    {
+      return KV_NOTLEADER;
+    }
+
+    // Create a new event for this operation
+    auto event = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    outstanding_requests_[oid_str] = event;
+</FONT>
+    // Wait for the event to be signaled or timeout
+    event-&gt;Wait(1000000);                 // Wait for 1 second
+    outstanding_requests_.erase(oid_str); // Clean up
+
+    // Check if the event timed out
+    if (event-&gt;status_ == Event::TIMEOUT)
+    {
+      return KV_TIMEOUT;
+    }
+
+    auto it = kv_store_.find(k);
+    if (it != kv_store_.end())
+    {
+      *v = it-&gt;second;
+      return KV_SUCCESS;
+    }
+
+    return KV_TIMEOUT;
+  }
+
+  /**
+   * @brief Entry point for handling committed commands.
+   *
+   * @param m The command.
+   * @note This function is called by the raft server when a command is committed.
+   */
+  void ShardKvServer::OnNextCommand(Marshallable &m)
+  {
+    // lab_shard: fill in your code
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(shardkv_mutex_);
+    auto cmd = static_cast&lt;MultiStringMarshallable *&gt;(&m);
+    std::string oid_str = cmd-&gt;data_[0];
+    // Notify the waiting operation (if exists)
+    if (outstanding_requests_.count(oid_str) != 0)
+    {
+      outstanding_requests_[oid_str]-&gt;Set(1);
+      // Log_info("ShardKvServer::OnNextCommand -&gt; oid_str: %s", oid_str.c_str());
+      outstanding_requests_.erase(oid_str); // Clean up after signaling
+    }
+  }
+
+  shared_ptr&lt;ShardKvClient&gt; ShardKvServer::CreateClient(Communicator *comm)
+  {
+    auto cli = make_shared&lt;ShardKvClient&gt;();
+    cli-&gt;commo_ = comm;
+    verify(cli-&gt;commo_ != nullptr);
+    static uint32_t id = 0;
+    id++;
+    cli-&gt;cli_id_ = id;
+    return cli;
+  }
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

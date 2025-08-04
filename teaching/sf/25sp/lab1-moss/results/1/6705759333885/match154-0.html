@@ -1,0 +1,189 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-js0753/src/deptran/raft/commo.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-js0753/src/deptran/raft/commo.cc<p><PRE>
+
+#include "commo.h"
+#include "../rcc/graph.h"
+#include "../rcc/graph_marshaler.h"
+#include "../command.h"
+#include "../procedure.h"
+#include "../command_marshaler.h"
+#include "raft_rpc.h"
+#include "macros.h"
+
+namespace janus {
+RaftCommo::RaftCommo(PollMgr* poll) : Communicator(poll) {
+}
+
+shared_ptr&lt;IntEvent&gt;  RaftCommo::SendRequestVote(parid_t par_id,
+                                siteid_t site_id,
+                                uint64_t *term,
+                                uint64_t lastLogIndex,
+                                uint64_t lastLogTerm,
+                                uint64_t *followerTerm,
+                                bool *voteGranted) {
+  /*
+   * Example code for sending a single RPC to server at site_id
+   * You may modify and use this function or just use it as a reference
+   */
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  auto candidate_id = loc_id_;
+  auto proxies = rpc_par_proxies_[par_id];
+  for (auto& p : proxies) {
+    if (p.first == site_id) {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [followerTerm, voteGranted, candidate_id, site_id, ev](Future* fu) {
+        /* this is a handler that will be invoked when the RPC returns */
+        uint64_t ret1;
+        bool_t vote_granted;
+        /* retrieve RPC return values in order */
+        fu-&gt;get_reply() &gt;&gt; ret1;
+        fu-&gt;get_reply() &gt;&gt; vote_granted;
+        /* process the RPC response here */
+        // cout&lt;&lt;candidate_id&lt;&lt;" PROCESSING RESPONSE FROM "&lt;&lt;site_id&lt;&lt;endl;
+        *followerTerm = ret1;
+        *voteGranted = vote_granted;
+        // cout&lt;&lt;"VOTE GRANTED IS : "&lt;&lt;*voteGranted&lt;&lt;endl;
+        ev-&gt;Set(1);  // problem here?
+      };
+      // ////Log_info("% d SENDING REQUEST VOTE to %d\n", loc_id_, p.first);
+      /* Always use Call_Async(proxy, RPC name, RPC args..., fuattr)
+      * to asynchronously invoke RPCs */
+      Call_Async(proxy, RequestVote, *term, loc_id_, lastLogIndex, lastLogTerm, fuattr);
+    }
+  }
+  return ev;
+}
+
+
+shared_ptr&lt;IntEvent&gt;  RaftCommo::SendAppendEntries(parid_t par_id,
+                                  siteid_t site_id,
+                                  uint64_t leaderCommit,
+                                  uint64_t *term, 
+                                  uint64_t *votedFor,
+                                  uint32_t *raft_leader_,
+                                  uint64_t *next_index,
+                                  uint64_t *match_index,
+                                  logEntries log
+                                  ) {
+  /*
+   * More example code for sending a single RPC to server at site_id
+   * You may modify and use this function or just use it as a reference
+   */
+    uint32_t prevLogIndex = *next_index-1;  // index till where follower log supposedly matches leader log
+    uint32_t prevLogTerm = 0;
+    if(prevLogIndex&gt;0)
+    prevLogTerm = log.terms[prevLogIndex-1];  // index till where follower log supposedly matches leader log
+    vector&lt;MarshallDeputy&gt; commands;
+    vector&lt;uint64_t&gt; terms;
+    for(int i=*next_index;i&lt;=log.commands.size();i++)
+    {
+      commands.push_back(log.commands[i-1]);
+      terms.push_back(log.terms[i-1]);
+    }    
+
+    // ////Log_info("PREVLOGINDEX IS : %d ", prevLogIndex);
+    // ////Log_info("ALL GOOD HERE1");
+    auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    auto proxies = rpc_par_proxies_[par_id];
+    for (auto& p : proxies) {
+    if (p.first == site_id) {
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match154-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        RaftProxy *proxy = (RaftProxy*) p.second;
+        FutureAttr fuattr;
+        fuattr.callback = [this, site_id, term, leaderCommit, raft_leader_, votedFor, prevLogIndex, prevLogTerm, next_index, match_index, log, commands, ev](Future* fu) {
+</FONT><A NAME="0"></A><FONT color = #FF0000><A HREF="match154-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+          bool_t followerAppendOK;
+          uint64_t followerTerm;
+          uint64_t followerPrevLogIndexTerm;
+          fu-&gt;get_reply() &gt;&gt; followerTerm;
+          fu-&gt;get_reply() &gt;&gt; followerAppendOK;  // issue here?
+          fu-&gt;get_reply() &gt;&gt; followerPrevLogIndexTerm;  // issue here?
+</FONT>          // if(!followerAppendOK){
+          //   printf("AppendEntryRPC of %d to %d failed as followerAppendOK is : %d\n",loc_id_,site_id, followerAppendOK);
+          // }
+          if(followerTerm == 0 ){
+           //Log_info("%d COULDNT REACH SERVER %d", loc_id_, site_id);
+          }
+          else{
+            if(followerTerm&gt;*term){
+              *raft_leader_ = -1;
+              *votedFor = -1;
+             //Log_info("%d LEADER HAD STALE TERM %d, GOT UPDATE FROM %d as %d", loc_id_, *term, site_id, followerTerm);
+              *term = followerTerm;
+            }
+            else{
+             //Log_info("%d responded to %d's FOLLOWER APPEND OK WITH : %d",site_id, loc_id_, followerAppendOK);
+              if(followerAppendOK)
+              {
+                *next_index += commands.size();
+               //Log_info("%d's NEXT INDEX INCREASED TO :%d ",site_id, (*next_index));
+                *match_index = *next_index - 1;
+               //Log_info("%d's MATCH INDEX UPDATED TO : %d ",site_id, *match_index);
+                
+              }
+              else {
+                if(followerPrevLogIndexTerm&gt;0 && followerPrevLogIndexTerm!=prevLogTerm){
+                    int i = prevLogIndex-1;
+                    for(i=prevLogIndex; i&gt;0;i-- ){
+                      if(log.terms[i-1] == followerPrevLogIndexTerm) break;
+                    }
+                    *next_index = i+1;
+                }
+                else if((*next_index)!=1){  // remember indexes start with 1 in Raft
+                (*next_index)=(*next_index) - 1;  // decrease the nextIndex
+                
+              }
+             //Log_info("%d's NEXT INDEX NOW DECREASED TO :%d ",site_id, (*next_index));
+              }
+            }
+          }
+          ev-&gt;Set(1);  // causing error sometimes
+      };
+      /* wrap Marshallable in a MarshallDeputy to send over RPC */
+      // ////Log_info("REACHED HEREEEEE");
+        Call_Async(proxy, AppendEntries, *term, loc_id_,prevLogIndex, prevLogTerm, terms, commands, leaderCommit, fuattr);
+    }
+  }
+  return ev;
+}
+
+
+
+
+
+
+shared_ptr&lt;IntEvent&gt; 
+RaftCommo::SendString(parid_t par_id, siteid_t site_id, const string& msg, string* res) {
+  
+  auto proxies = rpc_par_proxies_[par_id];
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  for (auto& p : proxies) {
+    if (p.first == site_id) {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [res,ev](Future* fu) {
+        fu-&gt;get_reply() &gt;&gt; *res;
+        ev-&gt;Set(1);
+      };
+      /* wrap Marshallable in a MarshallDeputy to send over RPC */
+      // ////Log_info("SENDING STRING");
+      Call_Async(proxy, HelloRpc, msg, fuattr);
+    }
+  }
+  return ev;
+}
+
+
+} // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

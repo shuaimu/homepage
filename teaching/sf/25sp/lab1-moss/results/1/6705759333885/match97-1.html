@@ -1,0 +1,612 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-Gillgamesh/src/deptran/raft/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-wehbedoug-1/src/deptran/raft/server.cc<p><PRE>
+
+
+#include "server.h"
+// #include "paxos_worker.h"
+#include "exec.h"
+#include "frame.h"
+#include "coordinator.h"
+#include "../classic/tpc_command.h"
+
+// SDW: Imports
+#include &lt;random&gt;
+
+
+namespace janus {
+
+void RaftServer::setCurrentState(RaftServer::RaftServerState newState) {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+
+    // Follower
+    if (newState == RaftServer::RaftServerState::FOLLOWER) {
+        this-&gt;currentState = RaftServer::RaftServerState::FOLLOWER;
+    }
+
+    // Candidate
+    else if (newState == RaftServer::RaftServerState::CANDIDATE) {
+        this-&gt;currentState = RaftServer::RaftServerState::CANDIDATE;
+
+        this-&gt;increaseTerm(this-&gt;currentTerm + 1);
+        this-&gt;votedFor = this-&gt;loc_id_;
+
+        Coroutine::CreateRun([this](){
+            this-&gt;runForOffice();
+        });
+    }
+
+    // Leader
+    else if (newState == RaftServer::RaftServerState::LEADER) {
+        this-&gt;currentState = RaftServer::RaftServerState::LEADER;
+
+        // Reinitialize nextIndex[] and matchIndex[]
+        this-&gt;nextIndex.clear();
+        this-&gt;matchIndex.clear();
+        for (siteid_t serverID = 0; serverID &lt; NUM_SERVERS; serverID++) {
+            // Do not track nextIndex or matchIndex for myself.
+            if (serverID == this-&gt;loc_id_) { continue; }
+
+            this-&gt;nextIndex[serverID] = this-&gt;log.size();
+            this-&gt;matchIndex[serverID] = 0;
+        }
+
+        Coroutine::CreateRun([this](){
+            this-&gt;sendHeartbeat();
+        });
+    }
+}
+
+void RaftServer::checkWhetherCommitIsPossible() {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+
+    // Coherence check: Only the leader should be increasing the commitIndex
+    // in this manner. Followers can increase their commitIndex using other
+    // rules (see #5 in AppendEntries RPC box, Figure 2).
+    if (this-&gt;currentState != RaftServer::RaftServerState::LEADER) {
+        return;
+    }
+
+    // Check for the existence of a log[N] that is safe to commit, but has not
+    // yet been committed.
+    uint64_t possibleN = this-&gt;getLastLogIndex();
+
+    // Check if a majority of servers have appended this log[N].
+    // Leader has obviously appended its own last log.
+    int serversThatContainLogN = 1;
+    for (siteid_t followerID = 0; followerID &lt; NUM_SERVERS; followerID++) {
+        // Do not double-count the leader.
+        if (followerID == this-&gt;loc_id_) { continue; }
+
+        if (this-&gt;matchIndex[followerID] &gt;= possibleN) {
+            serversThatContainLogN += 1;
+        }
+    }
+
+    // A majority of servers must contain log[N].
+    int serversNeeded = (NUM_SERVERS / 2) + 1;
+    if (serversThatContainLogN &lt; serversNeeded) {
+        if (!disconnected_) Log_debug("checkWhetherCommitIsPossible(%d): Commit(%d) not possible because only %d servers have logLength &gt; %d", this-&gt;loc_id_, possibleN, serversThatContainLogN, possibleN);
+        return;
+    }
+
+    // Coherence check: If a majority of servers contain an entry log[N], the
+    // leader (me) must be part of that majority.
+    if (this-&gt;log.size() &lt; possibleN) {
+        Log_fatal("server.cc: Failed assertion in checkWhetherCommitIsPossible: The following is true, which is bad: %d &lt; %d", this-&gt;log.size(), possibleN);
+        exit(1);
+    }
+
+    // We can only commit the latest log if it is from this term. See Figure 8.
+    if (this-&gt;log.at(possibleN).logTerm != this-&gt;currentTerm) {
+        if (!disconnected_) Log_debug("checkWhetherCommitIsPossible(%d): Commit(%d) not possible because my term is %d, whereas log[%d] term is %d", this-&gt;loc_id_, possibleN, this-&gt;currentTerm, possibleN, this-&gt;log.at(possibleN).logTerm);
+        Log_debug("| I | T |");
+        Log_debug("=========");
+        for (uint64_t idx = 0; idx &lt; this-&gt;log.size(); idx++) {
+            Log_debug("| %d | %d |", idx, this-&gt;log.at(idx).logTerm);
+        }
+        return;
+    }
+
+    // There exists an N that meets all the conditions; commit the new log,
+    // increase commitIndex, etc.
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match97-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    this-&gt;setCommitIndex(possibleN);
+}
+
+// Increase commitIndex, committing all the log entries along the way.
+void RaftServer::setCommitIndex(uint64_t newCommitIndex) {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+
+    if (newCommitIndex &lt; this-&gt;commitIndex) {
+</FONT>        Log_fatal("server.cc: Failed assertion in setCommitIndex: The following is true, which is bad: %d &lt; %d", newCommitIndex, this-&gt;commitIndex);
+        exit(1);
+    }
+
+    this-&gt;commitIndex = newCommitIndex;
+    this-&gt;commitEntries();
+}
+
+void RaftServer::commitEntries() {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+
+    while (this-&gt;lastApplied &lt; this-&gt;commitIndex) {
+        this-&gt;lastApplied += 1;
+        shared_ptr&lt;Marshallable&gt; cmdToCommit = this-&gt;log.at(this-&gt;lastApplied).logCmdPtr;
+        this-&gt;app_next_(*cmdToCommit);
+
+        if (this-&gt;currentState == RaftServer::RaftServerState::LEADER) Log_debug("SDW: commitEntries: ID(%d) app_next_(%d) state(LEADER)", this-&gt;loc_id_, this-&gt;lastApplied);
+        else if (this-&gt;currentState == RaftServer::RaftServerState::FOLLOWER) Log_debug("SDW: commitEntries: ID(%d) app_next_(%d) state(FOLLOWER)", this-&gt;loc_id_, this-&gt;lastApplied);
+        else if (this-&gt;currentState == RaftServer::RaftServerState::CANDIDATE) Log_debug("SDW: commitEntries: ID(%d) app_next_(%d) state(CANDIDATE)", this-&gt;loc_id_, this-&gt;lastApplied);
+    }
+}
+
+void RaftServer::appendLog(RaftServer::Log newLog, uint64_t newLogIndex) {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+
+    // Clear all existing elements at or after newLogIndex.
+    this-&gt;log.erase(this-&gt;log.begin() + newLogIndex, this-&gt;log.end());
+    if (this-&gt;log.size() != newLogIndex) {
+        Log_fatal("server.cc: Failed assertion in appendLog: The following is true, which is bad: %d != %d", this-&gt;log.size(), newLogIndex);
+    }
+
+    // Add new log at desired newLogIndex.
+    this-&gt;log.push_back(newLog);
+}
+
+std::vector&lt;RaftServer::Log&gt; RaftServer::constructLogsVector(siteid_t followerID) {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+
+    std::vector&lt;Log&gt; logsVector;
+    for (int idx = this-&gt;nextIndex[followerID]; idx &lt; this-&gt;log.size(); idx++) {
+        logsVector.push_back(this-&gt;log.at(idx));
+    }
+    return logsVector;
+}
+
+std::vector&lt;shared_ptr&lt;Marshallable&gt; &gt; RaftServer::deriveEntriesVector(std::vector&lt;Log&gt; logsVector) {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+
+    std::vector&lt;shared_ptr&lt;Marshallable&gt; &gt; entriesVector;
+    for (Log entry : logsVector) {
+        entriesVector.push_back(entry.logCmdPtr);
+    }
+    return entriesVector;
+}
+
+std::vector&lt;uint64_t&gt; RaftServer::deriveTermsVector(std::vector&lt;Log&gt; logsVector) {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+
+    std::vector&lt;uint64_t&gt; termsVector;
+    for (Log entry : logsVector) {
+        termsVector.push_back(entry.logTerm);
+    }
+    return termsVector;
+}
+
+void RaftServer::restartElectionTimer() {
+    Coroutine::CreateRun([this](){
+        while (true) {
+            // This can only be set to true by the HandleAppendEntries RPC handler.
+            this-&gt;recentlyReceivedHeartbeat = false;
+
+            // Election timeout is randomized.
+            // Reference: https://stackoverflow.com/a/13445752/20020749
+            std::random_device dev;
+            std::mt19937 rng(dev());
+            std::uniform_int_distribution&lt;std::mt19937::result_type&gt; electionTimeoutFactor(MIN_ELECTION_TIMEOUT_FACTOR, MAX_ELECTION_TIMEOUT_FACTOR);
+            Coroutine::Sleep(HEARTBEAT_INTERVAL * electionTimeoutFactor(rng) * ELECTION_TIMEOUT_UNIQUE_FACTOR);
+
+            std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+
+            // Leaders should never trigger an election.
+            if (this-&gt;currentState == RaftServer::RaftServerState::LEADER) {
+                continue;
+            }
+
+            if (this-&gt;recentlyReceivedHeartbeat == false) {
+                // Followers and Candidates that do not receive heartbeats should
+                // trigger a new election.
+                Log_debug("SDW: Did not receive heartbeat. I am %d.", this-&gt;loc_id_);
+
+                // Transition to candidate state.
+                this-&gt;setCurrentState(RaftServer::RaftServerState::CANDIDATE);
+            }
+
+            // Whether or not we triggered an election, restart the election timer and
+            // keep listening for heartbeats. Even candidates should listen for
+            // heartbeats.
+        }
+    });
+}
+
+// From the Raft paper:
+// To begin an election, a follower increments its current term and
+// transitions to a candidate state. It then votes for itself and issues
+// RequestVote RPCs in parallel to each of the other servers in the cluster.
+void RaftServer::runForOffice() {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+
+    // Coherence check: Only candidates should be seeking votes.
+    if (this-&gt;currentState != RaftServer::RaftServerState::CANDIDATE) {
+        return;
+    }
+    Log_debug("SDW: Triggering an election. I am %d.", this-&gt;loc_id_);
+
+    // This will be used in a later Coherence check.
+    uint64_t candidateOriginalTerm = this-&gt;currentTerm;
+
+    // For now, responses are sent and replies are processed, one destination at a time.
+    // TODO: Send RequestVote RPCs in parallel to each other server in the cluster.
+    std::vector&lt;uint64_t&gt; voterTerms;
+    std::vector&lt;bool_t&gt; votesGranted;
+    for (siteid_t voterID = 0; voterID &lt; NUM_SERVERS; voterID++) {
+        // Do not send a RequestVote to myself.
+        if (voterID == this-&gt;loc_id_) { continue; }
+
+        uint64_t candidateTerm = this-&gt;currentTerm;
+        uint64_t candidateId = this-&gt;loc_id_;
+        uint64_t lastLogIndex = this-&gt;getLastLogIndex();
+        uint64_t lastLogTerm = this-&gt;getLastLogTerm();
+        uint64_t voterTerm;
+        bool_t voteGranted;
+        bool_t voterHealthy;
+
+        auto event = commo()-&gt;SendRequestVote(0, voterID, candidateTerm, candidateId, lastLogIndex, lastLogTerm, &voterTerm, &voterHealthy, &voteGranted);
+        event-&gt;Wait(HEARTBEAT_INTERVAL * REQUEST_VOTE_TIMEOUT_FACTOR);
+
+        if (event-&gt;status_ == Event::TIMEOUT || voterHealthy == false) {
+            Log_debug("SDW: On server (%d) RequestVote timeout", this-&gt;loc_id_);
+        } else {
+            Log_debug("SDW: On server (%d) RequestVote reply received; (id=%d, term=%" PRIu64 ", granted=%s)", this-&gt;loc_id_, voterID, voterTerm, voteGranted ? "yes" : "no");
+            voterTerms.push_back(voterTerm);
+            votesGranted.push_back(voteGranted);
+        }
+
+        //Log_info("voterTerm=%" PRIu64 ", voteGranted=%" PRIu64 ", voterHealthy=%" PRIu64 ".", voterTerm, voteGranted, voterHealthy);
+    }
+
+    // Wait for all other (i.e. not self) servers to respond or timeout.
+    Coroutine::Sleep(HEARTBEAT_INTERVAL * REQUEST_VOTE_TIMEOUT_FACTOR);
+
+    //std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+
+    // Process the replies from the other servers.
+    //
+    // If any server responded with a higher term, then we abandon our candidacy
+    // and become a follower.
+    for (uint64_t term : voterTerms) {
+        if (term &gt; this-&gt;currentTerm) {
+            this-&gt;increaseTerm(term);
+            this-&gt;setCurrentState(RaftServer::RaftServerState::FOLLOWER);
+            return;
+        }
+    }
+
+    // Assuming we did not encounter any higher terms among the replies, count
+    // the votes.
+    //
+    // The candidate obviously voted for itself.
+    int positiveVotesReceived = 1;
+    for (bool_t vote : votesGranted) {
+        if (vote == true) {
+            positiveVotesReceived += 1;
+        }
+    }
+
+    int votesNeeded = (NUM_SERVERS / 2) + 1;
+    if (positiveVotesReceived &gt;= votesNeeded) {
+        // Coherence check: If this server somehow lost its candidate status, it
+        // should no longer be in contention for leader.
+        if (this-&gt;currentState != RaftServer::RaftServerState::CANDIDATE) {
+            return;
+        }
+
+        // Coherence check: If the candidate updated its term (due to either a
+        // reply it received from a voter, or a heartbeat it received from a
+        // leader), then it should not become leader.
+        if (candidateOriginalTerm != this-&gt;currentTerm) {
+            return;
+        }
+
+        Log_debug("SDW: RequestVote (%d) I should be leader, votes=%d, term=%" PRIu64 ".", this-&gt;loc_id_, positiveVotesReceived, this-&gt;currentTerm);
+
+        // Transition to leader state.
+        this-&gt;setCurrentState(RaftServer::RaftServerState::LEADER);
+    }
+    else {
+        // Did not get enough votes. This does not necessarily mean we should
+        // become a follower, though; it could be that several servers acquired
+        // enough votes to prevent a majority altogether for this term. In that
+        // case, the election timeout will trigger again, and we will run in
+        // another election.
+        Log_debug("SDW: RequestVote (%d) I should not be leader, votes=%d, term=%" PRIu64 ".", this-&gt;loc_id_, positiveVotesReceived, this-&gt;currentTerm);
+    }
+}
+
+void RaftServer::sendHeartbeat() {
+    //std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+
+    // Coherence check: Only the leader should be sending heartbeats.
+    if (this-&gt;currentState != RaftServer::RaftServerState::LEADER) {
+        return;
+    }
+
+    // For now, we send heartbeats and receive replies sequentially from each other server.
+    // TODO: Send AppendEntries RPCs in parallel to each other server in the cluster.
+    for (siteid_t followerID = 0; (followerID &lt; NUM_SERVERS); followerID++) {
+        // Leader should not send a heartbeat to itself.
+        if (followerID == this-&gt;loc_id_) { continue; }
+
+        bool_t followerHealthy;
+        bool_t followerAppendOK;
+        uint64_t followerTerm;
+
+        uint64_t prevLogIndex = this-&gt;getPrevLogIndex(followerID);
+        uint64_t prevLogTerm = this-&gt;getLogTerm(prevLogIndex);
+
+        std::vector&lt;Log&gt; logsVector = this-&gt;constructLogsVector(followerID);
+        std::vector&lt;shared_ptr&lt;Marshallable&gt; &gt; entriesVector = this-&gt;deriveEntriesVector(logsVector);
+        std::vector&lt;uint64_t&gt; termsVector = this-&gt;deriveTermsVector(logsVector);
+        if (nextIndex[followerID] != log.size()) Log_debug("SDW: sendHeartbeat: nextIndex[%d]=%d, my next index is %d, sizeof entries is %d", followerID, nextIndex[followerID], getLastLogIndex() + 1, logsVector.size());
+
+        Log_debug("in sendHeartbeat for loop, before sending RPC");
+        Log_debug("entriesVector.size()=%d", entriesVector.size());
+
+        auto event = this-&gt;commo()-&gt;SendAppendEntries(
+                0,
+                followerID,
+                this-&gt;currentTerm,
+                this-&gt;loc_id_,
+                prevLogIndex,
+                prevLogTerm,
+                entriesVector,
+                termsVector,
+                this-&gt;commitIndex,
+                &followerHealthy,
+                &followerAppendOK,
+                &followerTerm
+        );
+        event-&gt;Wait(HEARTBEAT_INTERVAL * APPEND_ENTRIES_TIMEOUT_FACTOR);
+
+        // If follower did not reply, assume they are unhealthy and move on.
+        if ((event-&gt;status_ == Event::TIMEOUT) || followerHealthy == false) {
+            Log_debug("SDW: sendHeartbeat: I (%d) received timeout", this-&gt;loc_id_);
+            continue;
+        }
+
+        // Non-timeout response from healthy follower.
+        Log_debug("SDW: sendHeartbeat: I (%d) received non-timeout response", this-&gt;loc_id_);
+
+        // If follower replies to a heartbeat with a higher term,
+        // update my term and step down as leader.
+        if (followerTerm &gt; this-&gt;currentTerm) {
+            Log_debug("SDW: On server (%d) stepping down from leader of term %" PRIu64 " due to follower heartbeat reply: (id=%d, ok=%d, term=%" PRIu64 ")", this-&gt;loc_id_, this-&gt;currentTerm, followerID, followerAppendOK, followerTerm);
+            this-&gt;increaseTerm(followerTerm);
+            this-&gt;setCurrentState(RaftServer::RaftServerState::FOLLOWER);
+
+            // Stop processing AppendEntries replies.
+            return;
+        }
+
+        // If the follower appended the log entry to its logs, then we are one
+        // step closer to committing this log entry.
+        if (followerAppendOK == true) {
+            Log_debug("SDW: sendHeartbeat Successful append by %d", followerID);
+            this-&gt;nextIndex[followerID] = this-&gt;log.size();
+            this-&gt;matchIndex[followerID] = this-&gt;getLastLogIndex();
+        }
+        // Otherwise, back up by one step and try again next time.
+        else {
+            Log_debug("SDW: sendHeartbeat Unsuccessful append by %d", followerID);
+            this-&gt;nextIndex[followerID] -= 1;
+        }
+
+        //Log_info("followerTerm=%" PRIu64 ", followerAppendOK=%" PRIu64 ", followerHealthy=%" PRIu64 ".", followerTerm, followerAppendOK, followerHealthy);
+    }
+
+    if (!disconnected_) Log_debug("\tTEST 11: LEADER: ID=%d, logLen=%d, lastApplied=%d, commitIndex=%d, term=%d, lastLogTerm=%d", this-&gt;loc_id_, this-&gt;log.size(), this-&gt;lastApplied, this-&gt;commitIndex, this-&gt;currentTerm, this-&gt;getLastLogTerm());
+
+    // Wait for all other (i.e. not self) servers to respond or timeout.
+    Coroutine::Sleep(HEARTBEAT_INTERVAL * APPEND_ENTRIES_TIMEOUT_FACTOR);
+
+    this-&gt;checkWhetherCommitIsPossible();
+    this-&gt;commitEntries(); // TODO: Redundant, but should be harmless.
+
+    Coroutine::Sleep(HEARTBEAT_INTERVAL);
+    this-&gt;sendHeartbeat();
+}
+
+// Used by RequestVote RPC (candidate).
+// Used by followers to update their commitIndex after receiving an AppendEntries.
+uint64_t RaftServer::getLastLogIndex() {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+
+    uint64_t lastLogIndex = this-&gt;log.size() - 1;
+    return lastLogIndex;
+}
+
+// Used by RequestVote RPC (candidate).
+uint64_t RaftServer::getLastLogTerm() {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+
+    uint64_t lastLogIndex = this-&gt;getLastLogIndex();
+    RaftServer::Log lastLogEntry = this-&gt;log.at(lastLogIndex);
+    uint64_t lastLogTerm = lastLogEntry.logTerm;
+    return lastLogTerm;
+}
+
+// Used by AppendEntries RPC (leader).
+uint64_t RaftServer::getPrevLogIndex(siteid_t followerID) {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+
+    return this-&gt;nextIndex[followerID] - 1;
+}
+
+// Used by AppendEntries RPC (leader).
+uint64_t RaftServer::getLogTerm(uint64_t logIndex) {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+
+    Log targetLog = this-&gt;log.at(logIndex);
+    return targetLog.logTerm;
+}
+
+bool RaftServer::destinationIsUpToDate(siteid_t followerID) {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+
+    Log_debug("this-&gt;log.size()=%" PRIu64 " vs. this-&gt;nextIndex[followerID]=% " PRIu64 ".", this-&gt;log.size(), this-&gt;nextIndex[followerID]);
+
+    if (this-&gt;getLastLogIndex() &gt;= this-&gt;nextIndex[followerID]) {
+        return false;
+    }
+    return true;
+}
+
+bool RaftServer::containsMatchingLog(uint64_t index, uint64_t term) {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+
+    // Log isn't physically long enough to contain such an index.
+    if (this-&gt;log.size() &lt;= index) {
+        return false;
+    }
+
+    // Otherwise, an element exists at that index.
+    RaftServer::Log element = this-&gt;log.at(index);
+
+    // The term of the entry at that index doesn't match.
+    if (element.logTerm != term) {
+        return false;
+    }
+
+    // By the log matching property, that element is in this log[].
+    return true;
+}
+
+void RaftServer::increaseTerm(uint64_t newTerm) {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+
+    Log_debug("SDW: On server %d; increaseTerm: Old term = %" PRIu64 "; New term = %" PRIu64 ".", this-&gt;loc_id_, this-&gt;currentTerm, newTerm);
+
+    // This server has not yet voted in the current term.
+    this-&gt;currentTerm = newTerm;
+    this-&gt;votedFor = DID_NOT_VOTE;
+}
+
+
+RaftServer::RaftServer(Frame * frame) {
+    frame_ = frame ;
+    /* Your code here for server initialization. Note that this function is
+        called in a different OS thread. Be careful about thread safety if
+        you want to initialize variables here. */
+
+    Log_debug("SDW: Constructor called. I am %d.", this-&gt;loc_id_);
+}
+
+RaftServer::~RaftServer() {
+    /* Your code here for server teardown */
+
+}
+
+void RaftServer::Setup() {
+    /* Your code here for server setup. Due to the asynchronous nature of the
+        framework, this function could be called after a RPC handler is triggered.
+        Your code should be aware of that. This function is always called in the
+        same OS thread as the RPC handlers. */
+
+    // All servers start out as followers in term 1. There will be an election
+    // once the servers start timing out.
+    this-&gt;setCurrentState(RaftServer::RaftServerState::FOLLOWER);
+    this-&gt;restartElectionTimer();
+
+    Log_debug("Setup exiting on Server %d", this-&gt;loc_id_);
+}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match97-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+bool RaftServer::Start(shared_ptr&lt;Marshallable&gt; &cmd,
+                       uint64_t *index,
+                       uint64_t *term) {
+    /* Your code here. This function can be called from another OS thread. */
+
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+</FONT>
+    if (this-&gt;currentState == RaftServer::RaftServerState::LEADER) Log_debug("\tSDW: Start: My (%d) term=%d, State = LEADER, Log[] length = %d, committed = %d", this-&gt;loc_id_, this-&gt;currentTerm, this-&gt;log.size(), this-&gt;commitIndex);
+    else if (this-&gt;currentState == RaftServer::RaftServerState::FOLLOWER) Log_debug("\tSDW: Start: My (%d) term=%d, State = FOLLOW, Log[] length = %d, committed = %d", this-&gt;loc_id_, this-&gt;currentTerm, this-&gt;log.size(), this-&gt;commitIndex);
+    else if (this-&gt;currentState == RaftServer::RaftServerState::CANDIDATE) Log_debug("\tSDW: Start: My (%d) term=%d, State = CNDATE, Log[] length = %d, committed = %d", this-&gt;loc_id_, this-&gt;currentTerm, this-&gt;log.size(), this-&gt;commitIndex);
+
+    // Only the leader should be initiating a new AppendEntries.
+    if (this-&gt;currentState != RaftServer::RaftServerState::LEADER) {
+        *index = 0;
+        *term = 0;
+        return false;
+    }
+
+    // Leader append to the end of my own log.
+    RaftServer::Log newLog = {cmd, this-&gt;currentTerm};
+    this-&gt;appendLog(newLog, this-&gt;getLastLogIndex() + 1);
+
+    // Fill in return values and return.
+    *index = this-&gt;getLastLogIndex();
+    *term = this-&gt;currentTerm;
+    return true;
+}
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match97-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void RaftServer::GetState(bool *is_leader, uint64_t *term) {
+    /* Your code here. This function can be called from another OS thread. */
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+
+    *is_leader = (this-&gt;currentState == RaftServer::RaftServerState::LEADER);
+</FONT>    *term = this-&gt;currentTerm;
+
+    if (this-&gt;currentState == RaftServer::RaftServerState::LEADER) Log_debug("\tSDW: GetState: My (%d) term=%d, State = LEADER", this-&gt;loc_id_, this-&gt;currentTerm);
+    else if (this-&gt;currentState == RaftServer::RaftServerState::FOLLOWER) Log_debug("\tSDW: GetState: My (%d) term=%d, State = FOLLOWER", this-&gt;loc_id_, this-&gt;currentTerm);
+    else if (this-&gt;currentState == RaftServer::RaftServerState::CANDIDATE) Log_debug("\tSDW: GetState: My (%d) term=%d, State = CANDIDATE", this-&gt;loc_id_, this-&gt;currentTerm);
+}
+
+/* Do not modify any code below here */
+
+void RaftServer::Disconnect(const bool disconnect) {
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+  verify(disconnected_ != disconnect);
+  // global map of rpc_par_proxies_ values accessed by partition then by site
+  static map&lt;parid_t, map&lt;siteid_t, map&lt;siteid_t, vector&lt;SiteProxyPair&gt;&gt;&gt;&gt; _proxies{};
+  if (_proxies.find(partition_id_) == _proxies.end()) {
+    _proxies[partition_id_] = {};
+  }
+  RaftCommo *c = (RaftCommo*) commo();
+  if (disconnect) {
+    verify(_proxies[partition_id_][loc_id_].size() == 0);
+    verify(c-&gt;rpc_par_proxies_.size() &gt; 0);
+    auto sz = c-&gt;rpc_par_proxies_.size();
+    _proxies[partition_id_][loc_id_].insert(c-&gt;rpc_par_proxies_.begin(), c-&gt;rpc_par_proxies_.end());
+    c-&gt;rpc_par_proxies_ = {};
+    verify(_proxies[partition_id_][loc_id_].size() == sz);
+    verify(c-&gt;rpc_par_proxies_.size() == 0);
+  } else {
+    verify(_proxies[partition_id_][loc_id_].size() &gt; 0);
+    auto sz = _proxies[partition_id_][loc_id_].size();
+    c-&gt;rpc_par_proxies_ = {};
+    c-&gt;rpc_par_proxies_.insert(_proxies[partition_id_][loc_id_].begin(), _proxies[partition_id_][loc_id_].end());
+    _proxies[partition_id_][loc_id_] = {};
+    verify(_proxies[partition_id_][loc_id_].size() == 0);
+    verify(c-&gt;rpc_par_proxies_.size() == sz);
+  }
+  disconnected_ = disconnect;
+}
+
+bool RaftServer::IsDisconnected() {
+  return disconnected_;
+}
+
+} // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

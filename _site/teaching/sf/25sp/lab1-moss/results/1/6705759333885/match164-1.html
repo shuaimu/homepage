@@ -1,0 +1,477 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-ShubhamRJ/src/deptran/raft/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-coladog/src/deptran/raft/server.cc<p><PRE>
+#include "server.h"
+// #include "paxos_worker.h"
+#include "exec.h"
+#include "frame.h"
+#include "coordinator.h"
+#include "../classic/tpc_command.h"
+
+
+namespace janus {
+
+
+RaftServer::RaftServer(Frame * frame) {
+  frame_ = frame ;
+  /* Your code here for server initialization. Note that this function is 
+     called in a different OS thread. Be careful about thread safety if 
+     you want to initialize variables here. */
+
+  srand(time(0));
+  std::lock_guard&lt;std::recursive_mutex&gt; lk(mtx_);
+  identity = IS_FOLLOWER;
+  heatbeatReceived = false;
+  currentTerm = 0;
+  votedFor = VOTED_FOR_NULL;
+  logQueue = LogQueue();
+  commitIndex = 0;
+  lastApplied = 0;
+  alive = true;
+}
+
+RaftServer::~RaftServer() {
+  /* Your code here for server teardown */
+  std::lock_guard&lt;std::recursive_mutex&gt; lk(mtx_);
+  alive = false;
+}
+
+void RaftServer::Setup() {
+  /* Your code here for server setup. Due to the asynchronous nature of the 
+     framework, this function could be called after a RPC handler is triggered. 
+     Your code should be aware of that. This function is always called in the 
+     same OS thread as the RPC handlers. */
+  Log_info("[+] PAR %d | ID %d | Setup", this-&gt;getPartitionID(), this-&gt;getThisServerID());
+
+  while (alive) {
+    uint64_t identitySnapShot;
+    {
+      std::lock_guard&lt;std::recursive_mutex&gt; lk(mtx_);
+      identitySnapShot = identity;
+    }
+
+    // if (identity == IS_CANDIDATE) {
+    //   Log_info("[+] ElectionTimeOut, %d changing to candidate", getThisServerID());
+    // }
+
+    if        (identitySnapShot == IS_FOLLOWER) {
+      {
+        std::lock_guard&lt;std::recursive_mutex&gt; lk(mtx_);
+        heatbeatReceived = false;
+      }
+
+      auto electionTimeOutUs = generateRandomElectionTimeout();
+
+      // Log_info("[+] follower %d into sleep for %d", getThisServerID(), electionTimeOutUs / 1000);
+
+      Coroutine::Sleep(electionTimeOutUs);
+
+      std::lock_guard&lt;std::recursive_mutex&gt; lk(mtx_);
+      if (identity == IS_FOLLOWER && !heatbeatReceived) {
+        identity = IS_CANDIDATE;
+      }
+    } else if (identitySnapShot == IS_CANDIDATE) {
+        uint64_t termSnapShot, lastLogIndexSnapShot, lastLogTermSnapShot;
+        {
+          std::lock_guard&lt;std::recursive_mutex&gt; lk(mtx_);
+          currentTerm ++;
+          votedFor = this-&gt;getThisServerID();
+          termSnapShot = currentTerm;
+          lastLogIndexSnapShot = logQueue.getLastLogIndex();
+          lastLogTermSnapShot = logQueue.getLastLogTerm();
+
+          // Log_info("[+] PAR %d | ID %d | turn into candidate | term %d", 
+          //   this-&gt;getPartitionID(), this-&gt;getThisServerID(), currentTerm);
+        }
+        auto electionTimeOutUs = generateRandomElectionTimeout();
+
+        uint64_t quorum = 1, received = 1;
+
+        /* sendVoteRequest */
+        for (auto targetServer = 0; targetServer &lt; getNumServers(); targetServer ++) {
+          if (targetServer == this-&gt;getThisServerID()) continue;
+
+          Coroutine::CreateRun([=, &quorum, &received](){
+            uint64_t receiverTerm = -1;
+            bool_t voteGranted = false;
+
+            auto event = commo()-&gt;SendRequestVote(
+              (parid_t) this-&gt;getPartitionID(),
+              (siteid_t) targetServer,
+              termSnapShot,
+              (uint64_t) this-&gt;getThisServerID(),
+              lastLogIndexSnapShot,
+              lastLogTermSnapShot,
+              &receiverTerm,
+              &voteGranted
+            );
+
+            event-&gt;Wait(electionTimeOutUs);
+
+            if (event-&gt;status_ != Event::TIMEOUT) {
+              std::lock_guard&lt;std::recursive_mutex&gt; lk(mtx_);
+              if (receiverTerm &gt; currentTerm) {
+                identity = IS_FOLLOWER;
+                currentTerm = receiverTerm;
+                votedFor = VOTED_FOR_NULL;
+              } else {
+                if (currentTerm == termSnapShot && identity == IS_CANDIDATE) {
+                  if (voteGranted) {
+                    // Log_info("[+] Received vote %d &lt;- %d | Term %d", getThisServerID(), targetServer, currentTerm);
+                    quorum ++;
+                  }
+                  received ++;
+                } 
+              }
+            } else {
+            }
+            
+          });
+        }
+        /* sendVoteRequest End */
+
+        // Log_info("[+] Candidate %d | Term %d | start blocking for %d ms", getThisServerID(), currentTerm, electionTimeOutUs / 1000);
+        uint64_t appBlockedUs = 0, busyLoopSleepUs = BUSY_LOOP_SLEEP;
+        while (alive) {
+          bool to_break = false;
+          {
+            std::lock_guard&lt;std::recursive_mutex&gt; lk(mtx_);
+            // Log_info("[+] Candidate %d | Term %d | blocked %d/%d", 
+            //   getThisServerID(), currentTerm, (getCurrentUs() - startVoteBlockedUs)/1000, electionTimeOutUs/1000);
+
+            if (!(currentTerm == termSnapShot && identity == IS_CANDIDATE)) {
+              // Log_info("[+] candidate %d exit with Term or Identity change", getThisServerID());
+              to_break = true;
+            } else if (quorum &gt; getNumServers() / 2) {
+              identity = IS_LEADER;
+              // Log_info("[+] ID %d | Term %d | become leader | quorum %d/%d", 
+              //   getThisServerID(), currentTerm, quorum, getNumServers());
+              to_break = true;
+            } else if (appBlockedUs &gt;= electionTimeOutUs) {
+              // Log_info("[+] candidate %d exit with electionTimeOutUs", getThisServerID());
+              to_break = true;
+            }
+          }
+
+          if (to_break) {
+            break;
+          }
+
+          Coroutine::Sleep(busyLoopSleepUs);
+          appBlockedUs += busyLoopSleepUs;
+        }
+        // Log_info("[+] Candidate %d | Term %d | end blocking", getThisServerID(), currentTerm);
+
+    } else if (identitySnapShot == IS_LEADER) {
+      uint64_t termSnapShot;
+      {
+        std::lock_guard&lt;std::recursive_mutex&gt; lk(mtx_);
+        initializeLeaderStates();
+        termSnapShot = currentTerm;
+      }
+
+      Log_info("[+] in IS_LEADER branch | %d become leader | term %d", getThisServerID(), currentTerm);
+
+      /* heartBeat */
+      for (auto targetServer = 0; targetServer &lt; getNumServers(); targetServer ++) {
+        if (targetServer == this-&gt;getThisServerID()) continue;
+
+        // Log_info("[+] heartbeat coro | %d -&gt; %d", getThisServerID(), targetServer);
+
+        Coroutine::CreateRun([=](){
+          while (alive) {
+            bool to_break = false;
+            uint64_t leaderCommit, prevLogIndex, prevLogTerm;
+
+            {
+              std::lock_guard&lt;std::recursive_mutex&gt; lk(mtx_);
+              if (currentTerm != termSnapShot || identity != IS_LEADER)
+                to_break = true;
+              else {
+                leaderCommit = this-&gt;commitIndex;
+
+                if (this-&gt;nextIndex[targetServer] &gt; logQueue.getLastLogIndex())
+                  prevLogIndex = this-&gt;nextIndex[targetServer] - 1;
+                else 
+                  prevLogIndex = this-&gt;nextIndex[targetServer];
+                prevLogTerm = this-&gt;logQueue.getLogTerm(prevLogIndex);
+              }
+            }
+            if (to_break) break;
+
+            // Log_info("[+] here");
+
+            uint64_t receiverTerm;
+            bool_t success;
+
+            // auto startUs = this-&gt;getCurrentUs();
+            auto event = commo()-&gt;SendEmptyAppendEntries(
+              (parid_t) this-&gt;getPartitionID(),
+              (siteid_t) targetServer,
+              termSnapShot,
+              (uint64_t) this-&gt;getThisServerID(),
+              prevLogIndex,
+              prevLogTerm,
+              leaderCommit,
+              &receiverTerm,
+              &success
+            );
+
+            // Log_info("[+] HeartBeat %d -&gt; %d", getThisServerID(), targetServer);
+
+            event-&gt;Wait(HEARTBEAT_INTERVAL);
+            
+            // Log_info("[+] HeartBeat %d -&gt; %d end", getThisServerID(), targetServer);
+            {
+              std::lock_guard&lt;std::recursive_mutex&gt; lk(mtx_);
+
+              if (event-&gt;status_ != Event::TIMEOUT) {
+                if (receiverTerm &gt; currentTerm) {
+                  currentTerm = receiverTerm;
+                  identity = IS_FOLLOWER;
+                  votedFor = VOTED_FOR_NULL;
+                } else if (currentTerm == termSnapShot && identity == IS_LEADER) {
+                  if (success) {
+                    this-&gt;matchIndex[targetServer] = max(prevLogIndex, this-&gt;matchIndex[targetServer]);
+                    this-&gt;updateCommitIndex();
+                    this-&gt;commitLogs();
+                  }
+                  else if (receiverTerm != NETWORK_FAILED_TERM) {
+                    if (this-&gt;nextIndex[targetServer] != min(prevLogIndex, this-&gt;nextIndex[targetServer]))
+                      // Log_info("[+] nextIndex %d | %d -&gt; %d", 
+                      //   targetServer, this-&gt;nextIndex[targetServer], min(prevLogIndex, this-&gt;nextIndex[targetServer]));
+
+                    this-&gt;nextIndex[targetServer] = min(prevLogIndex, this-&gt;nextIndex[targetServer]);
+                  }
+                }
+              }
+            }
+
+            Coroutine::Sleep(HEARTBEAT_INTERVAL);
+          }
+        });
+      }
+      /* heartBeat End*/
+      
+      /* replica */
+      for (auto targetServer = 0; targetServer &lt; getNumServers(); targetServer ++) {
+        if (targetServer == this-&gt;getThisServerID()) continue;
+
+        // Log_info("[+] creating replica coro: %d -&gt; %d", getThisServerID(), targetServer);
+
+        Coroutine::CreateRun([=](){
+          while (alive) {
+            bool to_break = false;
+
+            uint64_t leaderTerm, leaderCommit, prevLogIndex, prevLogTerm;
+            MarshallDeputy cmd; // MarshallDeputy md(cmd);
+            uint64_t cmdTerm;
+            // Marshallable cmd;
+            bool to_send = false;
+
+            {
+              std::lock_guard&lt;std::recursive_mutex&gt; lk(mtx_);
+
+              // Log_info("[+] checking Replica : %d -&gt; %d", getThisServerID(), targetServer);
+
+              if (currentTerm != termSnapShot || identity != IS_LEADER)
+                to_break = true;
+              else if (this-&gt;logQueue.getLastLogIndex() &gt;= this-&gt;nextIndex[targetServer]) {
+                to_send = true;
+                leaderTerm = currentTerm;
+                leaderCommit = commitIndex;
+                prevLogIndex = this-&gt;nextIndex[targetServer] - 1;
+                prevLogTerm = this-&gt;logQueue.getLogTerm(prevLogIndex);
+
+                cmd = MarshallDeputy(this-&gt;logQueue.getLogCmd(this-&gt;nextIndex[targetServer]));
+                cmdTerm = this-&gt;logQueue.getLogTerm(this-&gt;nextIndex[targetServer]);
+              }
+            }
+            
+            if (to_break) {
+              // Log_info("[+] ending Replica Coro | %d -&gt; %d", getThisServerID(), targetServer);
+              break;
+            }
+
+            if (to_send) {
+              uint64_t receiverTerm;
+              bool_t success;
+
+              // Log_info("[+] Replica Term %d | %d -&gt; %d, index %d", currentTerm, getThisServerID(), targetServer, prevLogIndex + 1);
+              
+              auto event = commo()-&gt;SendAppendEntries(
+                (parid_t) this-&gt;getPartitionID(),
+                (siteid_t) targetServer,
+                leaderTerm,
+                (uint64_t) this-&gt;getThisServerID(),
+                prevLogIndex,
+                prevLogTerm,
+                cmd,
+                cmdTerm,
+                leaderCommit,
+                &receiverTerm,
+                &success
+              );
+
+              event-&gt;Wait(BUSY_LOOP_SLEEP);
+
+              // Log_info("[+] Replica Term %d | %d -&gt; %d, index %d received status: %d", 
+              //   currentTerm, getThisServerID(), targetServer, prevLogIndex + 1, event-&gt;status_);
+
+              if (event-&gt;status_ != Event::TIMEOUT) {
+                if (receiverTerm &gt; currentTerm) {
+                  identity = IS_FOLLOWER;
+                  currentTerm = receiverTerm;
+                  votedFor = VOTED_FOR_NULL;
+                } else {
+                  std::lock_guard&lt;std::recursive_mutex&gt; lk(mtx_);
+                  if (currentTerm == leaderTerm && identity == IS_LEADER) {
+                    if (success) {
+                      this-&gt;matchIndex[targetServer] = max(prevLogIndex + 1, this-&gt;matchIndex[targetServer]);
+                      this-&gt;nextIndex[targetServer] = max(prevLogIndex + 2, this-&gt;nextIndex[targetServer]);
+
+                      // Log_info("[+] Term %d | %d -&gt; %d succ | next idx to send: %d", currentTerm, getThisServerID(), targetServer, this-&gt;nextIndex[targetServer]);
+
+                      this-&gt;updateCommitIndex();
+                      this-&gt;commitLogs();
+                    } else if (receiverTerm != NETWORK_FAILED_TERM) {
+                      if (this-&gt;nextIndex[targetServer] != min(prevLogIndex, this-&gt;nextIndex[targetServer]))
+                        // Log_info("[+] nextIndex %d | %d -&gt; %d", 
+                        //   targetServer, this-&gt;nextIndex[targetServer], min(prevLogIndex, this-&gt;nextIndex[targetServer]));
+
+                      this-&gt;nextIndex[targetServer] = min(this-&gt;nextIndex[targetServer], prevLogIndex);
+                    }
+                  }
+                }
+              }
+
+              if (!success)
+                Coroutine::Sleep(BUSY_LOOP_SLEEP * 20);
+            } else {
+              Coroutine::Sleep(BUSY_LOOP_SLEEP);
+            }
+          }
+        });
+      }
+      /* replica End */
+
+      while (alive) {
+        bool to_break = false;
+        {
+          std::lock_guard&lt;std::recursive_mutex&gt; lk(mtx_);
+          if (!(identity == IS_LEADER && currentTerm == termSnapShot)) {
+            // Log_info("[+] ID %d breaking! still leader: %d | currentTerm: %d | termSnapShot: %d",
+            //   getThisServerID(), identity == IS_LEADER, currentTerm, termSnapShot);
+            to_break = true;
+          }
+        }
+        if (to_break) {
+          // Log_info("[+] %d with Term %d break", getThisServerID(), currentTerm);
+          // Log_info("[+] ID %d exist IS_LEADER branch ", getThisServerID());
+          break;
+        }
+        Coroutine::Sleep(BUSY_LOOP_SLEEP);
+      }
+
+    }  
+  }
+}
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match164-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+bool RaftServer::Start(shared_ptr&lt;Marshallable&gt; &cmd,
+                       uint64_t *index,
+                       uint64_t *term) {
+  /* Your code here. This function can be called from another OS thread. */
+  std::lock_guard&lt;std::recursive_mutex&gt; lk(mtx_);
+  if (identity != IS_LEADER)
+</FONT>    return false;
+
+  // auto r_cmd = *cmd;
+  // Marshallable x(0);
+  // x = r_cmd;
+  logQueue.addLog(cmd, currentTerm);
+  *index = logQueue.getLastLogIndex();
+  *term = currentTerm;
+
+  // Log_info("[+] ID %d | Add cmd | index %d | term %d ", getThisServerID(), *index, *term);
+  return true;
+}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match164-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void RaftServer::GetState(bool *is_leader, uint64_t *term) {
+  /* Your code here. This function can be called from another OS thread. */
+  std::lock_guard&lt;std::recursive_mutex&gt; lk(mtx_);
+  *is_leader = identity == IS_LEADER;
+  *term = currentTerm;
+}
+
+void RaftServer::SyncRpcExample() {
+  /* This is an example of synchronous RPC using coroutine; feel free to 
+     modify this function to dispatch/receive your own messages. 
+     You can refer to the other function examples in commo.h/cc on how 
+     to send/recv a Marshallable object over RPC. */
+  Coroutine::CreateRun([this](){
+</FONT>    string res;
+    auto event = commo()-&gt;SendString(0, /* partition id is always 0 for lab1 */
+                                     0, "hello", &res);
+    event-&gt;Wait(1000000); //timeout after 1000000us=1s
+    if (event-&gt;status_ == Event::TIMEOUT) {
+      Log_info("timeout happens");
+    } else {
+      Log_info("rpc response is: %s", res.c_str()); 
+    }
+  });
+}
+
+/* Do not modify any code below here */
+
+void RaftServer::Disconnect(const bool disconnect) {
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+  verify(disconnected_ != disconnect);
+  // global map of rpc_par_proxies_ values accessed by partition then by site
+  static map&lt;parid_t, map&lt;siteid_t, map&lt;siteid_t, vector&lt;SiteProxyPair&gt;&gt;&gt;&gt; _proxies{};
+  if (_proxies.find(partition_id_) == _proxies.end()) {
+    _proxies[partition_id_] = {};
+  }
+  RaftCommo *c = (RaftCommo*) commo();
+  if (disconnect) {
+    verify(_proxies[partition_id_][loc_id_].size() == 0);
+    verify(c-&gt;rpc_par_proxies_.size() &gt; 0);
+    auto sz = c-&gt;rpc_par_proxies_.size();
+    _proxies[partition_id_][loc_id_].insert(c-&gt;rpc_par_proxies_.begin(), c-&gt;rpc_par_proxies_.end());
+    c-&gt;rpc_par_proxies_ = {};
+    verify(_proxies[partition_id_][loc_id_].size() == sz);
+    verify(c-&gt;rpc_par_proxies_.size() == 0);
+  } else {
+    verify(_proxies[partition_id_][loc_id_].size() &gt; 0);
+    auto sz = _proxies[partition_id_][loc_id_].size();
+    c-&gt;rpc_par_proxies_ = {};
+    c-&gt;rpc_par_proxies_.insert(_proxies[partition_id_][loc_id_].begin(), _proxies[partition_id_][loc_id_].end());
+    _proxies[partition_id_][loc_id_] = {};
+    verify(_proxies[partition_id_][loc_id_].size() == 0);
+    verify(c-&gt;rpc_par_proxies_.size() == sz);
+  }
+  disconnected_ = disconnect;
+
+  // if (disconnect)
+  //   Log_info("[+] Server %d disconnected", getThisServerID());
+  // else
+  //   Log_info("[+] Server %d reconnected", getThisServerID());
+}
+
+bool RaftServer::IsDisconnected() {
+  return disconnected_;
+}
+
+} // namespace janus
+
+</PRE>
+</PRE>
+</BODY>
+</HTML>

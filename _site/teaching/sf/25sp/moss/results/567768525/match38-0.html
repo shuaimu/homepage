@@ -1,0 +1,616 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/anshkhannasbu/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/anshkhannasbu/src/kvraft/server.go<p><PRE>
+package raftkv
+
+import (
+	"labgob"
+	"labrpc"
+	"log"
+	"raft"
+	"sync"
+	"strconv"
+	"time"
+	"bytes"
+	"strings"
+)
+
+const Debug = 0
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+type LogEntry struct {
+	Command interface{}
+	Term int
+}
+
+type Op struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+	ClientId int64
+	RpcId int64
+	Key string
+	OpType string
+	Value string
+}
+
+type RaftOp struct {
+	Op Op
+}
+
+type KVServer struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	maxraftstate int // snapshot if log grows this big
+	database []raft.ApplyMsg
+
+	rpcMapComm map[string]string
+	rpcMapUncomm map[string]string
+	kvMap map[string]string
+	
+	// Your definitions here.
+	quitAll chan int
+	databaseMutex sync.Mutex
+	lastProcessedIndex int
+	lastSnapshottedIndex int
+	volatileDbIdx int
+}
+
+<A NAME="12"></A><FONT color = #0000FF><A HREF="match38-1.html#12" TARGET="1"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func(kv *KVServer) isLeader() (int, bool){
+	a,b := kv.rf.GetState()
+	return a,b
+}
+
+func (kv *KVServer) LocateLeader(args *LocateLeaderArgs, reply *LocateLeaderResponse){
+</FONT>	term, isLeader := kv.rf.GetState()
+	reply.Term = term
+	reply.IsLeader = (isLeader == true)
+}
+
+func (kv *KVServer) processOp(op Op) (bool){
+
+<A NAME="11"></A><FONT color = #00FF00><A HREF="match38-1.html#11" TARGET="1"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	prevop := Op{}
+	prevop.ClientId = op.ClientId
+	prevop.RpcId = op.RpcId - 1
+
+	rpckey := getKey(op)
+
+	kv.mu.Lock()
+</FONT>	
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match38-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.initMaps()
+	
+	_, ok1 := kv.rpcMapUncomm[rpckey]
+	_, ok2 := kv.rpcMapComm[rpckey]
+
+	if !ok1 && !ok2 {
+		_, _, done := kv.rf.Start(opToRaftOp(op))
+		//DPrintf("received operation for server %d and index %d and client %d and rpc id %d last processed is %d\n", kv.me, idx_op, op.ClientId, op.RpcId, kv.lastSnapshottedIndex)
+		if !done{
+			kv.mu.Unlock()
+</FONT>			//DPrintf("returning reply1 %t\n", reply.Success)
+			return done
+		}
+		kv.rpcMapUncomm[rpckey] = "done"
+	}
+
+	kv.mu.Unlock()
+	
+	return true
+}
+
+
+<A NAME="8"></A><FONT color = #00FFFF><A HREF="match38-1.html#8" TARGET="1"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *KVServer) Get(args *GetArgs, reply *GetResponse) {
+	// Your code here.
+
+	op := Op{}
+	op.ClientId = args.ClientId
+	op.RpcId = args.RpcId
+	op.OpType = "Get"
+	op.Key = args.Key
+	op.Value = ""
+</FONT>
+	opDone := kv.processOp(op)
+	rpckey := getKey(op)
+
+	if !opDone{
+<A NAME="9"></A><FONT color = #FF00FF><A HREF="match38-1.html#9" TARGET="1"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		reply.Success = false
+		return
+	}
+
+	for {
+
+		time.Sleep(10*time.Millisecond)
+
+		_, isLeader := kv.isLeader()
+		if !isLeader{
+			reply.Success = false
+			break
+		}
+
+		kv.mu.Lock()
+		val, ok := kv.rpcMapComm[rpckey]
+</FONT>		_, ok1 := kv.rpcMapUncomm[rpckey]
+		kv.mu.Unlock()
+
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match38-1.html#7" TARGET="1"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		if ok {
+			reply.Value = val
+			reply.Success = true
+			//DPrintf("returning reply3 %t\n", reply.Success)
+			break
+		}
+
+		if !ok1{
+			reply.Success = false
+			break
+		}
+	}
+}
+
+func (kv *KVServer) Modify(args *ModifyArgs, reply *ModifyResponse) {
+	// Your code here.
+	op := Op{}
+	op.ClientId = args.ClientId
+	op.RpcId = args.RpcId
+</FONT>	op.OpType = args.OpType
+	op.Key = args.Key
+	op.Value = args.Value
+
+	opDone := kv.processOp(op)
+	rpckey := getKey(op)
+
+	if !opDone{
+<A NAME="10"></A><FONT color = #FF0000><A HREF="match38-1.html#10" TARGET="1"><IMG SRC="../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		reply.Success = false
+		return
+	}
+
+	for {
+		time.Sleep(10*time.Millisecond)
+		_, isLeader := kv.isLeader()
+		if !isLeader{
+			reply.Success = false
+			//DPrintf("returning reply1 %t\n", reply.Success)
+			break
+		}
+
+		kv.mu.Lock()
+		_, ok := kv.rpcMapComm[rpckey]
+</FONT>		_, ok1 := kv.rpcMapUncomm[rpckey]
+		kv.mu.Unlock()
+
+		if ok {
+			reply.Success = true
+			break
+		}
+
+		if !ok1{
+			reply.Success = false
+			break
+		}
+		//l1, l2, l3 := kv.rf.GetStatus()
+		//DPrintf("Server %d unable to return response for rpckey %s\n", kv.me, rpckey)
+	}
+	//DPrintf("returning reply10 %t\n", reply.Success)
+}
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match38-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func(kv *KVServer) updateRPCMap(nop interface{}, index int, value string){
+
+	op := nop.(Op)
+	key := getKey(op)
+	kv.rpcMapComm[key] = value
+	kv.deleteKeys(op.ClientId, op.RpcId - 1)
+	kv.lastProcessedIndex = max(kv.lastProcessedIndex, index)
+
+}
+
+func(kv *KVServer) deleteKeys(cid int64, rpcid int64){
+	
+	for k,_ := range kv.rpcMapComm {
+		arr := strings.Split(k, "$")
+		ncid, _ := strconv.ParseInt(arr[0], 10, 64)
+		nrpcid, _ := strconv.ParseInt(arr[1], 10, 64)
+</FONT><A NAME="0"></A><FONT color = #FF0000><A HREF="match38-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_7.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		if ncid != cid {
+			continue
+		}
+		if nrpcid &lt;= rpcid {
+			delete(kv.rpcMapComm, k)
+		}
+	}
+
+}
+
+func(kv *KVServer) updateKVMap(nop interface{}, index int) string {
+
+	op := nop.(Op)
+	_, ok := kv.kvMap[op.Key]
+
+	if ok {
+		if op.OpType == "Append"{
+			kv.kvMap[op.Key] += op.Value
+		} 
+		if op.OpType == "Put"{
+			//DPrintf("Server %d Put Op key %s Op value %s\n", kv.me, op.Key, op.Value)
+			kv.kvMap[op.Key] = op.Value
+		}
+		if op.OpType == "Get" {
+			//DPrintf("Server %d Get Op key %s Op value %s\n", kv.me, op.Key, op.Value)
+		}
+	} else{
+		if op.OpType != "Get"{
+			kv.kvMap[op.Key] = op.Value
+		}
+	}
+
+	return kv.kvMap[op.Key]
+	//DPrintf("kvMap keys count %d\n", len(kv.kvMap))
+}
+
+func dummyOp() Op{
+	op := Op{}
+	op.Key = "bits"
+	return op
+}
+
+func (kv *KVServer) listenToCommit(){
+	go func(){
+</FONT>		for{
+			select {
+				case &lt;-kv.quitAll:
+<A NAME="13"></A><FONT color = #00FFFF><A HREF="match38-1.html#13" TARGET="1"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+					return
+				case nop := (&lt;-kv.applyCh):
+					_, ok := nop.Command.(RaftOp)
+					if !ok {
+						if nop.SnapshotMessage {
+</FONT>							kv.readSnapshot(nop.Snapshot)
+							continue
+						}
+					}
+					
+					kv.addOp(nop)
+		
+			}
+		}
+	}()
+}
+
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match38-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func(kv *KVServer) addOp(msg raft.ApplyMsg){
+	kv.mu.Lock()
+	if msg.CommandIndex &lt;= kv.lastProcessedIndex {
+		kv.mu.Unlock()
+		return
+	}
+	rop, ok := msg.Command.(RaftOp)
+	var op Op
+	if !ok {
+		op = dummyOp()
+	} else{
+		op = raftOpToOp(rop)
+</FONT>	}
+	value := kv.updateKVMap(op, msg.CommandIndex)
+	kv.updateRPCMap(op, msg.CommandIndex, value)
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match38-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.mu.Unlock()
+}
+
+// func(kv *KVServer) processDb(){
+
+// 	go func(){
+// 		for{
+// 			select {
+// 				case &lt;-kv.quitAll:
+// 					return
+// 				default:
+
+// 					time.Sleep(30*time.Millisecond)
+// 					kv.mu.Lock()
+// 					for i := kv.volatileDbIdx + 1; i &lt; len(kv.database); i++ {
+// 						if !kv.database[i].CommandValid {
+// 							break
+// 						}
+// 						rop, ok := kv.database[i].Command.(RaftOp)
+// 						var op Op
+// 						if !ok {
+// 							op = dummyOp()
+// 						} else{
+// 							op = raftOpToOp(rop)
+// 						}
+// 						value := kv.updateKVMap(op, kv.database[i].CommandIndex)
+// 						kv.updateRPCMap(op, kv.database[i].CommandIndex, value)
+// 						kv.volatileDbIdx = max(kv.volatileDbIdx, i)
+// 					}
+// 					kv.mu.Unlock()
+// 			}
+// 		}
+// 	}()
+
+// }
+
+func opToRaftOp(op Op) RaftOp{
+	rop := RaftOp{}
+	rop.Op = op
+	return rop
+}
+
+func raftOpToOp(rop RaftOp) Op{
+	return rop.Op
+}
+
+func getKey(op interface{}) string{
+	nop := op.(Op)
+	return strconv.FormatInt(nop.ClientId, 10) + "$" + strconv.FormatInt(nop.RpcId, 10)
+</FONT>}
+
+<A NAME="14"></A><FONT color = #FF00FF><A HREF="match38-1.html#14" TARGET="1"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *KVServer) initRPCMap(log []raft.LogEntry, commitIdx int){
+	kv.rpcMapUncomm = make(map[string]string)
+	for i := 0; i &lt; len(log); i++ {
+</FONT><A NAME="2"></A><FONT color = #0000FF><A HREF="match38-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		rop, ok := log[i].Command.(RaftOp)
+		var op Op
+		if !ok {
+			op = dummyOp()
+		} else{
+			op = raftOpToOp(rop)
+		}
+		key := getKey(op)
+		_, ok2 := kv.rpcMapComm[key]
+		if !ok2 {
+			kv.rpcMapUncomm[key] = strconv.Itoa(i)
+</FONT>		}
+	}
+	//DPrintf("Log length is %d, commit index is %d", len(log), commitIdx)
+}
+
+//
+// the tester calls Kill() when a KVServer instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *KVServer) Kill() {
+	kv.rf.Kill()
+	// Your code here, if desired.
+	go func(){
+		for {
+			kv.quitAll &lt;- 1
+		}
+	}()
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Raft to
+// form the fault-tolerant key/value service.
+// me is the index of the current server in servers[].
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+// the k/v server should snapshot when Raft's saved state exceeds maxraftstate bytes,
+// in order to allow Raft to garbage-collect its log. if maxraftstate is -1,
+// you don't need to snapshot.
+// StartKVServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+
+func(kv *KVServer) initMaps(){
+	raftlog, commitIdx := kv.rf.GetLogAndCommit()
+	kv.initRPCMap(raftlog, commitIdx)
+}
+
+func(kv *KVServer) sendDummyGetForProgress(){
+	go func(){
+		for {
+			select {
+			case &lt;-kv.quitAll:
+				return
+			default:
+				time.Sleep(1000*time.Millisecond)
+				_, l := kv.isLeader()
+				if !l {
+					continue
+				}
+				op := Op{}
+				op.Key = "bits"
+				kv.rf.Start(opToRaftOp(op))
+			}
+		}
+	}()
+}
+
+func(kv *KVServer) monitorForSnapshot(){
+	if kv.maxraftstate == -1 {
+		return
+	}
+	go func(){
+		for {
+			select {
+			case &lt;-kv.quitAll:
+				return
+			default:
+				time.Sleep(20*time.Millisecond)
+				size := kv.rf.GetStateSize()
+				if size &gt;= kv.maxraftstate {
+					kv.TakeSnapshot()
+				}
+			}
+		}
+	}()
+}
+
+func(kv *KVServer) TakeSnapshot(){
+	
+	kv.mu.Lock()
+	a := make(map[string]string)
+	for k,v := range kv.kvMap {
+		a[k] = v
+	}
+	b := kv.lastProcessedIndex
+	
+	c := make(map[string]string)
+	for k,v := range kv.rpcMapComm {
+		c[k] = v
+	}
+	
+
+	v := new(bytes.Buffer)
+	d := labgob.NewEncoder(v)
+
+	trm := kv.rf.GetTermForIndex(b)
+
+	if trm == -1 {
+		kv.mu.Unlock()
+		return
+	}
+
+	d.Encode(b)
+	d.Encode(trm)
+	d.Encode(a)
+	d.Encode(c)
+	
+
+	data2 := v.Bytes()
+	// DPrintf("%d taking snapshot size %d\n", kv.me, len(data2))
+	//kv.printSnapshotData()
+	kv.rf.TakeSnapshot(data2, b, trm)
+	kv.mu.Unlock()
+
+
+
+	// DPrintf("%d done taking snapshot size %d\n", kv.me, len(data2))
+}
+
+func(kv *KVServer) printSnapshotData(){
+	// DPrintf("kvmap keys len %d\n", len(kv.kvMap))
+	// for k,v := range kv.kvMap {
+	// 	DPrintf("kvmap key value %s %s", k, v)
+	// }
+
+	// DPrintf("server %d rpcMapComm keys len %d\n", kv.me, len(kv.rpcMapComm))
+	// for k,v := range kv.rpcMapComm {
+	// 	DPrintf("rpccommmap key value %s %s", k, v)
+	// }
+
+}
+
+
+func(kv *KVServer) readSnapshot(snapshot []byte){
+
+	if snapshot == nil || len(snapshot) &lt; 1 {
+		return
+	}
+
+	//DPrintf("REACHED HERE\n")
+
+	r := bytes.NewBuffer(snapshot)
+	d := labgob.NewDecoder(r)
+	
+	var lastSnapshottedIndex, lastSnapshottedTerm int
+	var kvMap, rpcMapComm map[string]string 
+	
+	d.Decode(&lastSnapshottedIndex)
+	d.Decode(&lastSnapshottedTerm)
+	d.Decode(&kvMap)
+	d.Decode(&rpcMapComm)
+
+	kv.mu.Lock()
+
+	if lastSnapshottedIndex &lt;= kv.lastProcessedIndex {
+		kv.mu.Unlock()
+		return
+	}
+	
+	kv.kvMap = kvMap
+	kv.rpcMapComm = rpcMapComm
+	kv.database = make([]raft.ApplyMsg, 0)
+	kv.volatileDbIdx = -1
+
+	//kv.printSnapshotData()
+
+	kv.lastProcessedIndex = lastSnapshottedIndex
+	kv.lastSnapshottedIndex = lastSnapshottedIndex
+
+	kv.rf.TakeSnapshot(snapshot, lastSnapshottedIndex, lastSnapshottedTerm)
+	kv.mu.Unlock()
+}
+
+func(kv *KVServer) readSnapshotForCommitedEntries(){
+	kv.readSnapshot(kv.rf.GetSnapshot())
+}
+
+func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
+	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+	labgob.Register(RaftOp{})
+
+	kv := new(KVServer)
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match38-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+	kv.volatileDbIdx = -1
+	kv.lastProcessedIndex = -1
+	kv.lastSnapshottedIndex = -1
+	kv.rpcMapComm = make(map[string]string)
+	kv.rpcMapUncomm = make(map[string]string)
+	kv.kvMap = make(map[string]string)
+	kv.database = make([]raft.ApplyMsg, 0)
+</FONT>	kv.quitAll = make(chan int)
+
+	// You may need initialization code here.
+
+<A NAME="15"></A><FONT color = #FF0000><A HREF="match38-1.html#15" TARGET="1"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+	kv.readSnapshotForCommitedEntries()
+	kv.listenToCommit()
+	kv.sendDummyGetForProgress()
+</FONT>	kv.monitorForSnapshot()
+	// kv.processDb()
+
+	// You may need initialization code here.
+
+	return kv
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

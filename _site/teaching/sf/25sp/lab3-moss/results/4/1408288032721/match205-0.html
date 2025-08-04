@@ -1,0 +1,263 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-PranavDani/src/shardkv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-PranavDani/src/shardkv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+  int64_t ShardKvServer::GetNextOpId() {
+    verify(sp_log_svr_);
+    int64_t ret = sp_log_svr_-&gt;site_id_;
+    ret = ret &lt;&lt; 32;
+    ret = ret + op_id_cnt_++;
+    return ret;
+  }
+
+  int ShardKvServer::Put(const uint64_t& oid,
+    const string& k,
+    const string& v) {
+    // lab_shard: fill in your code
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("put");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);
+
+
+    /* your code here */
+
+    uint64_t index = -1;
+    uint64_t term = -1;
+
+    std::shared_ptr&lt;Marshallable&gt; cmd = s;
+
+    Log_debug("Put KV server %d with %d oid %s k, %s v", sp_log_svr_-&gt;loc_id_, oid, k.c_str(), v.c_str());
+    bool isLeader = GetRaftServer().Start(cmd, &index, &term);
+
+    if (isLeader) {
+      auto now = std::chrono::high_resolution_clock::now();
+      std::chrono::high_resolution_clock::time_point timeout = std::chrono::system_clock::now() + std::chrono::milliseconds(2000);
+
+      while (now &lt; timeout) {
+        now = std::chrono::high_resolution_clock::now();
+
+        if (commitMap[s-&gt;data_[0].c_str()]) {
+
+          Log_debug("Put value successful for server %d with key %s is %s", sp_log_svr_-&gt;loc_id_, k.c_str(), kv[k].c_str());
+
+          return KV_SUCCESS;
+        }
+
+        Coroutine::Sleep(500);
+      }
+
+      bool isDisconnected = GetRaftServer().IsDisconnected();
+
+      if (isDisconnected) {
+        return KV_TIMEOUT;
+      }
+      else {
+        return KV_NOTLEADER;
+      }
+
+    }
+    else {
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match205-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      Log_debug("Server %d is not leader", sp_log_svr_-&gt;loc_id_);
+      return KV_NOTLEADER;
+    }
+
+  }
+
+  int ShardKvServer::Append(const uint64_t& oid,
+    const string& k,
+    const string& v) {
+    // lab_shard: fill in your code
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+</FONT>    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("append");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);
+
+    uint64_t index = -1;
+    uint64_t term = -1;
+
+    std::shared_ptr&lt;Marshallable&gt; cmd = s;
+
+
+    Log_debug("Append in KV server %d with %d oid %s k, %s v", sp_log_svr_-&gt;loc_id_, oid, k.c_str(), v.c_str());
+    bool isLeader = GetRaftServer().Start(cmd, &index, &term);
+
+    if (isLeader) {
+      auto now = std::chrono::high_resolution_clock::now();
+      std::chrono::high_resolution_clock::time_point timeout = std::chrono::system_clock::now() + std::chrono::milliseconds(2000);
+
+      while (now &lt; timeout) {
+        now = std::chrono::high_resolution_clock::now();
+
+        if (commitMap[s-&gt;data_[0].c_str()]) {
+
+          Log_debug("Append successful %d op %d key and %d value, committed by server %d", oid, k, v, sp_log_svr_-&gt;loc_id_);
+          return KV_SUCCESS;
+        }
+
+        Coroutine::Sleep(500);
+      }
+
+
+      bool isDisconnected = GetRaftServer().IsDisconnected();
+
+      if (isDisconnected) {
+        return KV_TIMEOUT;
+      }
+      else {
+        return KV_NOTLEADER;
+      }
+    }
+    else {
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match205-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      Log_debug("Server %d is not leader", sp_log_svr_-&gt;loc_id_);
+      return KV_NOTLEADER;
+    }
+  }
+
+  int ShardKvServer::Get(const uint64_t& oid,
+    const string& k,
+    string* v) {
+
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("get");
+    s-&gt;data_.push_back(k);
+</FONT>    // s-&gt;data_.push_back(*v);
+
+
+    uint64_t index = -1;
+    uint64_t term = -1;
+
+    std::shared_ptr&lt;Marshallable&gt; cmd = s;
+
+
+    Log_debug("Get in KV server %d with %d oid %s k", sp_log_svr_-&gt;loc_id_, oid, k.c_str());
+    bool isLeader = GetRaftServer().Start(cmd, &index, &term);
+
+    if (isLeader) {
+      // Log_info("%d IsLeader for put", sp_log_svr_-&gt;loc_id_);
+
+      auto now = std::chrono::high_resolution_clock::now();
+      std::chrono::high_resolution_clock::time_point timeout = std::chrono::system_clock::now() + std::chrono::milliseconds(2000);
+
+      while (now &lt; timeout) {
+        now = std::chrono::high_resolution_clock::now();
+
+        if (commitMap[s-&gt;data_[0].c_str()]) {
+
+          mtx.lock();
+          Log_debug("Get value for key %s is %s", k.c_str(), kv[k].c_str());
+
+          *v = kv[k];
+
+          mtx.unlock();
+          return KV_SUCCESS;
+        }
+
+        Coroutine::Sleep(500);
+      }
+
+      bool isDisconnected = GetRaftServer().IsDisconnected();
+
+      if (isDisconnected) {
+        return KV_TIMEOUT;
+      }
+      else {
+        return KV_NOTLEADER;
+      }
+    }
+    else {
+      Log_debug("Server %d is not leader", sp_log_svr_-&gt;loc_id_);
+      return KV_NOTLEADER;
+    }
+
+  }
+
+  void ShardKvServer::OnNextCommand(Marshallable& m) {
+    // lab_shard: fill in your code
+
+    GetRaftServer().mtx_.lock();
+    int commandIndex = GetRaftServer().lastApplied;
+    uint64_t raftSize = GetRaftServer().persister-&gt;RaftStateSize();
+    GetRaftServer().mtx_.unlock();
+
+    auto v = (MultiStringMarshallable*)(&m);
+    Log_debug("OnNext command at KVServer %d with commandIndex %d, %s oid %s k, %s type", sp_log_svr_-&gt;loc_id_, commandIndex, v-&gt;data_[0].c_str(), v-&gt;data_[2].c_str(), v-&gt;data_[1].c_str());
+
+    if (v-&gt;data_[0] == "snapshot") {
+      mtx.lock();
+      Log_debug("Read snapshot command at KVServer %d", sp_log_svr_-&gt;loc_id_);
+
+      kv.clear();
+
+      for (int i = 1; i &lt; v-&gt;data_.size(); i += 2) {
+        string key = v-&gt;data_[i];
+        string value = v-&gt;data_[i + 1];
+        kv[key] = value;
+      }
+      mtx.unlock();
+      // return;
+    }
+    else {
+
+      string oid = v-&gt;data_[0];
+      string type = v-&gt;data_[1];
+      string key = v-&gt;data_[2];
+
+      if (commitMap[oid]) {
+        mtx.unlock();
+        Log_debug("Already committed");
+        return;
+      }
+
+      mtx.lock();
+      if (type == "put") {
+        string value = v-&gt;data_[3];
+        kv[key] = value;
+        Log_debug("Value for key %s is %s", key.c_str(), kv[key].c_str());
+      }
+      else if (type == "append") {
+        string value = v-&gt;data_[3];
+        kv[key] += value;
+        Log_debug("New value for key %s is %s", key.c_str(), kv[key].c_str());
+      }
+      else if (type == "get") {
+      }
+
+      commitMap[oid] = true;
+      mtx.unlock();
+
+    }
+
+  }
+
+  shared_ptr&lt;ShardKvClient&gt; ShardKvServer::CreateClient(Communicator* comm) {
+    auto cli = make_shared&lt;ShardKvClient&gt;();
+    cli-&gt;commo_ = comm;
+    verify(cli-&gt;commo_ != nullptr);
+    static uint32_t id = 0;
+    id++;
+    cli-&gt;cli_id_ = id;
+    return cli;
+  }
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,263 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-Apeksha115908828/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-nitingss11/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  /*  
+  Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  */
+  /* your code here */
+  // Coroutine::CreateRun([this](){}); 
+  // Log_info("put request key %s, val %s", k.c_str(), v.c_str());
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match164-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  // shared_ptr&lt;Marshallable&gt; sMarsh = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  shared_ptr&lt;Marshallable&gt; sMarsh = s;
+
+  RaftServer& raftServer = GetRaftServer();
+</FONT>
+  uint64_t index = -1;
+  uint64_t term = -1;
+  
+  // std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+
+  if(!raftServer.isLeader) {
+    return KV_NOTLEADER;
+  }
+
+  int oldLeader = raftServer.loc_id_;
+  int oldCommitIdx = raftServer.commitIdx;
+
+  bool result = raftServer.Start(sMarsh, &index, &term);
+  Coroutine::Sleep(500000); 
+
+  // Log_info("PUT op key %s value %s serverId %d, index %d, term %d, result %d", k.c_str(), v.c_str(), raftServer.loc_id_, index, term, result);
+  
+  int newLeader = raftServer.loc_id_;
+  int newCommitIdx = raftServer.commitIdx;
+  // Log_info("Old ci %d, new ci %d", oldCommitIdx, newCommitIdx);
+  
+  if(oldLeader==newLeader && newCommitIdx == oldCommitIdx) {
+    return KV_TIMEOUT;
+  } else {
+    // Log_info("returning success from put");
+    return KV_SUCCESS;
+  }
+}
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+  // mtx
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match164-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  s-&gt;data_.push_back("append");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  // shared_ptr&lt;Marshallable&gt; sMarsh = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  shared_ptr&lt;Marshallable&gt; sMarsh = s;
+
+  RaftServer& raftServer = GetRaftServer();
+</FONT>
+  uint64_t index = -1;
+  uint64_t term = -1;
+
+  // std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+
+  if(!raftServer.isLeader) {
+    return KV_NOTLEADER;
+  }
+
+  int oldLeader = raftServer.loc_id_;
+  int oldCommitIdx = raftServer.commitIdx;
+
+  bool result = raftServer.Start(sMarsh, &index, &term);
+  Coroutine::Sleep(500000);
+
+  int newLeader = raftServer.loc_id_;
+  int newCommitIdx = raftServer.commitIdx;
+  Log_info("APPEND op key %s value %s serverId %d, index %d, term %d, result %d", k.c_str(), v.c_str(), raftServer.loc_id_, index, term, result);
+  
+  Log_info("Old leader %d, new leader %d", oldLeader, newLeader);
+  Log_info("Old ci %d, new ci %d", oldCommitIdx, newCommitIdx);
+
+  if(oldLeader==newLeader && newCommitIdx == oldCommitIdx) {
+    return KV_TIMEOUT;
+  } else {
+    // Log_info("returning success from append");
+    return KV_SUCCESS;
+  }
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+  /* your code here */
+  /*Coroutine::Sleep(200000);
+  bool isLeader = false;
+  RaftServer& raftServer = GetRaftServer();
+  if(raftServer.isLeader == false) {
+    return KV_NOTLEADER;
+  } else {
+    *v = hashMap.at(k);
+    return KV_SUCCESS;
+  }*/
+
+  // *v = hashMap.at(k);
+  // return KV_SUCCESS;
+
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("get");
+  s-&gt;data_.push_back(k);
+  // s-&gt;data_.push_back(*v);
+
+  // shared_ptr&lt;Marshallable&gt; sMarsh = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  shared_ptr&lt;Marshallable&gt; sMarsh = s;
+
+  // string tes = "tes";
+  // string& vRef = tes;
+  // s-&gt;data_.push_back(vRef);
+
+  // shared_ptr&lt;MultiStringMarshallable&gt;& s2 = s;
+  // shared_ptr&lt;Marshallable&gt;& sMarsh =  dynamic_pointer_cast&lt;Marshallable&gt;(s2);
+
+  RaftServer& raftServer = GetRaftServer();
+
+  if(!raftServer.isLeader) {
+    return KV_NOTLEADER;
+  }
+
+  int oldLeader = raftServer.loc_id_;
+  int oldCommitIdx = raftServer.commitIdx;
+
+  uint64_t index = -1;
+  uint64_t term = -1;
+  bool result = raftServer.Start(sMarsh, &index, &term);
+  Coroutine::Sleep(500000); 
+
+  // Log_info("GET op key serverId %d, index %d, term %d, result %d", raftServer.loc_id_, index, term, result);
+  
+  int newLeader = raftServer.loc_id_;
+  int newCommitIdx = raftServer.commitIdx;
+
+  // Log_info("Old leader %d, new leader %d", oldLeader, newLeader);
+  // Log_info("Old ci %d, new ci %d", oldCommitIdx, newCommitIdx);
+  // Log_info("hashMap count of key %s is %d", k.c_str(), hashMap.count(k));
+
+
+
+  if(oldLeader==newLeader && newCommitIdx==oldCommitIdx || hashMap.count(k)==0) {
+    return KV_TIMEOUT;
+  } else {
+    // Log_info("vRef before the get return %s", vRef.c_str());
+    // *v = vRef;
+    *v = hashMap.at(k);
+    // Log_info("returning success from get");
+    return KV_SUCCESS;
+  }
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  /* your code here */
+  RaftServer& rs = GetRaftServer();
+  // if(rs.isLeader)
+  // Log_info("on next command of %d", GetRaftServer().loc_id_);
+
+  auto v = (MultiStringMarshallable*)(&m);
+  string operation = v-&gt;data_.at(1);
+  string key = v-&gt;data_.at(2);
+  
+  // if(rs.isLeader) {
+  //   Log_info("operation %s, key %s", operation.c_str(), key.c_str());
+  // }
+
+  if(operation.compare("put")==0) {
+    // if(rs.isLeader) {
+      // Log_info("put operation at key %s, a value %s", key.c_str(), v-&gt;data_.at(3).c_str());
+      if(hashMap.find(key) == hashMap.end()) {
+        hashMap.insert(make_pair(key, v-&gt;data_.at(3)));
+      } else {
+        hashMap.at(key) = v-&gt;data_.at(3);
+      }
+    // }
+  } else if(operation.compare("append")==0) {
+    // if(rs.isLeader) {
+      Log_info("append operation at key %s, a value %s", key.c_str(), v-&gt;data_.at(3).c_str());
+      if(hashMap.find(key) != hashMap.end()) {
+        hashMap.at(key) += v-&gt;data_.at(3);
+      } else {
+        hashMap.insert(make_pair(key, v-&gt;data_.at(3)));
+      }
+    // }
+  } else if(operation.compare("get")==0) {
+      // Log_info("get operation at key %s", key.c_str());
+
+    // string val = hashMap.at(key);
+    // if(rs.isLeader)
+    //   Log_info("get operation %s", val.c_str());
+    // auto v2 = static_cast&lt;MultiStringMarshallable*&gt;(&m);
+    // *(v2-&gt;data_[3]) = val;
+    // string& valRef = v-&gt;data_.at(3);
+    // valRef = val;
+    // if(rs.isLeader)
+    //   Log_info("whats the new val %s", valRef.c_str());
+  }
+
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

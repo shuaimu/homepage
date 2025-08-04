@@ -1,0 +1,217 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-digaru19/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-Linyqsbu/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match186-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  /* 
+  Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  */
+  /* your code here */
+  RaftServer& svr=GetRaftServer();
+  Log_info("processing put command with id %d on server %d", oid, svr.site_id_);
+</FONT>  Log_info("the key is %s, the value is %s", k.c_str(), v.c_str());
+  bool is_leader;
+  uint64_t term;
+  svr.GetState(&is_leader, &term);
+  if(!is_leader || svr.IsDisconnected()){
+    Log_info("server %d is not the leader", svr.site_id_);
+    return KV_NOTLEADER;
+  }
+  Log_info("done checking");
+  auto s=make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  uint64_t index;
+  uint64_t ret_term;
+  shared_ptr&lt;Marshallable&gt; cmd(s);
+  Log_info("the operation is %s", ((MultiStringMarshallable*)(cmd.get()))-&gt;data_[1].c_str());
+  bool status = svr.Start(cmd, &index, &ret_term);
+  auto proxies=svr.commo()-&gt;rpc_par_proxies_[0];
+  size_t size=proxies.size();
+  Log_info("the size is %d", size);
+  if(status && size&gt;=3){
+    uint32_t time=0;
+    while(svr.commit_index&lt;index){
+      Coroutine::Sleep(1000);
+      time+=1;
+      if(time&gt;=5000 && svr.commit_index&lt;index){
+        return KV_TIMEOUT;
+      }
+    }
+    return KV_SUCCESS;
+  }
+  return KV_TIMEOUT;
+}
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+  RaftServer& svr=GetRaftServer();
+  Log_info("processing append command with id %d on server %d", oid, svr.site_id_);
+  Log_info("the key is %s, the value is %s", k.c_str(), v.c_str());
+  bool is_leader;
+  uint64_t term;
+  svr.GetState(&is_leader, &term);
+  if(!is_leader || svr.IsDisconnected()){
+    Log_info("append failed, server %d is not the leader", svr.site_id_);
+    return KV_NOTLEADER;
+  }
+  auto s=make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("append");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  uint64_t index;
+  uint64_t ret_term;
+  shared_ptr&lt;Marshallable&gt; cmd(s);
+  bool status = svr.Start(cmd, &index, &ret_term);
+  if(status){
+    uint32_t time=0;
+    while(svr.commit_index&lt;index){
+      Coroutine::Sleep(1000);
+      time+=1;
+      if(time&gt;=5000 && svr.commit_index&lt;index){
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match186-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        return KV_TIMEOUT;
+      }
+    }
+    return KV_SUCCESS;
+  }
+  return KV_TIMEOUT;
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+  /* your code here */
+  RaftServer& svr=GetRaftServer();
+</FONT>  Log_info("processing get command with id %d on server %d", oid, svr.site_id_);
+  bool is_leader;
+  uint64_t term;
+  svr.GetState(&is_leader, &term);
+  if(!is_leader || svr.IsDisconnected()){
+    return KV_NOTLEADER;
+  }
+  auto s=make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("get");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(to_string(reinterpret_cast&lt;uintptr_t&gt;(v)));
+  uint64_t index;
+  uint64_t ret_term;
+  shared_ptr&lt;Marshallable&gt; cmd(s);
+  bool status = svr.Start(cmd, &index, &ret_term);
+  auto proxies=svr.commo()-&gt;rpc_par_proxies_[0];
+  size_t size=proxies.size();
+  Log_info("the size is %d", size);
+  if(status && size&gt;=3){
+    uint32_t time=0;
+    while(svr.commit_index&lt;index){
+      Coroutine::Sleep(1000);
+      time+=1;
+      if(time&gt;=5000 && svr.commit_index&lt;index){
+        return KV_TIMEOUT;
+      }
+    }
+    string value=kvstore_[k];
+    *v=value;
+    Log_info("the returned string is %s", (*v).c_str());
+    return KV_SUCCESS;
+  }
+  return KV_TIMEOUT;
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  auto v = (MultiStringMarshallable*)(&m);
+  /* your code here */
+  string op=v-&gt;data_[1];
+  Log_info("the next command to be applied is %s, id: %s", op.c_str(), v-&gt;data_[0].c_str());
+  if(op.compare("get")==0){
+    Log_info("applying the get command");
+    // string key=v-&gt;data_[2];
+    // string ptr=v-&gt;data_[3];
+    // stringstream ss(ptr);
+    // intptr_t p;
+    // ss &gt;&gt; p;
+    // string *ret=(string*)p;
+    // string value=kvstore_[key];
+    // *ret=value;
+    // Log_info("the returned string is %s", (*ret).c_str());
+  }
+  else if(op.compare("put")==0){
+    Log_info("applying the put command");
+    string key=v-&gt;data_[2];
+    string value=v-&gt;data_[3];
+    kvstore_[key]=value;
+    Log_info("the value stored for key %s is %s", key.c_str(), kvstore_[key].c_str());
+  }
+  else if(op.compare("append")==0){
+    Log_info("applying the append command");
+    string key=v-&gt;data_[2];
+    string arg=v-&gt;data_[3];
+    
+    if(kvstore_.count(key)==0){
+      kvstore_[key]=arg;
+    }
+    else{
+      string value=kvstore_[key];
+      value+=arg;
+      kvstore_[key]=value;
+    }
+    Log_info("the value stored for key %s is %s", key.c_str(), kvstore_[key].c_str());
+  }
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

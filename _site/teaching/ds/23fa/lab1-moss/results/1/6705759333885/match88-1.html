@@ -1,0 +1,238 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-Pritish1/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-sugamxp-1/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+void RaftServiceImpl::ConvertToFollower(uint64_t term) {
+  Log_info("{CONVERT TO FOLLOWER} SERVERID = %d ", svr_-&gt;loc_id_);
+  svr_-&gt;serverState = FOLLOWER;
+  svr_-&gt;currentTerm = term;
+  svr_-&gt;votedFor = -1;
+}
+
+void RaftServiceImpl::ResetTimeout() {
+  svr_-&gt;to = rand() % TIMER_RANGE + TIMER_MIN;
+}
+
+bool RaftServiceImpl::LogsUpToDateCheck(uint64_t lastLogIndex,
+                                        uint64_t lastLogTerm) {
+
+  int receiverLastIndex = svr_-&gt;logs.size() - 1;
+  int receiverLastTerm = svr_-&gt;logs[svr_-&gt;logs.size() - 1].term;
+
+  bool termCheck = lastLogTerm &gt; receiverLastTerm;
+  bool indexCheck = lastLogIndex &gt;= receiverLastIndex;
+
+  if (lastLogTerm == receiverLastTerm) {
+    return indexCheck;
+  }
+  return termCheck;
+}
+
+void RaftServiceImpl::HandleRequestVote(const RequestVoteReq& requestVoteReq,
+                                        RequestVoteResp* requestVoteResp,
+                                        rrr::DeferredReply* defer) {
+  /* Your code here */
+  uint64_t term = requestVoteReq.term;
+  uint64_t candidateId = requestVoteReq.candidateId;
+  uint64_t lastLogIndex = requestVoteReq.lastLogIndex;
+  uint64_t lastLogTerm = requestVoteReq.lastLogTerm;
+
+  svr_-&gt;mtx_.lock();
+
+  requestVoteResp-&gt;isServerActive = true;
+  requestVoteResp-&gt;voteGranted = false;
+  requestVoteResp-&gt;currentTerm = svr_-&gt;currentTerm;
+  requestVoteResp-&gt;candidatePrevTerm = requestVoteReq.term;
+
+  //! Reply false if term &lt; currentTerm (Receiver Implementation pt. 1)
+  if (term &lt; svr_-&gt;currentTerm) {
+    Log_info("{TERM LOWER %d &lt; %d} SERVERID = %d CANDIDATE = %d", term,
+             svr_-&gt;currentTerm, svr_-&gt;loc_id_, candidateId);
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match88-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    svr_-&gt;mtx_.unlock();
+    defer-&gt;reply();
+    return;
+  }
+
+  //! Convert to follower if term &gt; currentTerm (All Servers pt. 2)
+  if (term &gt; svr_-&gt;currentTerm) {
+    Log_info("{TERM HIGHER %d &gt; %d} SERVERID = %d CANDIDATE = %d", term,
+             svr_-&gt;currentTerm, svr_-&gt;loc_id_, candidateId);
+</FONT>    ConvertToFollower(term);
+    if (svr_-&gt;serverState != FOLLOWER){
+      ResetTimeout();
+    }
+    requestVoteResp-&gt;currentTerm = term;
+  }
+
+  //! Grant Vote Decision (Receiver Implementation pt. 2)
+  if ((svr_-&gt;votedFor == -1 || svr_-&gt;votedFor == candidateId) &&
+      LogsUpToDateCheck(lastLogIndex, lastLogTerm)) {
+    svr_-&gt;votedFor = candidateId;
+    requestVoteResp-&gt;voteGranted = true;
+    // ResetTimeout();
+  }
+  svr_-&gt;mtx_.unlock();
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleAppendEntries(
+    const AppendEntriesReq& appendEntriesReq,
+    AppendEntriesResp* appendEntriesResp, rrr::DeferredReply* defer) {
+  /* Your code here */
+
+  uint64_t term = appendEntriesReq.term;
+  uint64_t leaderId = appendEntriesReq.leaderId;
+  uint64_t prevLogIndex = appendEntriesReq.prevLogIndex;
+  uint64_t prevLogTerm = appendEntriesReq.prevLogTerm;
+  vector&lt;LogEntry&gt; entries = appendEntriesReq.entries;
+  int64_t leaderCommit = appendEntriesReq.leaderCommit;
+
+  Log_info(
+      "{AE PAYLOAD} LeaderTerm = %d leaderId = %d prevLogIndex = %d "
+      "prevLogTerm = %d entries.size() = %d leaderCommit = %d currentServer = "
+      "%d lastApplied = %d commitIndex = %d currLogSize = %d",
+      term, leaderId, prevLogIndex, prevLogTerm, entries.size(), leaderCommit,
+      svr_-&gt;loc_id_, svr_-&gt;lastApplied, svr_-&gt;commitIndex, svr_-&gt;logs.size());
+
+  svr_-&gt;mtx_.lock();
+
+  appendEntriesResp-&gt;isServerActive = true;
+
+  appendEntriesResp-&gt;conflictIndex = -1;
+  appendEntriesResp-&gt;conflictTerm = -1;
+  appendEntriesResp-&gt;shorterLogLen = -1;
+  appendEntriesResp-&gt;numEntriesAppended = 0;
+
+  appendEntriesResp-&gt;serverId = svr_-&gt;loc_id_;
+  appendEntriesResp-&gt;leaderPrevTerm = term;
+
+  appendEntriesResp-&gt;success = true;
+  appendEntriesResp-&gt;currTerm = term;
+
+  //! Outdated Leader AE
+  if (term &lt; svr_-&gt;currentTerm) {
+    appendEntriesResp-&gt;success = false;
+    appendEntriesResp-&gt;currTerm = svr_-&gt;currentTerm;
+    svr_-&gt;mtx_.unlock();
+    defer-&gt;reply();
+    return;
+  }
+
+  //! Convert to follower if term &gt; currentTerm (All Servers pt. 2)
+  if (term &gt; svr_-&gt;currentTerm) {
+    ConvertToFollower(term);
+  }
+
+  //! heartbeat
+  ResetTimeout();
+
+  //! Convert candidate to follower(Candidate pt. 3)
+  if (svr_-&gt;serverState == CANDIDATE) {
+    svr_-&gt;serverState = FOLLOWER;
+  }
+
+  int localLogIndex = svr_-&gt;logs.size() - 1;
+
+  //! log inconsistency checks
+  if (localLogIndex &lt; prevLogIndex ||
+      svr_-&gt;logs[prevLogIndex].term != prevLogTerm) {
+    appendEntriesResp-&gt;success = false;
+
+    //! follower log is shorter, return the log length
+    if (localLogIndex &lt; prevLogIndex) {
+      appendEntriesResp-&gt;shorterLogLen = svr_-&gt;logs.size();
+    } else {
+      //! return first index of the conflict term in followers log
+      //! follower logs - 04445555 - conflict term "5" - conflict index - 4
+      appendEntriesResp-&gt;conflictTerm = svr_-&gt;logs[prevLogIndex].term;
+      int left = 0;
+      int right = prevLogIndex;
+      while (left &lt;= right) {
+        int mid = left + ((right - left) / 2);
+        if (svr_-&gt;logs[mid].term == appendEntriesResp-&gt;conflictTerm) {
+          appendEntriesResp-&gt;conflictIndex = mid;
+          left = mid + 1;
+        } else if (svr_-&gt;logs[mid].term &gt; appendEntriesResp-&gt;conflictTerm)
+          right = mid - 1;
+        else
+          left = mid + 1;
+      }
+      Log_info("{CONFLICT IDX} Leader = %d CurrServer = %d ConflictIndex = %d",
+               leaderId, svr_-&gt;loc_id_, appendEntriesResp-&gt;conflictIndex);
+    }
+
+    svr_-&gt;mtx_.unlock();
+    defer-&gt;reply();
+    return;
+
+  } else {
+    //! resolve log inconsistency
+    //! check for empty entries (heartbeat) - was causing an issue when follower
+    //! log is longer than the leader
+    //! truncate the logs and append the entries
+    if (entries.size() &gt; 0) {
+      uint64_t nextLogIdx = prevLogIndex + 1;
+      if (prevLogIndex &lt; svr_-&gt;logs.size() - 1 &&
+          svr_-&gt;logs[nextLogIdx].term != term) {
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match88-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        std::vector&lt;LogEntry&gt; uptoDateLogs(svr_-&gt;logs.begin(),
+                                           svr_-&gt;logs.begin() + nextLogIdx);
+        svr_-&gt;logs = uptoDateLogs;
+      }
+    }
+    svr_-&gt;logs.insert(svr_-&gt;logs.end(), entries.begin(), entries.end());
+</FONT>    appendEntriesResp-&gt;numEntriesAppended = entries.size();
+    // Log_info("{LOGS UPDATED} CurrServer = %d LogSize = %d", svr_-&gt;loc_id_, svr_-&gt;logs.size());
+  }
+
+  //! leaderCommit &gt; commitIndex, set commitIndex = min(leaderCommit, index of lastNewentry)
+  if (leaderCommit &gt; svr_-&gt;commitIndex) {
+    int64_t lastNewEntry = svr_-&gt;logs.size() - 1;
+    svr_-&gt;commitIndex = std::min(leaderCommit, lastNewEntry);
+  }
+
+  //! commit logs
+  // Log_info("{FOLLOWER COMMITING LOGS} CurrServer = %d CommitIndex = %d LastApplied = %d",
+  //         svr_-&gt;loc_id_, svr_-&gt;commitIndex, svr_-&gt;lastApplied);
+  for (int i = svr_-&gt;lastApplied + 1; i &lt;= svr_-&gt;commitIndex; i++) {
+    svr_-&gt;app_next_(*const_cast&lt;MarshallDeputy&&gt;(svr_-&gt;logs[i].md).sp_data_);
+  }
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match88-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  svr_-&gt;lastApplied = svr_-&gt;commitIndex;
+
+  svr_-&gt;mtx_.unlock();
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleHelloRpc(const string& req, string* res,
+                                     rrr::DeferredReply* defer) {
+</FONT>  /* Your code here */
+  *res = "raft is awesome";
+  defer-&gt;reply();
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

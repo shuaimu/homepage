@@ -1,0 +1,293 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-Dhavall07/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-Dhavall07/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+#include &lt;chrono&gt;
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match16-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  ret = ret + op_id_cnt_++; 
+
+  return ret;
+}
+
+
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  /* 
+  Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v) attempt 1;
+  */
+  /* your code here */
+  //Coroutine::CreateRun([this, oid, k, v](){
+
+      uint64_t tmp_index = 0;
+      uint64_t tmp_term = 0;
+</FONT>      flag = false;
+      string x = std::to_string(oid);
+      Log_info("Called PUT by svr %d with oid as %s and key %s",sp_log_svr_-&gt;site_id_,x.c_str(),k.c_str());
+     
+
+      auto s = make_shared&lt;MultiStringMarshallable&gt;();
+      s-&gt;data_.push_back(to_string(oid));
+      s-&gt;data_.push_back("put");
+      s-&gt;data_.push_back(k);
+      s-&gt;data_.push_back(v);
+
+
+      
+
+      auto marsh = (shared_ptr&lt;Marshallable&gt;*)(&s);
+      bool raftsvr = GetRaftServer().Start( *marsh, &tmp_index, &tmp_term);
+
+      bool eventWaitFLag = 0;
+      if(raftsvr){
+        put_event.Set(0);
+        put_event.WaitUntilGreaterOrEqualThan(1,500*1000);
+
+          if(raftsvr and put_event.value_==1){
+            return KV_SUCCESS;
+          }else {
+            return KV_TIMEOUT;
+          }
+      }
+      
+     // }else{
+        return KV_NOTLEADER;
+      //
+      
+
+      // if(raftsvr){
+      //        Reactor::CreateSpEvent&lt;NeverEvent&gt;()-&gt;Wait(700*1000);
+      // }else{
+      //       Reactor::CreateSpEvent&lt;NeverEvent&gt;()-&gt;Wait(30*1000);
+      // }
+
+      // if(raftsvr and GetRaftServer().connectedFlag == false){
+      //   Log_info("Leader is disconnected, svr no. %d ",sp_log_svr_-&gt;site_id_);
+      // }
+
+      
+      // if(raftsvr and mpOp.find(x)==mpOp.end() ){
+      //     Log_info("PUT TIMEOUT by %d",sp_log_svr_-&gt;site_id_);
+      //     return KV_TIMEOUT;
+      // }
+      // else if(raftsvr and mpOp.find(x)!=mpOp.end() ){
+      //   Log_info("PUT SUCCESS by %d",sp_log_svr_-&gt;site_id_);
+      //   return KV_SUCCESS;
+      // }
+      // else{
+      //   return KV_NOTLEADER;
+      // }
+      
+}
+
+void KvServer::testing(){
+  Log_info("testing values");
+  for(auto it:mp){
+        Log_info("%s ---&gt; %s // ",it.first.c_str(), it.second.c_str());
+      }
+}
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match16-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+  
+      uint64_t tmp_index = 0;
+      uint64_t tmp_term = 0;
+</FONT>      
+
+      auto s = make_shared&lt;MultiStringMarshallable&gt;();
+      s-&gt;data_.push_back(to_string(oid));
+      string x = std::to_string(oid);
+      s-&gt;data_.push_back("append");
+      s-&gt;data_.push_back(k);
+      s-&gt;data_.push_back(v);
+
+      Log_info("Called APPEND by svr %d with oid as %s and key %s",sp_log_svr_-&gt;site_id_,x.c_str(),k.c_str());
+
+      auto marsh = (shared_ptr&lt;Marshallable&gt;*)(&s);
+      bool raftsvr = GetRaftServer().Start( *marsh, &tmp_index, &tmp_term);
+
+      if(raftsvr){
+        append_event.Set(0);
+        append_event.WaitUntilGreaterOrEqualThan(1,500*1000);
+
+          if(raftsvr and append_event.value_==1){
+            return KV_SUCCESS;
+          }else {
+            return KV_TIMEOUT;
+          }
+      }
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match16-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      return KV_NOTLEADER;
+      
+            
+      // if(raftsvr){
+
+      //        Reactor::CreateSpEvent&lt;NeverEvent&gt;()-&gt;Wait(700*1000);
+      // }else{
+      //       Reactor::CreateSpEvent&lt;NeverEvent&gt;()-&gt;Wait(30*1000);
+      // }
+
+      
+      
+      // if(raftsvr and mpOp.find(x)==mpOp.end() ){
+      //     Log_info("APPEND TIMEOUT by %d",sp_log_svr_-&gt;site_id_);
+      //     return KV_TIMEOUT;
+      // }
+      // else if(raftsvr and mpOp.find(x)!=mpOp.end() ){
+      //   Log_info("APPEND SUCCESS by %d",sp_log_svr_-&gt;site_id_);
+      //   return KV_SUCCESS;
+      // }
+      // else{
+      //   return KV_NOTLEADER;
+      // }
+      
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+
+      
+    //testing();
+    
+    uint64_t tmp_index = 0;
+      uint64_t tmp_term = 0;
+</FONT>      flag = false;
+      Log_info("Called GET by svr %d with oid as %d and key %s",sp_log_svr_-&gt;site_id_,oid,k.c_str());
+      
+
+      auto s = make_shared&lt;MultiStringMarshallable&gt;();
+      s-&gt;data_.push_back(to_string(oid));
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match16-1.html#3" TARGET="1"><IMG SRC="../../../bitmaps/tm_3_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      string x = std::to_string(oid);
+      s-&gt;data_.push_back("get");
+      s-&gt;data_.push_back(k);
+      s-&gt;data_.push_back("false");
+
+      auto marsh = (shared_ptr&lt;Marshallable&gt;*)(&s);
+</FONT>      bool raftsvr = GetRaftServer().Start( *marsh, &tmp_index, &tmp_term);
+
+     // if(raftsvr){
+        get_event.Set(0);
+        get_event.WaitUntilGreaterOrEqualThan(1,500*1000);
+
+          if(raftsvr and get_event.value_==1){
+            *v = mp[k];
+            return KV_SUCCESS;
+          }else if(raftsvr and get_event.value_==0){
+            return KV_TIMEOUT;
+          }
+      //}
+
+      
+      return KV_NOTLEADER;
+
+      // if(raftsvr){
+
+      //        Reactor::CreateSpEvent&lt;NeverEvent&gt;()-&gt;Wait(500*1000);
+      // }
+      // if(!raftsvr) return KV_NOTLEADER;
+      
+
+      // if(raftsvr and mpOp.find(x) != mpOp.end() and mp.find(k)!=mp.end() ){
+      //   *v = mp[k];
+      //   return KV_SUCCESS;
+      // }
+      // else{
+      //   return KV_TIMEOUT;
+      // }
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+
+
+      
+      auto v = (MultiStringMarshallable*)(&m);
+
+      flag = true;
+
+     // Log_info("Called OnNextCommand");
+      string oid = (v-&gt;data_[0]);
+     // Log_info("check Oid %s", oid.c_str());
+      string type = v-&gt;data_[1];
+      
+      string key = v-&gt;data_[2];
+      string val = v-&gt;data_[3];
+
+    //  Log_info("type is printed %s",type.c_str());
+
+      if(type=="put"){
+        this-&gt;mp[key] = val;
+        this-&gt;mpOp[oid] = key;
+        put_event.Set(1);
+        Log_info("Put value is inserted for key %s and oid %s",key.c_str(), oid.c_str());
+      }
+      else if(type=="append"){
+        this-&gt;mp[key] += val;
+        this-&gt;mpOp[oid] = key;
+        append_event.Set(1);
+        Log_info("Append value is inserted for key %s and oid %s",key.c_str(), oid.c_str());
+      }
+      else{
+        this-&gt;mpOp[oid] = key;
+        get_event.Set(1);
+        Log_info("Get value is inserted");
+        Log_info("GEt value is inserted for key %s and oid %s",key.c_str(), oid.c_str());
+      }
+
+    
+
+  //});
+    
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

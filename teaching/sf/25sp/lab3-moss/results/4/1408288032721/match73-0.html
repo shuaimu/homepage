@@ -1,0 +1,94 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-yskot1999/src/shardkv/client.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-yskot1999/src/shardkv/client.cc<p><PRE>
+
+
+#include "client.h"
+#include "server.h"
+#include "../shardmaster/service.h"
+namespace janus {
+
+int ShardKvClient::Op(function&lt;int(uint32_t*)&gt; func) {
+  uint64_t t1 = Time::now();
+  while (true) {
+    uint64_t t2 = Time::now();
+    if (t2 - t1 &gt; 10000000) {
+      return KV_TIMEOUT;
+    }
+    uint32_t ret = 0;
+    int r1; 
+    r1 = func(&ret);
+    if (r1 == ETIMEDOUT || ret == KV_TIMEOUT) {
+      leader_idx_ = (leader_idx_+1) % 5;
+      return KV_TIMEOUT;
+    }
+    if (ret == KV_SUCCESS) {
+      return KV_SUCCESS;
+    }
+    if (ret == KV_NOTLEADER) {
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match73-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      leader_idx_ = (leader_idx_+1) % 5;
+    }
+  }
+
+}
+
+int ShardKvClient::Put(const string& k, const string& v) {
+  uint32_t shardId = Key2Shard(k);
+  auto p = (ShardMasterProxy*)commo_-&gt;rpc_proxies_.at(0);
+</FONT>  ShardConfig configToServe;
+  uint32_t retValue;
+  p-&gt;Query(-1, &retValue,&configToServe);
+  vector&lt;uint32_t&gt; servers = configToServe.group_servers_map_[configToServe.shard_group_map_[shardId]];
+  Log_info("Size is : %d", servers.size());
+  Log_info("group size is : %d", configToServe.shard_group_map_[shardId]);
+  return Op([&](uint32_t* r)-&gt;int{
+    return Proxy(servers[0]).Put(GetNextOpId(), k, v, r);
+  });
+}
+
+ShardKvProxy& ShardKvClient::Proxy(siteid_t site_id) {
+  verify(commo_);
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match73-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  auto p = (ShardKvProxy*)commo_-&gt;rpc_proxies_.at(site_id);
+  return *p; 
+}
+
+int ShardKvClient::Append(const string& k, const string& v) {
+  uint32_t shardId = Key2Shard(k);
+  auto p = (ShardMasterProxy*)commo_-&gt;rpc_proxies_.at(0);
+</FONT>  ShardConfig configToServe;
+  uint32_t retValue;
+  p-&gt;Query(-1, &retValue,&configToServe);
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match73-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  vector&lt;uint32_t&gt; servers = configToServe.group_servers_map_[configToServe.shard_group_map_[shardId]];
+  return Op([&](uint32_t* r)-&gt;int{
+    return Proxy(servers[0]).Append(GetNextOpId(), k, v, r);
+</FONT>  });
+}
+
+int ShardKvClient::Get(const string& k, string* v) {
+  uint32_t shardId = Key2Shard(k);
+  auto p = (ShardMasterProxy*)commo_-&gt;rpc_proxies_.at(0);
+  ShardConfig configToServe;
+  uint32_t retValue;
+  p-&gt;Query(-1, &retValue,&configToServe);
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match73-1.html#3" TARGET="1"><IMG SRC="../../../bitmaps/tm_3_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  vector&lt;uint32_t&gt; servers = configToServe.group_servers_map_[configToServe.shard_group_map_[shardId]];
+  return Op([&](uint32_t* r)-&gt;int{
+    return Proxy(servers[0]).Get(GetNextOpId(), k, r, v);
+</FONT>  });
+}
+
+} // namesapce janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

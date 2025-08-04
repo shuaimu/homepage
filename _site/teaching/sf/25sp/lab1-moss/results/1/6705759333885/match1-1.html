@@ -1,0 +1,236 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-Pritish1/src/deptran/raft/commo.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-sugamxp-1/src/deptran/raft/commo.cc<p><PRE>
+
+#include "commo.h"
+#include "../rcc/graph.h"
+#include "../rcc/graph_marshaler.h"
+#include "../command.h"
+#include "../procedure.h"
+#include "../command_marshaler.h"
+#include "raft_rpc.h"
+#include "macros.h"
+#include "service.h"
+
+namespace janus {
+
+RaftCommo::RaftCommo(PollMgr* poll) : Communicator(poll) {
+}
+
+shared_ptr&lt;IntEvent&gt; RaftCommo::SendRequestVoteRPC(SendReqVote& sendReqVote) {
+  auto proxies = rpc_par_proxies_[sendReqVote.par_id];
+  auto intEvent = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+
+  for (auto& p : proxies) {
+    
+    RaftProxy* proxy = (RaftProxy*)p.second;
+    FutureAttr fuattr;
+
+    fuattr.callback = [&sendReqVote, intEvent, this](Future* fu) {
+      /* this is a handler that will be invoked when the RPC returns */
+
+      RequestVoteResp requestVoteResp;
+      uint64_t responseCurrTerm;
+      bool_t voteGranted;
+      bool_t isServerActive;
+      uint64_t candidatePrevTerm;
+
+      fu-&gt;get_reply() &gt;&gt; requestVoteResp;
+
+      responseCurrTerm = requestVoteResp.currentTerm;
+      voteGranted = requestVoteResp.voteGranted;
+      isServerActive = requestVoteResp.isServerActive;
+      // candidatePrevTerm = requestVoteResp.candidatePrevTerm;
+
+      Log_info(
+          "{VOTE HANDLER} candidateId = %d responseCurrTerm = %d voteGranted = "
+          "%d isServerActive = %d",
+          sendReqVote.candidateId, responseCurrTerm, voteGranted,
+          isServerActive);
+
+      if (sendReqVote.serverState != CANDIDATE) {
+        return;
+      }
+      if (isServerActive) {
+        if (responseCurrTerm &gt; sendReqVote.term) {
+          sendReqVote.term = responseCurrTerm;
+          if(intEvent) intEvent-&gt;Set(0);
+        }
+        if (voteGranted) {
+          sendReqVote.voteCount += 1;
+          if (sendReqVote.voteCount == (int)(NUM_SERVERS / 2)) {
+            if(intEvent) intEvent-&gt;Set(2);
+          }
+        }
+      }
+    };
+    /* Always use Call_Async(proxy, RPC name, RPC args..., fuattr)
+     * to asynchronously invoke RPCs */
+    if (sendReqVote.candidateId != p.first) {
+      RequestVoteReq requestVoteReq = {
+          sendReqVote.term, sendReqVote.candidateId, sendReqVote.lastLogIndex,
+          sendReqVote.lastLogTerm};
+      // requestVoteReq.term = term;
+      // requestVoteReq.candidateId = candidateId;
+      // requestVoteReq.lastLogIndex = lastLogIndex;
+      // requestVoteReq.lastLogTerm = lastLogTerm;
+      Call_Async(proxy, RequestVote, requestVoteReq, fuattr);
+    }
+  }
+  return intEvent;
+}
+
+shared_ptr&lt;IntEvent&gt; RaftCommo::SendAppendEntriesRPC(
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match1-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    parid_t par_id, uint64_t& term, uint64_t leaderId, int64_t& leaderCommit,
+    std::vector&lt;LogEntry&gt;& logs, std::vector&lt;int32_t&gt;& nextIndex,
+</FONT><A NAME="1"></A><FONT color = #00FF00><A HREF="match1-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    std::vector&lt;int32_t&gt;& matchIndex, int8_t& serverState) {
+      
+  auto proxies = rpc_par_proxies_[par_id];
+
+  auto intEvent = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+
+  for (auto& p : proxies) {
+    RaftProxy* proxy = (RaftProxy*)p.second;
+    FutureAttr fuattr;
+
+    fuattr.callback = [&, leaderId, this](Future* fu) {
+      uint64_t responseTermFromFollower;
+      bool_t success;
+</FONT>      bool_t isServerActive;
+      int64_t conflictIndex;
+      int64_t conflictTerm;
+      int64_t shorterLogLen;
+      uint64_t numEntriesAppended;
+      uint64_t serverId;
+      uint64_t leaderPrevTerm;
+      bool_t logConflict;
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match1-0.html#3" TARGET="0"><IMG SRC="../../../bitmaps/tm_3_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      AppendEntriesResp appendEntriesResp;
+      fu-&gt;get_reply() &gt;&gt; appendEntriesResp;
+
+      responseTermFromFollower = appendEntriesResp.currTerm;
+      success = appendEntriesResp.success;
+      isServerActive = appendEntriesResp.isServerActive;
+      conflictIndex = appendEntriesResp.conflictIndex;
+</FONT>      conflictTerm = appendEntriesResp.conflictTerm;
+      numEntriesAppended = appendEntriesResp.numEntriesAppended;
+      serverId = appendEntriesResp.serverId;
+      leaderPrevTerm = appendEntriesResp.leaderPrevTerm;
+      shorterLogLen = appendEntriesResp.shorterLogLen;
+
+      Log_info(
+          "{HRTBEAT HANDLER} responseTermFromFollower = %d success = %d "
+          "isServerActive = %d conflictIndex = %d conflictTerm = %d "
+          "numEntriesAppended = %d serverId = %d leaderPrevTerm = %d",
+          responseTermFromFollower, success, isServerActive, conflictIndex,
+          conflictTerm, numEntriesAppended, serverId, leaderPrevTerm);
+
+      if (serverState != LEADER ||
+          (isServerActive == 1 && leaderPrevTerm != term)) {
+        return;
+      }
+
+      if (isServerActive == 1) {
+        if (success) {
+          //! If successful - update nextIndex and matchIndex for follower
+          nextIndex[serverId] += numEntriesAppended;
+          matchIndex[serverId] = nextIndex[serverId] - 1;
+        } else {
+          if (responseTermFromFollower &gt; term) {
+            term = responseTermFromFollower;
+            serverState = FOLLOWER;
+            if(intEvent) intEvent-&gt;Set(0);
+          }
+          if (shorterLogLen != -1) {
+            //! handle shorter log here
+            nextIndex[serverId] = shorterLogLen;
+          } else {
+            Log_info(
+                "{FIND CONFLICT IN LEADER} CurrServer = %d nextIndex = %d "
+                "matchIndex = %d",
+                serverId, nextIndex[serverId], matchIndex[serverId]);
+            //! find conflict term in leader using binary search
+            auto findConflictTermIndex = [&]() {
+              int left = 0;
+              int right = logs.size() - 1;
+              int res = -1;
+              while (left &lt;= right) {
+                int mid = left + ((right - left) / 2);
+                if (logs[mid].term == conflictTerm) {
+                  res = mid;
+                  left = mid + 1;
+                } else if (logs[mid].term &gt; conflictTerm)
+                  right = mid - 1;
+                else
+                  left = mid + 1;
+              }
+              return res;
+            };
+            nextIndex[serverId] = findConflictTermIndex() != -1
+                                      ? findConflictTermIndex()
+                                      : conflictIndex;
+          }
+        }
+      }
+    };
+
+    if (leaderId != p.first) {
+      uint64_t prevLogIndex = nextIndex[p.first] - 1;
+      uint64_t prevLogTerm = logs[prevLogIndex].term;
+
+      vector&lt;LogEntry&gt; entries{};
+
+      if (nextIndex[p.first] &lt; logs.size()) {
+        for (int i = nextIndex[p.first]; i &lt; logs.size(); i++) {
+          entries.push_back(logs[i]);
+        }
+      }
+
+      AppendEntriesReq appendEntriesReq = {term, leaderId, prevLogIndex,
+                                           prevLogTerm, entries,  leaderCommit};
+      Call_Async(proxy, AppendEntries, appendEntriesReq, fuattr);
+    }
+  }
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match1-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_9.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  return intEvent;
+}
+
+shared_ptr&lt;IntEvent&gt; RaftCommo::SendString(parid_t par_id, siteid_t site_id,
+                                           const string& msg,
+                                           const uint64_t& candidateId,
+                                           string* res) {
+  auto proxies = rpc_par_proxies_[par_id];
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  for (auto& p : proxies) {
+    // if (p.first == site_id) {
+    RaftProxy* proxy = (RaftProxy*)p.second;
+    FutureAttr fuattr;
+    fuattr.callback = [res, ev](Future* fu) {
+      fu-&gt;get_reply() &gt;&gt; *res;
+</FONT>      ev-&gt;Set(100);
+      ev-&gt;Set(1000);
+
+      Log_info("Set values");
+    };
+    /* wrap Marshallable in a MarshallDeputy to send over RPC */
+    if (candidateId != p.first) Call_Async(proxy, HelloRpc, msg, fuattr);
+    // }
+  }
+  return ev;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>COPS | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="COPS" />
+<meta property="og:locale" content="en_US" />
+<link rel="canonical" href="http://0.0.0.0/teaching/sf/25sp/notes/cops.html" />
+<meta property="og:url" content="http://0.0.0.0/teaching/sf/25sp/notes/cops.html" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="COPS" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"COPS","url":"http://0.0.0.0/teaching/sf/25sp/notes/cops.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://0.0.0.0/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>COPS</h1>
+         </header> -->
+
+  <section>
+    
+<h1 id="cops">COPS</h1>
+
+<h2 id="background">Background</h2>
+<ul>
+  <li>System setup
+    <ul>
+      <li>Multiple data centers, separated by long distance links</li>
+      <li>Each data center has many nodes, storage state is fully replicated at each data center</li>
+    </ul>
+  </li>
+  <li>Desired performance:
+    <ul>
+      <li>Writes finish w/o waiting for remote sites (async. replication)</li>
+      <li>Reads contact local site only</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="whats-causal-consistency">What’s causal consistency?</h2>
+<ul>
+  <li>Systems that obey the following set of partial orders
+    <ul>
+      <li>
+        <ol>
+          <li>if op1 and op2 are in the single thread of execution and op1 is issued before op2, then op1 –&gt; op2. (On client1, op1: creates pid1, op2: adds pid1 to album aid. All node s see the effect of op2 after op1)</li>
+        </ol>
+      </li>
+      <li>
+        <ol>
+          <li>If op2 reads the result written by op1, then op1–&gt; op2 (On client1, op1: adds pid1 to album aid On client 2, op2: reads pid1 in album)</li>
+        </ol>
+      </li>
+      <li>
+        <ol>
+          <li>if op1–&gt;op2, op2–&gt;op3, then op1–&gt;op3   (On client 1, op1: adds pid1 to album aid On client 2, op2: reads pid1 in album, op3: deletes pid1. All nodes see op1—&gt;op2—&gt;op3, i.e. pid1 is deleted)</li>
+        </ol>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="cops-approach">COPS’ approach</h2>
+<ul>
+  <li>partition key-space among nodes</li>
+  <li>explicitly keep track explicit dependencies (partial orders) for each write
+    <ul>
+      <li>Site A performs a write, replicates it together with the dependencies to another site B</li>
+      <li>Site B waits until the write’s dependencies are satisfied in B before committing the write.</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="client-library">Client library</h2>
+<ul>
+  <li>put(key,value,context); //put’s dependencies are set by context, new dependency includes the new put version.</li>
+  <li>value = get(key,context);  //add dependencies of get to context</li>
+  <li>example
+    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Client 1:  put(x,1) ---&gt; put(y,2)           
+         ctx1:x1       store (x1) with y2, ctx=x1,y2
+Client 2:                get(y)=2 --&gt; put(x,4)                         
+                       ctx2:x1,y2   store (y2) with x4, ctx2:x4,y2
+Client 3:                             get(x)=4 --&gt; put(z,5)                                      
+                                    ctx3:x4,y2  store (x4,y2), ctx3:x4,y2,z5
+</code></pre></div>    </div>
+  </li>
+  <li>Site A replicate y2 with dependency (x1) to site B.</li>
+  <li>Site B performs a dependency check locally to wait for x1 to commit before committing y2.</li>
+</ul>
+
+<h2 id="anomalies-under-causal-consistency">Anomalies under causal consistency</h2>
+<ul>
+  <li>– write-write conflict</li>
+  <li>– do not capture causality caused by external communication. I posted a picture, call my friend to check it out.</li>
+</ul>
+
+<h2 id="reasoning-causal-consistency">Reasoning causal consistency</h2>
+<ul>
+  <li>example (consider the case with and without c3)
+    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>x,y=0 initially
+c1: put(x)=1        get(y)=?
+c2:      put(y)=1
+c3:                         get(y)=1  get(x)=0
+  
+</code></pre></div>    </div>
+  </li>
+</ul>
+
+<h2 id="time-to-check-to-time-to-use">Time to check to time to use</h2>
+<ul>
+  <li>example 1
+    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Alice:               private ACL; upload photo
+Bob:   read public ACL,                         read photo 
+</code></pre></div>    </div>
+  </li>
+  <li>example 2
+    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Alice: private ACL; upload photo
+Bob:                            read photo, read ACL 
+</code></pre></div>    </div>
+  </li>
+  <li>example 2
+```
+Alice: private ACL; upload photo; delete photo; public ACL
+Bob:                                            read photo, read ACL</li>
+</ul>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+</body>
+
+</html>

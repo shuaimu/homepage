@@ -1,0 +1,220 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-ajayhegde96/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-rads284/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+KvServer::KvServer(uint64_t maxraftstate=0) {
+    maxraftstate_ = maxraftstate;
+}
+
+KvServer::~KvServer() {
+  /* Your code here for server teardown */
+
+}
+
+int64_t KvServer::GetNextOpId() {
+  mtx_.lock();
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  Log_info("Next Op Id %lu op_id_cnt %lu", ret, op_id_cnt_);
+  mtx_.unlock();
+  return ret;
+}
+
+std::shared_ptr&lt;IntEvent&gt; KvServer::CallStart(const int64_t& oid, shared_ptr&lt;Marshallable&gt; &cmd) {
+    bool status = GetRaftServer().Start(cmd, &leader_term, &leader_index);
+    verify(status);
+    std::shared_ptr&lt;IntEvent&gt; e = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    ongoing_ops.insert({oid,e});
+    Log_info("Waiting for event with value %d status %d", e-&gt;value_, e-&gt;status_);
+    e-&gt;Wait(SERVER_TIMEOUT);
+
+    Log_info("Waiting for event with value %d status %d", e-&gt;value_, e-&gt;status_);
+    return e;
+}
+
+std::shared_ptr&lt;Marshallable&gt; KvServer::CreateCmd(int64_t server_op_id,
+                                                  const string& k,
+                                                  const string& v,
+                                                  const string& op) {
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(server_op_id));
+  s-&gt;data_.push_back(op);
+  s-&gt;data_.push_back(k);
+  if (op.compare("get") != 0) {
+      s-&gt;data_.push_back(v);
+  }
+  // ongoing_ops should be list of coroutines/events that notify when onnext is called?
+  std::shared_ptr&lt;Marshallable&gt; cmd = std::dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  return cmd;
+}
+
+bool QueueOp(const int64_t& server_op_id, std::shared_ptr&lt;Marshallable&gt; &cmd) {
+    return false;
+}
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+
+  if (!GetRaftServer().IsLeader()) {
+    return KV_NOTLEADER;
+  }
+  int64_t server_op_id = GetNextOpId();
+  Log_info("Client Op_id %lu | Server Op_id %lu | Op_type put", oid, server_op_id);
+  auto cmd = CreateCmd(server_op_id, k, v, std::string("put"));
+  auto ev = CallStart(server_op_id, cmd);
+  
+
+  Log_info("Not waiting");
+  if (ev-&gt;value_ == 1) {
+    Log_info("PUT Key k %s Put value %s", k.c_str(), v.c_str());
+    return KV_SUCCESS;
+  }
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match147-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  if (ev-&gt;status_ == Event::TIMEOUT) {
+    return KV_TIMEOUT;
+  }
+  return KV_TIMEOUT;
+}
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+</FONT>  if (!GetRaftServer().IsLeader()) {
+    return KV_NOTLEADER;
+  }
+  Log_info("Op_id %lu || Op_type append", oid);
+  int64_t server_op_id = GetNextOpId();
+  auto cmd = CreateCmd(server_op_id, k, v, std::string("append"));
+  auto ev = CallStart(server_op_id, cmd);
+
+  Log_info("Not waiting");
+  if (ev-&gt;value_ == 1) {
+    // KVUpdate(k,v);
+    Log_info("APPEND Key k %s Appended value %s", k.c_str(), v.c_str());
+    return KV_SUCCESS;
+  }
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match147-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  if (ev-&gt;status_ == Event::TIMEOUT) {
+    return KV_TIMEOUT;
+  }
+  return KV_TIMEOUT;
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+</FONT>                    
+  if (!GetRaftServer().IsLeader()) {
+    return KV_NOTLEADER;
+  }
+  Log_info("Op_id %lu || Op_type get", oid);
+  int64_t server_op_id = GetNextOpId();
+  auto cmd = CreateCmd(server_op_id, k, "", std::string("get"));
+  auto ev = CallStart(server_op_id, cmd);
+
+
+  Log_info("Not waiting");
+  if (ev-&gt;value_ == 1) {
+    KVGet(k, v);
+    if (!v-&gt;empty()) {
+        Log_info("GET Response key %s v %s", k.c_str(), v-&gt;c_str());
+        return KV_SUCCESS;
+    }
+  }
+  if (ev-&gt;status_ == Event::TIMEOUT) {
+    return KV_TIMEOUT;
+  }
+  return KV_TIMEOUT;
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  auto v = (MultiStringMarshallable*)(&m);
+  /* your code here */
+  verify(v-&gt;data_[0].length() != 0);
+  int64_t op_id = std::stol(v-&gt;data_[0]);
+  mtx_.lock();
+  if (ongoing_ops.find(op_id) != ongoing_ops.end()) {
+    auto ev = ongoing_ops[op_id];
+    Log_info("Op_id %d was committed on raft. Size of ongoing_ops %d", op_id, ongoing_ops.size());
+    ev-&gt;Set(1);
+    ongoing_ops.erase(op_id);
+  }
+  KVApply(m);
+  mtx_.unlock();
+}
+void KvServer::KVApply (Marshallable& m) {
+    auto v = (MultiStringMarshallable*)(&m);
+    if (v-&gt;data_[1] == "put") {
+        KVPut(v-&gt;data_[2], v-&gt;data_[3]);
+    } else if (v-&gt;data_[1] == "append") {
+        KVUpdate(v-&gt;data_[2], v-&gt;data_[3]);
+    }
+}
+void KvServer::KVPut(const string& k,
+                     const string& v) {
+    mtx_.lock();
+    if (kvstore_.find(k) == kvstore_.end()){
+        kvstore_.insert({k,v});
+    } else {
+        kvstore_[k] = v;
+    }
+    mtx_.unlock();
+}
+
+void KvServer::KVUpdate(const string& k,
+                      const string& v) {
+    mtx_.lock();
+    if (kvstore_.find(k) == kvstore_.end()){
+        kvstore_.insert({k,v});
+    } else {
+        kvstore_[k] += v;
+    }
+    mtx_.unlock();
+}
+
+void KvServer::KVGet(const string& k,
+                     string* v) {
+    mtx_.lock();
+    if (kvstore_.find(k) != kvstore_.end()){
+        *v = kvstore_[k];
+    }
+    mtx_.unlock();
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

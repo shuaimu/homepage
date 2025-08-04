@@ -1,0 +1,474 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-smeshah/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-JWaibong/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include &lt;boost/serialization/map.hpp&gt; //needed to serialize vector&lt;uint32_t&gt;
+#include &lt;boost/serialization/vector.hpp&gt; // needed to serialize vector&lt;uint32_t&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+namespace janus {
+
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  RaftServer& svr = this-&gt;GetRaftServer();
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match43-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  std::stringstream ss;
+  boost::archive::text_oarchive oa(ss);
+  oa &lt;&lt; gid_server_map;
+  string serialized_map = ss.str();
+
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back("join");
+</FONT>  s-&gt;data_.push_back(serialized_map);
+
+  uint64_t term = 0;
+  uint64_t insertIndex = 0;
+  shared_ptr&lt;Marshallable&gt; cmd = s;
+  
+  bool success = svr.Start(cmd, &insertIndex, &term);
+  if (!success) {
+    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+    return;
+  }
+
+  auto ev = WaitForCommit(svr, insertIndex);
+  ev-&gt;Wait(200 * HEARTBEAT_INTERVAL);
+  if (ev-&gt;status_ == Event::TIMEOUT) {
+    *ret = KV_TIMEOUT;
+    defer-&gt;reply();
+    return;
+  }
+  uint64_t res = ev-&gt;get();
+  if (!res) {
+    *ret = KV_TIMEOUT;
+    defer-&gt;reply();
+    return;
+  }
+
+
+
+
+  *ret = KV_SUCCESS;
+  defer-&gt;reply();
+}
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match43-0.html#3" TARGET="0"><IMG SRC="../../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  RaftServer& svr = this-&gt;GetRaftServer();
+</FONT>
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match43-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  std::stringstream ss;
+  boost::archive::text_oarchive oa(ss);
+  oa &lt;&lt; gids;
+  string serialized_gids = ss.str();
+
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back("leave");
+</FONT>  s-&gt;data_.push_back(serialized_gids);
+
+  uint64_t term = 0;
+  uint64_t insertIndex = 0;
+  shared_ptr&lt;Marshallable&gt; cmd = s;
+  
+  bool success = svr.Start(cmd, &insertIndex, &term);
+  if (!success) {
+    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+    return;
+  }
+
+  // might have to wait for commit here like in kv lab
+  auto ev = WaitForCommit(svr, insertIndex);
+  ev-&gt;Wait(200 * HEARTBEAT_INTERVAL);
+  
+  if (ev-&gt;status_ == Event::TIMEOUT) {
+    *ret = KV_TIMEOUT;
+    defer-&gt;reply();
+    return;
+  }
+  uint64_t res = ev-&gt;get();
+  if (!res) {
+    *ret = KV_TIMEOUT;
+    defer-&gt;reply();
+    return;
+  }
+
+
+
+  *ret = KV_SUCCESS;
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match43-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+
+  RaftServer& svr = this-&gt;GetRaftServer();
+</FONT>  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back("move");
+  s-&gt;data_.push_back(to_string(shard));
+  s-&gt;data_.push_back(to_string(gid));
+
+
+  uint64_t term = 0;
+  uint64_t insertIndex = 0;
+  shared_ptr&lt;Marshallable&gt; cmd = s;
+  
+  bool success = svr.Start(cmd, &insertIndex, &term);
+  if (!success) {
+    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+    return;
+  }
+
+  // might have to wait for commit here like in kv lab
+  auto ev = WaitForCommit(svr, insertIndex);
+  ev-&gt;Wait(200 * HEARTBEAT_INTERVAL);
+  
+  if (ev-&gt;status_ == Event::TIMEOUT) {
+    *ret = KV_TIMEOUT;
+    defer-&gt;reply();
+    return;
+  }
+  uint64_t res = ev-&gt;get();
+  if (!res) {
+    *ret = KV_TIMEOUT;
+    defer-&gt;reply();
+    return;
+  }
+
+  *ret = KV_SUCCESS;
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+  RaftServer& svr = this-&gt;GetRaftServer();
+
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back("query");
+  s-&gt;data_.push_back(to_string(config_no));
+
+  uint64_t term = 0;
+  uint64_t insertIndex = 0;
+  shared_ptr&lt;Marshallable&gt; cmd = s;
+  
+  bool success = svr.Start(cmd, &insertIndex, &term);
+  if (!success) {
+    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+    return;
+  }
+
+  auto ev = WaitForCommit(svr, insertIndex);
+  ev-&gt;Wait(200 * HEARTBEAT_INTERVAL);
+  if (ev-&gt;status_ == Event::TIMEOUT) {
+    *ret = KV_TIMEOUT;
+    defer-&gt;reply();
+    return;
+  }
+  uint64_t res = ev-&gt;get();
+  if (!res) {
+    *ret = KV_TIMEOUT;
+    defer-&gt;reply();
+    return;
+  }
+
+  uint64_t configNumAgreed = stoi(s-&gt;data_.at(2));
+
+  // std::map&lt;uint32_t, uint32_t&gt; deserializedShardGroupMap; 
+  // std::stringstream ss1(s-&gt;data_.at(3));
+  // boost::archive::text_iarchive ia1(ss1);
+  // ia1 &gt;&gt; deserializedShardGroupMap;
+
+  // std::map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt; deserializedGroupServersMap; 
+  // std::stringstream ss2(s-&gt;data_.at(4));
+  // boost::archive::text_iarchive ia2(ss2);
+  // ia2 &gt;&gt; deserializedGroupServersMap;
+
+  // ShardConfig c;
+  // c.number = configNum;
+  // c.shard_group_map_ = deserializedShardGroupMap;
+  // c.group_servers_map_ = deserializedGroupServersMap;
+
+  *config = this-&gt;configs_[configNumAgreed];
+  *ret = KV_SUCCESS;
+  defer-&gt;reply();
+}
+
+// same function I wrote as in lab2
+shared_ptr&lt;IntEvent&gt; ShardMasterServiceImpl::WaitForCommit(RaftServer& svr,  uint64_t insertIndex) {
+    auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    Coroutine::CreateRun([this, ev, &svr, insertIndex]() {
+      uint64_t retries = 0;
+      bool committed = false;
+      while (retries &lt; 100) {
+        Coroutine::Sleep(HEARTBEAT_INTERVAL * 2); // wait 200ms
+        svr.mtx_.lock();
+
+        if (svr.vs.lastApplied &gt;= insertIndex) {
+          committed = true;
+          svr.mtx_.unlock();
+          break;
+        }
+
+        retries++;
+        svr.mtx_.unlock();
+      }
+
+      if (committed) {
+        ev-&gt;Set(1);
+      }
+      else {
+        ev-&gt;Set(0);
+      }
+    });
+    return ev;
+}
+
+void ShardMasterServiceImpl::BalanceShardConfig(ShardConfig &config, uint64_t newNumGroups) {
+  uint64_t target = config.shard_group_map_.size() / newNumGroups;
+
+  std::unordered_map&lt;uint32_t, uint32_t&gt; freq;
+  for (const auto& entry: config.group_servers_map_) {
+    freq[entry.first] = 0;
+  }
+  for (const auto& entry: config.shard_group_map_) {
+    auto shardNum = entry.first;
+    auto gid = entry.second;
+    if (freq.count(gid) == 0) {
+      freq[gid] = 1;
+    }
+    else {
+      freq[gid]++; 
+    }
+  }
+
+  int32_t numZeroes = (freq.count(0) == 1) ? freq[0] : -1;
+  if (numZeroes != -1) {
+    freq.erase(0);
+  }
+  std::vector&lt;std::pair&lt;uint32_t, uint32_t&gt;&gt; sortedFreq(freq.begin(), freq.end());
+  auto comp = [](const std::pair&lt;uint32_t, uint32_t&gt; &a, const std::pair&lt;uint32_t, uint32_t&gt; &b) {
+                  return a.second &lt; b.second;
+              };
+  std::sort(sortedFreq.begin(), sortedFreq.end(), comp);
+
+  uint64_t left = 0;
+
+  if (numZeroes != -1 && numZeroes != config.shard_group_map_.size()) {
+      for (const auto& entry: config.shard_group_map_) {
+        auto shardNum = entry.first;
+        auto gid = entry.second;
+        if (gid == 0) {
+          if (left &gt; sortedFreq.size() - 1) {
+            left = 0;
+          }
+          config.shard_group_map_[shardNum] = sortedFreq[left].first;
+          sortedFreq[left].second++;
+          left++; 
+        }
+      }
+      std::sort(sortedFreq.begin(), sortedFreq.end(), comp);
+  }
+
+  left = 0;
+  uint64_t right = sortedFreq.size()-1;
+  uint64_t numShardsToMove = 0;
+  uint64_t currentShardsMoved = 0;
+  while (left &lt; right) {
+    if (sortedFreq[right].second &lt;= target) {
+      break;
+    }
+    numShardsToMove = target - sortedFreq[left].second;
+    sortedFreq[right].second -= numShardsToMove;
+    sortedFreq[left].second += numShardsToMove;
+    
+    currentShardsMoved = 0;
+    for (int i=1; i&lt;=config.shard_group_map_.size(); i++) {
+      if (currentShardsMoved == numShardsToMove) {
+        break;
+      }
+      if (config.shard_group_map_[i] == sortedFreq[right].first) { 
+        config.shard_group_map_[i] = sortedFreq[left].first;
+        currentShardsMoved++;
+      }
+    }
+
+    if (sortedFreq[right].second &lt;= target) {
+      right--;
+    }
+    if (sortedFreq[left].second == target) {
+      left++;
+    }
+  }
+
+
+
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(shardmaster_mtx);
+  auto v = (MultiStringMarshallable*)(&m);
+  auto op = v-&gt;data_.at(0);
+  
+  if (op.compare("join") == 0) {
+    Log_info("we called Join via On next command");
+
+    ShardConfig oldConfig = this-&gt;configs_[this-&gt;currConfigNum];
+    ShardConfig newConfig;
+
+    this-&gt;currConfigNum++;
+    newConfig.number = this-&gt;currConfigNum;
+
+    std::map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt; deserializedMap; // GID to list of serverIds
+    std::stringstream ss(v-&gt;data_.at(1));
+    boost::archive::text_iarchive ia(ss);
+    ia &gt;&gt; deserializedMap;
+
+
+    // put all new gids in newConfig
+    for (const auto& entry: deserializedMap) {
+      auto gid = entry.first;
+      std::vector&lt;uint32_t&gt; copiedServerIds(entry.second.begin(), entry.second.end());
+
+      // if the gid is already part of the previous config, then should we take the union of the serverIds, or replace completely?
+      // I'm going with replace completely for now
+      /*
+      Question answered?
+      A shardkv server is a member of only a single replica group. The set of servers in a given replica group will never change.
+      */
+      newConfig.group_servers_map_[gid] = copiedServerIds;
+    }
+
+
+    // merge new config with old config
+    for (const auto& entry: oldConfig.group_servers_map_) {
+      auto gid = entry.first;
+      auto serverIds = entry.second;
+      if (newConfig.group_servers_map_.count(gid) == 0) {
+        newConfig.group_servers_map_[gid] = serverIds;
+      }
+    }
+    std::map&lt;uint32_t, uint32_t&gt; copiedShardGroupMap(oldConfig.shard_group_map_.begin(), oldConfig.shard_group_map_.end());
+    newConfig.shard_group_map_ = copiedShardGroupMap;
+    uint64_t newNumGroups = newConfig.group_servers_map_.size();
+    BalanceShardConfig(newConfig, newNumGroups);
+    this-&gt;configs_[this-&gt;currConfigNum] = newConfig;
+
+  }
+  else if (op.compare("leave") == 0) {
+    Log_info("we called Leave via On next command");
+    ShardConfig oldConfig = this-&gt;configs_[this-&gt;currConfigNum];
+    ShardConfig newConfig;
+    this-&gt;currConfigNum++;
+    newConfig.number = this-&gt;currConfigNum;
+
+    std::vector&lt;uint32_t&gt; gids ; // GID to list of serverIds
+    std::stringstream ss(v-&gt;data_.at(1));
+    boost::archive::text_iarchive ia(ss);
+    ia &gt;&gt; gids;
+
+    std::map&lt;uint32_t, uint32_t&gt; copiedShardGroupMap(oldConfig.shard_group_map_.begin(), oldConfig.shard_group_map_.end());
+    newConfig.shard_group_map_ = copiedShardGroupMap;
+    map&lt;uint32_t, vector&lt;uint32_t&gt;&gt; copiedGroupServersMap;
+    for (const auto& entry: oldConfig.group_servers_map_) {
+      std::vector&lt;uint32_t&gt; copiedServerIds(entry.second.begin(), entry.second.end());
+      copiedGroupServersMap[entry.first] = copiedServerIds;
+    }
+    newConfig.group_servers_map_ = copiedGroupServersMap;
+
+    for (const int& gid: gids) {
+      if (newConfig.group_servers_map_.count(gid) &gt; 0) {
+        newConfig.group_servers_map_.erase(gid);
+        for (auto const& entry: newConfig.shard_group_map_) {
+          if(entry.second == gid) {
+            newConfig.shard_group_map_[entry.first] = 0;
+          }
+        }
+      }
+    }
+
+    uint64_t newNumGroups = newConfig.group_servers_map_.size();
+    BalanceShardConfig(newConfig, newNumGroups);
+    this-&gt;configs_[this-&gt;currConfigNum] = newConfig;
+  }
+  else if (op.compare("move") == 0) {
+    Log_info("we called move via on next command");
+    uint32_t shardToMove = stoi(v-&gt;data_.at(1));
+    uint32_t dst = stoi(v-&gt;data_.at(2));
+
+    ShardConfig oldConfig = this-&gt;configs_[this-&gt;currConfigNum];
+    ShardConfig newConfig;
+    this-&gt;currConfigNum++;
+    newConfig.number = this-&gt;currConfigNum;
+
+    std::map&lt;uint32_t, uint32_t&gt; copiedShardGroupMap(oldConfig.shard_group_map_.begin(), oldConfig.shard_group_map_.end());
+    newConfig.shard_group_map_ = copiedShardGroupMap;
+    map&lt;uint32_t, vector&lt;uint32_t&gt;&gt; copiedGroupServersMap;
+    for (const auto& entry: oldConfig.group_servers_map_) {
+      std::vector&lt;uint32_t&gt; copiedServerIds(entry.second.begin(), entry.second.end());
+      copiedGroupServersMap[entry.first] = copiedServerIds;
+    }
+    newConfig.group_servers_map_ = copiedGroupServersMap;
+    
+    for(const auto& entry: newConfig.shard_group_map_) {
+        auto shardNum = entry.first;
+        if (shardNum == shardToMove) {
+          newConfig.shard_group_map_[shardNum] = dst;
+          break;
+        }
+    }
+    this-&gt;configs_[this-&gt;currConfigNum] = newConfig;
+  }
+  else if (op.compare("query") == 0) {
+    Log_info("we called query via on next command");
+    // ShardConfig currentConfig = this-&gt;configs_[this-&gt;currConfigNum];
+    int32_t queriedConfigNum = stoi(v-&gt;data_.at(1));
+    if (queriedConfigNum == -1) {
+      v-&gt;data_.push_back(to_string(this-&gt;configs_[this-&gt;currConfigNum].number));
+    }
+    else {
+      v-&gt;data_.push_back(to_string(queriedConfigNum));
+    }
+
+    // std::stringstream ss1;
+    // boost::archive::text_oarchive oa1(ss1);
+    // oa1 &lt;&lt; currentConfig.shard_group_map_;
+
+    // v-&gt;data_.push_back(ss1.str());
+
+    // std::stringstream ss2;
+    // boost::archive::text_oarchive oa2(ss2);
+    // oa2 &lt;&lt; currentConfig.group_servers_map_;
+
+    // v-&gt;data_.push_back(ss2.str());
+  }
+  else {
+    Log_info("invalid command %s via On next command", op);
+  }
+
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  return cli;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

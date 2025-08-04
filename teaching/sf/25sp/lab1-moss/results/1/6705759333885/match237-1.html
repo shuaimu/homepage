@@ -1,0 +1,226 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-Sirneij/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-ojasdeshpande10-1/src/deptran/raft/service.cc<p><PRE>
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+#include "coordinator.h"
+
+namespace janus {
+
+std::recursive_mutex mtx_{};
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+
+void RaftServiceImpl::HandleRequestVote(const uint64_t& arg1,
+                                        const uint64_t& arg2,
+                                        const uint64_t& lastLogIndex,
+                                        const uint64_t& lastLogTerm,
+                                        uint64_t *ret1,
+                                        bool_t *vote_granted, bool_t *sendRPC,
+                                        rrr::DeferredReply* defer) {
+  /* Your code here */
+  *ret1 = 0;
+  *sendRPC=true;
+  *vote_granted=false;
+  //debugging comment-1&2 test
+  Log_info("***********The term of the candidate is %d and current term of the reciever is %d the reciever's votedFor state %d   reciever's id %d sender's id %d********",arg1,svr_-&gt;current_term,svr_-&gt;votedFor,svr_-&gt;loc_id_,arg2);
+  //mtx_.lock();
+  //Log_info("Lock11");
+  if(svr_-&gt;current_term&gt;arg1) {
+    *vote_granted=false;
+    *ret1 = svr_-&gt;current_term;
+    //mtx_.unlock();
+    //Log_info("unLock11");
+  }
+  else {
+    if(svr_-&gt;current_term&lt;arg1) {
+      //Log_info("%d voted for %d",svr_-&gt;loc_id_,arg2);
+      svr_-&gt;current_term=arg1;
+      svr_-&gt;votedFor=-1;
+      svr_-&gt;state=0;
+      *ret1=svr_-&gt;current_term;
+    }
+    if((svr_-&gt;log[svr_-&gt;log.size()-1].term!=lastLogTerm && svr_-&gt;log[svr_-&gt;log.size()-1].term&gt;lastLogTerm) || ((svr_-&gt;log[svr_-&gt;log.size()-1].term==lastLogTerm) && svr_-&gt;log.size()-1&gt;lastLogIndex)) {
+      Log_info("log issues");
+      *vote_granted=false; 
+      *ret1 = svr_-&gt;current_term;
+      //mtx_.unlock();
+      //Log_info("unLock11");       
+    }
+    else if(svr_-&gt;votedFor==-1 || svr_-&gt;votedFor==arg2) {
+      Log_info("%d voted for %d",svr_-&gt;loc_id_,arg2);
+      *vote_granted=true;
+      svr_-&gt;votedFor=arg2;
+      svr_-&gt;gotRequestRpc=true;
+      *ret1 = svr_-&gt;current_term;
+      //mtx_.unlock();
+      //Log_info("unLock11");
+    }
+    else {
+      Log_info("not granting vote as %d as voted for some one else %d",svr_-&gt;site_id_,svr_-&gt;votedFor);
+      *vote_granted=false;
+      *ret1 = svr_-&gt;current_term;
+      //mtx_.unlock();
+      //Log_info("unLock11");
+    }
+  }
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleAppendEntries(const uint64_t& arg1, const uint64_t& arg2,
+                                          bool_t *followerAppendOK, uint64_t *ret1,
+                                          rrr::DeferredReply* defer) {
+  /* Your code here */
+  //std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(md_cmd).sp_data_;
+  
+  //debugging comment-1&2 test
+  //Log_info("***********The term of the candidate is %d and current term of the reciever is %d the reciever's votedFor state %d   reciever's id %d********",arg1,svr_-&gt;current_term,svr_-&gt;votedFor,svr_-&gt;loc_id_);
+  if(arg1&gt;=svr_-&gt;current_term) {
+    *followerAppendOK=true;
+    svr_-&gt;state=0;
+    svr_-&gt;current_term=arg1;
+    *ret1 = svr_-&gt;current_term;
+    svr_-&gt;gotAppendRpc=true;
+    if(arg2&gt;svr_-&gt;commitIndex) {
+      Log_info("In follower %d with leader commitIndex as %d and server commitIndex %d with server log size() as %d ",svr_-&gt;site_id_,arg2,svr_-&gt;commitIndex,svr_-&gt;log.size());
+      if(arg2&lt;=svr_-&gt;log.size()-1) {
+        int i=arg2;
+        TxLogServer &server = *svr_;
+        Log_info("app_next for follower %d  %d      %d",svr_-&gt;site_id_,i,*(svr_-&gt;log[i].cmd));
+        svr_-&gt;commitIndex=arg2;
+        server.app_next_(*(svr_-&gt;log[i].cmd));
+      }
+    }
+  }
+  else {
+    Log_info("term sent by leader %d and term of follower%d",arg1,svr_-&gt;current_term);
+    *followerAppendOK=false;
+    *ret1=svr_-&gt;current_term;
+  }
+  defer-&gt;reply();
+}
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match237-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void RaftServiceImpl::HandleAppendEntriesLog(const uint64_t& term, const uint64_t& leader_id, const uint64_t& prevLogIndex, const uint64_t& prevLogterm, const uint64_t& commitIndex, const std::vector&lt;uint64_t&gt;& terms, const std::vector&lt;MarshallDeputy&gt;& cmds, 
+                                          bool_t *followerAppendOK, uint64_t *ret1, uint64_t *Xterm, uint64_t *XIndex, bool_t *sendAPE,
+</FONT>                                          rrr::DeferredReply* defer) {
+  /* Your code here */
+  
+  //debugging comment-1&2 test
+  //Log_info("Append Log Entries for sent by %d to reciever id is %d   %d   %d   %d    %d with log size %d", leader_id, svr_-&gt;site_id_,term,prevLogIndex,prevLogterm,arg5,svr_-&gt;log.size());
+  //      Log_info("term sent by leader %d and term of follower%d",term,svr_-&gt;current_term);
+  *Xterm=0;
+  *XIndex=0;
+  *sendAPE=true;
+  //mtx_.lock();
+  //Log_info("Lock12");
+  if(term&lt;svr_-&gt;current_term) {
+    *followerAppendOK=false;
+    *ret1=svr_-&gt;current_term;
+    Log_info("term of follower %d term of leader %d",svr_-&gt;current_term,term);
+    Log_info("Condition1");
+    //mtx_.unlock();
+    //Log_info("unLock12");
+  }
+  else {
+    Log_info("term sent by leader %d and term of follower%d",term,svr_-&gt;current_term);
+    svr_-&gt;state=0;
+    svr_-&gt;current_term=term;
+    svr_-&gt;votedFor=-1;
+    *ret1 = svr_-&gt;current_term;
+    svr_-&gt;gotAppendRpc=true;
+    Log_info("prevLogIndex %d, log.size()  %d", prevLogIndex,svr_-&gt;log.size());
+    if(prevLogIndex&gt;svr_-&gt;log.size()-1 || prevLogterm!=svr_-&gt;log[prevLogIndex].term) {
+      *followerAppendOK=false;
+      //Log_info("Condition2 log needs to be changed and correct log needs to be given");
+      *Xterm=svr_-&gt;log[svr_-&gt;log.size()-1].term;
+      *XIndex=svr_-&gt;log.size()-1;
+      int i=*XIndex-1;
+      while(i&gt;=1 && *Xterm==svr_-&gt;log[i].term) {
+        *XIndex=i;
+        i--;
+        Log_info("Xindex %d", *XIndex);
+      }
+      //mtx_.unlock();
+      //Log_info("unLock12");
+      //Log_info("The term and Index being sent %d    %d",*Xterm,*XIndex);
+    }
+    else {
+      *followerAppendOK=true;
+      //Log_info("the size of entries %d",terms.size());
+      //Log_info("Appending log entry into receiver id %d term number : %d index of log(prevLogIndex+1):  %d with follower's log size as %d", svr_-&gt;loc_id_, term, prevLogIndex+1, svr_-&gt;log.size());
+      int index=0;
+      //////mtx_.lock();
+      ////Log_info("Locking");
+      for(;index&lt;terms.size();index++) {
+        int currentIndex = prevLogIndex+1+index;
+        if(currentIndex&gt;svr_-&gt;log.size()-1) {
+          break;
+        }
+        Log_info("follower currentIndex %d svr_-&gt;log[currentIndex].term %d  leader's Logterm %d leader index %d",currentIndex, svr_-&gt;log[currentIndex].term, terms[index],index);
+        if(svr_-&gt;log[currentIndex].term!=terms[index]) {
+          vector&lt;LogEntry&gt; temp_log;
+          std::shared_ptr&lt;Marshallable&gt; cmd_temp;
+          LogEntry temp = {0,cmd_temp};
+          temp_log.push_back(temp);
+          for(int j=1;j&lt;currentIndex;j++) {
+            temp_log.push_back(svr_-&gt;log[j]);
+          }
+          svr_-&gt;log=temp_log;
+          svr_-&gt;lastApplied=svr_-&gt;log.size()-1;
+          break;
+        }
+      } 
+      Log_info("The start of new log is from index %d",index);
+      for(int i=index;i&lt;terms.size();i++) {
+        std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(cmds[i]).sp_data_;
+        LogEntry *temp = new LogEntry(terms[i], cmd);
+        svr_-&gt;log.push_back(*temp);
+      }
+      Log_info("size of log in follower %d",svr_-&gt;log.size());
+      if(commitIndex&gt;svr_-&gt;commitIndex) {
+        Log_info("In follower %d with leader commitIndex as %d and server commitIndex %d with server last log index as %d ",svr_-&gt;site_id_,commitIndex,svr_-&gt;commitIndex,svr_-&gt;log.size()-1);
+        int min = commitIndex&gt;svr_-&gt;log.size()-1?svr_-&gt;log.size()-1:commitIndex;
+        for(int i=svr_-&gt;commitIndex+1;i&lt;=min;i++) {
+          mtx_.lock();
+          svr_-&gt;commitIndex=i;
+          TxLogServer &server = *svr_;
+          Log_info("app_next for follower %d  %d      %d",svr_-&gt;site_id_,i,*(svr_-&gt;log[i].cmd));
+          svr_-&gt;commitIndex=commitIndex;
+          server.app_next_(*(svr_-&gt;log[i].cmd));
+          mtx_.unlock();
+        }
+      }
+      svr_-&gt;lastApplied=svr_-&gt;log.size()-1;
+      //Log_info("unLock12");
+      //mtx_.unlock();
+    }
+  }
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("receive an rpc: %s", req.c_str());
+  *res = "world";
+  defer-&gt;reply();
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

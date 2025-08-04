@@ -1,0 +1,266 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-MITsVision/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-MITsVision/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+
+void RaftServiceImpl::HandleRequestVote(const uint64_t& arg1,//term
+                                        const uint64_t& arg2,//can_id
+                                        const uint64_t& arg3,//lastLogIndex
+                                        const uint64_t& arg4,//lastLogTerm
+                                        uint64_t *ret1,
+                                        bool_t *vote_granted,
+                                        rrr::DeferredReply* defer) {
+  /* Your code here */
+
+  // std::unique_lock&lt;std::recursive_mutex&gt; lock(svr_-&gt;mtx_);  
+  Log_info("Response Vote Request for server[cand: %lu Term: %lu  lastLogIndex: %lu, LastlogTurm: %lu] by server [cand: %Lu Term: %lu  lastLogIndex: %lu, LastlogTurm: %lu]",arg2, arg1, arg3, arg4, svr_-&gt;s_id,svr_-&gt;curr_term, svr_-&gt;last_log_index, svr_-&gt;last_log_term);
+  
+  if(arg1 &gt; svr_-&gt;curr_term){
+    //new term
+    // svr_-&gt;curr_term = arg1;
+    svr_-&gt;voted_for = 1000;
+  }
+
+  if((svr_-&gt;voted_for == 1000 || svr_-&gt;voted_for == arg2) && arg1 &gt; svr_-&gt;curr_term && arg4 &gt;= svr_-&gt;last_log_term &&  arg3 &gt;= svr_-&gt;last_log_index){
+      Log_info("Granting vote by server: %lu for candidate: %lu", svr_-&gt;s_id, arg2);
+      // 3. Check if the voter has not already voted in this term
+      // Log_info("svr_-&gt;voted_for : %lu", svr_-&gt;voted_for);
+      // if (svr_-&gt;voted_for == 1000 || svr_-&gt;voted_for == svr_-&gt;s_id || svr_-&gt;voted_for == arg2) {
+      // 4. Check if other conditions (e.g., cluster membership) are met
+      // Grant the vote to the candidate
+
+      *vote_granted = true;
+      svr_-&gt;voted_for = arg2;
+      svr_-&gt;curr_term = arg1;
+      svr_-&gt;curr_role = 0;
+
+      //reset election timeout
+      svr_-&gt;InitializeRandomTimeout();
+      //reset elction timer start
+      svr_-&gt;start_time_ = std::chrono::steady_clock::now();
+
+  }else{
+
+    // *vote_granted = false;
+    // svr_-&gt;voted_for = 1000;
+    // svr_-&gt;curr_term = arg1;
+    if(arg1 &gt; svr_-&gt;curr_term){
+      svr_-&gt;curr_term = arg1;
+    }
+    
+    *vote_granted = false;
+    Log_info("## NOT ## Granted vote by server: %lu for candidate: %lu", svr_-&gt;s_id, arg2);
+
+  }
+   
+  *ret1 = svr_-&gt;curr_term;
+  
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleAppendEntries(const MarshallDeputy& md_cmd,
+                                          const uint64_t& logIndex,// for server log
+                                          const uint64_t& LogTerm,// for server log
+                                          const uint64_t& arg1,//term
+                                          const uint64_t& arg2,//leaderid
+                                          const uint64_t& arg3,//prevlogindex
+                                          const uint64_t& arg4,//prevlogturm
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match242-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                          const uint64_t& arg5,//leadercomit
+                                          uint64_t *ret1,
+                                          bool_t *followerAppendOK,
+                                          uint64_t *matchingIndex,
+                                          rrr::DeferredReply* defer) {
+  /* Your code here */
+  // Log_info("CC append callback received");
+  // std::unique_lock&lt;std::recursive_mutex&gt; lock(svr_-&gt;mtx_);  
+
+  std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(md_cmd).sp_data_;
+</FONT>  //Log_info("Call back for server %lu and index %lu", svr_-&gt;s_id, svr_-&gt;curr_index);
+  // svr_-&gt;curr_index = svr_-&gt;curr_index + 1;
+  Log_info("svr_-&gt; leader_id:%lu sent by server: %lu for server: %lu and for prevIndex: %lu and curr_index %lu", svr_-&gt; leader_id,arg2, svr_-&gt;s_id, arg3, logIndex);
+   
+   /*
+    =&gt; While waiting for votes, a candidate may receive an
+    AppendEntries RPC from another server claiming to be
+    leader.
+
+      =&gt; If the leader’s term (included in its RPC) is at least
+      as large as the candidate’s current term, then the candidate
+      recognizes the leader as legitimate and returns to follower
+      state. 
+
+      =&gt; If the term in the RPC is smaller than the candidate’s
+      current term, then the candidate rejects the RPC and continues in candidate state
+   */
+   
+  //  Log_info("Came to service handleAppend");
+   *matchingIndex = 0;
+
+  if(arg1 &gt; svr_-&gt;curr_term){
+    svr_-&gt;curr_term = arg1;
+    svr_-&gt;voted_for = 1000;
+    svr_-&gt;curr_role = 0;
+    svr_-&gt; leader_id = arg2;
+    Log_info("Found a Leader: %lu with higher term by server: %lu", arg2, svr_-&gt;s_id);
+  }
+
+   if(arg1 &gt;= svr_-&gt;curr_term /*&& svr_-&gt;log.size() &gt;= arg3 && svr_-&gt;log[arg3].term == arg4*/){
+      //  Log_info("Came to service handleAppend: server: %lu, log size: %d, prevIndex: %lu prev term: %lu", svr_-&gt;s_id, svr_-&gt;log.size(), arg3, arg4);
+
+      //reset election timer
+      svr_-&gt;InitializeRandomTimeout();
+      //reset elction timer start
+      svr_-&gt;start_time_ = std::chrono::steady_clock::now();
+
+      //check if log contains all the previous logs and probably more outdated logs
+      if(svr_-&gt;log.size() &gt; arg3){
+
+        if(svr_-&gt;log[arg3].term == arg4){
+          //previous term at prev log index matched in server
+          // Log_info("Macthed prevIndex and Turm, apended to server =&gt; %lu", svr_-&gt;s_id);
+
+          //check if current command exists already with same index and term
+          if(svr_-&gt;log.size() &gt; logIndex && svr_-&gt;log[logIndex].term == LogTerm){
+            Log_info("This already exists!! for server: %lu for index: %lu log size: %d", svr_-&gt;s_id, logIndex, svr_-&gt;log.size());
+            *followerAppendOK = true;
+            *matchingIndex = logIndex + 1;
+          }else{
+            //earse anything after this
+            if(svr_-&gt;log.size() &gt; arg3 + 1) //MITS: shouldn't be arg3 + 1
+            {
+              Log_info("Erasing from: %lu have log size: %d", arg3+1, svr_-&gt;log.size());
+              svr_-&gt;log.erase(svr_-&gt;log.begin() + arg3+1, svr_-&gt;log.end()); 
+            }
+
+            svr_-&gt; PushNewLog(cmd, logIndex, LogTerm);// log current
+            svr_-&gt;curr_index++ ;
+            *followerAppendOK = true;
+
+            // coomit to machine if there is some commited by server, min(leaderCommit, index of last new entry)
+
+            
+            svr_-&gt;commited_index  = min(arg5, svr_-&gt;last_log_index);
+            if(svr_-&gt; commited_index &gt; svr_-&gt;last_applied){
+              svr_-&gt;executeCommited();
+            }
+
+            svr_-&gt;last_log_index = logIndex;
+            svr_-&gt;last_log_term = LogTerm;//?? Todo: is it okay here
+          }
+          
+
+        }else{
+          //existing entry conflicts with the new one, same index different turm
+          //delete all entries starting with this lastlogindex
+          Log_info("##not matched prevIndex and Turm, for server =&gt; %lu, erasing logs from index: %lu to Index: %d", svr_-&gt;s_id, arg3, svr_-&gt;log.size());
+          svr_-&gt;log.erase(svr_-&gt;log.begin() + arg3, svr_-&gt;log.end());
+          // *matchingIndex = svr_-&gt;log[svr_-&gt;log.size() -1 ].index;
+          *followerAppendOK = false;
+        }
+
+      }else{
+        //log is not containing previous logs, leader will try a older entry
+        Log_info("Server: %lu not containing previous index", svr_-&gt;s_id);
+        //find the matching index and return its index
+        //sending the last index of the server log
+
+        *matchingIndex = svr_-&gt;log[svr_-&gt;log.size() -1 ].index + 1;
+
+        *followerAppendOK = false;
+      }
+
+   }else{
+    *followerAppendOK = false;
+    Log_info("log not update or term:%lu Higher than leader for server: %lu having termfor leader previndex: %lu and leader prevterm: %lu", svr_-&gt;curr_term, svr_-&gt;s_id,arg3, arg4);
+   }
+
+  *ret1 = svr_-&gt;curr_term;
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t& arg1,//term
+                                          const uint64_t& arg2,//leaderid
+                                          const uint64_t& arg3,//prevlogindex
+                                          const uint64_t& arg4,//prevlogturm
+                                          const uint64_t& arg5,//leadercomit
+                                          uint64_t *ret1,
+                                          bool_t *followerAppendOK,
+                                          rrr::DeferredReply* defer) {
+  /* Your code here */
+  // std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(md_cmd).sp_data_;
+  // Log_info("Heartbeat by leader: %lu for server: %lu and term: %lu have currTerm: %lu", arg2, svr_-&gt;s_id, arg1, svr_-&gt;curr_term);
+  // std::unique_lock&lt;std::recursive_mutex&gt; lock(svr_-&gt;mtx_);
+
+  *followerAppendOK = false;
+
+  if(arg1 &gt;= svr_-&gt;curr_term){
+    // Log_info("Timer reset in heartcallback by leader: %lu for server: %lu", arg2, svr_-&gt;s_id);
+
+    if(svr_-&gt;curr_term &lt; arg1){
+      svr_-&gt;curr_term = arg1;
+      svr_-&gt;voted_for = 1000;//new term, not voted for anybody
+    }
+
+    svr_-&gt; leader_id = arg2;
+    *followerAppendOK = true;
+    svr_-&gt;curr_role = 0;//set as followers
+    //reset election timer
+    svr_-&gt;InitializeRandomTimeout();
+    //reset elction timer start
+    svr_-&gt;start_time_ = std::chrono::steady_clock::now();
+
+    // coomit to machine if there is some commited by server
+    //TODO: check maching log till lastlogindex and apply the matching index to executecommand, just one
+    if(svr_-&gt;log[arg3].term == arg4){
+      svr_-&gt;commited_index  = min(arg5, svr_-&gt;last_log_index);
+      if(svr_-&gt; commited_index &gt; svr_-&gt;last_applied){
+        svr_-&gt;executeCommited();
+      }
+    }
+
+    // if(svr_-&gt;last_applied &lt; arg5 && arg5 &lt; svr_-&gt;log.size()){
+    //   Log_info("Calling Execute Commit for server: %lu from ##HeartBeats for commit: %lu", svr_-&gt;s_id, arg5);
+    //   svr_-&gt;executeCommited();
+    // }
+    
+  }
+  
+  *ret1 = svr_-&gt;curr_term;
+  defer-&gt;reply();
+}
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match242-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("receive an rpc: %s at server: %lu", req.c_str(), svr_-&gt;s_id);
+</FONT>  *res = "world";
+  defer-&gt;reply();
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

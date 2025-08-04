@@ -1,0 +1,298 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-a-preet/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-a-preet/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include &lt;boost/serialization/vector.hpp&gt;
+#include &lt;boost/serialization/map.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+string ShardConfig::Save() {
+  std::ostringstream archive_ostream;
+  boost::archive::text_oarchive oarchive(archive_ostream);
+  oarchive &lt;&lt; *this;
+  return archive_ostream.str();
+}
+
+void ShardConfig::Load(const string& s) {
+  std::istringstream archive_istream(s);
+  boost::archive::text_iarchive iarchive(archive_istream);
+  iarchive &gt;&gt; *this;
+}
+
+namespace janus {
+
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  config_number_++;
+  int config_no = config_number_;
+  ShardConfig config = configs_.rbegin()-&gt;second;
+  config.number = config_no;
+  map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt; new_gid_server_map = gid_server_map;
+  for (auto& gid_server_pair : config.group_servers_map_) {
+    uint32_t gid = gid_server_pair.first;
+    if (new_gid_server_map.find(gid) != new_gid_server_map.end()) {
+      new_gid_server_map.erase(gid);
+    }
+  }
+
+  int prev_group_num = config.group_servers_map_.size();
+  int total_shard = 10;
+  int shard_per_group = total_shard / (prev_group_num + new_gid_server_map.size());
+  int shard_left = total_shard % (prev_group_num + new_gid_server_map.size());
+  
+  for (auto& gid_server_pair : config.group_servers_map_) {
+    uint32_t gid = gid_server_pair.first;
+    int shard_num = shard_per_group;
+    if (shard_left &gt; 0) {
+      shard_num++;
+      shard_left--;
+    }
+    for (auto& shard_gid_pair : config.shard_group_map_) {
+      if (shard_gid_pair.second == gid) {
+        if (shard_num &gt; 0) {
+          shard_num--;
+        }
+        else {
+          config.shard_group_map_[shard_gid_pair.first] = 0;
+        }
+      }
+    }
+  }
+
+  for (auto& gid_server_pair : new_gid_server_map) {
+    uint32_t gid = gid_server_pair.first;
+    int shard_num = shard_per_group;
+    if (shard_left &gt; 0) {
+      shard_num++;
+      shard_left--;
+    }
+    for (int i = 1; i &lt; total_shard+1; i++) {
+      if (shard_num &gt; 0 && config.shard_group_map_[i] == 0) {
+        config.shard_group_map_[i] = gid;
+        shard_num--;
+      }
+    }
+    // Log_debug("gid %d shard_num %d", gid, shard_num);
+    verify(shard_num == 0);
+  }
+
+  for (auto& gid_server_pair : new_gid_server_map) {
+    // Log_debug("gid %d", gid_server_pair.first);
+    config.group_servers_map_[gid_server_pair.first] = gid_server_pair.second;
+  }
+
+  bool is_leader;
+  uint64_t term, index;
+
+  auto cmd = std::make_shared&lt;MultiStringMarshallable&gt;();
+  cmd-&gt;data_.push_back("config");
+  cmd-&gt;data_.push_back(config.Save());
+
+  auto cmd_ptr = dynamic_pointer_cast&lt;Marshallable&gt;(cmd);
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match80-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  is_leader = GetRaftServer().Start(cmd_ptr, &index, &term);
+  
+  if (!is_leader) {
+    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+    return;
+  }
+
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+</FONT>  outstanding_requests_[to_string(config_no)] = ev;
+  ev-&gt;Wait(SM_TIMEOUT);
+
+  if (ev-&gt;status_ == Event::TIMEOUT) {
+    outstanding_requests_.erase(to_string(config_no));
+    *ret = KV_TIMEOUT;
+    defer-&gt;reply();
+    return;
+  }
+
+  outstanding_requests_.erase(to_string(config_no));
+  *ret = KV_SUCCESS;
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  config_number_++;
+  int config_no = config_number_;
+  ShardConfig config = configs_.rbegin()-&gt;second;
+  config.number = config_no;
+  for (auto& gid : gids) {
+    config.group_servers_map_.erase(gid);
+    for (auto& shard_gid_pair : config.shard_group_map_) {
+      if (shard_gid_pair.second == gid) {
+        config.shard_group_map_[shard_gid_pair.first] = 0;
+      }
+    }
+  }
+  // shard rebalance with minimum transfers
+  int total_shard = 10;
+  int shard_per_group = total_shard / config.group_servers_map_.size();
+  int shard_left = total_shard % config.group_servers_map_.size();
+  for (auto& gid_server_pair : config.group_servers_map_) {
+    uint32_t gid = gid_server_pair.first;
+    int shard_num = shard_per_group;
+    if (shard_left &gt; 0) {
+      shard_num++;
+      shard_left--;
+    }
+    for (auto& shard_gid_pair : config.shard_group_map_) {
+      if (shard_gid_pair.second == gid) {
+        if (shard_num &gt; 0) {
+          shard_num--;
+        }
+      }
+    }
+    for (int i = 1; i &lt; total_shard+1; i++) {
+      if (shard_num &gt; 0 && config.shard_group_map_[i] == 0) {
+        config.shard_group_map_[i] = gid;
+        shard_num--;
+      }
+    }
+    Log_debug("gid %d shard_num %d", gid, shard_num);
+    verify(shard_num == 0);
+  }
+
+  bool is_leader;
+  uint64_t term, index;
+
+  auto cmd = std::make_shared&lt;MultiStringMarshallable&gt;();
+  cmd-&gt;data_.push_back("config");
+  cmd-&gt;data_.push_back(config.Save());
+
+  auto cmd_ptr = dynamic_pointer_cast&lt;Marshallable&gt;(cmd);
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match80-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  is_leader = GetRaftServer().Start(cmd_ptr, &index, &term);
+
+  if (!is_leader) {
+    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+    return;
+  }
+
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+</FONT>  outstanding_requests_[to_string(config_no)] = ev;
+  ev-&gt;Wait(SM_TIMEOUT);
+
+  if (ev-&gt;status_ == Event::TIMEOUT) {
+    outstanding_requests_.erase(to_string(config_no));
+    *ret = KV_TIMEOUT;
+    defer-&gt;reply();
+    return;
+  }
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match80-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  outstanding_requests_.erase(to_string(config_no));
+  *ret = KV_SUCCESS;
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+</FONT>  // your code here
+  config_number_++;
+  int config_no = config_number_;
+  ShardConfig config = configs_.rbegin()-&gt;second;
+  config.number = config_no;
+  config.shard_group_map_[shard] = gid;
+
+  bool is_leader;
+  uint64_t term, index;
+
+  auto cmd = std::make_shared&lt;MultiStringMarshallable&gt;();
+  cmd-&gt;data_.push_back("config");
+  cmd-&gt;data_.push_back(config.Save());
+
+  auto cmd_ptr = dynamic_pointer_cast&lt;Marshallable&gt;(cmd);
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match80-1.html#3" TARGET="1"><IMG SRC="../../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  is_leader = GetRaftServer().Start(cmd_ptr, &index, &term);
+
+  if (!is_leader) {
+    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+    return;
+  }
+
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+</FONT>  outstanding_requests_[to_string(config_no)] = ev;
+  ev-&gt;Wait(SM_TIMEOUT);
+
+  if (ev-&gt;status_ == Event::TIMEOUT) {
+    outstanding_requests_.erase(to_string(config_no));
+    *ret = KV_TIMEOUT;
+    defer-&gt;reply();
+    return;
+  }
+
+  outstanding_requests_.erase(to_string(config_no));
+  *ret = KV_SUCCESS;
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+  // your code here
+  if (config_no == -1 || config_no &gt;= configs_.size()) {    
+    *config = configs_.rbegin()-&gt;second;
+    *ret = KV_SUCCESS;
+    defer-&gt;reply();
+    return;
+  }
+  auto it = configs_.find(config_no);
+  if (it != configs_.end()) {
+    *config = it-&gt;second;
+    *ret = KV_SUCCESS;
+    defer-&gt;reply();
+    return;
+  }
+  *ret = KV_TIMEOUT;
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  // your code here
+  auto v = (MultiStringMarshallable*)(&m);
+  if (v-&gt;data_[0]=="config") {
+    ShardConfig config;
+    config.Load(v-&gt;data_[1]);
+    configs_[config.number] = config;
+    // Log_debug("config %d", config.number);
+    if(outstanding_requests_.find(to_string(config.number)) != outstanding_requests_.end()){
+      outstanding_requests_[to_string(config.number)]-&gt;Set(1);
+    }
+    // Log Config
+    // for (auto& gid_server_pair : config.group_servers_map_) {
+    //   uint32_t gid = gid_server_pair.first;
+    //   Log_debug("gid %u", gid);
+    //   for (auto& server : gid_server_pair.second) {
+    //     Log_debug("server %u", server);
+    //   }
+    // }
+    // for (auto& shard_gid_pair : config.shard_group_map_) {
+    //   Log_debug("shard %lu gid %u", shard_gid_pair.first, shard_gid_pair.second);
+    // }
+  }
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  return cli;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

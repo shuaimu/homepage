@@ -1,0 +1,129 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-DanielDeLayo/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-DanielDeLayo/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+
+void RaftServiceImpl::HandleRequestVote( const i64& cTerm,
+    const i64& cId,
+    const i64& clastLogIndex,
+    const i64& clastLogTerm,
+    i64* resultTerm,
+    bool_t* resultVotedFor,
+    rrr::DeferredReply* defer) {
+  /* Your code here */
+  //Log_info("%ld receive an requestvote from %ld", svr_-&gt;loc_id_, cId);
+
+  if(!svr_-&gt;isReady()) return;
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(svr_-&gt;mtx_);
+  //Log_info("%ld PAST LOCK receive an requestvote from %ld", svr_-&gt;loc_id_, cId);
+  svr_-&gt;maybeUpdateTerm(cTerm);
+  *resultTerm = svr_-&gt;currentTerm;
+
+  if (cTerm &lt; svr_-&gt;currentTerm)
+  {
+    *resultVotedFor = false;
+    //Log_info("%ld cannot vote for %ld", svr_-&gt;loc_id_, cId);
+  }
+  else if ((!svr_-&gt;hasVoted || svr_-&gt;votedFor == cId) && svr_-&gt;upToDate(clastLogTerm, clastLogIndex)) //grant vote
+  {
+    *resultVotedFor = svr_-&gt;hasVoted = true;
+    svr_-&gt;votedFor = cId;
+    //Log_info("%ld voted for %ld", svr_-&gt;loc_id_, cId);
+  }
+  else // refuse vote
+  {
+    *resultVotedFor = false;
+    //Log_info("%ld already voted; rejecting %ld", svr_-&gt;loc_id_, cId);
+  }
+
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleAppendEntries(
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match244-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_15.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    const i64& term, 
+    const i64& leaderId, 
+    const i64& prevLogIndex, 
+    const i64& prevLogTerm, 
+    const i64& leaderCommitIndex, 
+    const std::vector&lt;MarshallDeputy&gt;& cmds,
+    const std::vector&lt;i64&gt;& terms,
+    i64* rterm, 
+    bool_t* rsuccess, 
+    i64* conflictingTerm, 
+    i64* prevIndex,
+    rrr::DeferredReply* defer) {
+</FONT>
+  /* Your code here */
+  //Log_info("receive a handleappend");
+  if(!svr_-&gt;isReady()) return;
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(svr_-&gt;mtx_);
+  *rterm = svr_-&gt;currentTerm;
+  *conflictingTerm = 0;
+  *prevIndex = 0;
+  // CASE 1
+  if (svr_-&gt;currentTerm &gt; term)
+  {
+    // They have no right to tell us to do anything
+    *rterm = svr_-&gt;currentTerm;
+    Log_info("Append Failure term!");
+    defer-&gt;reply();
+    return;
+  }
+  svr_-&gt;maybeUpdateTerm(term);
+  *rterm = svr_-&gt;currentTerm;
+  // regardless of if we update or not, we're here, aren't we?
+  // We can no longer send out new data anyway, so it's safe to update!
+  
+
+  // CASE 2
+  if (!svr_-&gt;canApplyLogs(prevLogIndex, prevLogTerm, conflictingTerm, prevIndex))
+  {
+    *rsuccess = false;
+    Log_info("Append Failure can apply! %ld, %ld", *conflictingTerm, *prevIndex);
+    defer-&gt;reply();
+    return;
+  }
+  svr_-&gt;applyLogs(prevLogIndex, cmds, terms);
+  svr_-&gt;commitLogs(leaderCommitIndex);
+
+  //std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(data.entry[0]).sp_data_;
+  *rsuccess = true;
+  defer-&gt;reply();
+  return;
+}
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+    string* res,
+    rrr::DeferredReply* defer) {
+  /* Your code here */
+  if(!svr_-&gt;isReady()) return;
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(svr_-&gt;mtx_);
+  Log_info("receive an rpc: %s", req.c_str());
+  *res = "world";
+  defer-&gt;reply();
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,142 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-shivani232/src/shardkv/client.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-Dhavall07/src/shardkv/client.cc<p><PRE>
+
+
+#include "client.h"
+#include "server.h"
+#include "../shardmaster/service.h"
+#include "shardkv_rpc.h"
+#include "../deptran/communicator.h"
+
+namespace janus {
+
+int ShardKvClient::Op(function&lt;int(uint32_t*)&gt; func) {
+  Log_info("OP called");
+  uint64_t t1 = Time::now();
+  while (true) {
+    uint64_t t2 = Time::now();
+    if (t2 - t1 &gt; 10000000) {
+      return KV_TIMEOUT;
+    }
+    uint32_t ret = 0;
+    int r1; 
+    r1 = func(&ret);
+    if (r1 == ETIMEDOUT || ret == KV_TIMEOUT) {
+      leader_idx_ = (leader_idx_+1) % 5;
+      return KV_TIMEOUT;
+    }
+    if (ret == KV_SUCCESS) {
+      Log_info("KV_SUCCESS");
+      return KV_SUCCESS;
+    }
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match92-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    if (ret == KV_NOTLEADER) {
+      leader_idx_ = (leader_idx_+1) % 5;
+    }
+  }
+
+}
+
+int ShardKvClient::Put(const string& k, const string& v) {
+
+  Log_info("key %s, value %s", k.c_str(), v.c_str());
+</FONT>  shardid_t shardloc = Key2Shard(k);
+
+  auto pp = (ShardMasterProxy*)commo_-&gt;rpc_proxies_.at(0);
+
+  ShardConfig config;
+  uint32_t tmp = 1;
+  pp-&gt;Query(-1, &tmp ,&config);
+
+  int tmp1 = config.shard_group_map_[shardloc];
+  leader_idx_ = config.group_servers_map_[tmp1][0];
+  for(auto it:config.group_servers_map_[tmp1]){
+    Log_info("Grp Map, key %d",it);
+  }
+
+  Log_info("called PUT, with shardloc as %d, tmp as %d, leaderIDX as %d", shardloc, tmp1, leader_idx_);
+
+  int leader_idx_1 = config.shard_group_map_[10];
+  Log_info("called PUTcheck, with shardloc as %d, leaderIDX as %d", 10, leader_idx_1);
+
+  return Op([&](uint32_t* r)-&gt;int{
+    return Proxy(leader_idx_).Put(GetNextOpId(), k, v, r);
+  });
+}
+
+ShardKvProxy& ShardKvClient::Proxy(siteid_t site_id) {
+  verify(commo_);
+  //auto p = (ShardKvProxy*)commo_-&gt;rpc_proxies_.at(site_id);
+  ShardKvProxy* px ;
+  for(int i=0;i&lt;4;i++)
+  {
+    auto proxies = commo_-&gt;rpc_par_proxies_[i];
+    for(auto p:proxies){
+      //Log_info("proxy %d",p.first);
+      if(p.first == site_id){
+        //Log_info("Match found p first %d, p second %d",p.first,p.second);
+        px = (ShardKvProxy*)p.second;
+      }
+    }
+  }
+  
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match92-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  return *px; 
+}
+
+int ShardKvClient::Append(const string& k, const string& v) {
+
+  
+
+  shardid_t shardloc = Key2Shard(k);
+
+  auto pp = (ShardMasterProxy*)commo_-&gt;rpc_proxies_.at(0);
+
+  ShardConfig config;
+  uint32_t tmp = 1;
+</FONT>  pp-&gt;Query(-1, &tmp ,&config);
+
+  int tmp1 = config.shard_group_map_[shardloc];
+  leader_idx_ = config.group_servers_map_[tmp1][0];
+
+  Log_info("called APPEND, with shardloc as %d, leaderIDX as %d", shardloc, leader_idx_);
+
+  return Op([&](uint32_t* r)-&gt;int{
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match92-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_8.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    return Proxy(leader_idx_).Append(GetNextOpId(), k, v, r);
+  });
+}
+
+int ShardKvClient::Get(const string& k, string* v) {
+
+  
+  shardid_t shardloc = Key2Shard(k);
+
+  auto pp = (ShardMasterProxy*)commo_-&gt;rpc_proxies_.at(0);
+
+  ShardConfig config;
+</FONT>  uint32_t tmp = 1;
+  pp-&gt;Query(-1, &tmp ,&config);
+
+  int tmp1 = config.shard_group_map_[shardloc];
+  leader_idx_ = config.group_servers_map_[tmp1][0];
+
+  Log_info("called GET, with shardloc as %d, leaderIDX as %d", shardloc, leader_idx_);
+
+  return Op([&](uint32_t* r)-&gt;int{
+    return Proxy(leader_idx_).Get(GetNextOpId(), k, r, v);
+  });
+}
+
+} // namesapce janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

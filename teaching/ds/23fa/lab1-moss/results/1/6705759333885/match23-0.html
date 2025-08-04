@@ -1,0 +1,538 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-himanshu-ckh/src/deptran/raft/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-himanshu-ckh/src/deptran/raft/server.cc<p><PRE>
+
+
+#include "server.h"
+// #include "paxos_worker.h"
+#include "exec.h"
+#include "frame.h"
+#include "coordinator.h"
+#include "../classic/tpc_command.h"
+
+
+namespace janus {
+
+RaftServer::RaftServer(Frame * frame) {
+  frame_ = frame ;
+  /* Your code here for server initialization. Note that this function is 
+     called in a different OS thread. Be careful about thread safety if 
+     you want to initialize variables here. */
+
+  mtx_.lock();
+  //Voter for in the current term
+  this-&gt;votedFor = -1;
+
+  //Current term
+  this-&gt;currentTerm = 0;
+
+  //Leader Id according to the server
+  this-&gt;leaderId = -1;
+
+  //Latest Commit index
+  this-&gt;commitIndex = 0;
+
+  //Last Applied
+  this-&gt;lastApplied = 0;
+
+  //Total Vote count received
+  this-&gt;voteCount = 0;
+
+  //Total number of servers available
+  int totalServers = 0;
+
+  int gotAppendEntry = -1;
+
+  //Create an log Entry
+  log logEntry = log(0, 0, nullptr);
+
+  this-&gt;candidateId = this-&gt;loc_id_;
+
+  //Add an entry to the logs vector
+  this-&gt;logs.push_back(logEntry);
+
+  //Make all the servers as followers at the start, will change this to candidate and then to leader if timed out
+  this-&gt;state = follower;
+
+  this-&gt;heartBeatRecevied = -1;
+  //Election timeout for each server randomly changes which introduces some non-determinism but helpful in case of Raft 
+  this-&gt;electionTimeout = std::rand() % (500) + 700;
+  this-&gt;requestTimout = 100;
+  this-&gt;timerToTimeout = Timer();
+  this-&gt;votesForCurrentTerm = 0;
+  this-&gt;timerForHeatbeat = Timer();
+  this-&gt;votedInCurrentTerm = 0;
+
+  for(int i=0; i&lt;5; i++){
+    this-&gt;matchIndex.push_back(0);
+  }
+
+  for(int i=0; i&lt;5; i++){
+    this-&gt;nextIndex.push_back(1);
+  }
+  
+  mtx_.unlock();
+
+}
+
+RaftServer::~RaftServer() {
+  /* Your code here for server teardown */
+
+}
+
+
+
+void RaftServer::Setup() {
+  /* Your code here for server setup. Due to the asynchronous nature of the 
+     framework, this function could be called after a RPC handler is triggered. 
+     Your code should be aware of that. This function is always called in the 
+     same OS thread as the RPC handlers. 
+    */
+
+  // site_id_ -&gt; Server from where we are calling the RPC's
+
+  mtx_.lock();
+  //Call the Function for request vote RPC, if the timeout happen
+
+  //First Intialize a default log
+  log lastLog;
+  //Find the lastLog
+  if (!logs.empty())
+    lastLog = this-&gt;logs.back();
+
+  mtx_.unlock();
+
+  //Sleep for a given amount of time and then call the handleRequestVote function
+  // usleep(this-&gt;electionTimeout * pow(10, 3));
+
+  Coroutine::CreateRun([this]() {
+    mtx_.lock();
+    this-&gt;timerToTimeout.start();
+    this-&gt;timerForHeatbeat.start();
+    mtx_.unlock();
+    int electionTimeout = this-&gt;electionTimeout;
+    int loc_id_ = this-&gt;loc_id_;
+    int heartBeatReceived = this-&gt;heartBeatRecevied;
+    
+    while(true) {
+      int currentTerm = this-&gt;currentTerm;
+      if(this-&gt;state == follower) { 
+        log lastLog = this-&gt;logs.back();
+        if(this-&gt;timerToTimeout.elapsed() * pow(10, 3) &gt; electionTimeout) {
+          if(heartBeatRecevied == -1) {
+            this-&gt;timerToTimeout.start();
+            this-&gt;electionTimeout = std::rand() % (500) + 700;
+            Log_info("Server %d has transitioned to candidate and has started an election for %d", loc_id_, currentTerm + 1);
+            for(int serverCalled=0; serverCalled&lt;5; serverCalled++) {
+              this-&gt;votesForCurrentTerm = 0;
+              // Log_info("Sending request Vote for currentTerm %d, to Server %d from the site %d", currentTerm, serverCalled, loc_id_);
+              handleRequestVote(currentTerm, loc_id_, lastLog, serverCalled);
+            }
+          } else {
+            mtx_.lock();
+            this-&gt;state = follower;
+
+            this-&gt;heartBeatRecevied = -1;
+            this-&gt;timerToTimeout.start();
+            mtx_.unlock();
+          }
+        } 
+        else {
+          Coroutine::Sleep(this-&gt;electionTimeout *pow(10,3));
+        }
+      } 
+      else if(this-&gt;state == leader) {
+        //If the server received the append Entry flag, then we need to send the append entries
+        //if(this-&gt;gotAppendEntry == 1) {
+          //This means that leader got an entry and need to send the gotAppendEntry to all the servers
+        //}
+        if(this-&gt;timerForHeatbeat.elapsed() * pow(10,3) &gt; (HEARTBEAT_INTERVAL / 1000)) {
+          this-&gt;timerForHeatbeat.start();
+          sendHeartBeat();
+          sendAppendEntryToAllServers();
+        } else {
+          Coroutine::Sleep(HEARTBEAT_INTERVAL);
+        }
+      }
+    }      
+  });
+}
+
+
+void RaftServer::sendAppendEntryToAllServers() {
+  for(int serverToSend=0; serverToSend&lt;5; serverToSend++) {
+    if(serverToSend == leaderId || this-&gt;nextIndex[serverToSend] &gt;= this-&gt;logs.size()) {
+      //This means that leader got an entry and need to send the gotAppendEntry to all the servers
+      continue;
+    } else {
+      Log_info("The leader %d is sending out the Append entries to %d at matchIndex %d and next Index %d", this-&gt;loc_id_, serverToSend, this-&gt;matchIndex.at(serverToSend), this-&gt;nextIndex.at(serverToSend));
+
+      mtx_.lock();
+      int leaderTerm = this-&gt;currentTerm;
+      int leaderCommit = this-&gt;commitIndex;
+      int prevLogIndex = this-&gt;nextIndex[serverToSend] - 1;//this-&gt;matchIndex.at(serverToSend);
+      int prevLogTerm = this-&gt;logs.at(prevLogIndex).term;
+      //shared_ptr&lt;Marshallable&gt; command = this-&gt;logs.back().command;
+      int leaderId = this-&gt;loc_id_;
+      mtx_.unlock();
+      //Log_info("Next index of server %d is %d", serverToSend, this-&gt;nextIndex.at(serverToSend));
+
+      //Command After next Index to send to the Append Entries
+      vector&lt;shared_ptr&lt;Marshallable&gt;&gt; commandAfterNextIndex;
+      for(int i=this-&gt;nextIndex.at(serverToSend); i&lt;this-&gt;logs.size(); i++) {
+       // Log_info("Entry Appended in the Marshallable vector");
+        commandAfterNextIndex.push_back(this-&gt;logs.at(i).command);
+      }
+
+      //Send an Append Entry RPC, create a coroutine to send the append entry RPC
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match23-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      Coroutine::CreateRun([this, serverToSend, leaderId, leaderTerm, leaderCommit, prevLogIndex, prevLogTerm, commandAfterNextIndex] {
+        uint64_t currentTerm;
+        bool_t appendEntryAck;
+
+        auto event = commo()-&gt;SendAppendEntries(0,
+                          serverToSend,
+</FONT>                          0,
+                          leaderId,
+                          this-&gt;currentTerm,
+                          commandAfterNextIndex,
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match23-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                          prevLogTerm,
+                          prevLogIndex,
+                          leaderCommit,
+                          &appendEntryAck,
+                          &currentTerm);
+
+        event-&gt;Wait(1000000);
+        if(event-&gt;status_ == Event::TIMEOUT) {
+          Log_info("Timed Out while sending the Append Entry RPC to servers");
+        } else {
+          if(appendEntryAck) {
+</FONT>            Log_info("Data Appended to the server %d for the term %d", serverToSend, currentTerm);
+            mtx_.lock();
+            //Check with match index it it replicated till that level
+            this-&gt;matchIndex.at(serverToSend) = this-&gt;logs.size()-1;
+
+            //Need to set the Next Index as well, in case we need to go back and check
+            this-&gt;nextIndex.at(serverToSend) = this-&gt;logs.size();
+
+            //Find the Majority Append from the Match Index
+            int majorityAppend = 0;
+            for (int i; i&lt; this-&gt;matchIndex.size(); i++) {
+              if (this-&gt;matchIndex.at(i) == this-&gt;logs.size()-1) {
+                majorityAppend++;
+              }
+            }
+            mtx_.unlock();
+
+            //Appended by majority of Servers
+            if(majorityAppend &gt;= 2) {
+              Log_info("The command is appended by Majority of servers");
+              mtx_.lock();
+              if (!(this-&gt;logs.size()-1 == this-&gt;commitIndex)) {
+                for(int i=this-&gt;commitIndex+1; i&lt;=max(this-&gt;commitIndex, (int) this-&gt;logs.size()-1); i++) {
+                  //Log_info("Commit index for leader %d is %d before commiting", this-&gt;loc_id_, this-&gt;commitIndex);
+                  this-&gt;app_next_(*this-&gt;logs.at(i).command.get());
+                }
+                this-&gt;commitIndex = max(this-&gt;commitIndex, (int) this-&gt;logs.size()-1);
+                Log_info("Commit index for leader %d is %d after commiting", this-&gt;loc_id_, this-&gt;commitIndex);
+
+              }
+              mtx_.unlock();
+              //Log_info("Now we need to commit this value to all servers");
+              
+            }
+          } else {
+            Log_info("When we did not get the Append Entry Ack from server %d for term %d and the index was %d", serverToSend, this-&gt;currentTerm, this-&gt;commitIndex);
+            //This means the servers was disconnected and we got the result of the currentTerm to be 0
+            if(currentTerm == 0) {
+              Log_info("The server %d, is timedout", serverToSend);
+            } else if(currentTerm &gt; leaderTerm) {
+              Log_info("The leader was not able to append the entries to the majority of servers because the leader Term is %d and currentTerm is %d", currentTerm, this-&gt;currentTerm);
+              mtx_.lock();
+              this-&gt;currentTerm = currentTerm;
+              this-&gt;state = follower;
+              mtx_.unlock();
+            } else {
+                mtx_.lock();
+                try {
+                  this-&gt;nextIndex.at(serverToSend) = max(0, this-&gt;nextIndex.at(serverToSend) - 1);
+                }catch(...) {
+                  Log_info("Crashed while decreasing next index for %d, len of nextIndex is %d", serverToSend, nextIndex.size());
+                }
+                this-&gt;gotAppendEntry = 1;
+                mtx_.unlock();
+              }
+          }
+        }
+      });
+    }
+  }
+}
+
+
+//Send Heart Beat
+void RaftServer::sendHeartBeat() {
+  for(int appendEntryServer=0; appendEntryServer&lt;5; appendEntryServer++) { 
+    leaderId = this-&gt;loc_id_;
+    if(appendEntryServer == leaderId) {
+      continue;
+    } else {
+      //Call the send Append Entries RPC will a null pointer to send the Heartbeat to seach server
+      shared_ptr&lt;Marshallable&gt; newHeartBeatCMD = shared_ptr&lt;Marshallable&gt;();
+      vector&lt;shared_ptr&lt;Marshallable&gt;&gt; commandAfterNextIndex;
+
+      commandAfterNextIndex.push_back(newHeartBeatCMD);
+
+      mtx_.lock();
+      log lastLog = this-&gt;logs.back();
+
+      int prevLogTerm = lastLog.term;
+      int prevLogIndex = lastLog.index;
+      int leaderCommit = this-&gt;commitIndex;
+      mtx_.unlock();
+
+      //This coroutine is for HeartBeat so sending an empty object
+      Coroutine::CreateRun([this, appendEntryServer, newHeartBeatCMD, prevLogTerm, prevLogIndex, leaderCommit, commandAfterNextIndex]() {
+
+      /*We'll get back, the term from the heart Beat and the ack from the heartbeat
+      Term from heatbeat -&gt; Term we'll receive from the server we send the RPC to
+      HeartBeatAck -&gt; If server accepted or not.
+      */
+
+      uint64_t termFromHeartbeat;
+      bool_t heartbeatAck;
+      
+      //Sending the append entries RPC
+      auto event1 = commo()-&gt;SendAppendEntries(0,
+                            appendEntryServer,
+                            1,
+                            leaderId,
+                            this-&gt;currentTerm,
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match23-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                            commandAfterNextIndex,
+                            prevLogTerm,
+                            prevLogIndex,
+                            leaderCommit,
+                            &heartbeatAck,
+                            &termFromHeartbeat);
+
+      event1-&gt;Wait(1000000); //timeout after 1000000us=1s
+      if (event1-&gt;status_ == Event::TIMEOUT) {
+        // Log_info("timeout happens in send Append Entries");
+      } else {
+        //If have not recevievd the heartBeat ACK because of leader already elected or term is behind, transition to follower
+        if(!heartbeatAck) {
+</FONT>          if(termFromHeartbeat &gt; this-&gt;currentTerm) {
+            mtx_.lock();
+            this-&gt;currentTerm = termFromHeartbeat;
+            this-&gt;state = follower;
+            mtx_.unlock();
+          }
+        }
+        // Log_info("Received the heartbeat for term: %d", termFromHeartbeat);
+      }
+  });
+  }
+  }
+}
+
+
+//Function to handle the rquest Vote RPC which will be used to send an RPC to get the vote depending on the state
+void RaftServer::handleRequestVote(int currentTermToSend, int candidateServer, log lastLog, int serverCalled) {
+//  mtx_.lock();
+
+  uint64_t lastLogIndex = lastLog.index;
+  uint64_t lastLogTerm = lastLog.term;
+
+  //Calling the RquestVoteRPC using the commo object and we'll handle the same in the servive.cc file
+  Coroutine::CreateRun([this, lastLogIndex, lastLogTerm, serverCalled, currentTermToSend, candidateServer](){
+
+    //We'll need 2 response from the RPC, one is voteGrated and another is currentTerm.
+    bool_t voteGranted;
+    uint64_t currentTerm;
+
+    // int currentTermToSend = this-&gt;currentTerm;
+    // int candidateServer = this-&gt;loc_id_;
+
+    //Call the SendRequesVote RPC to each server to get the vote
+    auto event = commo()-&gt;SendRequestVote(0, /* partition id is always 0 for lab1 */
+                            serverCalled,
+                            candidateServer,
+                            currentTermToSend + 1,
+                            lastLogIndex,
+                            lastLogTerm,
+                            &voteGranted,
+                            &currentTerm
+                            );
+    event-&gt;Wait(1000000); //timeout after 1000000us=1s
+    if (event-&gt;status_ == Event::TIMEOUT) {
+      Log_info("timeout happens in leader election");
+    } else {
+      if(voteGranted) {
+        //Increase the count for the votes for the current Term for the 1st server
+        mtx_.lock();
+        this-&gt;votesForCurrentTerm = this-&gt;votesForCurrentTerm + 1;
+        mtx_.unlock();
+
+        if(this-&gt;votesForCurrentTerm &gt;= 3) {
+          //Update the currentTerm
+          
+          mtx_.lock();
+          this-&gt;currentTerm = currentTermToSend + 1;
+          this-&gt;state = leader;
+          Log_info("Leader elected for term %d and the leader is %d", this-&gt;currentTerm, candidateServer);
+          //Change the state to leader
+         
+          
+
+          //Change the NextIndex and Match Index - 
+          for(int i=0; i&lt;5; i++){
+              this-&gt;matchIndex.at(i) = 0;
+              this-&gt;nextIndex.at(i) = this-&gt;logs.size();
+          }
+
+          //Reset the voteCount for the currentTerm, as Majority reached
+          this-&gt;votesForCurrentTerm = 0;
+          mtx_.unlock();
+          sendHeartBeat();
+        }
+
+      } else {
+        //Transition from leader to follower
+        if(currentTerm &gt; this-&gt;currentTerm) {
+          mtx_.lock();
+          this-&gt;currentTerm = currentTerm;
+          this-&gt;state = follower;
+          mtx_.unlock();
+        }
+      }
+    }
+  });  
+}
+
+
+
+bool RaftServer::Start(shared_ptr&lt;Marshallable&gt; &cmd,
+                       uint64_t *index,
+                       uint64_t *term) {
+  /* Your code here. This function can be called from another OS thread. */
+  mtx_.lock();
+  int ifLeader = this-&gt;state;
+  mtx_.unlock();
+
+
+  if(ifLeader == leader) {
+    Log_info("Client sending the command to leader %d and the leaders log size is %d", this-&gt;loc_id_, this-&gt;logs.size());
+    mtx_.lock();
+
+    //In this thread, we'll just save the state of the leader
+    //Append entry to the local log
+    log newLogEntry;
+    //new Log Index will be the size of the log
+    newLogEntry.index = this-&gt;logs.size();
+    newLogEntry.term = this-&gt;currentTerm;
+    newLogEntry.command = cmd;
+
+    /*Since Setup is running in different thread, 
+    making sure to set this value so that it can send the append entry in the main thread
+    */
+
+    this-&gt;gotAppendEntry = 1;
+
+    //Push the new Logs to the leader
+    this-&gt;logs.push_back(newLogEntry);
+    mtx_.unlock();
+
+
+    Log_info("New Log at leader appended, The new log index %d and term %d for leader %d", newLogEntry.index, newLogEntry.term, this-&gt;loc_id_);
+    
+    *index = newLogEntry.index;
+    *term = newLogEntry.term;
+
+    return true;
+    } else {
+      return false;
+    }
+}
+
+void RaftServer::GetState(bool *is_leader, uint64_t *term) {
+  /* Your code here. This function can be called from another OS thread. */
+
+  if(this-&gt;state == leader) {
+    *is_leader = true;
+    *term = this-&gt;currentTerm;
+  } else {
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match23-1.html#3" TARGET="1"><IMG SRC="../../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    *is_leader = false;
+    *term = this-&gt;currentTerm;
+  }
+  
+}
+
+void RaftServer::SyncRpcExample() {
+  /* This is an example of synchronous RPC using coroutine; feel free to 
+     modify this function to dispatch/receive your own messages. 
+     You can refer to the other function examples in commo.h/cc on how 
+     to send/recv a Marshallable object over RPC. */
+  Coroutine::CreateRun([this](){
+    string res;
+    auto event = commo()-&gt;SendString(0, /* partition id is always 0 for lab1 */
+</FONT>                                     0, "hello", &res);
+    event-&gt;Wait(1000000); //timeout after 1000000us=1s
+    if (event-&gt;status_ == Event::TIMEOUT) {
+      Log_info("timeout happens");
+    } else {
+      // Log_info("rpc response is: %s", res.c_str()); 
+    }
+  });
+}
+
+/* Do not modify any code below here */
+
+void RaftServer::Disconnect(const bool disconnect) {
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+  verify(disconnected_ != disconnect);
+  // global map of rpc_par_proxies_ values accessed by partition then by site
+  static map&lt;parid_t, map&lt;siteid_t, map&lt;siteid_t, vector&lt;SiteProxyPair&gt;&gt;&gt;&gt; _proxies{};
+  if (_proxies.find(partition_id_) == _proxies.end()) {
+    _proxies[partition_id_] = {};
+  }
+  RaftCommo *c = (RaftCommo*) commo();
+  if (disconnect) {
+    verify(_proxies[partition_id_][loc_id_].size() == 0);
+    verify(c-&gt;rpc_par_proxies_.size() &gt; 0);
+    auto sz = c-&gt;rpc_par_proxies_.size();
+    _proxies[partition_id_][loc_id_].insert(c-&gt;rpc_par_proxies_.begin(), c-&gt;rpc_par_proxies_.end());
+    c-&gt;rpc_par_proxies_ = {};
+    verify(_proxies[partition_id_][loc_id_].size() == sz);
+    verify(c-&gt;rpc_par_proxies_.size() == 0);
+  } else {
+    verify(_proxies[partition_id_][loc_id_].size() &gt; 0);
+    auto sz = _proxies[partition_id_][loc_id_].size();
+    c-&gt;rpc_par_proxies_ = {};
+    c-&gt;rpc_par_proxies_.insert(_proxies[partition_id_][loc_id_].begin(), _proxies[partition_id_][loc_id_].end());
+    _proxies[partition_id_][loc_id_] = {};
+    verify(_proxies[partition_id_][loc_id_].size() == 0);
+    verify(c-&gt;rpc_par_proxies_.size() == sz);
+  }
+  disconnected_ = disconnect;
+}
+
+bool RaftServer::IsDisconnected() {
+  return disconnected_;
+}
+
+} // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

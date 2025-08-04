@@ -1,0 +1,278 @@
+<HTML>
+<HEAD>
+<TITLE>./spring19/sshshao/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./spring19/sshshao/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+import (
+	"context"
+	"labgob"
+	"labrpc"
+	"raft"
+	"sync"
+)
+
+type ShardMaster struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	configs []Config // indexed by config num
+
+	// Your data here.
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match200-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	requestChan       map[int64](chan bool)
+	clientLastRequest map[int64]OpResult
+
+	ctx    context.Context
+	cancel context.CancelFunc
+}
+
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+</FONT>
+	// Your code here, if desired.
+	sm.cancel()
+	DPrintf("\033[31m[ShardMaster %d] Killed\033[37m", sm.me)
+}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+	return sm.rf
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	sm := new(ShardMaster)
+	sm.me = me
+
+	sm.configs = make([]Config, 1)
+	sm.configs[0].Groups = map[int][]string{}
+
+	labgob.Register(Op{})
+	sm.applyCh = make(chan raft.ApplyMsg)
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+
+	// Your code here.
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match200-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	sm.requestChan = make(map[int64](chan bool))
+	sm.clientLastRequest = make(map[int64]OpResult)
+	sm.ctx, sm.cancel = context.WithCancel(context.Background())
+
+	go sm.receiveCommandExecution()
+</FONT>
+	return sm
+}
+
+func (sm *ShardMaster) receiveCommandExecution() {
+	for {
+		select {
+		case applyMsg := &lt;-sm.applyCh:
+			sm.mu.Lock()
+			DPrintf("\033[33m[ShardMaster %d][%d] Received applymsg: %+v\033[37m", sm.me, applyMsg.Command.(Op).OpID, applyMsg)
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match200-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			switch applyMsg.Command.(Op).Opcode {
+			case 200:
+				sm.executeJoin(applyMsg.Command.(Op))
+			case 201:
+				sm.executeLeave(applyMsg.Command.(Op))
+			case 202:
+				sm.executeMove(applyMsg.Command.(Op))
+</FONT>			case 203:
+				sm.executeQuery(applyMsg.Command.(Op))
+			default:
+			}
+			sm.mu.Unlock()
+		case &lt;-sm.ctx.Done():
+			return
+		default:
+			//time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+func (sm *ShardMaster) executeJoin(op Op) {
+	//sm.mu.Lock()
+	//defer sm.mu.Unlock()
+
+	var opResult OpResult
+	var err Err
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match200-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	DPrintf("\033[37m[ShardMaster %d][%d] Executing JOIN\033[37m", sm.me, op.OpID)
+
+	if lastResult, executed := sm.clientLastRequest[op.ClerkID]; executed && lastResult.OpID == op.OpID {
+		DPrintf("\033[36m[ShardMaster %d][%d] Previously executed JOIN: %+v\033[37m", sm.me, op.OpID, lastResult)
+		opResult = lastResult
+	} else {
+</FONT>		// Execute Join
+		lastConfig := sm.configs[len(sm.configs)-1]
+		newConfig := Config{}
+		newConfig.Num = lastConfig.Num + 1
+		newConfig.Groups = mergeGroups(lastConfig.Groups, op.Servers)
+		newConfig.Shards, err = arrangeShardJoin(lastConfig.Shards, newConfig.Groups)
+
+		if err == "" {
+			sm.configs = append(sm.configs, newConfig)
+		}
+		opResult = OpResult{
+			OpID:    op.OpID,
+			ClerkID: op.ClerkID,
+			Opcode:  op.Opcode,
+			Err:     err}
+		sm.clientLastRequest[op.ClerkID] = opResult
+		DPrintf("\033[32m[ShardMaster %d][%d] Executed JOIN: %+v, %s\033[37m", sm.me, op.OpID, newConfig, err)
+	}
+
+	if channel, contains := sm.requestChan[op.OpID]; contains {
+		DPrintf("\033[32m[ShardMaster %d][%d] Sending JOIN result to channel: %+v\033[37m", sm.me, op.OpID, opResult)
+		select {
+		case channel &lt;- true:
+		default:
+		}
+	}
+}
+
+func (sm *ShardMaster) executeLeave(op Op) {
+	//sm.mu.Lock()
+	//defer sm.mu.Unlock()
+
+	var opResult OpResult
+	var err Err
+
+	DPrintf("\033[37m[ShardMaster %d][%d] Executing LEAVE\033[37m", sm.me, op.OpID)
+
+	if lastResult, executed := sm.clientLastRequest[op.ClerkID]; executed && lastResult.OpID == op.OpID {
+		DPrintf("\033[36m[ShardMaster %d][%d] Previously executed LEAVE: %+v\033[37m", sm.me, op.OpID, lastResult)
+		opResult = lastResult
+	} else {
+		// Execute Leave
+		lastConfig := sm.configs[len(sm.configs)-1]
+		newConfig := Config{}
+		newConfig.Num = lastConfig.Num + 1
+		newConfig.Groups = removeGroups(lastConfig.Groups, op.GIDs)
+		newConfig.Shards, err = arrangeShardRemove(lastConfig.Shards, newConfig.Groups)
+
+		if err == "" {
+			sm.configs = append(sm.configs, newConfig)
+		}
+		opResult = OpResult{
+			OpID:    op.OpID,
+			ClerkID: op.ClerkID,
+			Opcode:  op.Opcode,
+			Err:     err}
+		sm.clientLastRequest[op.ClerkID] = opResult
+		DPrintf("\033[32m[ShardMaster %d][%d] Executed LEAVE: %+v, %s\033[37m", sm.me, op.OpID, newConfig, err)
+	}
+
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match200-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	if channel, contains := sm.requestChan[op.OpID]; contains {
+		DPrintf("\033[32m[ShardMaster %d][%d] Sending LEAVE result to channel: %+v\033[37m", sm.me, op.OpID, opResult)
+		select {
+		case channel &lt;- true:
+</FONT>		default:
+		}
+	}
+}
+
+func (sm *ShardMaster) executeMove(op Op) {
+	//sm.mu.Lock()
+	//defer sm.mu.Unlock()
+
+	var opResult OpResult
+	var err Err
+
+	DPrintf("\033[37m[ShardMaster %d][%d] Executing MOVE\033[37m", sm.me, op.OpID)
+
+	if lastResult, executed := sm.clientLastRequest[op.ClerkID]; executed && lastResult.OpID == op.OpID {
+		DPrintf("\033[36m[ShardMaster %d][%d] Previously executed MOVE: %+v\033[37m", sm.me, op.OpID, lastResult)
+		opResult = lastResult
+	} else {
+		// Execute Move
+		lastConfig := sm.configs[len(sm.configs)-1]
+		newConfig := Config{}
+		newConfig.Num = lastConfig.Num + 1
+		newConfig.Groups = lastConfig.Groups
+		newConfig.Shards, err = arrangeShardMove(lastConfig, op.Shard, op.GID)
+
+		if err == "" {
+			sm.configs = append(sm.configs, newConfig)
+		}
+		opResult = OpResult{
+			OpID:    op.OpID,
+			ClerkID: op.ClerkID,
+			Opcode:  op.Opcode,
+			Err:     err}
+		sm.clientLastRequest[op.ClerkID] = opResult
+		DPrintf("\033[32m[ShardMaster %d][%d] Executed MOVE: %+v, %s\033[37m", sm.me, op.OpID, newConfig, err)
+	}
+
+	if channel, contains := sm.requestChan[op.OpID]; contains {
+		DPrintf("\033[32m[ShardMaster %d][%d] Sending MOVE result to channel: %+v\033[37m", sm.me, op.OpID, opResult)
+		select {
+		case channel &lt;- true:
+		default:
+		}
+	}
+}
+
+func (sm *ShardMaster) executeQuery(op Op) {
+	//sm.mu.Lock()
+	//defer sm.mu.Unlock()
+
+	var opResult OpResult
+	var lastConfig Config
+
+	DPrintf("\033[37m[ShardMaster %d][%d] Executing QUERY %+v\033[37m", sm.me, op.OpID, op)
+
+	if op.Num &lt; 0 || op.Num &gt; sm.configs[len(sm.configs)-1].Num {
+		lastConfig = sm.configs[len(sm.configs)-1]
+	} else {
+		lastConfig = sm.configs[op.Num]
+	}
+
+	opResult = OpResult{
+		OpID:    op.OpID,
+		ClerkID: op.ClerkID,
+		Opcode:  op.Opcode,
+		Err:     "",
+
+		Config: lastConfig}
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match200-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	sm.clientLastRequest[op.ClerkID] = opResult
+	DPrintf("\033[32m[ShardMaster %d][%d] Executed QUERY: %+v\033[37m", sm.me, op.OpID, lastConfig)
+
+	if channel, contains := sm.requestChan[op.OpID]; contains {
+		DPrintf("\033[32m[ShardMaster %d][%d] Sending QUERY result to channel: %+v\033[37m", sm.me, op.OpID, opResult)
+</FONT>		select {
+		case channel &lt;- true:
+		default:
+		}
+	}
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

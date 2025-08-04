@@ -1,0 +1,321 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-MITsVision/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-MITsVision/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match104-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  /* 
+  Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  */
+  /* your code here */
+
+  std::unique_lock&lt;std::recursive_mutex&gt; lock(mtx_);
+</FONT>
+  int sentStatus = checkKVSent(k, v);
+
+  if(sentStatus == 1){
+    Log_info("TO");
+    return KV_TIMEOUT; //a retry of the same op
+  }else
+  if(sentStatus == 2){
+    Log_info("SC");
+    eraseKV(k,v);
+    return KV_SUCCESS;
+  }
+
+  string req_id = to_string(GetNextOpId());
+  cout&lt;&lt;"[PUT] Client Request Id: "&lt;&lt;req_id &lt;&lt; " Key: " &lt;&lt; k &lt;&lt;" value: "&lt;&lt; v &lt;&lt; endl;
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id_cnt_));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  s-&gt;data_.push_back(req_id);
+  
+  auto cmdptr_m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+
+  // operationApplied = false;
+  applied[req_id] = false;
+
+  // if(repStore.count(k) == 0)
+  // {
+    uint64_t index;
+    uint64_t term;
+    // auto cmdptr_m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+
+    bool_t a = GetRaftServer().Start(cmdptr_m, &index, &term);
+    
+    if(a){
+
+      applied[req_id] = false;
+
+      putKV insertKey = {k,v,0};
+
+      putKVMap[req_id] = insertKey;
+
+      Log_info("[Put] Success: %d Index: %lu term: %lu", a, index, term);
+      //repStore[k] = v;//next one won't execute
+      
+      
+      Coroutine::Sleep(10000);
+      //}
+      if(!applied[req_id]){
+         Log_info("Returing PUT TIMEOUT for req_id: %s", req_id.c_str());
+         updateMap(k,v,1);//1: timeout
+        return KV_TIMEOUT;
+      }
+
+      Log_info("Returing PUT Success for req_id: %s", req_id.c_str());
+      //updateMap(k,v,3);//3: sent
+      eraseKV(k,v);
+      return KV_SUCCESS;
+    }else{
+      Log_info("[PUT] Not a leader for k: %s v: %s", k.c_str(), v.c_str());
+      return KV_NOTLEADER;
+    }
+    Log_info("Returing PUT TIMEOUT for req_id: %s", req_id.c_str());
+    return KV_TIMEOUT;
+  
+}
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+
+  std::unique_lock&lt;std::recursive_mutex&gt; lock(mtx_);
+
+
+  string req_id = to_string(GetNextOpId());
+
+  cout&lt;&lt;"[Append] Client Request Id: "&lt;&lt;req_id &lt;&lt; " Key: " &lt;&lt; k &lt;&lt;" value: "&lt;&lt; v &lt;&lt; endl;
+  
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id_cnt_));
+  s-&gt;data_.push_back("append");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  s-&gt;data_.push_back(req_id);
+  
+
+  uint64_t index;
+  uint64_t term;
+  auto cmdptr_m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+
+  bool_t a = GetRaftServer().Start(cmdptr_m, &index, &term);
+
+  if(a){
+    // operationApplied  = false;
+    applied[req_id] = false;
+
+    while (!applied[req_id]) {
+      Coroutine::Sleep(10000);
+    }
+    if(!applied[req_id]){
+      Log_info("Returing APPEND TIMEOUT for req_id: %s", req_id.c_str());
+        return KV_TIMEOUT;
+    }
+
+    Log_info("Returing Append Success for req_id: %s", req_id.c_str());
+    return KV_SUCCESS;
+  }else{
+    Log_info("[Append] Not a leader for k: %s v: %s", k.c_str(), v.c_str());
+    return KV_NOTLEADER;
+  }
+  Log_info("Returing APPEND TIMEOUT for req_id: %s", req_id.c_str());
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match104-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  return KV_TIMEOUT;
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+  /* your code here */
+  std::unique_lock&lt;std::recursive_mutex&gt; lock(mtx_);
+
+  string req_id = to_string(GetNextOpId());
+</FONT>  cout&lt;&lt;"[Get] Client Request Id: "&lt;&lt;req_id &lt;&lt; " Key: " &lt;&lt; k &lt;&lt;" value: "&lt;&lt; v &lt;&lt; endl;
+
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id_cnt_));
+  s-&gt;data_.push_back("get");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back("");
+  s-&gt;data_.push_back(req_id);
+
+  //operationApplied = false;
+  applied[req_id] = false;
+  
+  uint64_t index;
+  uint64_t term;
+  auto cmdptr_m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  bool_t a = GetRaftServer().Start(cmdptr_m, &index, &term);
+
+  if(a){
+      Log_info("[Get] Success: %d Index: %lu term: %lu", a, index, term);
+
+        Coroutine::Sleep(10000);
+
+      if(applied[req_id]){
+        if(store.count(k) &gt; 0){
+          // Log_info("[GET] Key Exixts key: %s val: %s", k.c_str(),store[k].c_str());
+          *v = store[k];
+          Log_info("Returing Get Success for req_id: %s for k: %s Value: %s", req_id.c_str(), k.c_str(), store[k].c_str());
+          return KV_SUCCESS;
+        }
+        Log_info("Returing GET TIMEOUT for req_id: %s", req_id.c_str());
+        return KV_TIMEOUT;
+      }
+      Log_info("Returing GET TIMEOUT for req_id: %s", req_id.c_str());
+      return KV_TIMEOUT;
+     
+    }else{
+      Log_info("[GeT] Not a leader for k: %s", k.c_str());
+      return KV_NOTLEADER;
+    }
+    Log_info("Returing GET TIMEOUT for req_id: %s", req_id.c_str());
+    return KV_TIMEOUT;
+    
+}
+
+void KvServer::eraseKV(const string k, const string v){
+  std::unique_lock&lt;std::recursive_mutex&gt; lock(mtx_);
+
+  for (std::map&lt;std::string, putKV&gt;::iterator it = putKVMap.begin(); it != putKVMap.end(); ++it) {
+        const std::string& key = it-&gt;first;
+        putKV tmpKV = it-&gt;second;
+        if(tmpKV.key == k && tmpKV.value == v && tmpKV.status == 2){
+         putKVMap.erase(it);
+         break;
+        }
+    }
+}
+
+void KvServer::updateMap(const string k, const string v, int status){
+  for (std::map&lt;std::string, putKV&gt;::iterator it = putKVMap.begin(); it != putKVMap.end(); ++it) {
+        const std::string& key = it-&gt;first;
+        putKV tmpKV = it-&gt;second;
+        if(tmpKV.key == k && tmpKV.value == v){
+           it-&gt;second.status = status;
+           break;
+        }
+    }
+}
+
+int KvServer::checkKVSent(const string k, const string v){
+  std::unique_lock&lt;std::recursive_mutex&gt; lock(mtx_);
+
+  for (std::map&lt;std::string, putKV&gt;::iterator it = putKVMap.begin(); it != putKVMap.end(); ++it) {
+        const std::string& key = it-&gt;first;
+        putKV tmpKV = it-&gt;second;
+        if(tmpKV.key == k && tmpKV.value == v ){
+          return tmpKV.status;
+        }
+    }
+    return 55;//random
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  // auto v = (MultiStringMarshallable*)(&m);
+  /* your code here */
+  std::unique_lock&lt;std::recursive_mutex&gt; lock(mtx_);
+  Coroutine::CreateRun([this, &m]() {
+        //while (true) {
+            applyToKVDB(m);
+            Coroutine::Sleep(100);
+        //}
+    });
+
+}
+
+void KvServer::applyToKVDB(Marshallable& m){
+  
+  std::unique_lock&lt;std::recursive_mutex&gt; lock(mtx_);
+
+  auto v = (MultiStringMarshallable*)(&m);
+
+  const string clientId = v-&gt;data_[0];
+  const string requestType = v-&gt;data_[1];
+  const string comitKey = v-&gt;data_[2];
+  const string comitValue = v-&gt;data_[3];
+  const string reqId = v-&gt;data_[4];
+
+  cout&lt;&lt;"[OnNextCommand] Request Id: "&lt;&lt; reqId&lt;&lt;" Client Id: "&lt;&lt;clientId&lt;&lt;" Request type: "&lt;&lt; requestType &lt;&lt; " Key: "&lt;&lt;comitKey&lt;&lt;" Value: "&lt;&lt;comitValue&lt;&lt;endl;
+
+  // std::unique_lock&lt;std::mutex&gt; lock(mu);
+  // operationApplied = true;
+  applyCondition.notify_one(); // Signal that the operation is applied.
+
+  if(!applied[reqId]){
+      applied[reqId] = true;
+  }
+
+  updateMap(comitKey,comitValue,2);//2: sucess, ready to be sent
+
+  if(requestType == "get"){
+    //operationApplied = true;
+    Log_info("Get Commited!!");
+  }else{
+    if(requestType == "put"){
+      store[comitKey] = comitValue;
+    }else{
+      if(store.count(comitKey) == 0){
+        store[comitKey] = comitValue;
+      }else{
+        store[comitKey] = store[comitKey] + comitValue;
+      }
+    }
+
+  }
+  
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

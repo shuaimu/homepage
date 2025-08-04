@@ -1,0 +1,413 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/vmylsamy/src/shardkv/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/vmylsamy/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+import (
+	"raft"
+)
+import "labrpc"
+import "sync"
+import "labgob"
+
+
+type ClientWait struct{
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match203-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	Index int
+	ch chan Op
+}
+
+type ShardMaster struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+	isAlive bool
+	cliendIdToEventId map[int64]int64
+</FONT>	channelPerClient  map[int64]ClientWait
+	configs []Config
+	LastApplied int
+}
+
+
+type Op struct {
+	Type               	string
+	EventId            	int64
+	CliendId           	int64
+
+	Servers map[int][]string
+	GroupIds    []int
+	Shard   int
+	GroupId     int
+	QueryNum    int
+
+	IsAlreadyProcessed 	bool
+	IsCommandValid 		bool
+}
+
+
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+	operation := Op{EventId: args.EventId, CliendId: args.CliendId,Servers:args.Servers,Type:OP_JOIN}
+	index,_,isLeader:= sm.rf.Start(operation)
+	if !isLeader {
+		reply.WrongLeader = true
+	} else {
+		sm.waitTillAgreement(operation.CliendId,index)
+	}
+
+}
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+
+	operation := Op{EventId: args.EventId, CliendId: args.CliendId,GroupIds:args.GIDs,Type:OP_LEAVE}
+
+	index,_,isLeader:= sm.rf.Start(operation)
+	if !isLeader {
+		reply.WrongLeader = true
+	} else {
+		sm.waitTillAgreement(operation.CliendId,index)
+	}
+
+}
+
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+	operation := Op{EventId: args.EventId, CliendId: args.CliendId,GroupId:args.GID,Shard:args.Shard, Type:OP_MOVE}
+	index,_,isLeader:= sm.rf.Start(operation)
+	if !isLeader {
+		reply.WrongLeader = true
+	} else {
+		sm.waitTillAgreement(operation.CliendId,index)
+	}
+}
+
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+
+	operation := Op{EventId: args.EventId, CliendId: args.CliendId,QueryNum:args.Num,Type:OP_QUERY}
+	index,_,isLeader:= sm.rf.Start(operation)
+	if !isLeader {
+		reply.WrongLeader = true
+	} else {
+		reply.WrongLeader, reply.Config = sm.getQueryResponse(operation, index);
+	}
+}
+
+func (sm *ShardMaster) waitTillAgreement(cliendId int64, index int) {
+	sm.mu.Lock()
+	clientCh := make(chan Op)
+	clientWait := ClientWait { Index: index, ch: clientCh,}
+	sm.channelPerClient[cliendId] = clientWait
+	sm.mu.Unlock()
+	&lt;- clientCh
+	close(clientCh)
+	return
+}
+
+func (sm *ShardMaster) getQueryResponse(operation Op,  index int) ( bool, Config) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	clientCh := make(chan Op)
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match203-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	clientWait := ClientWait { Index: index, ch: clientCh,}
+	sm.channelPerClient[operation.CliendId] = clientWait
+	sm.mu.Unlock()
+</FONT>	var config Config
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match203-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	appliedOp := &lt;- clientCh
+	sm.mu.Lock()
+	if (appliedOp.IsCommandValid && (appliedOp.CliendId == operation.CliendId && appliedOp.EventId == operation.EventId &&
+		appliedOp.QueryNum == operation.QueryNum && appliedOp.Type == operation.Type )) || appliedOp.IsAlreadyProcessed {
+</FONT>		if appliedOp.QueryNum &gt;= 0 && appliedOp.QueryNum &lt; len(sm.configs) {
+			config = sm.configs[appliedOp.QueryNum]
+
+		} else {
+			config =  sm.configs[len(sm.configs) - 1]
+
+		}
+
+
+	}
+	close(clientCh)
+	return false, config
+
+}
+
+
+func (sm *ShardMaster) createCopy(config Config) Config {
+	var newConfig Config
+	newConfig.Groups = make(map[int][]string)
+	for GroupId, Servers := range config.Groups {
+		newConfig.Groups[GroupId] = Servers
+	}
+
+	for i:=0; i&lt; len(config.Shards);i++{
+		newConfig.Shards[i] = config.Shards[i]
+	}
+
+	newConfig.Num = config.Num+1
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match203-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	return newConfig
+}
+
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+	sm.mu.Lock()
+	sm.isAlive = false
+	sm.mu.Unlock()
+	sm.applyCh &lt;- raft.ApplyMsg{ CommandValid: false, Command: "Kill", CommandIndex: -1,}
+</FONT>
+}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+	return sm.rf
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	labgob.Register(Op{})
+	sm := new(ShardMaster)
+	sm.me = me
+	sm.isAlive = true
+	sm.configs = make([]Config, 1)
+	sm.configs[0].Groups = map[int][]string{}
+	sm.applyCh = make(chan raft.ApplyMsg)
+	sm.channelPerClient = make(map[int64]ClientWait)
+	sm.cliendIdToEventId = make(map[int64]int64)
+	go sm.startApplyMessageHandler()
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+	return sm
+}
+
+
+func (sm *ShardMaster) startApplyMessageHandler(){
+	for {
+		msg := &lt;- sm.applyCh
+		sm.mu.Lock()
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match203-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		var currCmd  Op
+		if msg.CommandValid {
+			currCmd = msg.Command.(Op)
+			sm.processMsg(currCmd)
+		} else {
+			currCmd = Op{
+				IsCommandValid: false,
+			}
+			go sm.sendMsgToWaitingClients(currCmd, sm.LastApplied)
+			if msg.Command.(string) == "Kill" {
+</FONT>				sm.mu.Unlock()
+				break
+			}
+		}
+		sm.mu.Unlock()
+	}
+}
+
+func (sm *ShardMaster) sendMsgToWaitingClients(msg Op, appliedIndex int){
+	sm.mu.Lock()
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match203-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	if sm.isAlive {
+		for k, v := range sm.channelPerClient {
+			if appliedIndex == v.Index || (!msg.IsCommandValid ){
+				v.ch &lt;- msg
+				delete(sm.channelPerClient, k)
+			}
+		}
+	}
+	sm.mu.Unlock()
+}
+
+
+func (sm *ShardMaster) processMsg(currCmd Op){
+</FONT>	currCmd.IsCommandValid = true
+	lastProcEventId := sm.cliendIdToEventId[currCmd.CliendId]
+	if currCmd.Type != OP_QUERY {
+		if lastProcEventId &lt; currCmd.EventId {
+			 if currCmd.Type == OP_JOIN {
+				sm.handleJoin(currCmd.Servers)
+			 } else if currCmd.Type == OP_LEAVE {
+				 sm.handleLeave(currCmd.GroupIds)
+			 } else if currCmd.Type == OP_MOVE {
+				 sm.handleMove(currCmd.GroupId, currCmd.Shard)
+			 }
+		} else {
+			currCmd.IsAlreadyProcessed = true;
+		}
+	}
+
+	sm.cliendIdToEventId[currCmd.CliendId] = currCmd.EventId
+	sm.LastApplied++
+	go sm.sendMsgToWaitingClients(currCmd, sm.LastApplied)
+}
+
+
+func (sm * ShardMaster) handleJoin(serverList map[int][]string){
+	currConfig := sm.configs[len(sm.configs)-1]
+	newConfig := sm.createCopy(currConfig)
+	for key,value := range serverList {
+		newConfig.Groups[key] = value
+	}
+	newConfig = sm.createNewConfigurationOnJoin(newConfig, serverList)
+	sm.configs = append(sm.configs, newConfig)
+}
+
+
+func (sm * ShardMaster) handleLeave(GroupIds []int){
+	currConfig := sm.configs[len(sm.configs)-1]
+	newConfig := sm.createCopy(currConfig)
+	for _,value := range GroupIds {
+		delete(newConfig.Groups, value)
+	}
+	newConfig = sm.createNewConfigurationOnLeaving(newConfig, GroupIds)
+	sm.configs = append(sm.configs, newConfig)
+}
+
+func (sm *ShardMaster) handleMove(groupId int, shard int){
+	currConfig := sm.configs[len(sm.configs)-1]
+	newConfig := sm.createCopy(currConfig)
+	newConfig.Shards[shard] = groupId
+	sm.configs = append(sm.configs, newConfig)
+//	fmt.Println("Server : ",sm.me," After move : ",sm.configs[len(sm.configs)-1].Shards)
+}
+
+func (sm *ShardMaster) createNewConfigurationOnJoin(config Config, grpsAdded map[int][]string) Config {
+	groupToShardCount := make(map[int]int)
+
+	for k,_ := range config.Groups{
+		groupToShardCount[k]=0
+	}
+
+	shardsPerGroup := len(config.Shards)/ len(config.Groups)
+
+	for i:=0;i&lt;len(config.Shards);i++ {
+		grp:= config.Shards[i]
+		if value,ok := groupToShardCount[grp];ok{
+			groupToShardCount[grp]=value+1
+		}
+	}
+
+	for i:=0;i&lt;len(config.Shards);{
+		grp:= config.Shards[i]
+		value,ok := groupToShardCount[grp]
+		isFound :=false
+		if ok {
+			if groupToShardCount[grp] &gt; shardsPerGroup {
+				for k,_:= range grpsAdded {
+					if groupToShardCount[k] &lt; shardsPerGroup {
+						config.Shards[i] = k
+						groupToShardCount[k]++;
+						isFound = true
+						break;
+					}
+				}
+
+				groupToShardCount[grp]=value-1
+			} else {
+				isFound = true
+			}
+
+		} else {
+			for k,_:= range grpsAdded {
+				if groupToShardCount[k] &lt; shardsPerGroup {
+					config.Shards[i] = k
+					groupToShardCount[k]++;
+					isFound = true
+					break;
+				}
+			}
+		}
+		if(isFound) {
+			i++;
+		} else {
+			shardsPerGroup++
+		}
+	}
+	return config
+}
+
+
+func (sm *ShardMaster) createNewConfigurationOnLeaving(config Config, GroupIds []int) Config {
+
+	removedGrps := make(map[int]int)
+
+	groupsToShardCount := make(map[int]int)
+
+	for i:=0; i&lt; len(GroupIds);i++ {
+		removedGrps[GroupIds[i]] = 0
+	}
+
+	for k,_ := range config.Groups {
+		if _,ok:=removedGrps[k];!ok{
+			groupsToShardCount[k]=0
+		}
+	}
+
+	for i:=0;i&lt;len(config.Shards);i++ {
+		if _,ok:=groupsToShardCount[config.Shards[i]];ok{
+			groupsToShardCount[config.Shards[i]] = 1
+		}
+	}
+
+	if len(groupsToShardCount) &gt; 0 {
+		shardsPerGroup := len(config.Shards)/ len(groupsToShardCount)
+
+			for i:=0;i&lt;len(config.Shards); {
+				if _,ok:=removedGrps[config.Shards[i]];ok{
+						isFound:=false;
+						for k,val:= range groupsToShardCount {
+							if val &lt; shardsPerGroup {
+
+								isFound = true;
+								config.Shards[i] = k
+								groupsToShardCount[k] = val+1
+								i++
+								break
+							}
+						}
+						if !isFound{
+							shardsPerGroup++
+						}
+
+				} else {
+					i++
+				}
+			}
+
+
+
+	} else {
+		for i:=0;i&lt;len(config.Shards);i++ {
+			config.Shards[i] = 0
+		}
+	}
+	return config
+}
+
+
+
+
+</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,291 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-Sagor054/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-Sirneij/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus
+{
+
+  RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+      : svr_((RaftServer *)sched)
+  {
+    struct timespec curr_time;
+    clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+    srand(curr_time.tv_nsec);
+  }
+
+  /**
+   * @brief Handles the request vote RPC.
+   * 
+   * @param term The candidate's term.
+   * @param candidate_id The candidate's ID.
+   * @param last_log_index The index of the candidate's last log entry.
+   * @param last_log_term The term of the candidate's last log entry.
+   * @param reply_term The term of the server.
+   * @param vote_granted Whether the server granted the vote.
+   * @param defer The deferred reply.
+   * 
+   * @return void
+   * 
+   * @note This function is called by the RPC handler.
+  */
+  void RaftServiceImpl::HandleRequestVote(const int64_t &term,
+                                          const locid_t &candidate_id,
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match38-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                          const int64_t &last_log_index,
+                                          const int64_t &last_log_term,
+                                          int64_t *reply_term,
+                                          bool_t *vote_granted,
+                                          rrr::DeferredReply *defer)
+  {
+    svr_-&gt;mtx_.lock();
+
+    int64_t lastLogIndex, lastLogTerm;
+</FONT>    std::tie(lastLogIndex, lastLogTerm) = svr_-&gt;GetLastLogIndexAndTerm();
+
+    if (term &gt; svr_-&gt;currentTerm)
+    {
+      // Log_info("RaftServiceImpl::HandleRequestVote -&gt; Term out of date. Current term: %d, received term: %d, Candidate: %d", svr_-&gt;currentTerm, term, candidate_id);
+      svr_-&gt;BecomeFollower(term);
+    }
+
+    if (term == svr_-&gt;currentTerm && (svr_-&gt;votedFor == -1 || svr_-&gt;votedFor == candidate_id) && (last_log_term &gt; lastLogTerm || (last_log_term == lastLogTerm && last_log_index &gt;= lastLogIndex)))
+    {
+      *vote_granted = true;
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match38-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      svr_-&gt;votedFor = candidate_id;
+      svr_-&gt;electionResetEvent = std::chrono::high_resolution_clock::now();
+    }
+    else
+    {
+      *vote_granted = false;
+    }
+
+    *reply_term = svr_-&gt;currentTerm;
+
+    // Log_info("RaftServiceImpl::HandleRequestVote -&gt;  Reply: { candidate: %d, term: %d, vote_granted: %d }", candidate_id, *reply_term, *vote_granted);
+
+    svr_-&gt;mtx_.unlock();
+
+    defer-&gt;reply();
+  }
+
+  /**
+   * @brief Handles the empty append entries RPC.
+   * 
+   * @param term The leader's term.
+   * @param leader_id The leader's ID.
+   * @param prev_log_index The index of the log entry immediately preceding the new ones.
+   * @param prev_log_term The term of the log entry immediately preceding the new ones.
+   * @param log_term The term of the log entry.
+   * @param log_cmd The command of the log entry.
+   * @param leader_commit The leader's commit index.
+   * @param reply_term The term of the server.
+   * @param followerAppendOK Whether the server appended the entries.
+   * @param defer The deferred reply.
+   * 
+   * @return void
+   * 
+   * @note This function is called by the RPC handler.
+  */
+  void RaftServiceImpl::HandleEmptyAppendEntries(const int64_t &term,
+</FONT>                                                 const locid_t &leader_id,
+                                                 const int64_t &prev_log_index,
+                                                 const int64_t &prev_log_term,
+                                                 const int64_t &log_term,
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match38-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                                 const int64_t &log_cmd,
+                                                 const int64_t &leader_commit,
+                                                 int64_t *reply_term,
+                                                 bool_t *followerAppendOK,
+                                                 rrr::DeferredReply *defer)
+  {
+    svr_-&gt;mtx_.lock();
+    if (term &gt; svr_-&gt;currentTerm)
+</FONT>    {
+      // Log_info("void RaftServiceImpl::HandleEmptyAppendEntries -&gt; Term out of date. Current term: %d, received term: %d, Leader: %d", svr_-&gt;currentTerm, term, leader_id);
+      svr_-&gt;BecomeFollower(term);
+    }
+
+    *followerAppendOK = false;
+    if (term == svr_-&gt;currentTerm)
+    {
+      if (svr_-&gt;state != RaftState::FOLLOWER)
+      {
+        svr_-&gt;BecomeFollower(term);
+      }
+      svr_-&gt;electionResetEvent = std::chrono::high_resolution_clock::now();
+      *followerAppendOK = true;
+    }
+
+    *reply_term = svr_-&gt;currentTerm;
+
+    // Log_info("void RaftServiceImpl::HandleEmptyAppendEntries -&gt; Reply: { leader: %d, term: %d, followerAppendOK: %d }", leader_id, *reply_term, *followerAppendOK);
+
+    svr_-&gt;mtx_.unlock();
+
+    defer-&gt;reply();
+  }
+
+  /**
+   * @brief Handles the append entries RPC.
+   * 
+   * @param term The leader's term.
+   * @param leader_id The leader's ID.
+   * @param prev_log_index The index of the log entry immediately preceding the new ones.
+   * @param prev_log_term The term of the log entry immediately preceding the new ones.
+   * @param leader_commit The leader's commit index.
+   * @param terms The terms of the log entries.
+   * @param commands The commands of the log entries.
+   * @param reply_term The term of the server.
+   * @param followerAppendOK Whether the server appended the entries.
+   * @param conflict_index The index of the conflicting entry.
+   * @param conflict_term The term of the conflicting entry.
+   * @param defer The deferred reply.
+   * 
+   * @return void
+   * 
+   * @note This function is called by the RPC handler.
+  */
+  void RaftServiceImpl::HandleAppendEntries(const int64_t &term,
+                                            const locid_t &leader_id,
+                                            const int64_t &prev_log_index,
+                                            const int64_t &prev_log_term,
+                                            const int64_t &leader_commit,
+                                            const std::vector&lt;int64_t&gt; &terms,
+                                            const std::vector&lt;MarshallDeputy&gt; &commands,
+                                            int64_t *reply_term,
+                                            bool_t *followerAppendOK,
+                                            int64_t *conflict_index,
+                                            int64_t *conflict_term,
+                                            rrr::DeferredReply *defer)
+  {
+    svr_-&gt;mtx_.lock();
+
+    if (term &gt; svr_-&gt;currentTerm)
+    {
+      // Log_info("RaftServiceImpl::HandleAppendEntries -&gt; Term out of date. Current term: %d, received term: %d, Leader: %d", svr_-&gt;currentTerm, term, leader_id);
+      svr_-&gt;BecomeFollower(term);
+    }
+
+    *followerAppendOK = false;
+    // *conflict_index = -1;
+    // *conflict_term = -1;
+    if (term == svr_-&gt;currentTerm)
+    {
+      if (svr_-&gt;state != RaftState::FOLLOWER)
+      {
+        svr_-&gt;BecomeFollower(term);
+      }
+      svr_-&gt;electionResetEvent = std::chrono::high_resolution_clock::now();
+
+      if (prev_log_index == -1 ||
+          (prev_log_index &lt; svr_-&gt;log.size() && prev_log_term == svr_-&gt;log[prev_log_index].term))
+      {
+        *followerAppendOK = true;
+
+        int64_t logInsertIndex = prev_log_index + 1;
+        int64_t newEntriesIndex = 0;
+
+        vector&lt;shared_ptr&lt;Marshallable&gt;&gt; commandsPtr;
+        for (auto &command : commands)
+        {
+          commandsPtr.push_back(command.sp_data_);
+        }
+
+        std::vector&lt;LogEntry&gt; entries = svr_-&gt;MergeTermsAndCommandsToLogEntry(terms, commandsPtr);
+
+        while (logInsertIndex &lt; svr_-&gt;log.size() && newEntriesIndex &lt; entries.size() && svr_-&gt;log[logInsertIndex].term == entries[newEntriesIndex].term) {
+                    logInsertIndex++;
+                    newEntriesIndex++;
+                }
+
+        if (newEntriesIndex &lt; entries.size())
+        {
+          // Log_info("RaftServiceImpl::HandleAppendEntries -&gt; Inserting entries %s from index %d", svr_-&gt;StringifyLogEntry(entries).c_str(), logInsertIndex);
+
+          svr_-&gt;log = std::vector&lt;LogEntry&gt;(svr_-&gt;log.begin(), svr_-&gt;log.begin() + logInsertIndex);
+          svr_-&gt;log.insert(svr_-&gt;log.end(), entries.begin() + newEntriesIndex, entries.end());
+
+          // svr_-&gt;log.insert(svr_-&gt;log.begin() + logInsertIndex, entries.begin() + newEntriesIndex, entries.end());
+          // Log_info("RaftServiceImpl::HandleAppendEntries -&gt; log is now: %s", svr_-&gt;StringifyLogEntry(svr_-&gt;log).c_str());
+        }
+
+        if (leader_commit &gt; svr_-&gt;commitIndex)
+        {
+          svr_-&gt;commitIndex = std::min(leader_commit, static_cast&lt;int64_t&gt;(svr_-&gt;log.size()) - 1);
+          // Log_info("RaftServiceImpl::HandleAppendEntries -&gt; Setting commitIndex=%d", svr_-&gt;commitIndex);
+          // Coroutine::Sleep(rand() % 1000);
+          int64_t savedTerm = svr_-&gt;currentTerm;
+          int64_t savedLastApplied = svr_-&gt;lastApplied;
+          std::vector&lt;LogEntry&gt; newEntries;
+
+          if (svr_-&gt;commitIndex &gt; svr_-&gt;lastApplied)
+          {
+            newEntries.insert(newEntries.end(), svr_-&gt;log.begin() + svr_-&gt;lastApplied + 1, svr_-&gt;log.begin() + svr_-&gt;commitIndex + 1);
+            svr_-&gt;lastApplied = svr_-&gt;commitIndex;
+          }
+
+          // Log_info("RaftServiceImpl::HandleAppendEntrie -&gt; entries=%s, savedLastApplied=%d, committer: %d", svr_-&gt;StringifyLogEntry(newEntries).c_str(), savedLastApplied, svr_-&gt;loc_id_);
+
+          for (size_t i = 0; i &lt; newEntries.size(); i++)
+          {
+            svr_-&gt;app_next_(*newEntries[i].command);
+          }
+        }
+      }
+      else
+      {
+        if (prev_log_index &gt;= svr_-&gt;log.size())
+        {
+          *conflict_index = svr_-&gt;log.size();
+          *conflict_term = -1;
+        }
+        else
+        {
+          *conflict_term = svr_-&gt;log[prev_log_index].term;
+          int64_t i;
+          for (i = prev_log_index - 1; i &gt;= 0; i--)
+          {
+            if (svr_-&gt;log[i].term != *conflict_term)
+            {
+              break;
+            }
+          }
+          *conflict_index = i + 1;
+        }
+      }
+    }
+
+    *reply_term = svr_-&gt;currentTerm;
+
+    // Log_info("RaftServiceImpl::HandleAppendEntries -&gt; Reply: { leader: %d, term: %d, followerAppendOK: %d, conflict_index: %d, conflict_term: %d }", leader_id, *reply_term, *followerAppendOK, *conflict_index, *conflict_term);
+
+    defer-&gt;reply();
+    svr_-&gt;mtx_.unlock();
+  }
+  void RaftServiceImpl::HandleHelloRpc(const string &req,
+                                       string *res,
+                                       rrr::DeferredReply *defer)
+  {
+    /* Your code here */
+    Log_info("receive an rpc: %s", req.c_str());
+    *res = "world";
+    defer-&gt;reply();
+  }
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

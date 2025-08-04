@@ -1,0 +1,210 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-devu1997/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-devu1997/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match92-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                  const string& v) {
+  /* 
+  Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  */
+  /* your code here */
+  auto cmd = make_shared&lt;MultiStringMarshallable&gt;();
+  string operationId = to_string(oid);
+  cmd-&gt;data_.push_back(operationId);
+  cmd-&gt;data_.push_back("put");
+  cmd-&gt;data_.push_back(k);
+  cmd-&gt;data_.push_back(v);
+</FONT>  Log_debug("Received Put request with operation id: %d", oid);
+  
+  uint64_t index;
+  uint64_t term;
+  shared_ptr&lt;Marshallable&gt; cmdToSend = static_pointer_cast&lt;Marshallable&gt;(cmd);
+  bool isLeader = GetRaftServer().Start(cmdToSend, &index, &term);
+  if (!isLeader) {
+    return KV_NOTLEADER;
+  }
+  Log_debug("Request with operation id: %d started processing", oid);
+
+  Timer *timer = new Timer();
+  timer-&gt;start();
+  while (timer-&gt;elapsed() &lt;= PROCESSING_TIMEOUT && cmdResponse.find(oid) == cmdResponse.end())
+  {
+    Coroutine::Sleep(50000);
+  }
+
+  int status = KV_TIMEOUT;
+  if (cmdResponse.find(oid) != cmdResponse.end()) {
+    status = KV_SUCCESS;
+    Log_debug("Request with operation id: %d succeeded", oid);
+  } else {
+    Log_debug("Request with operation id: %d timed out", oid);
+  }
+  cmdResponse.erase(oid);
+  return status;
+}
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match92-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  shared_ptr&lt;MultiStringMarshallable&gt; cmd = make_shared&lt;MultiStringMarshallable&gt;();
+  string operationId = to_string(oid);
+  cmd-&gt;data_.push_back(operationId);
+  cmd-&gt;data_.push_back("append");
+  cmd-&gt;data_.push_back(k);
+  cmd-&gt;data_.push_back(v);
+</FONT>  Log_debug("Received Append request with operation id: %d", oid);
+  
+  uint64_t index;
+  uint64_t term;
+  shared_ptr&lt;Marshallable&gt; cmdToSend = static_pointer_cast&lt;Marshallable&gt;(cmd);
+  bool isLeader = GetRaftServer().Start(cmdToSend, &index, &term);
+  if (!isLeader) {
+    return KV_NOTLEADER;
+  }
+  Log_debug("Request with operation id: %d started processing", oid);
+  
+  Timer *timer = new Timer();
+  timer-&gt;start();
+  while (timer-&gt;elapsed() &lt;= PROCESSING_TIMEOUT && cmdResponse.find(oid) == cmdResponse.end())
+  {
+    Coroutine::Sleep(50000);
+  }
+  
+  int status = KV_TIMEOUT;
+  if (cmdResponse.find(oid) != cmdResponse.end()) {
+    status = KV_SUCCESS;
+    Log_debug("Request with operation id: %d succeeded", oid);
+  } else {
+    Log_debug("Request with operation id: %d timed out", oid);
+  }
+  cmdResponse.erase(oid);
+  return status;
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+  shared_ptr&lt;MultiStringMarshallable&gt; cmd = make_shared&lt;MultiStringMarshallable&gt;();
+  string operationId = to_string(oid);
+  cmd-&gt;data_.push_back(operationId);
+  cmd-&gt;data_.push_back("get");
+  cmd-&gt;data_.push_back(k);
+  Log_debug("Received Get request with operation id: %d", oid);
+  
+  uint64_t index;
+  uint64_t term;
+  shared_ptr&lt;Marshallable&gt; cmdToSend = static_pointer_cast&lt;Marshallable&gt;(cmd);
+  bool isLeader = GetRaftServer().Start(cmdToSend, &index, &term);
+  if (!isLeader) {
+    return KV_NOTLEADER;
+  }
+  Log_debug("Request with operation id: %d started processing", oid);
+  
+  Timer *timer = new Timer();
+  timer-&gt;start();
+  while (timer-&gt;elapsed() &lt;= PROCESSING_TIMEOUT && cmdResponse.find(oid) == cmdResponse.end())
+  {
+    Coroutine::Sleep(50000);
+  }
+
+  int status = KV_TIMEOUT;
+  if (cmdResponse.find(oid) != cmdResponse.end()) {
+    *v = cmdResponse.at(oid);
+    status = KV_SUCCESS;
+    Log_debug("Request with operation id: %d succeeded", oid);
+  } else {
+    Log_debug("Request with operation id: %d timed out", oid);
+  }
+  cmdResponse.erase(oid);
+  return status;
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  /* your code here */
+  auto cmd = (MultiStringMarshallable*)(&m);
+  string operationId = cmd-&gt;data_.at(0);
+  string operationType = cmd-&gt;data_.at(1);
+  string key = cmd-&gt;data_.at(2);
+  
+  stringstream operationIdStream(operationId);
+  uint64_t oid;
+  operationIdStream &gt;&gt; oid;
+  Log_debug("Request with operation id: %d to be applied", oid);
+
+  if (operationType.compare("put") == 0) {
+    string value = cmd-&gt;data_.at(3);
+    kvStore[key] = value;
+    cmdResponse[oid] = KV_EMPTY_RESPONSE;
+    Log_debug("Put request with operation id: %d is applied", oid);
+  } 
+  
+  else if (operationType.compare("append") == 0) {
+    string value = cmd-&gt;data_.at(3);
+    if (kvStore.find(key) == kvStore.end()) {
+      kvStore[key] = value;
+    } else {
+      kvStore[key] += value;
+    }
+    cmdResponse[oid] = KV_EMPTY_RESPONSE;
+    Log_debug("Append request with operation id: %d is applied", oid);
+  } 
+  
+  else if (operationType.compare("get") == 0) {
+    cmdResponse[oid] = kvStore[key];
+    Log_debug("Get request with operation id: %d is applied", oid);
+  }
+
+  Log_debug("Request with operation id: %d is applied", oid);
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

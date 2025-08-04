@@ -1,0 +1,486 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-Linyqsbu/src/deptran/raft/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-omkar-rajwade-sbu-1/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+
+
+void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t& leaderCommitIndex,
+                                               const uint64_t& term,
+                                               const uint64_t& prevLogIndex,
+                                               const uint64_t& prevLogTerm,
+                                               const uint64_t& leaderId,
+                                        uint64_t* termReturned,
+                                        bool_t* followerAppendOK,
+                                        uint64_t* conflictTerm,
+                                        uint64_t* conflictIdx,
+                                        rrr::DeferredReply* defer){
+      bool alreadyReplied = false;
+      if(term &lt; svr_-&gt;currentTerm)
+      {
+        Log_info("Site %d : I have higher term than %d, returning that term.",svr_-&gt;loc_id_,leaderId);
+        *followerAppendOK = 0;
+        *termReturned = svr_-&gt;currentTerm;
+        defer-&gt;reply();
+        alreadyReplied = true;
+      }
+
+      if(!alreadyReplied)
+      {
+        if(svr_-&gt;anEvent == nullptr)
+        {
+          svr_-&gt;anEvent = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+        }
+      }
+
+      if(!alreadyReplied && svr_-&gt;log.size() &lt; prevLogIndex + 1) //Potentially faulty
+      {
+        Log_info("Site %d : Log size issue. command was from %dwith prevlogIndex %d",svr_-&gt;loc_id_,leaderId,prevLogIndex);
+        uint64_t lastEntryIdx = svr_-&gt;log.size() - 1;
+        svr_-&gt;mtx_.lock();
+        uint64_t lastLogTerm = svr_-&gt;log.at(lastEntryIdx).term;
+        svr_-&gt;mtx_.unlock();
+        *conflictIdx = lastEntryIdx;
+        *conflictTerm = lastLogTerm;
+        *followerAppendOK = 0;
+        *termReturned = svr_-&gt;currentTerm;
+        if(svr_-&gt;lcf!= 0 && leaderCommitIndex &gt; svr_-&gt;commitIndex)
+        {
+          svr_-&gt;mtx_.lock();
+          svr_-&gt;commitIndex = min(leaderCommitIndex,svr_-&gt;currentLogIdx - 1);
+          svr_-&gt;mtx_.unlock();
+        }
+
+        svr_-&gt;anEvent-&gt;Set(1);
+        svr_-&gt;lcf = 2;
+        defer-&gt;reply();
+        alreadyReplied = true;
+      }
+
+      if(!alreadyReplied && svr_-&gt;log[prevLogIndex].term != prevLogTerm)
+      {
+        Log_info("Site %d : PrevLog no match. command was from %d, considering hb",svr_-&gt;loc_id_,leaderId);
+        //locate lowest entry with the given term
+        uint64_t myConflictTerm = svr_-&gt;log[prevLogIndex].term ;
+        uint64_t myConflictIndex = prevLogIndex ;
+        for(uint64_t i = prevLogIndex;i&gt;=0;i--)
+        {
+            if(svr_-&gt;log[i].term ==myConflictTerm)
+            {
+                myConflictIndex = i;
+            }
+            else
+            {
+              break;
+            }
+        } 
+        *conflictIdx = myConflictIndex;
+        *conflictTerm = myConflictTerm;
+        *followerAppendOK = 0;
+        *termReturned = svr_-&gt;currentTerm;
+        if(svr_-&gt;lcf!= 0 &&  leaderCommitIndex &gt; svr_-&gt;commitIndex)
+        {
+          svr_-&gt;mtx_.lock();
+          svr_-&gt;commitIndex = min(leaderCommitIndex,svr_-&gt;currentLogIdx - 1);
+          svr_-&gt;mtx_.unlock();
+        }
+        svr_-&gt;anEvent-&gt;Set(1);
+        svr_-&gt;lcf = 2;
+        defer-&gt;reply();
+        alreadyReplied = true;
+      }
+
+      if(!alreadyReplied)
+      {
+        //Log_info("Site %d : All other cases. command was from %d, replying positive",svr_-&gt;loc_id_,leaderId);
+        if(svr_-&gt;currentTerm &lt; term)
+        {
+          svr_-&gt;currentTerm = term;
+          svr_-&gt;lcf = 2;
+        }
+        if(svr_-&gt;lcf!= 0 && leaderCommitIndex &gt; svr_-&gt;commitIndex)
+        {
+          svr_-&gt;mtx_.lock();
+          svr_-&gt;commitIndex = min(leaderCommitIndex,svr_-&gt;currentLogIdx - 1);
+          svr_-&gt;mtx_.unlock();
+        }
+        *followerAppendOK = 1;
+        *termReturned = svr_-&gt;currentTerm;
+        if(svr_-&gt;lcf != 0) //Potentially FAULTY
+        {
+          svr_-&gt;lcf = 2;
+        }
+        svr_-&gt;anEvent-&gt;Set(1);
+        defer-&gt;reply();   
+      }  
+}
+
+
+
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match211-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void RaftServiceImpl::HandleFullAppendEntries(const uint64_t& leaderCommitIndex,
+                                               const uint64_t& term,
+                                               const uint64_t& prevLogIndex,
+                                               const uint64_t& prevLogTerm,
+                                               const std::vector&lt;MarshallDeputy&gt;& commands,
+                                               const std::vector&lt;uint64_t&gt;& logEntryTerms,
+                                               const uint64_t& leaderId,
+                                        uint64_t* termReturned,
+                                        bool_t* followerAppendOK,
+                                        uint64_t* conflictTerm,
+                                        uint64_t* conflictIdx,
+</FONT>                                        rrr::DeferredReply* defer){
+      bool alreadyReplied = false;
+      if(term &lt; svr_-&gt;currentTerm)
+      {
+        Log_info("Site %d : I have higher term than %d, returning that term.",svr_-&gt;loc_id_,leaderId);
+        *followerAppendOK = 0;
+        *termReturned = svr_-&gt;currentTerm;
+        defer-&gt;reply();
+        alreadyReplied = true;
+      }
+
+      if(!alreadyReplied)
+      {
+        if(svr_-&gt;anEvent == nullptr)
+        {
+          svr_-&gt;anEvent = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+        }
+      }
+
+      if(!alreadyReplied && svr_-&gt;log.size() &lt; prevLogIndex + 1) //Potentially faulty
+      {
+        Log_info("Site %d : Log size issue. command was from %dwith prevlogIndex %d",svr_-&gt;loc_id_,leaderId,prevLogIndex);
+        uint64_t lastEntryIdx = svr_-&gt;log.size() - 1;
+        svr_-&gt;mtx_.lock();
+        uint64_t lastLogTerm = svr_-&gt;log.at(lastEntryIdx).term;
+        svr_-&gt;mtx_.unlock();
+        *conflictIdx = lastEntryIdx;
+        *conflictTerm = lastLogTerm;
+        *followerAppendOK = 0;
+        *termReturned = svr_-&gt;currentTerm;
+        if(svr_-&gt;lcf!= 0 && leaderCommitIndex &gt; svr_-&gt;commitIndex)
+        {
+          svr_-&gt;mtx_.lock();
+          svr_-&gt;commitIndex = min(leaderCommitIndex,svr_-&gt;currentLogIdx - 1);
+          svr_-&gt;mtx_.unlock();
+        }
+        svr_-&gt;anEvent-&gt;Set(1);
+        svr_-&gt;lcf = 2;
+        defer-&gt;reply();
+        alreadyReplied = true;
+      }
+      svr_-&gt;mtx_.lock();
+
+      if(!alreadyReplied && svr_-&gt;log.at(prevLogIndex).term != prevLogTerm)
+      {
+        svr_-&gt;mtx_.unlock();
+        Log_info("Site %d : PrevLog issue. command was from %d, considering hb",svr_-&gt;loc_id_,leaderId);
+        uint64_t myConflictTerm = svr_-&gt;log[prevLogIndex].term ;
+        uint64_t myConflictIndex = prevLogIndex ;
+        for(uint64_t i = prevLogIndex;i&gt;=0;i--)
+        {
+            if(svr_-&gt;log[i].term ==myConflictTerm)
+            {
+                myConflictIndex = i;
+            }
+            else
+            {
+              break;
+            }
+        } 
+        *conflictIdx = myConflictIndex;
+        *conflictTerm = myConflictTerm;
+        *followerAppendOK = 0;
+        *termReturned = svr_-&gt;currentTerm;
+        if(svr_-&gt;lcf!= 0 &&  leaderCommitIndex &gt; svr_-&gt;commitIndex)
+        {
+          svr_-&gt;mtx_.lock();
+          svr_-&gt;commitIndex = min(leaderCommitIndex,svr_-&gt;currentLogIdx - 1);
+          svr_-&gt;mtx_.unlock();
+        }
+        svr_-&gt;anEvent-&gt;Set(1);
+        svr_-&gt;lcf = 2;
+        defer-&gt;reply();
+        alreadyReplied = true;
+      }
+      svr_-&gt;mtx_.unlock();
+
+      if(!alreadyReplied)
+      {
+
+        Log_info("Site %d : I can append entries from %d, considering HB",svr_-&gt;loc_id_,leaderId);
+        if(svr_-&gt;currentTerm &lt; term)
+        {
+          svr_-&gt;currentTerm = term;
+          svr_-&gt;lcf = 2;
+        }
+        if(svr_-&gt;lcf != 0) //Potentially FAULTY
+        {
+          //Log_info("Site %d : Appending to log %d, from %d",svr_-&gt;loc_id_,prevLogIndex+1,leaderId);
+          if(svr_-&gt;log.size() &lt; prevLogIndex  + 1)
+          {
+            //Ideally here the follower log contains nothing from leader
+            Log_info("Site %d:  Resizing log from %d to %d", svr_-&gt;loc_id_,svr_-&gt;log.size(),prevLogIndex + commands.size() + 1);
+            svr_-&gt;log.resize(prevLogIndex + commands.size() + 1, janus::RaftServer::raftLogEntry{0,nullptr});
+          }
+
+        //Don't update if log entry with same term and same index is already there
+        uint64_t incomingLogMismatch = 0;
+        uint64_t followerLogMismatch = prevLogIndex + 1;
+        for(uint64_t k=0;k&lt;commands.size();k++)
+        {
+          if(svr_-&gt;log.size() == prevLogIndex + k + 1)
+          {
+            followerLogMismatch = prevLogIndex + k + 1;
+            incomingLogMismatch = k;
+            break;
+          }
+          svr_-&gt;mtx_.lock();
+          if(svr_-&gt;log.at(prevLogIndex + k + 1).term != logEntryTerms.at(k))
+          {
+            svr_-&gt;mtx_.unlock();
+            followerLogMismatch = prevLogIndex + k + 1;
+            incomingLogMismatch = k;
+            break;
+          }
+          svr_-&gt;mtx_.unlock();
+        }
+
+        svr_-&gt;log.resize(followerLogMismatch + (commands.size()- incomingLogMismatch));
+
+        uint64_t appendIdx = 0;
+        for(uint64_t k=incomingLogMismatch;k&lt;commands.size();k++)
+        {
+          std::shared_ptr&lt;Marshallable&gt; logCmd = const_cast&lt;MarshallDeputy&&gt;(commands.at(k)).sp_data_;
+          svr_-&gt;mtx_.lock();
+          svr_-&gt;log.at(followerLogMismatch + appendIdx).logCmd = logCmd;
+          svr_-&gt;log.at(followerLogMismatch + appendIdx).term = logEntryTerms.at(k);
+          svr_-&gt;mtx_.unlock();
+          appendIdx++;
+        }
+        svr_-&gt;mtx_.lock();
+          
+        svr_-&gt;currentLogIdx = prevLogIndex + commands.size() + 1;
+        svr_-&gt;mtx_.unlock();
+
+
+
+        }
+          svr_-&gt;lcf = 2;
+        
+        if(svr_-&gt;lcf!= 0 &&  leaderCommitIndex &gt; svr_-&gt;commitIndex)
+        {
+          svr_-&gt;mtx_.lock();
+          svr_-&gt;commitIndex = min(leaderCommitIndex,svr_-&gt;currentLogIdx - 1);
+          svr_-&gt;mtx_.unlock();
+        }
+        *followerAppendOK = 1;
+        *termReturned = svr_-&gt;currentTerm;
+        svr_-&gt;anEvent-&gt;Set(1);
+        defer-&gt;reply(); 
+                                        }  
+      }  
+
+
+
+
+
+void RaftServiceImpl::HandleRequestVote(const uint64_t& term,
+                                        const uint64_t& candidateId,
+                                        const uint64_t& lastLogIndex,
+                                        const uint64_t& lastLogTerm,
+                                        uint64_t *currentTerm,
+                                        bool_t *vote_granted,
+                                        rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("Site %d :reqvote recv from %d. my term is %d. Recv term is %d",svr_-&gt;loc_id_, candidateId,svr_-&gt;currentTerm, term);
+  if(svr_-&gt;log.size() == 0)
+  {
+    svr_-&gt;log.resize(1, janus::RaftServer::raftLogEntry{0, nullptr});
+  }
+  bool alreadyVoted = false;
+  //Case where current server has 
+  //higher term that requesting server
+  if (svr_-&gt;currentTerm &gt; term)
+  {
+    *currentTerm = svr_-&gt;currentTerm;
+    *vote_granted = 0;
+     Log_info("Site %d :Not granting vote to %d because I know higher term.",svr_-&gt;loc_id_,candidateId);
+     defer-&gt;reply();
+     alreadyVoted = true;
+
+  }
+
+  if (!alreadyVoted)
+  { 
+
+  if (
+    (svr_-&gt;termVotedFor == -1 && svr_-&gt;votedFor == -1) || 
+  (svr_-&gt;termVotedFor == term && svr_-&gt;votedFor == candidateId) ||
+  (svr_-&gt;termVotedFor &lt; term  ))
+  {
+          svr_-&gt;mtx_.lock();
+
+          if(lastLogTerm &gt;= svr_-&gt;log[svr_-&gt;currentLogIdx-1].term &&
+            lastLogIndex &gt;= svr_-&gt;currentLogIdx-1)
+            {
+              svr_-&gt;mtx_.unlock();
+
+                Log_info("Site %d :Granting vote to %d",svr_-&gt;loc_id_,candidateId);
+                svr_-&gt;votedFor = candidateId;
+                svr_-&gt;lcf = 2;
+                svr_-&gt;currentTerm = term;
+                svr_-&gt;termVotedFor = term;        
+                if(svr_-&gt;anEvent == nullptr)
+                {
+                  svr_-&gt;anEvent = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+                }        
+                svr_-&gt;anEvent-&gt;Set(1);
+                *currentTerm = term;
+                *vote_granted = 1;
+                defer-&gt;reply();
+                alreadyVoted = true;
+            }
+            else
+            {
+                svr_-&gt;mtx_.unlock();
+                if(term &gt; svr_-&gt;currentTerm)
+                {
+                  svr_-&gt;currentTerm = term;
+                  svr_-&gt;votedFor = -1;
+                  svr_-&gt;mtx_.lock();
+                  svr_-&gt;lcf = 2;
+                  svr_-&gt;mtx_.unlock();
+                  Log_info("Site %d :Not granting vote to %d because I have higher log but catching up term",svr_-&gt;loc_id_,candidateId);
+                }
+                *currentTerm = term;
+                *vote_granted = 0;
+                Log_info("Site %d :Not granting vote to %d because I have higher log.",svr_-&gt;loc_id_,candidateId);
+                defer-&gt;reply();
+                alreadyVoted = true;
+            }
+  }
+  else
+{
+  if(!alreadyVoted)
+      {
+            Log_info("Site %d :Not granting vote to %d default case",svr_-&gt;loc_id_,candidateId);
+
+      *currentTerm = svr_-&gt;currentTerm;
+      *vote_granted = 0;
+      defer-&gt;reply();
+      }
+}
+  }
+  
+
+}
+
+void RaftServiceImpl::HandleAppendEntries(const MarshallDeputy& md_cmd,
+                                          const uint64_t& leaderCommitIndex,
+                                          bool_t *followerAppendOK,
+                                          rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("Site %d : Handling append entries",svr_-&gt;loc_id_);
+  std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(md_cmd).sp_data_;
+
+  *followerAppendOK = true;
+  
+
+    svr_-&gt;log.resize(svr_-&gt;currentLogIdx + 2 );
+
+  svr_-&gt;currentLogIdx++;
+    Log_info("Site %d : currentLogIdx incremented",svr_-&gt;loc_id_);
+
+
+  //svr_-&gt;log[svr_-&gt;currentLogIdx] = cmd;
+
+      Log_info("Site %d : Command put in log",svr_-&gt;loc_id_);
+
+
+  if(svr_-&gt;lcf!= 0 &&  leaderCommitIndex &gt; svr_-&gt;commitIndex)
+  {
+    svr_-&gt;commitIndex = min(leaderCommitIndex,svr_-&gt;currentLogIdx);
+  }  
+
+  defer-&gt;reply();
+
+}
+
+
+
+void RaftServiceImpl::HandleAppendEntries2(const uint64_t& leaderTerm,
+                                           const uint64_t& leaderId,
+                                           const uint64_t& prevLogIndex,
+                                           const uint64_t& prevLogTerm,
+                                           const MarshallDeputy& command,
+                                           const uint64_t& leaderCommitIndex,
+                                           bool_t* followerAppendOK,
+                                           uint64_t* newTerm,
+                                          rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("Site %d : Handling append entries",svr_-&gt;loc_id_);
+  std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(command).sp_data_;
+
+  *followerAppendOK = true;
+
+    svr_-&gt;log.resize(svr_-&gt;currentLogIdx + 2 );
+
+  svr_-&gt;currentLogIdx++;
+    Log_info("Site %d : currentLogIdx incremented",svr_-&gt;loc_id_);
+
+
+  //svr_-&gt;log[svr_-&gt;currentLogIdx] = cmd;
+
+      Log_info("Site %d : Command put in log",svr_-&gt;loc_id_);
+
+
+  if(leaderCommitIndex &gt; svr_-&gt;commitIndex)
+  {
+    svr_-&gt;commitIndex = min(leaderCommitIndex,svr_-&gt;currentLogIdx);
+  }  
+
+  defer-&gt;reply();
+
+}
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("site %d:receive an rpc: %s", svr_-&gt;loc_id_, req.c_str());
+
+  if(rand()%2 == 1)
+  {
+  Log_info("site %d:reply to rpc: %s", svr_-&gt;loc_id_, req.c_str());
+
+  svr_-&gt;anEvent-&gt;Set(1);
+  *res = "world";
+  defer-&gt;reply();
+  }
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

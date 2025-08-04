@@ -1,0 +1,493 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-law-lin/src/deptran/raft/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-law-lin/src/deptran/raft/server.cc<p><PRE>
+
+#include "server.h"
+// #include "paxos_worker.h"
+#include "../classic/tpc_command.h"
+#include "coordinator.h"
+#include "exec.h"
+#include "frame.h"
+
+namespace janus {
+
+RaftServer::RaftServer(Frame *frame) {
+    frame_ = frame;
+    /* Your code here for server initialization. Note that this function is
+       called in a different OS thread. Be careful about thread safety if
+     called in a different OS thread. */
+    currentTerm = 0;
+    votedFor = -1;
+
+    // We're making a "placeholder" term here since the rest of the server logic depends on there being some term present
+    // (to compare previous term with current term).
+    auto cmdptr = std::make_shared&lt;TpcCommitCommand&gt;();
+    auto vpd_p = std::make_shared&lt;VecPieceData&gt;();
+    vpd_p-&gt;sp_vec_piece_data_ = std::make_shared&lt;vector&lt;shared_ptr&lt;SimpleCommand&gt;&gt;&gt;();
+    cmdptr-&gt;tx_id_ = -1;
+    cmdptr-&gt;cmd_ = vpd_p;
+    auto cmdptr_m = dynamic_pointer_cast&lt;Marshallable&gt;(cmdptr);
+    LogEntry log;
+    log.term = 0;
+    log.cmd = cmdptr_m;
+    logs.push_back(log);
+
+    state = FOLLOWER;
+    heartbeatTimer.eventQueue = &eventQueue;
+    electionTimer.eventQueue = &eventQueue;
+    votesReceived = 0;
+    commitIndex = 0;
+    lastApplied = 0;
+}
+
+void RaftServer::StartElection() {
+    // Log_info("Election started by %d", loc_id_);
+    mtx_.lock();
+    votesReceived = 1;
+    Log_info("[server %d] follower moving from term %d to term %d", loc_id_, currentTerm, currentTerm + 1);
+    currentTerm += 1;       // Increment currentTerm
+    votedFor = loc_id_;     // Vote for self
+    electionTimer.reset();  // Reset election timer
+    mtx_.unlock();
+    IssueRequestVote();  // Send RequestVote RPCs to all other servers
+}
+
+void RaftServer::StartBackgroundCoroutine() {
+    // Log_info("[server %d] StartBackgroundCoroutine", loc_id_);
+    ServerEvent event;
+    while (true) {
+        // Dequeue event. The thread is blocked until an event is returned.
+        // Log_info("[server %d] State: %d", loc_id_, state);
+        switch (state) {
+            case FOLLOWER:
+                // Log_info("[follower] Waiting on event for server %d", loc_id_);
+                event = eventQueue.dequeue();  // thread blocked here
+                // Log_info("[follower] Got event for server %d: %d", loc_id_, event);
+                if (state != FOLLOWER) {
+                    // If server state is no longer follower, maintain dequeued event for next iteration
+                    continue;
+                }
+                if (event == VOTE_GRANTED) {
+                    // Log_info("[server %d] follower processing vote granted", loc_id_);
+                    electionTimer.reset();
+                } else if (event == RECEIVED_HEARTBEAT) {
+                    Log_info("[server %d] follower received heartbeat", loc_id_);
+                    electionTimer.reset();
+                }
+                if (event == ELECTION_TIMEOUT) {
+                    // If election timeout elapses without receiving AppendEntries
+                    // RPC from current leader or granting vote to candidate : convert to candidate
+                    state = CANDIDATE;
+                    // Log_info("[server %d] follower requested election start.", loc_id_);
+                    StartElection();
+                }
+                break;
+            case CANDIDATE:
+                // Log_info("[candidate] Waiting on event for server %d", loc_id_);
+                event = eventQueue.dequeue();
+                if (state != CANDIDATE) {
+                    continue;
+                }
+                // Log_info("[candidate] Got event for server %d: %d", loc_id_, event);
+                if (event == RECEIVED_HEARTBEAT) {
+                    // If AppendEntries RPC received from new leader: convert to follower
+                    Log_info("[candidate] Server %d received heartbeat from leader, converting to follower", loc_id_);
+                    mtx_.lock();
+                    ConvertToFollower(currentTerm);
+                    mtx_.unlock();
+                } else if (event == WON_ELECTION) {
+                    // Yay, candidate won election! Promote them to leader.
+                    // Log_info("Yay server %d became leader", loc_id_);
+                    mtx_.lock();
+                    state = LEADER;
+                    std::fill_n(std::back_inserter(nextIndex), commo()-&gt;rpc_par_proxies_[0].size(), 0);
+                    std::fill_n(std::back_inserter(matchIndex), commo()-&gt;rpc_par_proxies_[0].size(), 0);
+                    auto proxies = commo()-&gt;rpc_par_proxies_[0];
+                    for (auto &p : proxies) {
+                        nextIndex[p.first] = GetLastLogIndex() + 1;  // initialized to leader last log index + 1
+                        matchIndex[p.first] = 0;                     // initialized to 0, increases monotonically
+                    }
+                    if (heartbeatTimer.command == HBT_PAUSE || heartbeatTimer.command != HBT_NONE) {
+                        // Resuming heartbeat timer that was previously paused (due to demotion from leader to follower)
+                        // Log_info("RESUMING HBT");
+                        heartbeatTimer.resume();
+                    } else {
+                        // Server has never been elected leader before, start up the heartbeat timer
+                        // Log_info("STARTING HBT");
+                        heartbeatTimer.start();  // Start heartbeat interval timer
+                    }
+
+                    mtx_.unlock();
+                    // Log_info("issuing first heartbeat");
+                    IssueAppendEntries();  // Issue first heartbeat, let timer take care of rest
+                    // Log_info("issued first heartbeat");
+                } else if (event == ELECTION_TIMEOUT) {
+                    // If election timeout elapses: start new election
+                    // Log_info("[server %d] Election timeout elapses: candidate starting new election", loc_id_);
+                    StartElection();
+                }
+                break;
+            case LEADER:
+                // Log_info("[leader] Waiting on event for server %d", loc_id_);
+                event = eventQueue.dequeue();
+                if (state != LEADER) {
+                    continue;
+                }
+                // Log_info("[leader] Got event for server %d: %d", loc_id_, event);
+                if (event == SEND_HEARTBEAT) {
+                    Log_info("[LEADER][server %d] Sending heartbeat", loc_id_);
+                    IssueAppendEntries();
+                    heartbeatTimer.reset();
+                } 
+                // else if (event == RECEIVED_HEARTBEAT) {
+                //     // If AppendEntries RPC received from new leader: convert to follower
+                //     Log_info("[LEADER] Server %d received heartbeat from leader, converting to follower", loc_id_);
+                //     mtx_.lock();
+                //     ConvertToFollower(currentTerm);
+                //     mtx_.unlock();
+                // }
+                break;
+            default:
+                break;
+        }
+    }
+}
+
+void RaftServer::StartBackgroundDisconnectCheck() {
+    while (true) {
+        if (IsDisconnected()) {
+            // Log_info("[server %d] detected disconnect, resetting election timer", loc_id_);
+            // As I found that sometimes election timeouts were happening for disconnected servers that reconnect,
+            // we want to ensure that the server has a "fresh" election timeout when it reconnects,
+            // but we have no way of knowing when it's disconnected beyond spawning a thread and routinely
+            // checking if it's disconnected.
+            electionTimer.reset();
+            // if(heartbeatTimer.isRunning){
+            //     heartbeatTimer.pause();
+            // }
+        } 
+        // else {
+        //     if(!heartbeatTimer.isRunning){
+        //         heartbeatTimer.resume();
+        //     }
+        // }
+        // arbitrary sleep value, can reduce it even more to more accurately guarantee that an election
+        // timeout does not occur for a previously disconnected server
+        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    }
+}
+
+RaftServer::~RaftServer() {
+    /* Your code here for server teardown */
+
+    // We can probably set up some atomic&lt;bool&gt; value to stop the background threads (that are detached and will
+    // not stop running), but maybe unnecessary for this assignment as it doesn't cause any issues.
+    Log_info("[server %d] TEAR DOWN CALLED", loc_id_);
+    electionTimer.stop();
+    heartbeatTimer.stop();
+}
+
+void RaftServer::Setup() {
+    /* Your code here for server setup. Due to the asynchronous nature of the
+       framework, this function could be called after a RPC handler is triggered.
+       Your code should be aware of that. This function is always called in the
+       same OS thread as the RPC handlers. */
+    std::thread background_coroutine(&RaftServer::StartBackgroundCoroutine, this);
+    std::thread background_disconnect_check(&RaftServer::StartBackgroundDisconnectCheck, this);
+    background_coroutine.detach();
+    background_disconnect_check.detach();
+    if (!electionTimer.isRunning) {
+        electionTimer.start();
+    }
+}
+
+int RaftServer::GetLastLogIndex() {
+    return logs.size() - 1;
+}
+
+int RaftServer::GetLastLogTerm() {
+    return logs[GetLastLogIndex()].term;
+}
+
+bool RaftServer::Start(shared_ptr&lt;Marshallable&gt; &cmd,
+                       uint64_t *index,
+                       uint64_t *term) {
+    /* Your code here. This function can be called from another OS thread. */
+    mtx_.lock();
+    Log_info("Leader in start %d", loc_id_);
+    // If server is not the leader, return false
+    if (state != LEADER) {
+        mtx_.unlock();
+        return false;
+    }
+    /* Else, start agreement on cmd in a new log entry,
+    set index and term with the server’s current index */
+    Log_info("[LEADER][server %d] Starting agreement in new log entry at index %d with term %d", loc_id_, GetLastLogIndex() + 1, currentTerm);
+    *index = GetLastLogIndex() + 1;
+    *term = currentTerm;
+    LogEntry log;
+    log.cmd = cmd;
+    log.term = currentTerm;
+    logs.push_back(log);
+    mtx_.unlock();
+    return true;
+}
+
+void RaftServer::GetState(bool *is_leader, uint64_t *term) {
+    /* Your code here. This function can be called from another OS thread. */
+    // Log_info("GetState called1");
+    mtx_.lock();
+    // Log_info("GetState called2");
+    *is_leader = (state == LEADER);
+    *term = currentTerm;
+    mtx_.unlock();
+    // Log_info("GetState called3");
+}
+
+void RaftServer::RequestVoteCallback(uint64_t term, bool_t voteGranted) {
+    // Log_info("[Res] Term: %d, Vote Granted: %d", term, voteGranted);
+    mtx_.lock();
+    if (term &gt; currentTerm) {
+        Log_info("[server %d] RequestVoteCB Converting to follower since term  &gt; currentTerm", loc_id_);
+        ConvertToFollower(term);
+        mtx_.unlock();
+        return;
+    }
+    if (state != CANDIDATE) {
+        mtx_.unlock();
+        return;
+    }
+    if (voteGranted) {
+        votesReceived += 1;
+    }
+    Log_info("Votes received for candidate %d: %d", loc_id_, votesReceived);
+    //  If votes received from majority of servers: become leader
+    if (state != LEADER && votesReceived &gt; commo()-&gt;rpc_par_proxies_[0].size() / 2) {
+        Log_info("Server %d became leader for term %d with %d votes! Minimum needed: %d, Num servers: %d", loc_id_, term, votesReceived, commo()-&gt;rpc_par_proxies_[0].size() / 2, commo()-&gt;rpc_par_proxies_[0].size());
+        eventQueue.enqueue(WON_ELECTION);
+        // Log_info("[server %d] Sending heartbeat right after RequestVote RPC", loc_id_);
+        //  IssueEmptyAppendEntries();
+    }
+    mtx_.unlock();
+}
+
+void RaftServer::CallEmptyAppendEntries() {
+    Coroutine::CreateRun([this]() {
+        IssueEmptyAppendEntries();
+    });
+}
+
+void RaftServer::IssueRequestVote() {
+    /* This is an example of synchronous RPC using coroutine; feel free to
+      modify this function to dispatch/receive your own messages.
+      You can refer to the other function examples in commo.h/cc on how
+      to send/recv a Marshallable object over RPC. */
+    // Log_info("IssueRequestVote");
+    mtx_.lock();
+    int candidateTerm = currentTerm;
+    locid_t candidateId = loc_id_;
+    int lastLogIndex = GetLastLogIndex();
+    int lastLogTerm = GetLastLogTerm();
+
+    // Log_info("[RPC call] Candidate (%d,%d)", candidateTerm, candidateId);
+    //   state = CANDIDATE; // Test
+    if (state == CANDIDATE) {
+        uint64_t term;
+        bool_t voteGranted;
+        commo()-&gt;SendRequestVote(0, /* partition id is always 0 for lab1 */
+                                 candidateId, candidateTerm, candidateId, lastLogIndex, lastLogTerm, std::bind(&RaftServer::RequestVoteCallback, this, std::placeholders::_1, std::placeholders::_2));
+    }
+    mtx_.unlock();
+}
+
+void RaftServer::AppendEntriesCallback(locid_t serverId, int numEntries, uint64_t term, bool_t success, uint64_t conflictingIndex) {
+    mtx_.lock();
+    if (term &gt; currentTerm) {
+        Log_info("[server %d] AppendEntriesCB Leader converting to follower. term of svr %d: %d, currentTerm: %d", loc_id_, serverId, term, currentTerm);
+        ConvertToFollower(term);
+        mtx_.unlock();
+        return;
+    }
+    if (state != LEADER || IsDisconnected()) {  // prevent race condition when leader sends heartbeat right after reconnecting or server was disconnected
+        mtx_.unlock();
+        return;
+    }
+    // Log_info("term %d success %d cI %d cT %d", term, success, conflictingIndex);
+    if (success) {
+        // Leader knows that the follower’s log is identical to its own log up through the new entries.
+        nextIndex[serverId] = numEntries;  // logs.size() - 1 + 1 is index of next log entry
+        matchIndex[serverId] = nextIndex[serverId] - 1;
+        // Log_info("[server %d] success, nextIndex[%d] = %d matchIndex[%d] = %d", serverId, serverId, numEntries, serverId, nextIndex[serverId] - 1);
+
+    } else {
+        // If AppendEntries fails because of log inconsistency: decrement nextIndex and retry
+        // Log_info("[server %d] fail, log inconsistency at %d with %d logs", serverId, conflictingIndex, logs.size());
+        if (logs.size() &lt; conflictingIndex) {
+            nextIndex[serverId] = logs.size();
+        } else {
+            nextIndex[serverId] = conflictingIndex;  // nextIndex[serverId] - 1 for decrement logic.
+        }
+    }
+    /*
+        If there exists an N such that N &gt; commitIndex, a majority
+        of matchIndex[i] ≥ N, and log[N].term == currentTerm:
+        set commitIndex = N
+    */
+    // Log_info("[LEADER][server %d] lastLogIndex: %d, commitIndex: %d", loc_id_, GetLastLogIndex(), commitIndex);
+    for (int n = GetLastLogIndex(); n &gt; commitIndex; n--) {
+        int numMatchIndex = 1;  // leader itself
+        // Log_info("logs[n].term=%d, currentTerm=%d", logs[n].term, currentTerm);
+        if (logs[n].term == currentTerm) {
+            auto proxies = commo()-&gt;rpc_par_proxies_[0];
+            for (auto &p : proxies) {
+                // Log_info("[server %d] matchIndex[%d] = %d, n = %d", loc_id_, p.first, matchIndex[p.first], n);
+                if (p.first != loc_id_ && matchIndex[p.first] &gt;= n) {
+                    numMatchIndex++;
+                }
+            }
+        }
+        // Log_info("[server %d] numMatchIndex %d, numServers %d, cond: %d", loc_id_, numMatchIndex, commo()-&gt;rpc_par_proxies_[0].size(), numMatchIndex &gt; commo()-&gt;rpc_par_proxies_[0].size() / 2);
+        if (numMatchIndex &gt; commo()-&gt;rpc_par_proxies_[0].size() / 2) {
+            commitIndex = n;
+            // Each server must pass each committed commmand to app_next_ exactly once,
+            // in the correct order, as soon as each command is committed on each server.
+            // Log_info("[LEADER][server %d] lastApplied: %d, commitIndex: %d", loc_id_, lastApplied, commitIndex);
+            for (int i = lastApplied + 1; i &lt;= commitIndex; i++) {
+                Log_info("[LEADER][server %d] Committing entry index %d with term %d", loc_id_, i, logs[i].term);
+                app_next_(*logs[i].cmd);
+            }
+            lastApplied = commitIndex;
+            break;
+        }
+    }
+    mtx_.unlock();
+}
+
+void RaftServer::IssueAppendEntries() {
+    if (logs.size() == 1 and logs[0].term == 0) {
+        // No agreement to start yet
+        IssueEmptyAppendEntries();
+        return;
+    }
+    auto proxies = commo()-&gt;rpc_par_proxies_[0];
+    for (auto &p : proxies) {
+        if (p.first != loc_id_) {
+            mtx_.lock();
+            uint64_t leaderTerm = currentTerm;
+            locid_t leaderId = loc_id_;
+            uint64_t prevLogIndex = nextIndex[p.first] - 1;
+            uint64_t prevLogTerm = logs[prevLogIndex].term;
+            uint64_t leaderCommit = commitIndex;
+            vector&lt;LogEntry&gt; entries = {logs.begin(), logs.end()};
+            int numEntries = entries.size();
+            mtx_.unlock();
+            commo()-&gt;SendAppendEntries(0, /* partition id is always 0 for lab1 */
+                                       p.first, leaderTerm, leaderId, prevLogIndex, prevLogTerm, entries, leaderCommit, std::bind(&RaftServer::AppendEntriesCallback, this, p.first, numEntries, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+        }
+    }
+}
+
+void RaftServer::EmptyAppendEntriesCallback(uint64_t term) {
+    mtx_.lock();
+    if (term &gt; currentTerm) {
+        // Log_info("[server %d] EmptyAppendEntriesCB Leader converting to follower, term: %d, currentTerm: %d", loc_id_, term, currentTerm);
+        ConvertToFollower(term);
+    }
+    mtx_.unlock();
+}
+
+void RaftServer::IssueEmptyAppendEntries() {
+    // Log_info("Issuing EmptyAppendEntries");
+    mtx_.lock();
+    uint64_t leaderTerm = currentTerm;
+    locid_t leaderId = loc_id_;
+    uint64_t prevLogIndex = -1;
+    uint64_t prevLogTerm = -1;
+    uint64_t leaderCommit = -1;
+    vector&lt;LogEntry&gt; empty;
+    mtx_.unlock();
+    uint64_t term;
+    commo()-&gt;SendEmptyAppendEntries(0, /* partition id is always 0 for lab1 */
+                                    leaderId, leaderTerm, leaderId, std::bind(&RaftServer::EmptyAppendEntriesCallback, this, std::placeholders::_1));
+}
+
+void RaftServer::ConvertToFollower(uint64_t term) {
+    if (state == LEADER) {
+        // Log_info("stopping heartbeat timer...");
+        if(heartbeatTimer.isRunning){
+            heartbeatTimer.pause();
+        }
+    }
+    state = FOLLOWER;
+    currentTerm = term;
+    votedFor = -1;
+}
+
+void RaftServer::SyncRpcExample() {
+    /* This is an example of synchronous RPC using coroutine; feel free to
+      modify this function to dispatch/receive your own messages.
+      You can refer to the other function examples in commo.h/cc on how
+      to send/recv a Marshallable object over RPC. */
+    Coroutine::CreateRun([this]() {
+        string res;
+        auto event = commo()-&gt;SendString(0, /* partition id is always 0 for lab1 */
+                                         0, "hello", &res);
+        event-&gt;Wait(1000000);  // timeout after 1000000us=1s
+        if (event-&gt;status_ == Event::TIMEOUT) {
+            // Log_info("timeout happens");
+        } else {
+            // Log_info("rpc response is: %s", res.c_str());
+        }
+    });
+}
+
+/* Do not modify any code below here */
+
+void RaftServer::Disconnect(const bool disconnect) {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    verify(disconnected_ != disconnect);
+    // global map of rpc_par_proxies_ values accessed by partition then by site
+    static map&lt;parid_t, map&lt;siteid_t, map&lt;siteid_t, vector&lt;SiteProxyPair&gt;&gt;&gt;&gt; _proxies{};
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match31-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    if (_proxies.find(partition_id_) == _proxies.end()) {
+        _proxies[partition_id_] = {};
+    }
+    RaftCommo *c = (RaftCommo *)commo();
+    if (disconnect) {
+        Log_info("[server %d] disconnected", loc_id_);
+        verify(_proxies[partition_id_][loc_id_].size() == 0);
+        verify(c-&gt;rpc_par_proxies_.size() &gt; 0);
+        auto sz = c-&gt;rpc_par_proxies_.size();
+</FONT>        _proxies[partition_id_][loc_id_].insert(c-&gt;rpc_par_proxies_.begin(), c-&gt;rpc_par_proxies_.end());
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match31-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        c-&gt;rpc_par_proxies_ = {};
+        verify(_proxies[partition_id_][loc_id_].size() == sz);
+        verify(c-&gt;rpc_par_proxies_.size() == 0);
+    } else {
+        Log_info("[server %d] reconnected", loc_id_);
+        verify(_proxies[partition_id_][loc_id_].size() &gt; 0);
+        auto sz = _proxies[partition_id_][loc_id_].size();
+        c-&gt;rpc_par_proxies_ = {};
+</FONT>        c-&gt;rpc_par_proxies_.insert(_proxies[partition_id_][loc_id_].begin(), _proxies[partition_id_][loc_id_].end());
+        _proxies[partition_id_][loc_id_] = {};
+        verify(_proxies[partition_id_][loc_id_].size() == 0);
+        verify(c-&gt;rpc_par_proxies_.size() == sz);
+    }
+    disconnected_ = disconnect;
+}
+
+bool RaftServer::IsDisconnected() {
+    return disconnected_;
+}
+
+}  // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

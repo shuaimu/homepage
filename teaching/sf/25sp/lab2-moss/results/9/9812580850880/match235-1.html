@@ -1,0 +1,181 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-bnithish/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-ShubhamRJ/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+  int KvServer::Put(const uint64_t &oid,
+                    const string &k,
+                    const string &v){
+    /*
+    Your are recommended to use MultiStringMarshallable as the format
+    for the log entries. Here is an example how you can use it.
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(op_id));
+    s-&gt;data_.push_back("put");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);
+    */
+    /* your code here */
+    // std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    if(op_id_map_.find(to_string(oid)) != op_id_map_.end()){
+      return KV_SUCCESS;
+    }
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("put");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);
+    uint64_t index, term;
+    shared_ptr&lt;Marshallable&gt; m = static_pointer_cast&lt;Marshallable&gt;(s);
+    bool ret = GetRaftServer().Start(m, &index, &term);
+    if (!ret){
+      return KV_NOTLEADER;
+    }
+    int timeout = 1000000;
+    while(timeout){
+      if (op_id_map_.find(to_string(oid)) != op_id_map_.end() && op_id_map_[to_string(oid)]){
+        // Log_info("Put %s %s", k.c_str(), kv_store_[k].c_str());
+        return KV_SUCCESS;
+      }
+      Coroutine::Sleep(100000);
+      timeout -= 100000;
+    }
+    // Log_info("Put timeout");
+    return KV_TIMEOUT;
+  }
+
+  int KvServer::Append(const uint64_t &oid,
+                       const string &k,
+                       const string &v)
+  {
+    /* your code here */
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    if(op_id_map_.find(to_string(oid)) != op_id_map_.end()){
+      return KV_SUCCESS;
+    }
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("append");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);
+    uint64_t index, term;
+    shared_ptr&lt;Marshallable&gt; m = static_pointer_cast&lt;Marshallable&gt;(s);
+    // Log_info("Send append");
+    bool ret = GetRaftServer().Start(m, &index, &term);
+    if (!ret){
+      return KV_NOTLEADER;
+    }
+   int timeout = 1000000;
+    while(timeout){
+      if (op_id_map_.find(to_string(oid)) != op_id_map_.end() && op_id_map_[to_string(oid)]){
+        // Log_info("Put %s %s", k.c_str(), kv_store_[k].c_str());
+        return KV_SUCCESS;
+      }
+      Coroutine::Sleep(100000);
+      timeout -= 100000;
+    }
+    // Log_info("Append timeout");
+    return KV_TIMEOUT;
+  }
+
+  int KvServer::Get(const uint64_t &oid,
+                    const string &k,
+                    string *v)
+  {
+    /* your code here */
+    // std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    if(op_id_map_.find(to_string(oid)) != op_id_map_.end()){
+      // *v = get_map_[k];
+      *v = kv_store_[k];
+      return KV_SUCCESS;
+    }
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("get");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back("");
+    uint64_t index, term;
+    shared_ptr&lt;Marshallable&gt; m = static_pointer_cast&lt;Marshallable&gt;(s);
+    bool ret = GetRaftServer().Start(m, &index, &term);
+    if (!ret){
+      return KV_NOTLEADER;
+    }
+    int timeout = 1000000;
+    while(timeout){
+      if (op_id_map_.find(to_string(oid)) != op_id_map_.end() && op_id_map_[to_string(oid)]){
+        // Log_info("Put %s %s", k.c_str(), kv_store_[k].c_str());
+        *v = kv_store_[k];
+        return KV_SUCCESS;
+      }
+      Coroutine::Sleep(100000);
+      timeout -= 100000;
+    }
+    // Log_info("Get timeout");
+    return KV_TIMEOUT;
+  }
+
+  void KvServer::OnNextCommand(Marshallable &m){
+    auto v = (MultiStringMarshallable *)(&m);
+    /* your code here */
+    // std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    if(op_id_map_.find(v-&gt;data_[0]) != op_id_map_.end()){
+      return;
+    }
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match235-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_7.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    if (v-&gt;data_[1] == "put"){
+      kv_store_[v-&gt;data_[2]] = v-&gt;data_[3];
+      // Log_info("Put new for key - %s %s", v-&gt;data_[2].c_str(), kv_store_[v-&gt;data_[2]].c_str());
+    }
+    else if (v-&gt;data_[1] == "append"){
+      // Log_info("Append existing for key - %lu %s %s", GetRaftServer().loc_id_, v-&gt;data_[2].c_str(), kv_store_[v-&gt;data_[2]].c_str());
+      kv_store_[v-&gt;data_[2]] += v-&gt;data_[3];
+</FONT>    }
+  
+    // else{
+    //   string value;
+    //   if(kv_store_.find(v-&gt;data_[2]) != kv_store_.end()){
+    //     value = kv_store_[v-&gt;data_[2]];
+    //   }
+    //   get_map_[v-&gt;data_[2]] = value;
+    // }
+    op_id_map_[v-&gt;data_[0]] = true;
+  }
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

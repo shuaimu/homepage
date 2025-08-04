@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>Parallel Snapshot Isolation | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="Parallel Snapshot Isolation" />
+<meta property="og:locale" content="en_US" />
+<link rel="canonical" href="http://0.0.0.0/teaching/sf/25sp/notes/psi.html" />
+<meta property="og:url" content="http://0.0.0.0/teaching/sf/25sp/notes/psi.html" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="Parallel Snapshot Isolation" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"Parallel Snapshot Isolation","url":"http://0.0.0.0/teaching/sf/25sp/notes/psi.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://0.0.0.0/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>Parallel Snapshot Isolation</h1>
+         </header> -->
+
+  <section>
+    <h1 id="parallel-snapshot-isolation">Parallel Snapshot Isolation</h1>
+
+<h2 id="design">Design</h2>
+<ul>
+  <li>each data item has a preferred site</li>
+  <li>use per site timestamp &lt;site, seqno&gt;
+    <ul>
+      <li>vector timestamp &lt;seqno1, seqno2, …&gt;</li>
+      <li>each site maintains a vector timestamp indicating remote sites GotVTS</li>
+    </ul>
+  </li>
+  <li>Tx protocol
+    <ul>
+      <li>get a startVTS, which has the highest seqno for each site</li>
+      <li>read local version that is “visible”.
+        <ul>
+          <li>data with version &lt;site, seqno&gt;: seqno &lt; startVTS[site]</li>
+        </ul>
+      </li>
+      <li>write buffered at local write-set</li>
+      <li>commit, use 2PC:
+        <ul>
+          <li>prepare phase, send to all preferred sites of objects in the write-set
+            <ul>
+              <li>if modified (has newer version), reply no</li>
+              <li>if being locked, reply no</li>
+              <li>otherwise, lock the data and reply yes</li>
+            </ul>
+          </li>
+          <li>commit phase
+            <ul>
+              <li>assign a sequence number, apply changes locally</li>
+              <li>then propagate changes in the background</li>
+            </ul>
+          </li>
+        </ul>
+      </li>
+      <li>fast commit:
+        <ul>
+          <li>if all preferred sites are local, then no geo coordination needed</li>
+        </ul>
+      </li>
+      <li>on propagation
+        <ul>
+          <li>the preferred site can release locks</li>
+          <li>wait until GotVTS &gt;= startVTS, and GotVTS[site] = seq-1</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="anomalies-analysis">Anomalies analysis</h2>
+<ul>
+  <li>not possible for either SI or PSI
+    <ul>
+      <li>dirty read: non-committed value</li>
+      <li>non-repeatable read: read different values for the same object</li>
+      <li>lost updates: concurrent writes become “lost”</li>
+    </ul>
+  </li>
+  <li>possible for both SI and PSI
+    <ul>
+      <li>short fork
+        <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>T1: Read(A)=0, Read(B)=0, Write(A)=1 
+T2: Read(A)=0, Read(B)=0, Write(B)=1 
+T3:                                  Read(A)=1, Read(B)=1
+</code></pre></div>        </div>
+      </li>
+    </ul>
+  </li>
+  <li>not possible for SI, but possible for PSI
+    <ul>
+      <li>long fork
+        <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>T1: R(A)=0, R(B)=0, W(A)=1 
+T2:                    R(A)=1, R(B)=0
+T3: R(A)=0, R(B)=0, W(B)=1 
+T4:                    R(A)=0, R(B)=1
+T5:                                  R(A)=1, R(B)=1
+</code></pre></div>        </div>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+</body>
+
+</html>

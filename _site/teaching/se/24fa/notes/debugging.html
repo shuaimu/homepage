@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="Home" />
+<meta property="og:locale" content="en_US" />
+<link rel="canonical" href="http://0.0.0.0/teaching/se/24fa/notes/debugging.html" />
+<meta property="og:url" content="http://0.0.0.0/teaching/se/24fa/notes/debugging.html" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="Home" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"Home","url":"http://0.0.0.0/teaching/se/24fa/notes/debugging.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://0.0.0.0/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1></h1>
+         </header> -->
+
+  <section>
+    <ul>
+  <li>Common techniques in debugging?
+    <ul>
+      <li>debugger (e.g., GDB)</li>
+      <li>logging</li>
+    </ul>
+  </li>
+  <li>Organization/culture
+    <ul>
+      <li>who is responsible for incidents?
+        <ul>
+          <li>SWE and SRE (site reliability engineer)</li>
+        </ul>
+      </li>
+      <li>on call</li>
+      <li>don’t blame</li>
+    </ul>
+  </li>
+  <li>Flow
+    <ul>
+      <li>receive alert
+        <ul>
+          <li>what is the severity?</li>
+        </ul>
+      </li>
+      <li>evaluate (triage)
+        <ul>
+          <li>should i create an incident?</li>
+          <li>escalate severity?</li>
+          <li>local or global?</li>
+          <li>inactionable?</li>
+        </ul>
+      </li>
+      <li>isolate error (initial investigation)
+        <ul>
+          <li>monitoring tools
+            <ul>
+              <li>spike in error and latency?</li>
+              <li>QPS</li>
+            </ul>
+          </li>
+          <li>dependency change</li>
+        </ul>
+      </li>
+      <li>Mitigate
+        <ul>
+          <li>rollback code / configuration</li>
+          <li>assign to a different datacenter</li>
+        </ul>
+      </li>
+      <li>Validate health</li>
+      <li>Fix (background)</li>
+    </ul>
+  </li>
+  <li>Common issues in isolating the error
+    <ul>
+      <li>capacity problems</li>
+      <li>code changes</li>
+      <li>configuration chances</li>
+      <li>dependency
+        <ul>
+          <li>2018 oct, youtube crashed because of logging library changed</li>
+        </ul>
+      </li>
+      <li>underlying infrasturcture</li>
+      <li>external traffic</li>
+    </ul>
+  </li>
+  <li>Example 1
+    <ul>
+      <li>500</li>
+      <li>check monitor tools, more alert coming in</li>
+      <li>local or global? route the traffic</li>
+      <li>look for cause (code change)</li>
+      <li>roll back</li>
+      <li>validate</li>
+      <li>(send a issue to developer)</li>
+    </ul>
+  </li>
+  <li>Example 2:
+    <ul>
+      <li>alert SLO drops from 99.9% to 90%</li>
+      <li>intial investigation
+        <ul>
+          <li>when starting? caused by timeouts?</li>
+          <li>dig into server logs</li>
+        </ul>
+      </li>
+      <li>At the same time, another on-caller changes the configuration
+        <ul>
+          <li>intend to increase quota, but accidentally decreases</li>
+          <li>pushed globally (bad act!) without communication (bad act!)</li>
+          <li>more errors in the app</li>
+        </ul>
+      </li>
+      <li>Finally, they connect and mitigate the issues together</li>
+    </ul>
+  </li>
+  <li>Debug / finding root cause
+    <ul>
+      <li>horse vs zebra</li>
+      <li>horses are more common, but in a large system, expect zebras</li>
+      <li>the python eq example</li>
+    </ul>
+  </li>
+  <li>Uncommon issues (zebras)
+    <ul>
+      <li>int32 (4 billion) vs int64
+        <ul>
+          <li>63,000 search queries per second</li>
+        </ul>
+      </li>
+      <li>hash collision</li>
+      <li>(concurrency) bugs that only happens at a large scale</li>
+      <li>hanging program eats memory</li>
+      <li>10,000 shared libraries, minutes to start the program</li>
+    </ul>
+  </li>
+  <li>Things to do when get stuck
+    <ul>
+      <li>read the doc more
+        <ul>
+          <li>the python equal example</li>
+        </ul>
+      </li>
+      <li>add more log</li>
+      <li>take a break</li>
+      <li>clean the code</li>
+      <li>delete it!</li>
+    </ul>
+  </li>
+</ul>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+</body>
+
+</html>

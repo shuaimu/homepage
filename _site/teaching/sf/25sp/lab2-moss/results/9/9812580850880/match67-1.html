@@ -1,0 +1,303 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-arkn98/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-ShreyasBlues/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  /* 
+  Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  */
+  /* your code here */
+
+ // Coroutine::CreateRun([oid, k, v, this](){ 
+
+  Log_info("We Enter Coroutine...!");
+  Log_info("We in PUT KV Server ----&gt; &lt;---- Op ID : %s Key : %s and Value : %s, Server : %d", to_string(oid).c_str(), k.c_str(), v.c_str(), sp_log_svr_-&gt;site_id_);
+
+  switch (GetRaftServer().current_state_)
+  {
+    case 0:
+    case 1: Log_info("Not Leader..!");
+    return KV_NOTLEADER;
+    break;
+
+    case 2:
+    
+    string x=std::to_string(oid);
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match67-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    Log_info("We in PUT LEADER KV Server ----&gt; &lt;---- Op ID : %s Key : %s and Value : %s, Server : %d", x.c_str(), k.c_str(), v.c_str(), sp_log_svr_-&gt;site_id_);
+
+/*     auto itr = op_success.find(oid);
+    if(itr != op_success.end()){
+      return itr-&gt;second;
+    } */
+
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("put");
+    s-&gt;data_.push_back(k);
+</FONT>    s-&gt;data_.push_back(v);
+
+    auto sp_m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+
+    auto op_data = std::make_shared&lt;KVOpData&gt;(KVOpData{KV_TIMEOUT});
+    op_success.insert(std::make_pair(to_string(oid), op_data));
+
+    uint64_t index, term;
+    index = GetRaftServer().logs_.size();
+    term = GetRaftServer().current_term_;  
+
+    Log_info("Submit to RAFT..%d %d State : %d  CMD : %s", index, term, GetRaftServer().current_state_, x.c_str());
+    bool isLeader = GetRaftServer().Start(sp_m, &index, &term);
+    Log_info("We complete Start %d", isLeader);
+
+    if(isLeader == false){
+      return KV_NOTLEADER;
+    }
+
+    Log_info("Coroutine WAIT START!!!!!!!!!!!!!!!!!!!!!!!!");
+    
+    op_data-&gt;cmit_evt.value_ = 0;
+    Log_info("PUT Event Value Set to -&gt; %d", op_data-&gt;cmit_evt.value_);
+    op_data-&gt;cmit_evt.WaitUntilGreaterOrEqualThan(1, 500000);
+
+    Log_info("Coroutine WAIT DONEEEEEEEE!KV_SUCCESS!!!!!!!!!!!!!!!!!!!!!!!");
+
+    Log_info("OPID : %s Return :%d", std::to_string(oid).c_str(), op_data-&gt;status);
+
+    return op_data-&gt;status;
+
+  }
+//  });
+  return KV_TIMEOUT;
+}
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+//  Coroutine::CreateRun([oid, k, v, this](){ 
+
+  Log_info("We Enter Coroutine...!");
+  Log_info("We in APPEND KV Server ----&gt; &lt;---- Op ID : %s Key : %s and Value : %s, Server : %d", to_string(oid).c_str(), k.c_str(), v.c_str(), sp_log_svr_-&gt;site_id_);
+
+  switch (GetRaftServer().current_state_)
+  {
+    case 0:
+    case 1: Log_info("Not Leader..!");
+    return KV_NOTLEADER;
+    break;
+
+    case 2:
+    
+    string x=std::to_string(oid);
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match67-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    Log_info("We in APPEND LEADER KV Server ----&gt; &lt;---- Op ID : %s Key : %s and Value : %s, Server : %d", x.c_str(), k.c_str(), v.c_str(), sp_log_svr_-&gt;site_id_);
+
+/*     auto itr = op_success.find(oid);
+    if(itr != op_success.end()){
+      return itr-&gt;second;
+    } */
+
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("append");
+    s-&gt;data_.push_back(k);
+</FONT>    s-&gt;data_.push_back(v);
+
+    auto sp_m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+
+    auto op_data = std::make_shared&lt;KVOpData&gt;(KVOpData{KV_TIMEOUT});
+    op_success.insert(std::make_pair(to_string(oid), op_data));
+
+    uint64_t index, term;
+    index = GetRaftServer().logs_.size();
+    term = GetRaftServer().current_term_;  
+
+    Log_info("Submit to RAFT..%d %d State : %d  CMD : %s!", index, term, GetRaftServer().current_state_, x.c_str());
+    bool isLeader = GetRaftServer().Start(sp_m, &index, &term);
+    Log_info("We complete Start %d", isLeader);
+
+    if(isLeader == false){
+      return KV_NOTLEADER;
+    }
+
+    Log_info("Coroutine WAIT START!!!!!!!!!!!!!!!!!!!!!!!!");
+    
+    op_data-&gt;cmit_evt.WaitUntilGreaterOrEqualThan(1, 500000);
+
+    Log_info("Coroutine WAIT DONEEEEEEEE!!!!!!!!!!!!!!!!!!!!!!!!");
+    Log_info("Return from Append Status : %d", op_data-&gt;status);
+
+    return op_data-&gt;status;
+  }
+//  });
+  return KV_TIMEOUT;
+}
+
+
+void KvServer::PutAppend(shared_ptr&lt;Marshallable&gt; &cmd, 
+                  const uint64_t& oid,
+                  int* success) {
+
+//  Coroutine::CreateRun([&cmd, oid, success, this](){                
+    uint64_t index, term;
+    index = GetRaftServer().logs_.size();
+    term = GetRaftServer().current_term_;  
+
+    Log_info("We complete Cast..%d %d State : %d  CMD : %s!", index, term, GetRaftServer().current_state_);
+    bool isLeader = GetRaftServer().Start(cmd, &index, &term);
+    Log_info("We complete Start %d", isLeader);
+
+    if(isLeader == false){
+      *success = KV_NOTLEADER;
+      return;
+    }
+
+    auto ev = op_success.at(to_string(oid));
+    
+//  });
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+  /* your code here */
+  //Coroutine::CreateRun([oid, k, v, this](){ 
+
+  Log_info("We Enter Coroutine...!");
+  Log_info("We in GET KV Server ----&gt; &lt;---- Op ID : %s Key : %s and Server : %d", to_string(oid).c_str(), k.c_str(), sp_log_svr_-&gt;site_id_);
+
+  switch (GetRaftServer().current_state_)
+  {
+    case 0:
+    case 1: Log_info("Not Leader..!");
+    return KV_NOTLEADER;
+    break;
+
+    case 2:
+    
+    string x=std::to_string(oid);
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match67-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    Log_info("We in GET LEADER KV Server ----&gt; &lt;---- Op ID : %s Key : %s and Server : %d", x.c_str(), k.c_str(), sp_log_svr_-&gt;site_id_);
+
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("get");
+    s-&gt;data_.push_back(k);
+</FONT>
+    auto sp_m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+
+    auto op_data = std::make_shared&lt;KVOpData&gt;(KVOpData{KV_TIMEOUT});
+    op_success.insert(std::make_pair(to_string(oid), op_data));
+
+    uint64_t index, term;
+    index = GetRaftServer().logs_.size();
+    term = GetRaftServer().current_term_;  
+
+    Log_info("Submit to RAFT..%d %d State : %d  CMD : %s!", index, term, GetRaftServer().current_state_);
+    bool isLeader = GetRaftServer().Start(sp_m, &index, &term);
+    Log_info("We complete Start %d", isLeader);
+
+    if(isLeader == false){
+      return KV_NOTLEADER;
+    }
+
+    Log_info("Coroutine WAIT START!!!!!!!!!!!!!!!!!!!!!!!!");
+    
+    op_data-&gt;cmit_evt.WaitUntilGreaterOrEqualThan(1, 500000);
+
+    Log_info("Coroutine WAIT DONEEEEEEEE!!!!!!!!!!!!!!!!!!!!!!!!");
+    Log_info("Return from GET Status : %d", op_data-&gt;status);
+    
+    if(op_data-&gt;status == KV_SUCCESS){
+      *v = KvDbStore.at(k);
+      Log_info("Value from GET for Key %d : %d", k, *v);
+    }
+    return op_data-&gt;status;
+  }
+
+  return KV_TIMEOUT;
+//  });
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+
+  Coroutine::CreateRun([&m, this](){ 
+  auto v = (MultiStringMarshallable*)(&m);
+  /* your code here */
+  Log_info("We in OnNextCommand KV Server ----&gt; &lt;---- CMD : %s for Server State : %d and OPD : %s Key : %s", v-&gt;data_.at(1).c_str(),sp_log_svr_-&gt;site_id_, v-&gt;data_.at(0).c_str(), v-&gt;data_.at(2).c_str());
+
+  if(v-&gt;data_.at(1) == "put"){
+    Log_info("We in OnNextCommand PUT KV Server ----&gt; &lt;---- for Server State : %d and OPD : %s Key : %s Value : %s", sp_log_svr_-&gt;site_id_, v-&gt;data_.at(0).c_str(), v-&gt;data_.at(2).c_str(), v-&gt;data_.at(3).c_str());
+    Log_info("KV STORE SIZE : %d ", KvDbStore.size());
+    KvDbStore[v-&gt;data_.at(2)] = v-&gt;data_.at(3);
+    Log_info("AFTER KV STORE SIZE : %d ", KvDbStore.size());
+  } 
+  else if(v-&gt;data_.at(1) == "append"){
+    auto it = KvDbStore.find(v-&gt;data_.at(2));
+    if (it != KvDbStore.end()) {
+        KvDbStore[v-&gt;data_.at(2)] = KvDbStore[v-&gt;data_.at(2)] + v-&gt;data_.at(3);
+    } else {
+        KvDbStore[v-&gt;data_.at(2)] = v-&gt;data_.at(3);
+    }
+  } 
+
+  if(GetRaftServer().current_state_ == 2 && op_success.find(v-&gt;data_.at(0)) != op_success.end()){
+    Log_info("OnNextCommand Event OPD: %s Value is : %d and status : %d", v-&gt;data_.at(0).c_str(), op_success.at(v-&gt;data_.at(0))-&gt;cmit_evt.value_, op_success.at(v-&gt;data_.at(0))-&gt;status);
+    op_success.at(v-&gt;data_.at(0))-&gt;status = KV_SUCCESS;
+    op_success.at(v-&gt;data_.at(0))-&gt;cmit_evt.Set(1);  
+    Log_info("OnNextCommand Set's Event OPD : %s Value to : %d and status : %d", v-&gt;data_.at(0).c_str(), op_success.at(v-&gt;data_.at(0))-&gt;cmit_evt.value_, op_success.at(v-&gt;data_.at(0))-&gt;status);
+  }
+  });
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

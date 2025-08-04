@@ -1,0 +1,504 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-mainak9830/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-Surabhi-Gogte/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+// #include &lt;cstdlib&gt;
+
+namespace janus
+{
+  
+  ShardConfig ShardMasterServiceImpl::BalanceLoad(ShardConfig &sc, string action, uint32_t gid)
+  {
+    vector&lt;int&gt; gidsList;
+    string gidsListS;
+    for (const auto &entry : sc.group_servers_map_)
+    {
+      gidsList.push_back(entry.first);
+      gidsListS+=to_string(entry.first) + " ";
+    }
+    Log_debug("gidlist is %s",gidsListS);
+    if (action == "Join")
+    {
+      orderOfArrival.push_back(gid);
+      Log_debug("order arrival list index %d val %d",orderOfArrival.size()-1,gid);
+    }
+    else
+    {
+      int indexToRemove = -1;
+      for (int i=0;i&lt;orderOfArrival.size();i++)
+      {
+        if (orderOfArrival[i] == gid)
+        {
+          indexToRemove = i;
+          Log_debug("index to remove %d",indexToRemove);
+          
+          break;
+        }
+      }
+
+      if(indexToRemove!=-1){
+        //Log_debug("inde")
+        Log_debug("removing gid %d from arrival list", gid);
+        orderOfArrival.erase(orderOfArrival.begin() + indexToRemove);
+      }
+      else{
+        Log_debug("gid does nott exist %d",gid);
+        return sc;
+      }
+      
+      if(orderOfArrival.size()==0){
+        for(auto x : sc.shard_group_map_){
+            sc.shard_group_map_[x.first] = 0;
+        }
+        return sc;
+      }
+      
+    }
+    if (gidsList.size() == 1)
+    {
+      Log_debug("join/rebalannce rebalance 1 group %d",gid);
+      prevCount[gidsList[0]] = 10;
+      for(auto x : sc.shard_group_map_){
+            sc.shard_group_map_[x.first] = gidsList[0];
+        }
+        return sc;
+    
+    }
+
+    // if(gidsList.size())
+    else if (gidsList.size() &gt; 1) 
+    {
+
+      int numNodes = gidsList.size(); //1
+      // map&lt;uint32_t,uint64_t&gt; prevCOunt;
+      int minNodes = 10 / numNodes; // 1
+      int maxNodes = minNodes; // 1
+      int pendingNodes = 10 % numNodes; // max changes in counts
+      auto oldMap = prevCount;  
+      
+      if (pendingNodes != 0)
+      {
+        maxNodes = minNodes + 1;
+      }
+      Log_debug("min %d, max %d, pendingNodes %d",minNodes, maxNodes, pendingNodes);
+      for (auto x : orderOfArrival)
+      {
+        if (pendingNodes &gt; 0)
+        {
+          prevCount[x] = maxNodes;
+          pendingNodes--;
+        }
+        else
+        {
+          prevCount[x] = minNodes;
+        }
+
+        Log_debug("gid %d has shards count assigned %d", x, prevCount[x]);
+      }
+      if(action == "Leave"){
+        Log_debug("Rebalancing for real after leave");
+        auto totalAdds  = prevCount[gid];
+        //prevCount.erase(prevCount.find(gid));
+        oldMap.erase(oldMap.find(gid));
+        Log_debug("should successfully delete %d from old map",gid);
+                // additions or deductions allowed
+        for(auto x : oldMap){
+          oldMap[x.first] = prevCount[x.first] - x.second; //old -curr
+        }
+        auto prevShard = sc.shard_group_map_;
+        auto it = oldMap.begin();
+        for(auto x : prevShard){
+          if(prevShard[x.first]==gid){
+            while(it-&gt;second==0){
+              it++;
+            }
+              //it++;
+              sc.shard_group_map_[x.first] = it-&gt;first;
+              oldMap[it-&gt;first] = it-&gt;second-1;
+              totalAdds--;
+          }
+          else{
+            sc.shard_group_map_[x.first] = x.second;
+          }
+          // if(totalAdds==0){
+          //   //return newConfig;
+          //   break;
+          // }
+          Log_debug("sc shard group key %d maps tp gid %d", x.first, sc.shard_group_map_[x.first]);
+        }
+      }
+
+      else if (action == "Join")
+      {
+        Log_debug("Rebalancing for real after join");
+        auto trackTemp = prevCount; // newcount
+        auto prevShard = sc.shard_group_map_;
+        for (auto x : prevShard)
+        {
+          if (trackTemp[x.second] &gt; 0)
+          {
+            trackTemp[x.second]--;
+            sc.shard_group_map_[x.first] = x.second;
+          }
+          else
+          {
+            sc.shard_group_map_[x.first] = gid;
+            trackTemp[gid]--;
+          }
+          Log_info("sc shard group key %d maps tp gid %d", x.first, sc.shard_group_map_[x.first]);
+        }
+      }
+    }
+    return sc;
+  }
+
+  void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt; &gid_server_map, uint32_t *ret, rrr::DeferredReply *defer)
+  {
+    // your code here
+    Log_debug("shard master site is %d", GetRaftServer().site_id_);
+    Log_debug("shard master partition id is %d", GetRaftServer().partition_id_);
+    ShardConfig sc;
+    if (configs_.size() == 0)
+    {
+      // ShardConfig sc;
+      sc.number = 1;
+      sc.group_servers_map_ = gid_server_map;
+      sc.shard_group_map_ = sc.shard_group_map_;
+      // BalanceLoad(sc);
+      for (auto it : gid_server_map)
+      {
+        // sc.group_servers_map_[it.first] = it.second;
+        //orderOfArrival.push_back(it.first);
+        Log_debug("Join:: adding GID at number %d", it.first);
+        sc = BalanceLoad(sc,"Join",it.first);
+      }
+      
+      //Log_debug("Join:: adding config at number %d", sc.number);
+      // configs_[sc.number] = sc;
+    }
+    else
+    {
+
+      auto prevConf = configs_.rbegin();
+      auto prevId = prevConf-&gt;first;
+      sc.number = prevId + 1;
+      sc.group_servers_map_ = prevConf-&gt;second.group_servers_map_;
+      sc.shard_group_map_ = prevConf-&gt;second.shard_group_map_;
+      for (auto it : gid_server_map)
+      {
+        if(prevConf-&gt;second.group_servers_map_.find(it.first)==prevConf-&gt;second.group_servers_map_.end()){
+          sc.group_servers_map_[it.first] = it.second;
+          //orderOfArrival.push_back(it.first);
+          Log_debug("Join:: adding GID at number %d", it.first);
+          sc = BalanceLoad(sc,"Join",it.first);
+        
+        }
+      }
+      
+      //sc = BalanceLoad(sc);
+      
+
+      // configs_[sc.number] = sc;
+      // configs_[gid] = *newconf;
+    }
+    // configs_[sc.number] = sc;
+    /**starting raft stuff*/
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    // s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("join");
+    s-&gt;data_.push_back(sc.toStreamString());
+    // s-&gt;data_.push_back(k);
+    // s-&gt;data_.push_back(v);
+    RaftServer &raftServ = GetRaftServer();
+    auto m_obj = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+    auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    uint64_t commitIndex;
+    uint64_t term;
+    bool res;
+    Log_debug("calling raft start for join");
+    res = raftServ.Start(m_obj, &commitIndex, &term);
+    ev-&gt;Wait(300000);
+    Log_debug("start response is %d", res);
+    if (!res)
+    {
+      *ret = KV_NOTLEADER;
+    }
+    else if (res)
+    {
+      if (raftServ.lastApplied &gt;= commitIndex)
+      {
+
+        *ret = KV_SUCCESS;
+      }
+      else
+      {
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match154-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        *ret = KV_TIMEOUT;
+      }
+    }
+    else
+    {
+      *ret = KV_TIMEOUT;
+    }
+    //*ret = KV_SUCCESS;
+    defer-&gt;reply();
+  }
+  void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt; &gids, uint32_t *ret, rrr::DeferredReply *defer)
+</FONT>  {
+    // your code here
+    if (configs_.size() &gt; 0)
+    {
+      ShardConfig sc;
+      auto prevConf = configs_.rbegin();
+      auto prevId = prevConf-&gt;first;
+      sc.number = prevId + 1;
+      sc.group_servers_map_ = prevConf-&gt;second.group_servers_map_;
+      sc.shard_group_map_ = prevConf-&gt;second.shard_group_map_;
+      for (auto gid : gids)
+      {
+        Log_debug("Leave:: removing GID at number %d", gid);
+        sc.group_servers_map_.erase(gid);
+        sc = BalanceLoad(sc,"Leave",gid);
+      }
+      //Log_debug("Leave:: adding config at number %d", sc.number);
+      // configs_[sc.number] = sc;
+      /* starting raft code*/
+      auto s = make_shared&lt;MultiStringMarshallable&gt;();
+      s-&gt;data_.push_back("leave");
+      // s-&gt;data_.push_back(to_string(sc.number));
+      s-&gt;data_.push_back(sc.toStreamString());
+      RaftServer &raftServ = GetRaftServer();
+      auto m_obj = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+      auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+      uint64_t commitIndex;
+      uint64_t term;
+      bool res;
+      // Log_debug("calling start for put for oid %d",to_string(oid));
+      res = raftServ.Start(m_obj, &commitIndex, &term);
+      ev-&gt;Wait(350000);
+      if (!res)
+      {
+        *ret = KV_NOTLEADER;
+      }
+      else if (res)
+      {
+        if (raftServ.lastApplied &gt;= commitIndex)
+        {
+          // configs_[sc.number] = sc;
+          *ret = KV_SUCCESS;
+        }
+        else
+        {
+          *ret = KV_TIMEOUT;
+        }
+      }
+      else
+      {
+        *ret = KV_TIMEOUT;
+      }
+      // configs_[sc.number] = sc;
+    }
+    //*ret = KV_SUCCESS;
+    defer-&gt;reply();
+  }
+
+  void ShardMasterServiceImpl::Move(const int32_t &shard, const uint32_t &gid, uint32_t *ret, rrr::DeferredReply *defer)
+  {
+    // your code here
+    if (configs_.size() &gt; 0)
+    {
+      ShardConfig sc;
+      auto prevConf = configs_.rbegin();
+      auto prevId = prevConf-&gt;first;
+      sc.number = prevId + 1;
+      sc.group_servers_map_ = prevConf-&gt;second.group_servers_map_;
+      // for(auto gid : gids){
+      //   sc.group_servers_map_.erase(gid);
+      // }
+      sc.shard_group_map_ = prevConf-&gt;second.shard_group_map_;
+      sc.shard_group_map_[shard] = gid;
+      Log_debug("move:: shard %d to gid %d", shard, gid);
+      auto s = make_shared&lt;MultiStringMarshallable&gt;();
+      // s-&gt;data_.push_back(to_string(oid));
+      s-&gt;data_.push_back("move");
+      s-&gt;data_.push_back(sc.toStreamString());
+      // s-&gt;data_.push_back(k);
+      // s-&gt;data_.push_back(v);
+      RaftServer &raftServ = GetRaftServer();
+      auto m_obj = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+      auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+      uint64_t commitIndex;
+      uint64_t term;
+      bool res;
+      // Log_debug("calling start for put for oid %d",to_string(oid));
+      res = raftServ.Start(m_obj, &commitIndex, &term);
+      ev-&gt;Wait(300000);
+      if (!res)
+      {
+        *ret = KV_NOTLEADER;
+      }
+      else if (res)
+      {
+        if (raftServ.lastApplied &gt;= commitIndex)
+        {
+          // configs_[sc.number] = sc;
+          *ret = KV_SUCCESS;
+        }
+        else
+        {
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match154-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+          *ret = KV_TIMEOUT;
+        }
+      }
+      else
+      {
+        *ret = KV_TIMEOUT;
+      }
+
+      // configs_[sc.number] = sc;
+    }
+    // configs_[sc.number] = sc;
+    //*ret = KV_SUCCESS;
+    defer-&gt;reply();
+  }
+  void ShardMasterServiceImpl::Query(const int32_t &config_no, uint32_t *ret, ShardConfig *config, rrr::DeferredReply *defer)
+</FONT>  {
+    // your code here
+    Log_debug("shard master site is %d", GetRaftServer().site_id_);
+    Log_debug("Query :: config_num %d, site id %d", config_no, GetRaftServer().site_id_);
+
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    // s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("query");
+    s-&gt;data_.push_back(to_string(config_no));
+    // s-&gt;data_.push_back(sc.toStreamString());
+    //  s-&gt;data_.push_back(k);
+    //  s-&gt;data_.push_back(v);
+    RaftServer &raftServ = GetRaftServer();
+    auto m_obj = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+    auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    uint64_t commitIndex;
+    uint64_t term;
+    bool res;
+    Log_debug("calling start for query");
+    res = raftServ.Start(m_obj, &commitIndex, &term);
+    ev-&gt;Wait(300000);
+    if (!res)
+    {
+
+      *ret = KV_NOTLEADER;
+    }
+    else if (res)
+    {
+      if (raftServ.lastApplied &gt;= commitIndex)
+      {
+        if (config_no == -1)
+        {
+          Log_debug("config size %d", configs_.size());
+          *config = configs_.rbegin()-&gt;second;
+        }
+        else
+        {
+          *config = configs_[config_no];
+          Log_debug("checking shard for config no : %d", configs_[config_no].number);
+        }
+
+        *ret = KV_SUCCESS;
+      }
+      else
+      {
+        *ret = KV_TIMEOUT;
+      }
+    }
+    else
+    {
+      *ret = KV_TIMEOUT;
+    }
+
+    /*raft end*/
+    // if (config_no == -1)
+    // {
+    //   Log_debug("configs size %d",configs_.size());
+    //   if(configs_.size()==0){
+    //     *ret = KV_NOTLEADER;
+    //   }
+    //   *config = configs_.rbegin()-&gt;second;
+    //   Log_debug("checking shard for config no : %d", configs_.rbegin()-&gt;second.number);
+    // }
+    // else
+    // {
+    //   *config = configs_[config_no];
+    //   Log_debug("checking shard for config no : %d", configs_[config_no].number);
+    // }
+    // *ret = KV_SUCCESS;
+    defer-&gt;reply();
+  }
+
+  void ShardMasterServiceImpl::OnNextCommand(Marshallable &m)
+  {
+    // your code here
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match154-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    auto v = (MultiStringMarshallable *)(&m);
+    auto opid = v-&gt;data_[0];
+    auto operation = v-&gt;data_[1];
+    if (opid == "join")
+</FONT>    {
+      ShardConfig scnew;
+      scnew.FromStreamString(operation);
+      configs_[scnew.number] = scnew;
+      Log_debug("configs onnext join nums %d", scnew.number);
+    }
+    else if (opid == "leave")
+    {
+      // stringstream ss;
+      // ss &lt;&lt; operation;
+      ShardConfig scnew;
+      scnew.FromStreamString(operation);
+      configs_[scnew.number] = scnew;
+      Log_debug("configs onnext leave nums %d", scnew.number);
+    }
+    else if (opid == "move")
+    {
+      // stringstream ss;
+      // ss &lt;&lt; operation;
+      ShardConfig scnew;
+      scnew.FromStreamString(operation);
+      configs_[scnew.number] = scnew;
+      Log_debug("configs onnext move nums %d", scnew.number);
+    }
+    else if (opid == "query")
+    {
+      Log_debug("onnext query");
+    }
+    // if(opid)
+    //  if(opid == "join" || opid == "leave" || opid == "move" || opid == "query"){
+    RaftServer &raftS = GetRaftServer();
+    raftS.lastApplied += 1;
+    //}
+  }
+
+  // do not change anything below
+  shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient()
+  {
+    auto cli = make_shared&lt;ShardMasterClient&gt;();
+    cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+    uint32_t id = sp_log_svr_-&gt;site_id_;
+    return cli;
+  }
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,181 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-omkar-rajwade-sbu-1/src/shardkv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-jnukin/src/shardkv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match147-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+int64_t ShardKvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+bool ShardKvServer::KVOperation(string oid){
+</FONT>  RaftServer& raftServer = this-&gt;GetRaftServer();
+  lock_guard&lt;recursive_mutex&gt; lock(raftServer.mtx_);
+  Timer waitTimer;
+  waitTimer.start();
+  while(waitTimer.elapsed()*1e6 &lt; this-&gt;agreementTimeOut && this-&gt;completedCmds.count(oid)==0){
+    // Log_info("Time Elapsed: %f", waitTimer.elapsed());
+    Coroutine::Sleep(this-&gt;agreementTimeOut/10);
+  }
+  // waitTimer.reset();
+  return (this-&gt;completedCmds.count(oid));
+}
+
+int ShardKvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  Log_info("Put ShardKvServer");
+  RaftServer& raftServer = this-&gt;GetRaftServer();
+  lock_guard&lt;recursive_mutex&gt; lock(raftServer.mtx_);
+  string oid_string  = to_string(oid);
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  shared_ptr&lt;Marshallable&gt; cmd = s;
+  uint64_t index, term;
+  bool result = raftServer.Start(cmd, &index, &term);
+  if(!result){
+    Log_info("Put Not Leader %d", oid);
+    return KV_NOTLEADER;
+  }
+  bool ret  = KVOperation(oid_string);
+  if(ret){
+    Log_info("Put Success %d", oid);
+    return KV_SUCCESS;
+  }
+  Log_info("Get Timeout %d", oid);
+  return KV_TIMEOUT;
+}
+
+int ShardKvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+    // lab_shard: fill in your code
+  Log_info("Append ShardKvServer");
+  RaftServer& raftServer = this-&gt;GetRaftServer();
+  lock_guard&lt;recursive_mutex&gt; lock(raftServer.mtx_);
+  string oid_string  = to_string(oid);
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("append");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  shared_ptr&lt;Marshallable&gt; cmd = s;
+  uint64_t index, term;
+  bool result = raftServer.Start(cmd, &index, &term);
+  if(!result){
+    Log_info("Append Not Leader %d", oid);
+    return KV_NOTLEADER;
+  }
+  bool ret  = KVOperation(oid_string);
+  if(ret){
+    Log_info("Append Success %d", oid);
+    return KV_SUCCESS;
+  }
+  Log_info("Append Timeout %d", oid);
+  return KV_TIMEOUT;
+}
+
+int ShardKvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+    // lab_shard: fill in your code
+  Log_info("Get ShardKvServer");
+  Log_info("Get ShardKvServer key: %s", k.c_str());
+  RaftServer& raftServer = this-&gt;GetRaftServer();
+  lock_guard&lt;recursive_mutex&gt; lock(raftServer.mtx_);
+  string oid_string  = to_string(oid);
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match147-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("get");
+  s-&gt;data_.push_back(k);
+  // s-&gt;data_.push_back(*v);
+  shared_ptr&lt;Marshallable&gt; cmd = s;
+</FONT>  uint64_t index, term;
+  bool result = raftServer.Start(cmd, &index, &term);
+  if(!result){
+    Log_info("Get Not Leader %d", oid);
+    return KV_NOTLEADER;
+  }
+  Log_info("Get ShardKV for Leader %d", raftServer.site_id_);
+  bool ret  = KVOperation(oid_string);
+  if(ret){
+    Log_info("Get Success %d", oid);
+    if(completedCmds.count(oid_string)){
+      *v = kvStore[k];
+      return KV_SUCCESS;
+    }
+  }
+  Log_info("Get Timeout %d", oid);
+  return KV_TIMEOUT;
+}
+
+void ShardKvServer::OnNextCommand(Marshallable& m) {
+    // lab_shard: fill in your code
+  RaftServer& raftServer = this-&gt;GetRaftServer();
+  lock_guard&lt;recursive_mutex&gt; lock(raftServer.mtx_);
+  auto v = (MultiStringMarshallable*)(&m);
+  string oid = (v-&gt;data_[0]);
+  string op = v-&gt;data_[1];
+  string key = v-&gt;data_[2];
+  completedCmds.insert(oid);
+  if(op == "get"){
+    Log_info("Get - Key %s, Val %s", key.c_str(), kvStore[key].c_str());
+  }
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match147-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  else if(op == "put"){
+    string newVal = v-&gt;data_[3];
+    kvStore[key] = newVal;
+    Log_info("Put - Key %s, Val %s", key.c_str(), kvStore[key].c_str());
+</FONT>  }
+  else if(op == "append"){
+    string newVal = v-&gt;data_[3];
+    if(kvStore.count(key)){
+      try{
+        string orignal = kvStore[key];
+        kvStore[key]= orignal + newVal;
+      }
+      catch(...){
+        Log_info("Nikunj Mittal catches error!!!");
+      }
+    }
+    else{
+      kvStore[key]=newVal;
+    }
+    Log_info("Put - Key %s, Val %s, appendVal: %s", key.c_str(), kvStore[key].c_str(), newVal.c_str());
+  }
+}
+
+shared_ptr&lt;ShardKvClient&gt; ShardKvServer::CreateClient(Communicator* comm) {
+  auto cli = make_shared&lt;ShardKvClient&gt;();
+  cli-&gt;commo_ = comm;
+  verify(cli-&gt;commo_ != nullptr);
+  static uint32_t id = 0;
+  id++;
+  cli-&gt;cli_id_ = id; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

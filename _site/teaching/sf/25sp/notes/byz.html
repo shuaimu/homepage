@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>Byzantine Paxos | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="Byzantine Paxos" />
+<meta property="og:locale" content="en_US" />
+<link rel="canonical" href="http://0.0.0.0/teaching/sf/25sp/notes/byz.html" />
+<meta property="og:url" content="http://0.0.0.0/teaching/sf/25sp/notes/byz.html" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="Byzantine Paxos" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"Byzantine Paxos","url":"http://0.0.0.0/teaching/sf/25sp/notes/byz.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://0.0.0.0/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>Byzantine Paxos</h1>
+         </header> -->
+
+  <section>
+    <h1 id="byzantine-paxos">Byzantine Paxos</h1>
+
+<h2 id="byzantine-failures-malicious-participants">Byzantine failures: “malicious” participants</h2>
+<ul>
+  <li>including crashes/slowness</li>
+  <li>hacked/compromised servers</li>
+  <li>other rare failures: disk/memory/network corruption</li>
+</ul>
+
+<h2 id="how-many-good-servers-needed-to-tolerate-f-byz-failures">How many good servers needed to tolerate f byz-failures?</h2>
+<ul>
+  <li>Apparently greater than f+1, i.e., has to cover normal consensus</li>
+  <li>f+1 is not enough
+    <ul>
+      <li>divide the system into 3 groups
+        <ul>
+          <li>f byz servers</li>
+          <li>f good servers</li>
+          <li>1 good server</li>
+        </ul>
+      </li>
+      <li>counter-example
+        <ul>
+          <li>f good servers offline</li>
+          <li>f byz servers and 1 good server come to a decision v-1</li>
+          <li>1 good server offline, f good server online.</li>
+          <li>f byz servers act like never deciding anything</li>
+          <li>f good servers and f byz servers will decide a different value v-2</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>f+x is not enough for any x &lt;= f</li>
+  <li>so we at least need 2f+1 good servers to tolerate f byz servers; that is 3f+1 in total</li>
+</ul>
+
+<h2 id="starting-point">Starting point</h2>
+<ul>
+  <li>in Paxos we have our quorum as majority, which is f+1 out of 2f+1 servers.</li>
+  <li>now we have f possible liars in each message round.</li>
+  <li>can we enlarge the quorum size by f to outvote the byz-servers?
+    <ul>
+      <li>f+1 -&gt; 2f+1, in prepare and accept</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="example">Example</h2>
+<ul>
+  <li>good: S1, S2, S3, byz: S4</li>
+  <li>S1 prepares all with ballot 1</li>
+  <li>S1 accepts S1, S3, S4 with (1, v1), considers this value chosen.</li>
+  <li>S1 stands down</li>
+  <li>S2 tries to prepare S2,S3,S4</li>
+  <li>S3 replies (1, v1), S4 replies (1, v2)</li>
+  <li>S2 is stuck!</li>
+</ul>
+
+<h2 id="prevent-lies-at-non-proposers">Prevent lies at non-proposers</h2>
+<ul>
+  <li>assume proposers don’t lie for now</li>
+  <li>lies in phase1b (ack to prepare), should-&gt;lie
+    <ul>
+      <li>type 1: okay -&gt; reject</li>
+      <li>type 2: okay (b1, v1) -&gt; okay (no-value)</li>
+      <li>type 3: okay (b1, v1) -&gt; okay (bx, vx)
+        <ul>
+          <li>let the phase1b message include the previous phase2a as proof</li>
+        </ul>
+      </li>
+      <li>type 4: reject -&gt; okay (no-value)</li>
+      <li>type 5: reject -&gt; okay (bx, vx)</li>
+    </ul>
+  </li>
+  <li>lies in phase 2b, does it hurt?
+    <ul>
+      <li>type 1: okay -&gt; reject</li>
+      <li>type 2: reject -&gt; okay</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="prevent-lies-at-proposers">Prevent lies at proposers</h2>
+<ul>
+  <li>lies in phase1a, does it hurt?
+    <ul>
+      <li>no, only a number.</li>
+    </ul>
+  </li>
+  <li>lies in phase2a, a single type: (b1, v1)-&gt;(bx, vx)
+    <ul>
+      <li>let phase2a include previous phase1b responses as proof.</li>
+      <li>or, add another phase phase1c to send these proof before phase2a</li>
+    </ul>
+  </li>
+  <li>what about commit messages?
+    <ul>
+      <li>include phase2b?</li>
+      <li>add another phase phase2av to broadcast accepted values.</li>
+    </ul>
+  </li>
+</ul>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+</body>
+
+</html>

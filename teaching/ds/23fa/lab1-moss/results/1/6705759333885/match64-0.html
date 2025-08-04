@@ -1,0 +1,180 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-ShreyasBlues/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-ShreyasBlues/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+
+void RaftServiceImpl::HandleRequestVote(const ballot_t& term,
+                                        const locid_t& candidate_loc_id_,
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match64-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                        const slotid_t& last_log_index,
+                                        const ballot_t& last_log_term,
+                                        ballot_t* current_term_,
+                                        bool_t* vote_granted,
+                                        rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("Server %d received requestVote rpc from with term %d : %d", svr_-&gt;loc_id_, candidate_loc_id_, term);
+</FONT>  std::lock_guard&lt;std::recursive_mutex&gt; lock(svr_-&gt;mtx_);
+  *vote_granted = false;
+  if(term &gt; svr_-&gt;current_term_){
+    svr_-&gt;current_term_ = term;
+    svr_-&gt;current_state_ = 0;
+    svr_-&gt;voted_for = -1;
+  }
+  svr_-&gt;last_log_term_ = (svr_-&gt;logs_.size()&gt;0)? svr_-&gt;logs_term_.back() : 0;
+  bool updated_logs_ = (last_log_term &gt; svr_-&gt;last_log_term_ || 
+                          (last_log_term == svr_-&gt;last_log_term_ 
+                            && last_log_index &gt;= svr_-&gt;logs_.size())) 
+                        ? true : false;
+  
+  if(term == svr_-&gt;current_term_ && updated_logs_ && (svr_-&gt;voted_for == -1 || svr_-&gt;voted_for == candidate_loc_id_)){
+    svr_-&gt;voted_for = candidate_loc_id_;
+    *vote_granted = true;
+  }
+  *current_term_ = svr_-&gt;current_term_;
+  //std::lock_guard&lt;std::recursive_mutex&gt; unlock(svr_-&gt;mtx_);
+  Log_info("Server %d replied to server %d with term %d %d : %d", svr_-&gt;loc_id_, candidate_loc_id_, svr_-&gt;current_term_, term, *vote_granted);
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleAppendEntries(const MarshallDeputy& md_cmd,
+                                          bool_t *followerAppendOK,
+                                          rrr::DeferredReply* defer) {
+  /* Your code here */
+  std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(md_cmd).sp_data_;
+  *followerAppendOK = false;
+  defer-&gt;reply();
+}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match64-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void RaftServiceImpl::HandleEmptyAppendEntries(const ballot_t& term,
+                                               const locid_t& leader_loc_id_,
+                                               const slotid_t& prev_Log_Index_,
+                                               const ballot_t& prev_Log_Term_,
+                                               const std::vector&lt;MarshallDeputy&gt;& suffix_logs_,
+                                               const std::vector&lt;ballot_t&gt;& suffix_logs_term_,
+                                               const slotid_t& leader_commit_,
+                                               ballot_t* current_term_,
+                                               slotid_t* ack_idx_,
+                                               bool_t *followerAppendOK,
+</FONT>                                               rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("receive heartbeat rp: %d", svr_-&gt;loc_id_);
+
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(svr_-&gt;mtx_);
+
+  if(suffix_logs_.size() &gt; 0){
+  auto &c = dynamic_cast&lt;TpcCommitCommand&&gt;(*const_cast&lt;MarshallDeputy&&gt;(suffix_logs_.at(0)).sp_data_);
+  auto tx_id = c.tx_id_;
+  Log_info("Received Cmd %d  with PLT %d PLI %d--&gt; ", tx_id, prev_Log_Term_, prev_Log_Index_);
+  }
+  //std::lock_guard&lt;std::recursive_mutex&gt; lock(svr_-&gt;mtx_);
+  *followerAppendOK = false;
+  *ack_idx_ = 0;
+  *current_term_ = svr_-&gt;current_term_;
+
+  if(term &gt;= svr_-&gt;current_term_){
+    Log_info("Heartbeat rpc update Term with %d for : %d", term, svr_-&gt;loc_id_);
+    svr_-&gt;TimerReset();
+    svr_-&gt;current_state_ =  0;
+    svr_-&gt;current_term_ = term;
+    svr_-&gt;leader_id = leader_loc_id_;
+    //*followerAppendOK = true;
+  }
+
+  bool updated_logs_ = ((svr_-&gt;logs_.size() &gt;= prev_Log_Index_) 
+                          &&  (prev_Log_Index_ == 0 || svr_-&gt;logs_term_.at(prev_Log_Index_-1) == prev_Log_Term_))
+                        ? true : false;
+
+  Log_info("Updated Logs : %d", updated_logs_);                      
+
+  if(term == svr_-&gt; current_term_ && updated_logs_){
+
+  Log_info("Leader Term %d and Follower Terrm : %d", term, svr_-&gt;current_term_);   
+
+    if(suffix_logs_.size() &gt; 0 && svr_-&gt;logs_.size() &gt; prev_Log_Index_){
+
+      Log_info("Me in Adjust Log..!");
+
+      slotid_t index = std::min(svr_-&gt;logs_.size(), prev_Log_Index_ + suffix_logs_.size()) - 1;
+
+      
+      if(svr_-&gt;logs_term_.at(index) != suffix_logs_term_.at(index - prev_Log_Index_)){
+        if((prev_Log_Index_-1) &gt;= 0 && (prev_Log_Index_-1) &lt; svr_-&gt;logs_term_.size()) {
+          
+          auto logs_startIterator = svr_-&gt;logs_.begin() + (prev_Log_Index_-1) + 1;
+          auto logs_term_startIterator = svr_-&gt;logs_term_.begin() + (prev_Log_Index_-1) + 1;
+
+          svr_-&gt;logs_.erase(logs_startIterator, svr_-&gt;logs_.end());
+          svr_-&gt;logs_term_.erase(logs_term_startIterator, svr_-&gt;logs_term_.end());
+        }
+      }
+    }
+
+    Log_info("PLI %d and SFlogs Size %d &gt; Follow logs %d: ", prev_Log_Index_, suffix_logs_.size(), svr_-&gt;logs_.size());
+
+    if(prev_Log_Index_+suffix_logs_.size() &gt; svr_-&gt;logs_.size()){
+      for(int index = (svr_-&gt;logs_.size() - prev_Log_Index_); index &lt; suffix_logs_.size(); index++){
+        Log_info("Me in Add Log to follower %d..!", svr_-&gt;loc_id_);
+        auto &c = dynamic_cast&lt;TpcCommitCommand&&gt;(*const_cast&lt;MarshallDeputy&&gt;(suffix_logs_.at(0)).sp_data_);
+        auto tx_id = c.tx_id_;
+        Log_info("Received Cmd %d  at %d index with termm  %d--&gt; ", tx_id, index, prev_Log_Index_, suffix_logs_.size()) ;
+        svr_-&gt;logs_.push_back(const_cast&lt;MarshallDeputy&&gt;(suffix_logs_.at(index)).sp_data_);
+        svr_-&gt;logs_term_.push_back(suffix_logs_term_.at(index));
+      }
+    }
+    Log_info("Me out ofs Add Log to follower %d..!", svr_-&gt;loc_id_);
+
+    Log_info("Leader Commit Index %d and Follower Commit indx %d..!", leader_commit_, svr_-&gt;commit_index_);
+
+    if(leader_commit_ &gt; svr_-&gt;commit_index_){
+      Log_info("Me in Commit Log to follower %d..!", svr_-&gt;loc_id_);
+      for(int index = svr_-&gt;commit_index_; index&lt;leader_commit_; index++){
+        Log_info("Me at Commit for Follower..!");
+        svr_-&gt;app_next_(*svr_-&gt;logs_.at(index));
+      }
+      svr_-&gt;commit_index_ = leader_commit_;  
+    }
+    *ack_idx_ = prev_Log_Index_ + suffix_logs_.size();
+    *followerAppendOK = true;
+
+    Log_info("Exit Service with Reply -- Commit Index %d, Ack Ind %d and Append  %d..!", svr_-&gt;commit_index_, *ack_idx_, *followerAppendOK);
+  }
+  std::lock_guard&lt;std::recursive_mutex&gt; unlock(svr_-&gt;mtx_);
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("receive an rpc: %s", req.c_str());
+  Log_info("receive an rpc ID: %d", svr_-&gt;site_id_);
+  
+  *res = "world";
+  defer-&gt;reply();
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

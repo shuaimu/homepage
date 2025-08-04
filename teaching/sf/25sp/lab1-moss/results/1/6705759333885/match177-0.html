@@ -1,0 +1,268 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-law-lin/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-law-lin/src/deptran/raft/service.cc<p><PRE>
+
+#include "service.h"
+
+#include "../marshallable.h"
+#include "server.h"
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match177-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer* sched)
+    : svr_((RaftServer*)sched) {
+    struct timespec curr_time;
+    clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+    srand(curr_time.tv_nsec);
+}
+
+bool RaftServiceImpl::IsLogUpToDate(int term, int index) {
+</FONT>    int otherTerm = svr_-&gt;GetLastLogTerm();
+    int otherIndex = svr_-&gt;GetLastLogIndex();
+    return (term &gt; otherTerm) || (term == otherTerm && index &gt;= otherIndex);
+}
+
+void RaftServiceImpl::HandleRequestVote(const uint64_t& candidateTerm,
+                                        const locid_t& candidateId,
+                                        const uint64_t& lastLogIndex,
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match177-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                        const uint64_t& lastLogTerm,
+                                        uint64_t* term,
+                                        bool_t* voteGranted,
+                                        rrr::DeferredReply* defer) {
+    /* Your code here */
+    svr_-&gt;mtx_.lock();
+    // //Log_info("[HandleRequestVote RPC handler for server %d] Candidate (%d,%d), Current term %d, Voted for %d", svr_-&gt;loc_id_, candidateTerm, candidateId, svr_-&gt;currentTerm, svr_-&gt;votedFor);
+    *term = svr_-&gt;currentTerm;
+    *voteGranted = false;
+
+    // Reply false if term &lt; currentTerm
+    if (candidateTerm &lt; svr_-&gt;currentTerm) {
+</FONT>        // Log_info("Candidate term is less than current term");
+        svr_-&gt;mtx_.unlock();
+        defer-&gt;reply();
+        return;
+    }
+    if (candidateTerm &gt; svr_-&gt;currentTerm) {
+        // Log_info("[server %d] (vote) CONVERT TO FOLLOWER", svr_-&gt;loc_id_);
+        svr_-&gt;ConvertToFollower(candidateTerm);
+    }
+
+    /* If votedFor is null or candidateId, and candidate’s log is at
+    least as up-to-date as receiver’s log, grant vote */
+    // //Log_info("got here [%d]", (svr_-&gt;votedFor == -1 || svr_-&gt;votedFor == candidateId) && IsLogUpToDate(lastLogTerm, lastLogIndex));
+    //  Note: Would use svr_-&gt;votedFor &lt; 0, but that returns true when svr_-&gt;votedFor = -1 for whatever weird reason...
+    if ((svr_-&gt;votedFor == -1 || svr_-&gt;votedFor == candidateId) && IsLogUpToDate(lastLogTerm, lastLogIndex)) {
+        // Log_info("[RPC server %d] Granting vote to candidate %d", svr_-&gt;loc_id_, candidateId);
+        *voteGranted = true;
+        svr_-&gt;votedFor = candidateId;
+        // Notify background coroutine that the server granted the candidate the vote
+        svr_-&gt;eventQueue.enqueue(VOTE_GRANTED);
+    }
+    svr_-&gt;mtx_.unlock();
+    defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleAppendEntries(const uint64_t& leaderTerm,
+                                          const locid_t& leaderId,
+                                          const uint64_t& prevLogIndex,
+                                          const uint64_t& prevLogTerm,
+                                          const vector&lt;uint64_t&gt;& entriesTerms,
+                                          const vector&lt;MarshallDeputy&gt;& entriesCommands,
+                                          const uint64_t& leaderCommit,
+                                          uint64_t* term,
+                                          bool_t* success,
+                                          uint64_t* conflictingIndex,
+                                          uint64_t* conflictingTerm,
+                                          rrr::DeferredReply* defer) {
+    /* Your code here */
+    svr_-&gt;mtx_.lock();
+    Log_info("[server %d] HandleAppendEntries RPC", svr_-&gt;loc_id_);
+    *term = 0;
+    *success = false;
+    *conflictingTerm = 0;
+    uint64_t lastLogIndex = svr_-&gt;GetLastLogIndex();
+
+    // Log_info("[server %d] lastLogIndex %d, leaderTerm: %d, svr-&gt;currentTerm: %d", svr_-&gt;loc_id_, lastLogIndex, leaderTerm, svr_-&gt;currentTerm);
+    // Reply false if term &lt; currentTerm
+    if (leaderTerm &lt; svr_-&gt;currentTerm) {
+        *term = svr_-&gt;currentTerm;
+        *success = false;
+        *conflictingIndex = lastLogIndex + 1;
+        // Log_info("conflictingIndex term %d &lt; currentTerm %d , CI: %d", leaderTerm, svr_-&gt;currentTerm, lastLogIndex + 1);
+        svr_-&gt;mtx_.unlock();
+        defer-&gt;reply();
+        return;
+    }
+    
+    // If RPC request or response contains term T &gt; currentTerm:
+    // set currentTerm = T, convert to follower
+    if (leaderTerm &gt; svr_-&gt;currentTerm) {
+        // Log_info("[server %d] CONVERT TO FOLLOWER", svr_-&gt;loc_id_);
+        svr_-&gt;ConvertToFollower(leaderTerm);
+    }
+
+    // Notify background coroutine that this server has received a heartbeat and to reset heartbeat timer
+    Log_info("[server %d] enqueueing heartbeat event", svr_-&gt;loc_id_);
+    svr_-&gt;eventQueue.enqueue(RECEIVED_HEARTBEAT);
+
+    *term = svr_-&gt;currentTerm;
+
+    // Log_info("[server %d] prevLogIndex %d lastLogIndex %d. prev &gt; last %d, prevLogIndex != -1 %d", svr_-&gt;loc_id_, prevLogIndex, lastLogIndex, prevLogIndex &gt; lastLogIndex, prevLogIndex != -1);
+    if (prevLogIndex != -1 && prevLogIndex &gt; lastLogIndex) {
+        *success = false;
+        *conflictingIndex = lastLogIndex + 1;
+        // Log_info("[server %d] conflictingIndex prevLogIndex &gt; lastLogIndex %d", svr_-&gt;loc_id_, conflictingIndex);
+        svr_-&gt;mtx_.unlock();
+        defer-&gt;reply();
+        return;
+    }
+    /*  Reply false if log doesn’t contain an entry at prevLogIndex
+        whose term matches prevLogTerm
+    */
+    // Log_info("[server %d] svr_-&gt;logs[prevLogIndex:%d].term=%d prevLogTerm=%d", svr_-&gt;loc_id_, prevLogIndex, svr_-&gt;logs[prevLogIndex].term, prevLogTerm);
+    if (prevLogIndex != -1 && svr_-&gt;logs[prevLogIndex].term != prevLogTerm) {
+        *success = false;
+        for (int i = prevLogIndex; i &gt;= 0; i--) {
+            // Log_info("[server %d] svr_-&gt;logs[%d].term=%d, svr_-&gt;logs[prevLogIndex:%d].term=%d", svr_-&gt;loc_id_, i, svr_-&gt;logs[i].term, prevLogIndex, svr_-&gt;logs[prevLogIndex].term);
+            *conflictingIndex = i;
+            if (svr_-&gt;logs[i].term != svr_-&gt;logs[prevLogIndex].term) {
+                /*  Found previous term to conflicting term:
+                the leader can decrement nextIndex to bypass all of the conflicting
+                entries in that term; one AppendEntries RPC will
+                be required for each term with conflicting entries, rather
+                than one RPC per entry
+                */
+                // Log_info("[server %d] conflictingIndex in loop %d", svr_-&gt;loc_id_, i);
+                break;
+            }
+        }
+        svr_-&gt;mtx_.unlock();
+        defer-&gt;reply();
+        return;
+    }
+    // Log_info("[server %d] made it thru", svr_-&gt;loc_id_);
+    *success = true;
+    *conflictingIndex = -1;
+    /*  If an existing entry conflicts with a new one (same index
+        but different terms), delete the existing entry and all that
+        follow it
+    */
+    // for (auto log : svr_-&gt;logs)
+    //     Log_info("[server %d][print before] svr_-&gt;log %d", svr_-&gt;loc_id_, log.term);
+
+    int lst = svr_-&gt;GetLastLogIndex();
+    // Log_info("[AppendEntries print before removing][server %d] svr_-&gt;log[%d].term=%d, total size=%d", svr_-&gt;loc_id_, lst, svr_-&gt;logs[lst].term, svr_-&gt;logs.size());
+
+    int i = 0;
+    for (i; i &lt; svr_-&gt;logs.size() && i &lt; entriesTerms.size(); i++) {
+        // Log_info("svr_-&gt;logs[i].term: %d, entriesTerms[i]: %d", svr_-&gt;logs[i].term, entriesTerms[i]);
+        if (svr_-&gt;logs[i].term != entriesTerms[i]) {
+            // Log_info("[server %d] Removing elements from i to end:%d", svr_-&gt;loc_id_, i);
+            svr_-&gt;logs.erase(svr_-&gt;logs.begin() + i, svr_-&gt;logs.end());
+            break;
+        }
+    }
+    // int i = prevLogIndex + 1;
+    // int j = 0;
+    // for (i, j; i &lt; lastLogIndex + 1 && j &lt; entriesTerms.size(); i++, j++) {
+    //     if (svr_-&gt;logs[i].term != entriesTerms[j]) {
+    //         // Index i indicates the first conflicting index to remove all entries prior
+    //         // Index j indicates the first index where all entries after are safe
+    //         break;
+    //     }
+    // }
+    // Log_info("Removing elements from 0 to i:%d and adding elements at j:%d", i, j);
+
+    // Delete all logs at and prior to index i-1
+    // Log_info("[server %d] Appending new entries not in the log", svr_-&gt;loc_id_);
+    // Append any new entries not already in the log
+    for (i; i &lt; entriesTerms.size(); i++) {
+        std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(entriesCommands[i]).sp_data_;
+        LogEntry entry;
+        entry.cmd = cmd;
+        entry.term = entriesTerms[i];
+        svr_-&gt;logs.push_back(entry);
+    }
+    // for (j; j &lt; entriesTerms.size(); j++) {
+    //     Log_info("test1");
+    //     std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(entriesCommands[j]).sp_data_;
+    //     Log_info("test2");
+    //     LogEntry entry;
+    //     entry.cmd = cmd;
+    //     entry.term = entriesTerms[j];
+    //     svr_-&gt;logs.push_back(entry);
+    // }
+    // for (auto log : svr_-&gt;logs)
+    //      Log_info("[server %d][print after] svr_-&gt;log %d", svr_-&gt;loc_id_, log.term);
+    lst = svr_-&gt;GetLastLogIndex();
+    // Log_info("[AppendEntries print after appending][server %d] svr_-&gt;log[%d].term=%d, total size=%d", svr_-&gt;loc_id_, lst, svr_-&gt;logs[lst].term, svr_-&gt;logs.size());
+    /*  If leaderCommit &gt; commitIndex, set commitIndex =
+        min(leaderCommit, index of last new entry)
+    */
+    // Log_info("[server %d] leaderCommit %d, svr_-&gt;commitIndex %d", svr_-&gt;loc_id_, leaderCommit, svr_-&gt;commitIndex);
+    if (leaderCommit &gt; svr_-&gt;commitIndex) {
+        lastLogIndex = svr_-&gt;GetLastLogIndex();
+        if (leaderCommit &lt; lastLogIndex) {
+            svr_-&gt;commitIndex = leaderCommit;
+        } else {
+            svr_-&gt;commitIndex = lastLogIndex;
+        }
+        // Each server must pass each committed commmand to app_next_ exactly once,
+        // in the correct order, as soon as each command is committed on each server.
+        // Log_info("[server %d] svr_-&gt;lastApplied + 1 %d  svr_-&gt;commitIndex %d", svr_-&gt;loc_id_, svr_-&gt;lastApplied + 1, svr_-&gt;commitIndex);
+        for (int i = svr_-&gt;lastApplied + 1; i &lt;= svr_-&gt;commitIndex; i++) {
+            Log_info("[server %d] Committing entry index %d with term %d", svr_-&gt;loc_id_, i, svr_-&gt;logs[i].term);
+            svr_-&gt;app_next_(*svr_-&gt;logs[i].cmd);
+            // Log_info("made it");
+        }
+        svr_-&gt;lastApplied = svr_-&gt;commitIndex;
+    }
+    svr_-&gt;mtx_.unlock();
+    defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t& leaderTerm,
+                                               const locid_t& leaderId,
+                                               uint64_t* term,
+                                               rrr::DeferredReply* defer) {
+    /* Your code here */
+    svr_-&gt;mtx_.lock();
+    // //Log_info("HandleEmptyAppendEntries RPC");
+    *term = svr_-&gt;currentTerm;
+    if (leaderTerm &lt; svr_-&gt;currentTerm) {
+        // Log_info("Leader %d term is less than server %d term", leaderId, svr_-&gt;loc_id_);
+        svr_-&gt;mtx_.unlock();
+        defer-&gt;reply();
+        return;
+    }
+    // Issue heartbeat
+    // Log_info("Server %d got heartbeat from server %d", svr_-&gt;loc_id_, leaderId);
+    // svr_-&gt;electionTimer.reset();
+    // svr_-&gt;ConvertToFollower(leaderTerm);
+    svr_-&gt;eventQueue.enqueue(RECEIVED_HEARTBEAT);
+    svr_-&gt;mtx_.unlock();
+    defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     rrr::DeferredReply* defer) {
+    /* Your code here */
+    // //Log_info("receive an rpc: %s", req.c_str());
+    *res = "world";
+    defer-&gt;reply();
+}
+
+}  // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

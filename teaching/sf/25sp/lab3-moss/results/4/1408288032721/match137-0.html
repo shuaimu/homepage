@@ -1,0 +1,119 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-JayaramKrovvidi/src/shardkv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-JayaramKrovvidi/src/shardkv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match137-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+int64_t ShardKvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+bool ShardKvServer::IsLeader() {
+</FONT>  RaftServer& rs = GetRaftServer();
+  bool is_leader;
+  uint64_t term;
+  rs.GetState(&is_leader, &term);
+  return is_leader;
+}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match137-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+int ShardKvServer::PublishRaftCommand(const uint64_t& oid, const string& k, const string& v, const string& op) {
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back(op);
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+</FONT>
+  RaftServer& rs = GetRaftServer();
+  shared_ptr&lt;Marshallable&gt; cmd = s;
+  uint64_t index, term;
+  rs.Start(cmd, &index, &term);
+  Log_info("Shard KV Node %d :: %s %s %s", rs.site_id_, op.c_str(), k.c_str(), v.c_str());
+
+  for(int i=1; i&lt;=3; ++i) {
+    Coroutine::Sleep(i*300000);
+    if(uncommitted_ops_[k].find(oid) == uncommitted_ops_[k].end()) break;
+  }
+  return uncommitted_ops_[k].find(oid) != uncommitted_ops_[k].end() ? KV_TIMEOUT : KV_SUCCESS;
+}
+
+int ShardKvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+    // lab_shard: fill in your code
+    if (!IsLeader()) return KV_NOTLEADER;
+    uncommitted_ops_[k].insert(oid);
+    return PublishRaftCommand(oid, k, v, "put");
+}
+
+int ShardKvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+    // lab_shard: fill in your code
+    if (!IsLeader()) return KV_NOTLEADER;
+    uncommitted_ops_[k].insert(oid);
+    return PublishRaftCommand(oid, k, v, "append");
+}
+
+int ShardKvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+    // lab_shard: fill in your code
+    if(!IsLeader()) return KV_NOTLEADER;
+
+    if(uncommitted_ops_[k].size() &gt; 0 || kv_store_.find(k) == kv_store_.end()) {
+      return KV_TIMEOUT;
+    } else {
+      *v = kv_store_[k];
+      return KV_SUCCESS;
+    }
+}
+
+void ShardKvServer::OnNextCommand(Marshallable& m) {
+    // lab_shard: fill in your code
+    auto v = (MultiStringMarshallable*)(&m);
+    uint64_t op_id = stoull(v-&gt;data_[0]);
+    string op = v-&gt;data_[1];
+    string k = v-&gt;data_[2];
+    string v1 = v-&gt;data_[3];
+    if(uncommitted_ops_[k].find(op_id) != uncommitted_ops_[k].end()) {
+      uncommitted_ops_[k].erase(op_id);
+    }
+    if(op == "put") {
+      kv_store_[k] = v1;
+    } else if(op == "append") {
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match137-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      kv_store_[k] += v1;
+    }
+}
+
+shared_ptr&lt;ShardKvClient&gt; ShardKvServer::CreateClient(Communicator* comm) {
+  auto cli = make_shared&lt;ShardKvClient&gt;();
+  cli-&gt;commo_ = comm;
+</FONT>  verify(cli-&gt;commo_ != nullptr);
+  static uint32_t id = 0;
+  id++;
+  cli-&gt;cli_id_ = id; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

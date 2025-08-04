@@ -1,0 +1,81 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-iGN5117/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-praksekar/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+
+void RaftServiceImpl::HandleRequestVote(const uint64_t& term,
+                                        const uint64_t& candidateId,
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match162-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_14.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                        const uint64_t& lastLogIndex,
+                                        const uint64_t& lastLogTerm,
+                                        i32 *ret_term,
+                                        bool_t *vote_granted,
+                                        rrr::DeferredReply* defer) {
+  /* Your code here */
+  // Log_info("%s entering HandleRequestVote(term=%d, cid=%d, lastlogidx=%d, lastlogterm=%d)", svr_-&gt;to_str().data(), term, candidateId, lastLogIndex, lastLogTerm);
+  tuple&lt;i32, bool_t&gt; res = svr_-&gt;handleRequestVote(term, candidateId, lastLogIndex, lastLogTerm);
+</FONT>  *ret_term = get&lt;i32&gt;(res);
+  *vote_granted = get&lt;bool_t&gt;(res);
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleAppendEntries(const uint64_t& term, 
+                                          const uint64_t& leaderId, 
+                                          const uint64_t& prevLogIndex, 
+                                          const uint64_t& prevLogTerm, 
+                                          const string& entries, 
+                                          const uint64_t& leaderCommit,
+                                          i32 *ret_term, 
+                                          bool_t *success,
+                                          rrr::DeferredReply* defer) {
+  /* Your code here */
+  // Log_info("%s entering HandleAppendEntries(term=%d, lid=%d, prevLogIdx=%d, prevLogTerm=%d, leaderCommitIdx=%d)", svr_-&gt;to_str().data(), term, leaderId, prevLogIndex, prevLogTerm, leaderCommit);
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match162-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_9.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  tuple&lt;i32, bool_t&gt; res = svr_-&gt;handleAppendEntries(term, leaderId, prevLogIndex, prevLogTerm, entries, leaderCommit);
+  *ret_term = get&lt;i32&gt;(res);
+</FONT>  *success = get&lt;bool_t&gt;(res);
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t& term,
+                                               const uint64_t& leaderCommit,
+                                               i32 *ret_term, 
+                                               rrr::DeferredReply* defer) {
+  // Log_info("%s entering HandleEmptyAppendEntries(term=%d, leaderCommit=%d)", svr_-&gt;to_str().data(), term, leaderCommit);
+  *ret_term = svr_-&gt;handleEmptyAppendEntries(term, leaderCommit);
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("receive an rpc: %s", req.c_str());
+  *res = "world";
+  defer-&gt;reply();
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

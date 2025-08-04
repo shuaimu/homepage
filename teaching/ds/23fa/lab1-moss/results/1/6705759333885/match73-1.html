@@ -1,0 +1,195 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-DeepshikaR/src/deptran/raft/commo.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-ksp20/src/deptran/raft/commo.cc<p><PRE>
+
+#include "commo.h"
+#include "../rcc/graph.h"
+#include "../rcc/graph_marshaler.h"
+#include "../command.h"
+#include "../procedure.h"
+#include "../command_marshaler.h"
+#include "raft_rpc.h"
+#include "macros.h"
+#include "iostream"
+
+namespace janus {
+
+RaftCommo::RaftCommo(PollMgr* poll) : Communicator(poll) {
+}
+
+void RaftCommo::SendRequestVote(parid_t par_id,
+                                siteid_t site_id,
+                                uint64_t arg1,
+                                uint64_t currentterm,
+                                uint64_t lastlogindex,
+                                uint64_t lastlogterm,
+                                uint64_t leaderid,
+                                int* votecount) {
+  /*
+   * Example code for sending a single RPC to server at site_id
+   * You may modify and use this function or just use it as a reference
+   */
+   //Log_info("send request vote rpc %d",site_id);
+  auto proxies = rpc_par_proxies_[par_id];
+  
+ 
+  for (auto& p : proxies) {
+  
+    if (p.first == site_id) {
+   // Log_info("%d&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;",site_id);
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match73-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    arg1=site_id;
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [votecount](Future* fu) {
+        /* this is a handler that will be invoked when the RPC returns */
+        uint64_t ret1;
+        bool_t vote_granted;
+</FONT>        int v=*votecount;
+        /* retrieve RPC return values in order */
+        fu-&gt;get_reply() &gt;&gt; ret1;
+        fu-&gt;get_reply() &gt;&gt; vote_granted;
+        /* process the RPC response here */
+        if (vote_granted) {
+          v++;
+          *votecount=v;
+        }
+       
+      };
+     
+      Call_Async(proxy, RequestVote, arg1, currentterm,lastlogindex,lastlogterm,leaderid, fuattr);
+   }
+  }
+}
+
+void RaftCommo::SendAppendEntries(parid_t par_id,
+                                  siteid_t site_id,
+                                  uint64_t leaderid,
+                                  uint64_t leaderterm,
+                                  shared_ptr&lt;Marshallable&gt; cmd,
+                                  uint64_t leaderindex,
+                                  uint64_t previndex,
+                                  uint64_t leadercommitindex,
+                                  int* n_append,
+                                  uint64_t l_term,
+                                  uint64_t p_term,
+                                  int *nextindex,
+                                  bool* check) {
+
+  //std::lock_guard&lt;std::recursive_mutex&gt; lock();
+  auto proxies = rpc_par_proxies_[par_id];
+  for (auto& p : proxies) {
+    
+    if (p.first == site_id) {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [n_append,nextindex,check](Future* fu) {
+        int no=*n_append;
+        int nxtindex= *nextindex;
+        bool_t followerAppendOK;
+        bool_t indexmismatch1 = false;
+        fu-&gt;get_reply() &gt;&gt; indexmismatch1;
+        fu-&gt;get_reply() &gt;&gt; followerAppendOK;
+        
+        if(followerAppendOK == true){
+          no++;
+          *n_append=no;
+          //Log_info("%d append count",*n_append);
+          *check = true;
+        }
+        if(indexmismatch1 == true){
+           nxtindex--;
+          *nextindex=nxtindex;
+          *check=false;
+          //Log_info("indexmismatch1");
+        }
+        else{
+          //nxtindex=-1;
+          //*nextindex=nxtindex;
+        }
+      };
+      /* wrap Marshallable in a MarshallDeputy to send over RPC */
+     // std::cout&lt;&lt;cmd;
+      MarshallDeputy md(cmd);
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match73-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      Call_Async(proxy, AppendEntries,leaderid,leaderterm, md,leaderindex,previndex,leadercommitindex,l_term,p_term,fuattr);
+    }
+  }
+}
+
+//shared_ptr&lt;IntEvent&gt; 
+
+void RaftCommo::SendString(parid_t par_id, siteid_t site_id,uint64_t currentterm) {
+</FONT>  auto proxies = rpc_par_proxies_[par_id];
+  //auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  
+  for (auto& p : proxies) {
+   if (p.first == site_id) {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      string res1;
+      string *res=&res1;
+      fuattr.callback = [res](Future* fu) {
+     
+        fu-&gt;get_reply() &gt;&gt; *res;
+        //ev-&gt;Set(1);
+       
+      };
+      /* wrap Marshallable in a MarshallDeputy to send over RPC */
+      Call_Async(proxy, HelloRpc,currentterm, fuattr);
+    }
+  }
+  //return ev;
+}
+
+
+
+ void RaftCommo::SendEmptyAppend(parid_t par_id, 
+                                  siteid_t site_id,
+                                  uint64_t leaderid,
+                                  uint64_t leaderterm,
+                                  uint64_t commitedindex, 
+                                  uint64_t leaderindex,
+                                  bool* check,
+                                  uint64_t l_term  ){
+
+    //std::lock_guard&lt;std::recursive_mutex&gt; lock1();
+    auto proxies = rpc_par_proxies_[par_id];
+ // auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  
+  for (auto& p : proxies) {
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match73-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+   if (p.first == site_id) {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+       
+      fuattr.callback = [check](Future* fu) {
+        bool_t indexmismatch=false;
+</FONT>        fu-&gt;get_reply() &gt;&gt; indexmismatch;
+        if(indexmismatch == true){
+          //Log_info("entered");
+          *check=true;
+        }
+        // fu-&gt;get_reply() &gt;&gt; *ack;
+       // ev-&gt;Set(1);
+       
+      };
+     
+      Call_Async(proxy, EmptyAppend,leaderid, leaderterm,commitedindex,leaderindex, l_term, fuattr);
+    }
+  }
+
+  }  
+
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

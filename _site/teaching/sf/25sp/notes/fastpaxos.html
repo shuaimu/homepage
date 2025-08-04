@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>Fast Paxos | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="Fast Paxos" />
+<meta property="og:locale" content="en_US" />
+<link rel="canonical" href="http://0.0.0.0/teaching/sf/25sp/notes/fastpaxos.html" />
+<meta property="og:url" content="http://0.0.0.0/teaching/sf/25sp/notes/fastpaxos.html" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="Fast Paxos" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"Fast Paxos","url":"http://0.0.0.0/teaching/sf/25sp/notes/fastpaxos.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://0.0.0.0/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>Fast Paxos</h1>
+         </header> -->
+
+  <section>
+    
+<h1 id="fast-paxos">Fast Paxos</h1>
+
+<h2 id="paxos-review">Paxos review</h2>
+<ul>
+  <li>Round structure</li>
+  <li>Discover the possibly chosen value of previous rounds?
+    <ul>
+      <li>no value accepted before</li>
+      <li>a single round or multiple round accepted before
+        <ul>
+          <li>choose the higher round</li>
+          <li>is there a single value or multiple accepted in this round?</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>Trick, intersect
+    <ul>
+      <li>What if increasing the prepare quorum size?</li>
+      <li>What if increasing the accept quorum size?</li>
+    </ul>
+  </li>
+  <li>The high performance model
+    <ul>
+      <li>there is a leader</li>
+      <li>client to leader</li>
+      <li>leader send to follwers, and followers ack</li>
+      <li>leader reply to client</li>
+      <li>2 RTT in total</li>
+    </ul>
+  </li>
+  <li>Question: can we reduce RTT?
+    <ul>
+      <li>client directly send to every one?</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="fastpath-quorum">Fastpath Quorum</h2>
+<ul>
+  <li>problem
+    <ul>
+      <li>multiple values can be accepted in a round</li>
+    </ul>
+  </li>
+  <li>quorum size: a majority?
+    <ul>
+      <li>how to recover in the next round?</li>
+      <li>compare number is no longer possible</li>
+    </ul>
+  </li>
+  <li>quorum size: all?
+    <ul>
+      <li>if see differeent values, then values chosen</li>
+      <li>unless see the overlap between N and M, which is M, no need to accept this value</li>
+    </ul>
+  </li>
+  <li>what is the right size? between M and N?</li>
+  <li>problem, the intersection of M and Qf does not intersect with another QF
+    <ul>
+      <li>Make the intesect!</li>
+      <li>Qf+M-N+Qf-N&gt;0 2Qf+M&gt;2N
+        <ul>
+          <li>N-E+N-F-N+N-E-N&gt;0, N&gt;2E+F</li>
+        </ul>
+      </li>
+      <li>2M&gt;N
+        <ul>
+          <li>N-F+N-F&gt;N, N&gt;2F</li>
+        </ul>
+      </li>
+      <li>4Qf&gt;=3N,</li>
+    </ul>
+  </li>
+  <li></li>
+</ul>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+</body>
+
+</html>

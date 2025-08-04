@@ -1,0 +1,198 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-Abhinav1497/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-HOD101s/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match230-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+shared_ptr&lt;MultiStringMarshallable&gt; GenerateMarshallable(const uint64_t& oid, const string& action, const string& key, const string& value) {
+  /* Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it. */
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back(action);
+  s-&gt;data_.push_back(key);
+  s-&gt;data_.push_back(value);
+</FONT>  return s;
+}
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  /* 
+  Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  */
+  /* your code here */
+  cout&lt;&lt;"KvServer Put: "&lt;&lt;oid&lt;&lt;" "&lt;&lt;k&lt;&lt;" "&lt;&lt;v&lt;&lt;" Raft server id "&lt;&lt;GetRaftServer().site_id_&lt;&lt;endl;
+  shared_ptr&lt;Marshallable&gt; command = GenerateMarshallable(oid, PUT, k, v);
+  bool start_response;
+
+  uint64_t index, term;
+  start_response = GetRaftServer().Start(command, &index, &term);
+  
+  if (!start_response) {
+    cout&lt;&lt;"Put is not leader for "&lt;&lt;GetRaftServer().site_id_&lt;&lt;endl;
+    return KV_NOTLEADER;
+  }
+
+  int retries = 1000;
+
+  bool op_commited;
+  string oid_str = to_string(oid);
+
+  while(--retries){
+    mtx_.lock();
+    op_commited = commited_oids.count(oid_str);
+    mtx_.unlock();
+
+    if (op_commited){
+      cout&lt;&lt;"Put is Success"&lt;&lt;endl;
+      return KV_SUCCESS;
+    }
+    Coroutine::Sleep(10);
+  }
+  
+  cout&lt;&lt;"Put is Timeout"&lt;&lt;endl;
+  return KV_TIMEOUT;
+}
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+  shared_ptr&lt;Marshallable&gt; command = GenerateMarshallable(oid, APPEND, k, v);
+  uint64_t index, term;
+  cout&lt;&lt;"KvServer Append: "&lt;&lt;oid&lt;&lt;" "&lt;&lt;k&lt;&lt;" "&lt;&lt;v&lt;&lt;" Raft server id "&lt;&lt;GetRaftServer().site_id_&lt;&lt;endl;
+  bool start_response = GetRaftServer().Start(command, &index, &term);
+  
+  if (!start_response) {
+    cout&lt;&lt;"Append is not leader for "&lt;&lt;GetRaftServer().site_id_&lt;&lt;endl;
+    return KV_NOTLEADER;
+  }
+
+  int retries = 1000;
+
+  bool op_commited;
+  string oid_str = to_string(oid);
+
+  while(--retries){
+    mtx_.lock();
+    op_commited = commited_oids.count(oid_str);
+    mtx_.unlock();
+
+    if (op_commited){
+      cout&lt;&lt;"Append is Success"&lt;&lt;endl;
+      return KV_SUCCESS;
+    }
+    Coroutine::Sleep(10);
+  }
+
+  cout&lt;&lt;"Append is Timeout"&lt;&lt;endl;
+  return KV_TIMEOUT;
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+  /* your code here */
+  cout&lt;&lt;"KvServer Get: "&lt;&lt;oid&lt;&lt;" "&lt;&lt;k&lt;&lt;" Raft server id "&lt;&lt;GetRaftServer().site_id_&lt;&lt;endl;
+  shared_ptr&lt;Marshallable&gt; command = GenerateMarshallable(oid, GET, k, "");
+  uint64_t index, term;
+  bool start_response = GetRaftServer().Start(command, &index, &term);
+  
+  if (!start_response) {
+    cout&lt;&lt;"Get is not leader for "&lt;&lt;GetRaftServer().site_id_&lt;&lt;endl;
+    return KV_NOTLEADER;
+  }
+
+  int retries = 1000;
+
+
+  bool op_commited;
+  string oid_str = to_string(oid);
+
+  while(--retries){
+    mtx_.lock();
+    op_commited = commited_oids.count(oid_str);
+    mtx_.unlock();
+
+    if (op_commited){
+      mtx_.lock();
+      *v = database[k];
+      mtx_.unlock();
+      cout&lt;&lt;"Get is Success"&lt;&lt;endl;
+      return KV_SUCCESS;
+    }
+    Coroutine::Sleep(10);
+  }
+
+  cout&lt;&lt;"Get is Timeout"&lt;&lt;endl;
+  return KV_TIMEOUT;
+}
+
+void KvServer::KvDataUpdate(vector&lt;string&gt; data) {
+  string operation = data[1], key = data[2], value = data[3];
+  if (operation == PUT) {
+    database[key] = value;
+  } else if(operation == APPEND) {
+    database[key] += value;
+  }
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  auto v = (MultiStringMarshallable*)(&m);
+  /* your code here */
+  cout&lt;&lt;"KvServer id: "&lt;&lt;v-&gt;data_[0]&lt;&lt;" -&gt; "&lt;&lt;v-&gt;data_[1]&lt;&lt;": "&lt;&lt;v-&gt;data_[2]&lt;&lt;" "&lt;&lt;v-&gt;data_[3]&lt;&lt;endl;
+  mtx_.lock();
+  KvDataUpdate(v-&gt;data_);
+  commited_oids.insert(v-&gt;data_[0]);
+  cout&lt;&lt;"Commited id "&lt;&lt;v-&gt;data_[0]&lt;&lt;endl;
+  cout&lt;&lt;"Database value for "&lt;&lt;v-&gt;data_[2]&lt;&lt;" = "&lt;&lt;database[v-&gt;data_[2]]&lt;&lt;endl;
+  mtx_.unlock();
+  Coroutine::Sleep(10);
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

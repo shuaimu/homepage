@@ -1,0 +1,324 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-BruceWang3077/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-imtoobose/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+namespace janus {
+
+static int volatile xShardMarshal =
+  MarshallDeputy::RegInitializer(MarshallDeputy::CMD_SHARD_CONFIG,
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match196-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                     [] () -&gt; Marshallable* {
+                                       return new ShardConfigMarshal;
+                                     });
+
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+</FONT>  auto newConfig = ShardConfig{};
+  for (auto &v: gid_server_map) {
+    newConfig.group_servers_map_[v.first] = v.second;
+  }
+
+  uint64_t index, term;
+  auto logCmd = GetMarshallableLogCmd(ShardKvCommandType::JOIN, newConfig);
+  auto cmd = dynamic_pointer_cast&lt;Marshallable&gt;(logCmd);
+  auto isLeader = GetRaftServer().Start(cmd, &index, &term);
+  if (!isLeader)
+  {
+    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+    return;
+  }
+  
+  // for (auto &v: gid_server_map) {
+  //   auto s = to_string(v.first) + ":{";
+  //   for(auto &j: v.second) {
+  //     s += to_string(j) + " ";
+  //   }
+  //   s += "}";
+  //   Log_info("join group - %s", s.c_str());
+  // }
+
+  const auto oid = logCmd-&gt;operationId;
+  eventMap[oid] = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  eventMap[oid]-&gt;Wait(EVENT_TIMEOUT);
+  if (eventMap[oid]-&gt;IsTimeout())
+  {
+    eventMap.erase(oid);
+    *ret = KV_TIMEOUT;
+    defer-&gt;reply();
+    return;
+  }
+
+  eventMap.erase(oid);
+  *ret = KV_SUCCESS;
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  auto newConfig = ShardConfig{};
+  for (auto &v : gids)
+  {
+    newConfig.group_servers_map_[v] = {};
+  }
+  
+  uint64_t index, term;
+  auto logCmd = GetMarshallableLogCmd(ShardKvCommandType::LEAVE, newConfig);
+  auto cmd = dynamic_pointer_cast&lt;Marshallable&gt;(logCmd);
+  auto isLeader = GetRaftServer().Start(cmd, &index, &term);
+  if (!isLeader)
+  {
+    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+    return;
+  }
+
+  // string leaveGroupLog = "[";
+  // for (auto &v: gids) {
+  //   leaveGroupLog += to_string(v)+" ";
+  // }
+  // Log_info("leave groups - %s]", leaveGroupLog.c_str());
+
+  const auto oid = logCmd-&gt;operationId;
+  eventMap[oid] = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  eventMap[oid]-&gt;Wait(EVENT_TIMEOUT);
+  if (eventMap[oid]-&gt;IsTimeout())
+  {
+    eventMap.erase(oid);
+    *ret = KV_TIMEOUT;
+    defer-&gt;reply();
+    return;
+  }
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match196-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  eventMap.erase(oid);
+  *ret = KV_SUCCESS;
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+</FONT>  // your code here
+  auto newConfig = ShardConfig{};
+  newConfig.shard_group_map_[shard] = gid;
+
+  uint64_t index, term;
+  auto logCmd = GetMarshallableLogCmd(ShardKvCommandType::MOVE, newConfig);
+  auto cmd = dynamic_pointer_cast&lt;Marshallable&gt;(logCmd);
+  auto isLeader = GetRaftServer().Start(cmd, &index, &term);
+  if (!isLeader)
+  {
+    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+    return;
+  }
+
+  const auto oid = logCmd-&gt;operationId;
+  eventMap[oid] = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  eventMap[oid]-&gt;Wait(EVENT_TIMEOUT);
+  if (eventMap[oid]-&gt;IsTimeout())
+  {
+    eventMap.erase(oid);
+    *ret = KV_TIMEOUT;
+    defer-&gt;reply();
+    return;
+  }
+
+  eventMap.erase(oid);
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match196-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  *ret = KV_SUCCESS;
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+</FONT>  // your code here
+  uint64_t index, term;
+  auto newConfig = ShardConfig{};
+  newConfig.number = config_no;
+  
+  auto logCmd = GetMarshallableLogCmd(ShardKvCommandType::QUERY, newConfig);
+  auto cmd = dynamic_pointer_cast&lt;Marshallable&gt;(logCmd);
+  auto isLeader = GetRaftServer().Start(cmd, &index, &term);
+  if (!isLeader)
+  {
+    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+    return;
+  }
+
+  const auto oid = logCmd-&gt;operationId;
+  eventMap[oid] = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  eventMap[oid]-&gt;Wait(EVENT_TIMEOUT);
+  if (eventMap[oid]-&gt;IsTimeout())
+  {
+    eventMap.erase(oid);
+    *ret = KV_TIMEOUT;
+    defer-&gt;reply();
+    return;
+  }
+  
+  eventMap.erase(oid);
+  *ret = KV_SUCCESS;
+
+  ShardConfig retConfig;
+  if (config_no == -1 || config_no &gt;= getLatestConfigNumber()) {
+    // Log_info("returning config at %d %s", getLatestConfigNumber()-1, configs_.at(getLatestConfigNumber()-1).toString().c_str() );
+    retConfig = configs_.at(getLatestConfigNumber() - 1).copy();
+  } else {
+    // Log_info("returning config at %d %s", config_no, configs_.at(config_no).toString().c_str());
+    retConfig = configs_.at(config_no).copy();
+  }
+  retConfig.group_servers_map_.erase(0);
+  *config = retConfig;
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  // your code here
+  const auto shardCommand = (ShardConfigMarshal*)&m;
+
+  switch (shardCommand-&gt;cmd) {
+    case ShardKvCommandType::JOIN:
+    {
+      auto newConfig = configs_.at(getLatestConfigNumber()-1).copy();
+      newConfig.number = getLatestConfigNumber();
+      for (auto &v: shardCommand-&gt;config.group_servers_map_) {
+        newConfig.group_servers_map_[v.first] = v.second;
+      }
+      rebalanceShards(newConfig);
+      configs_[getLatestConfigNumber()] = newConfig;
+      break;
+    }
+
+    case ShardKvCommandType::LEAVE:
+    {
+      auto newConfig = configs_.at(getLatestConfigNumber()-1).copy();
+      newConfig.number = getLatestConfigNumber();
+      for (auto &v : shardCommand-&gt;config.group_servers_map_)
+      {
+        if (v.first == 0) {
+          continue;
+        }
+        newConfig.group_servers_map_.erase(v.first);
+      }
+      rebalanceShards(newConfig);
+      configs_[getLatestConfigNumber()] = newConfig;
+      break;
+    }
+    case ShardKvCommandType::MOVE:
+    {
+      auto newConfig = configs_.at(getLatestConfigNumber() - 1).copy();
+      newConfig.number = getLatestConfigNumber();
+      for (auto &v : shardCommand-&gt;config.shard_group_map_)
+      {
+        newConfig.shard_group_map_[v.first] = v.second;
+      }
+      configs_[getLatestConfigNumber()] = newConfig;
+      break;
+    }
+    case ShardKvCommandType::QUERY:
+      break;
+    default:
+      return;
+  }
+
+  if (eventMap.find(shardCommand-&gt;operationId) != eventMap.end()){
+    eventMap.at(shardCommand-&gt;operationId)-&gt;Set(1);
+  }
+}
+
+void ShardMasterServiceImpl::rebalanceShards(ShardConfig& config) {
+  if (config.group_servers_map_.size() == 1) { 
+    for (auto i = 1; i &lt;= NSHARDS; i++) {
+      config.shard_group_map_[i] = 0;
+    }
+    return;
+  }
+
+  const uint32_t averageShardCount = NSHARDS / (config.group_servers_map_.size() - 1);
+  
+  // Log_info("[%d] before rebalance %s average %d", config.number, config.toString().c_str(), averageShardCount);
+  
+  map&lt;uint32_t, vector&lt;uint32_t&gt;&gt; group_shard_size;
+  vector&lt;uint32_t&gt; movedShards;
+  auto firstGroup = -1;
+  for (auto&v: config.shard_group_map_) {
+    auto &shard = v.first;
+    auto &group = v.second;
+    if (group != 0 && config.group_servers_map_.find(group) != config.group_servers_map_.end()) {
+      if (group_shard_size[group].size() &gt;= averageShardCount) {
+        movedShards.push_back(shard);
+      } else {
+        group_shard_size[group].push_back(shard);
+        config.shard_group_map_[shard] = group;
+        if (firstGroup == -1) {
+          firstGroup = group;
+        }
+      }
+    } else {
+      movedShards.push_back(shard);
+    }
+  }
+
+  // string movedShardsLog = "";
+  // for (auto &v: movedShards) {
+  //   movedShardsLog += to_string(v)+" ";
+  // }
+  // Log_info("[%d] moved shards %s", config.number, movedShardsLog.c_str());
+
+  auto idx = 0;
+  for (auto &j : config.group_servers_map_)
+  {
+    auto group = j.first;
+    if (group == 0 || group_shard_size[group].size() &gt;= averageShardCount) {
+      continue;
+    }
+
+    auto target = idx+averageShardCount;
+    for ( ; idx &lt; target && idx &lt; movedShards.size(); idx++) {
+      config.shard_group_map_[movedShards[idx]] = group;
+    }
+  }
+  
+  // Log_info("[%d] idx after moving %d", config.number, idx);
+  for (; idx &lt; movedShards.size(); idx++) {
+    config.shard_group_map_[movedShards[idx]] = firstGroup;
+  }
+    // Log_info("[%d] rebalancing - average %d, config %s", config.number, averageShardCount, config.toString().c_str());
+  }
+
+shared_ptr&lt;ShardConfigMarshal&gt; ShardMasterServiceImpl::GetMarshallableLogCmd(ShardKvCommandType cmdType, ShardConfig config) {
+  auto logEntry = make_shared&lt;ShardConfigMarshal&gt;();
+  logEntry-&gt;cmd = cmdType;
+  logEntry-&gt;config = config;
+  logEntry-&gt;operationId = getOpId(cmdType, ++operationId);
+  return logEntry;
+}
+
+string ShardMasterServiceImpl::getOpId(ShardKvCommandType cmd, int32_t operationNumber) {
+  return to_string(GetRaftServer().loc_id_) + "_" + to_string(operationNumber) + "_" + to_string(cmd);
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  return cli;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

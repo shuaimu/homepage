@@ -1,0 +1,171 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-praksekar/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-praksekar/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+#include &lt;map&gt;
+#include &lt;set&gt;
+#include &lt;unistd.h&gt;
+
+namespace janus {
+
+map&lt;string, string&gt; kv_store;
+set&lt;int&gt; pending_glbl_oids; // operations that are waiting to be committed
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int generate_next_glbl_oid() { // maybe we need a mutex to guard concurrent reads of glbl_id here?
+  static uint glbl_oid = 0;
+  Log_info("generating glbl_oid of %d", glbl_oid);
+  return glbl_oid++;
+}
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+string kv_store_to_str() {
+  string res = "[";
+  for (auto kv: kv_store)
+    res += "(" + kv.first + "," + kv.second + "),";
+  res += "]";
+  return res;
+}
+
+string pending_glbl_oids_to_str() {
+  string res = "[";
+  for (int glbl_oid: pending_glbl_oids)
+    res += to_string(glbl_oid) + ",";
+  res += "]";
+  return res;
+}
+
+bool wait_for_commit(int glbl_oid) {
+  Log_info("waiting for %d to be committed", glbl_oid);
+  for (int i = 0; i &lt; KV_TIMEOUT_MS/PENDING_OP_CHECK_INTVL_MS; i++) {
+    if (pending_glbl_oids.count(glbl_oid) == 0) 
+      return true;
+    cr_msleep(PENDING_OP_CHECK_INTVL_MS); 
+  }
+  return false;
+}
+
+int KvServer::start_op_and_wait_for_commit(uint64_t cli_oid, op_type op_tp, string k, string v) {
+  if (GetRaftServer().role != leader) {
+    Log_info("Put request came to kvserver %d but I am not leader, returning KV_NOTLEADER", GetRaftServer().loc_id_);
+    return KV_NOTLEADER;
+  }
+  int glbl_oid = generate_next_glbl_oid();
+  log_entry e = log_entry{0, (int)cli_oid, glbl_oid, op_tp, k, v};
+  Log_info("creating marshallable to input into start");
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(entry_serialize(e));
+  auto b = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  uint64_t index, term;
+  Log_info("about to call Start with cli_oid=%d, op_type=%s, k=%s, v=%s", cli_oid, op_type_to_str[op_tp], k.data(), v.data());
+  GetRaftServer().Start(b, &index, &term);
+  Log_info("1");
+  pending_glbl_oids.insert(glbl_oid);
+  Log_info("inserted %d into %s", glbl_oid, pending_glbl_oids_to_str().data());
+  if (!wait_for_commit(glbl_oid)) {
+    Log_info("glbl_oid %d was not removed from pending_glbl_oids after %d ms", glbl_oid, KV_TIMEOUT_MS);
+    return KV_TIMEOUT;
+  }
+  return -1;
+}
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  /* 
+  Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  */
+  /* your code here */
+  Log_info("entering put oid=%d, k=%s, v=%s", oid, k.data(), v.data());
+  int res;
+  if ((res = start_op_and_wait_for_commit(oid, PUT, k, v)) != -1)
+    return res;
+  kv_store[k] = v; // put
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match130-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  Log_info("put is committed, put: k=%s, v=%s into %s", k.data(), kv_store[k].data(), kv_store_to_str().data());
+  return KV_SUCCESS;
+}
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+  Log_info("entering append oid=%d, k=%s, v=%s", oid, k.data(), v.data());
+</FONT>  int res;
+  if ((res = start_op_and_wait_for_commit(oid, APND, k, v)) != -1)
+    return res;
+  if (kv_store.count(k) == 0) // append
+    kv_store[k] = v;
+  else 
+    kv_store[k] += v ;
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match130-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  Log_info("append is committed, appended values: k=%s, v=%s into %s", k.data(), kv_store[k].data(), kv_store_to_str().data());
+  return KV_SUCCESS;
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+  /* your code here */
+  Log_info("entering get oid=%d, k=%s", oid, k.data());
+</FONT>  int res;
+  if ((res = start_op_and_wait_for_commit(oid, GET, k, "")) != -1)
+    return res;
+  if (kv_store.count(k) == 0) // get
+    return KV_TIMEOUT;
+  *v = kv_store[k];
+  Log_info("get is committed, getting value: v=%s from %s", kv_store[k].data(), kv_store_to_str().data());
+  return KV_SUCCESS;
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  auto v = (MultiStringMarshallable*)(&m);
+  /* your code here */
+  Log_info("data coming into OnNextCommand: %s", v-&gt;data_[0].data());
+  int glbl_oid = stoi(v-&gt;data_[0].data()); 
+  Log_info("Inside OnNextCommand, removing glbl_oid %d from %s", glbl_oid, pending_glbl_oids_to_str().data());
+  pending_glbl_oids.erase(glbl_oid);
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

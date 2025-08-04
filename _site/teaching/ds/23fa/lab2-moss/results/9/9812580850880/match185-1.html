@@ -1,0 +1,182 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-digaru19/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-ManemDhanush/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match185-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  /* 
+  Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  */
+  /* your code here */
+  RaftServer& raft = GetRaftServer(); 
+
+  uint64_t ret_term = 0;
+</FONT>  uint64_t ret_index = 0;
+  bool is_leader = false;
+
+  (&raft)-&gt;GetState(&is_leader, &ret_term);
+
+  if(!is_leader) {
+    std::cout&lt;&lt;"not leader in the put" &lt;&lt; std::endl;
+    return KV_NOTLEADER;
+  }
+
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+
+  shared_ptr&lt;Marshallable&gt; cmd = s;
+  (&raft)-&gt;Start(cmd, &ret_index, &ret_term);
+
+  Coroutine::Sleep(400000);
+  if (data_set.find(s-&gt;data_) != data_set.end()) {
+    std::cout&lt;&lt;"KV success in the put" &lt;&lt; std::endl;
+    return KV_SUCCESS;
+  }
+  std::cout&lt;&lt;"KV timeout in the put" &lt;&lt; std::endl;
+  return KV_TIMEOUT;
+}
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+  RaftServer& raft = this-&gt;GetRaftServer();
+
+  uint64_t ret_term = 0;
+  uint64_t ret_index = 0;
+  bool is_leader = false;
+
+  (&raft)-&gt;GetState(&is_leader, &ret_term);
+
+  if(!is_leader) {
+    std::cout&lt;&lt;"not leader in the append" &lt;&lt; std::endl;
+    return KV_NOTLEADER;
+  }
+
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("append");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+
+  shared_ptr&lt;Marshallable&gt; cmd = s;
+  (&raft)-&gt;Start(cmd, &ret_index, &ret_term);
+
+  Coroutine::Sleep(400000);
+  if (data_set.find(s-&gt;data_) != data_set.end()) {
+    std::cout&lt;&lt;"KV success in the append" &lt;&lt; std::endl;
+    return KV_SUCCESS;
+  }
+  std::cout&lt;&lt;"KV timeout in the append" &lt;&lt; std::endl;
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match185-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  return KV_TIMEOUT;
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+  /* your code here */
+  RaftServer& raft = GetRaftServer(); 
+
+  uint64_t ret_term = 0;
+</FONT>  uint64_t ret_index = 0;
+  bool is_leader = false;
+
+  (&raft)-&gt;GetState(&is_leader, &ret_term);
+
+  if(!is_leader) {
+    std::cout&lt;&lt;"not leader in the get" &lt;&lt; std::endl;
+    return KV_NOTLEADER;
+  }
+
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("get");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(*v);
+
+  shared_ptr&lt;Marshallable&gt; cmd = s;
+  (&raft)-&gt;Start(cmd, &ret_index, &ret_term);
+
+  Coroutine::Sleep(400000);
+  if (data_set.find(s-&gt;data_) != data_set.end()) {
+    *v = key_value_pair[s-&gt;data_[2]];
+    std::cout&lt;&lt;"KV success in the get and the value is " &lt;&lt; *v &lt;&lt; std::endl;
+    return KV_SUCCESS;
+  }
+  std::cout&lt;&lt;"KV timeout in the get" &lt;&lt; std::endl;
+  return KV_TIMEOUT;
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  auto v = (MultiStringMarshallable*)(&m);
+  int op = v-&gt;data_[1] == "get" ? get : v-&gt;data_[1] == "put" ? put : v-&gt;data_[1] == "append" ? append : unknown;
+
+  switch (op) {
+    case get:
+      v-&gt;data_[3] = (key_value_pair[v-&gt;data_[2]]);
+      break;
+    case put:
+      key_value_pair[v-&gt;data_[2]] = v-&gt;data_[3];
+      break;
+    case append:
+      key_value_pair[v-&gt;data_[2]] = key_value_pair.find(v-&gt;data_[2]) == key_value_pair.end() ? v-&gt;data_[3] : key_value_pair[v-&gt;data_[2]] + v-&gt;data_[3];
+      break;
+    case unknown:
+      break;
+  }
+  data_set.insert(v-&gt;data_);
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

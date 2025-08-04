@@ -1,0 +1,220 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-Nitish5499-1/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-Nitish5499-1/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+
+void RaftServiceImpl::HandleRequestVote(const siteid_t& site_id,
+                                        const uint64_t& candidateTerm,
+                                        const uint64_t& lastLogIndex,
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match116-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                        const uint64_t& lastLogTerm,
+                                        uint64_t *updatedTerm,
+                                        bool_t *vote_granted,
+                                        rrr::DeferredReply* defer) {
+  /* Your code here */
+  *updatedTerm = 0;
+  *vote_granted = false;
+
+  Log_info("Received request vote from server %d to server %d with term %d", site_id, svr_-&gt;loc_id_, candidateTerm);
+</FONT>
+  std::lock_guard&lt;std::recursive_mutex&gt; lock_guard(svr_-&gt;mtx_);
+  uint64_t lastReceiverLogIndex = 0;
+  uint64_t lastReceiverLogTerm = 0;
+  uint64_t logSize = svr_-&gt;logEntries.size();
+
+  if(candidateTerm &lt; svr_-&gt;currentTerm){
+    Log_info("Candidate %d's term %d is less than server %d's term %d. Returning updated term.", site_id, candidateTerm, svr_-&gt;loc_id_, svr_-&gt;currentTerm);
+    *updatedTerm = svr_-&gt;currentTerm;
+    *vote_granted = false;
+  }
+  else{
+      if(candidateTerm &gt; svr_-&gt;currentTerm){
+        Log_info("Candidate %d's term %d is than receiver(follower/candidate) %d's term %d", site_id, candidateTerm, svr_-&gt;loc_id_, svr_-&gt;currentTerm);
+        svr_-&gt;currentTerm = candidateTerm;// update receiver term to candidateTerm if candidateTerm in greater
+        //If the server is a leader or candidate, convert to follower. Need to check if this can be removed.
+        svr_-&gt;convertToFollower();
+      }
+  
+      Log_info("Before log size check");
+      if(logSize &gt; 0){
+          Log_info("Log size check");
+          lastReceiverLogIndex = logSize - 1; //get the lastLogIndex and lastLogTerm for the receiver.
+          lastReceiverLogTerm = svr_-&gt;logEntries[lastLogIndex].term;
+      }
+      Log_info("Checking if vote can be granted and voted for is %d", svr_-&gt;votedFor);
+      if((svr_-&gt;votedFor == -1 || svr_-&gt;votedFor == site_id)
+        && (lastReceiverLogTerm &lt;= lastLogTerm)
+        && (lastReceiverLogIndex &lt;= lastLogIndex)){
+          *vote_granted = true;
+          svr_-&gt;votedFor = site_id;
+          svr_-&gt;resetHeartbeatTimeoutStamp();
+          Log_info("Vote Granted: %d", *vote_granted);
+        }
+  }
+  Log_info("Leaving receiver");
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleAppendEntries(const siteid_t& leader_id,
+                                          const uint64_t& leaderTerm,
+                                          const uint64_t& prevLogIndex,
+                                          const uint64_t& prevLogTerm,
+                                          const uint64_t& leaderCommitIndex,
+                                          const MarshallDeputy& md_cmd,
+                                          const uint64_t& elementTerm,
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match116-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                          const bool_t& isHeartbeat,
+                                          uint64_t* updatedTerm,
+                                          bool_t *followerAppendOK,
+                                          uint64_t* followerNextIndex,
+                                          rrr::DeferredReply* defer) {
+  /* Your code here */
+  std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(md_cmd).sp_data_;
+  *updatedTerm = 0;
+  *followerAppendOK = false;
+  *followerNextIndex = 0;
+</FONT>  if(isHeartbeat == 2){
+    Log_info("Received appendEntry request from leader %d to server %d with term %d", leader_id, svr_-&gt;loc_id_, leaderTerm);
+  }
+  else{
+    Log_info("Received heartbeat from leader %d to server %d with term %d", leader_id, svr_-&gt;loc_id_, leaderTerm);
+  }
+
+  std::lock_guard&lt;std::recursive_mutex&gt; lock_guard(svr_-&gt;mtx_);
+  if(leaderTerm &lt; svr_-&gt;currentTerm){
+    Log_info("Leader %d's term %d is less than server %d's term %d in Append Entries. Returning updated term.", leader_id, leaderTerm, svr_-&gt;loc_id_, svr_-&gt;currentTerm);
+    *updatedTerm = svr_-&gt;currentTerm; //RI 1
+    *followerAppendOK = false;
+  }
+  else{ 
+    if(svr_-&gt;serverType != FOLLOWER){
+      svr_-&gt;resetHeartbeatTimeoutStamp();
+      svr_-&gt;convertToFollower();
+      Log_info("leader %d converting candidate/leader %d to follower", leader_id, svr_-&gt;loc_id_);
+    }
+    Log_info("server %d checking for log processing", svr_-&gt;loc_id_);
+    if(prevLogIndex &gt; svr_-&gt;logEntries.size() - 1){
+      svr_-&gt;resetHeartbeatTimeoutStamp();
+      Log_info("leader %d's prevlogindex:%d is greater than server %d's log size: %d",  leader_id, prevLogIndex, svr_-&gt;loc_id_, svr_-&gt;logEntries.size());
+      *followerNextIndex = svr_-&gt;logEntries.size() - 1;
+      *followerAppendOK = false;
+    }
+    else{
+      uint64_t currIndex = prevLogIndex + 1;
+      svr_-&gt;resetHeartbeatTimeoutStamp();
+
+      if(svr_-&gt;logEntries[prevLogIndex].term != prevLogTerm){
+        *followerAppendOK = false; //RI2
+        Log_info("server %d (leader) log is inconsistent with follower %d, leader prevlogterm: %d, server prevLogTerm: %d", leader_id, svr_-&gt;loc_id_, prevLogTerm, svr_-&gt;logEntries[prevLogIndex].term);
+        Log_info("server %d log size: %d", svr_-&gt;loc_id_, svr_-&gt;logEntries.size());
+        Log_info("leader %d prevlogindex: %d", leader_id, prevLogIndex);
+      }
+      else{
+        if(isHeartbeat == 2){
+          Log_info("leader %d going to append server %d's log, currIndex: %d, currIndex term: %d, leader term: %d", leader_id, svr_-&gt;loc_id_, currIndex, svr_-&gt;logEntries[currIndex].term, leaderTerm);
+          if((svr_-&gt;logEntries.size() - 1 &gt;= currIndex) && (svr_-&gt;logEntries[currIndex].term != leaderTerm)){
+            Log_info("leader %d possibly deleting and appending logs to server %d", leader_id, svr_-&gt;loc_id_);
+            svr_-&gt;logEntries.erase(svr_-&gt;logEntries.begin() + currIndex, svr_-&gt;logEntries.end()); //RI3
+            Log_info("leader %d's entry added to server %d's log", leader_id, svr_-&gt;loc_id_);
+            svr_-&gt;logEntries.push_back(LogEntry(elementTerm, cmd)); //RI4
+          }
+          else if(svr_-&gt;logEntries.size() == currIndex){
+          Log_info("leader %d's entry added to server %d's log", leader_id, svr_-&gt;loc_id_);
+          svr_-&gt;logEntries.push_back(LogEntry(elementTerm, cmd)); //RI4
+          }
+        }
+        
+        if(leaderCommitIndex &gt; svr_-&gt;commitIndex){
+          uint64_t commitStart = svr_-&gt;commitIndex + 1;
+          svr_-&gt;commitIndex = min(leaderCommitIndex, svr_-&gt;logEntries.size() - 1); //RI5
+          // Log_info("leader %d updating follower %d's commit index to %d", leader_id, svr_-&gt;loc_id_, svr_-&gt;commitIndex);
+          // Log_info("printing commit index %d and logsize %d", commitStart, svr_-&gt;logEntries.size());
+          // svr_-&gt;app_next_(*(svr_-&gt;logEntries[svr_-&gt;commitIndex].cmd));
+          while(commitStart &lt;= svr_-&gt;commitIndex){
+            Log_info("server %d applyingcommit index %d to the state machine", svr_-&gt;loc_id_, commitStart);
+            Log_info("printing commit index %d and logsize %d", commitStart, svr_-&gt;logEntries.size());
+            svr_-&gt;app_next_(*(svr_-&gt;logEntries[commitStart].cmd));
+            commitStart++;
+          }
+        }
+        *followerAppendOK = true; 
+      }
+    }
+  }
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleEmptyAppendEntries(const siteid_t& site_id,
+                                               const uint64_t& leaderTerm,
+                                               const uint64_t& leaderCommitIndex,
+                                               bool_t* electionTimeoutReset,
+                                               uint64_t* updatedTerm,
+                                               rrr::DeferredReply* defer){ 
+
+  Log_info("Received hearbeat from leader %d", site_id);   
+  *electionTimeoutReset = false;
+  *updatedTerm = 0;
+
+  std::lock_guard&lt;std::recursive_mutex&gt; lock_guard(svr_-&gt;mtx_);
+  if(leaderTerm &lt; svr_-&gt;currentTerm){
+    *updatedTerm = svr_-&gt;currentTerm;
+    *electionTimeoutReset = false;
+  }
+  else{
+    if(svr_-&gt;serverType == CANDIDATE){
+      svr_-&gt;convertToFollower();
+    }
+    else{
+      if(leaderCommitIndex &gt; svr_-&gt;commitIndex){
+        uint64_t commitStart = svr_-&gt;commitIndex + 1;
+
+        svr_-&gt;commitIndex = min(leaderCommitIndex, svr_-&gt;logEntries.size() - 1);
+        Log_info("server %d updating commit index to %d through leader %d's heartbeat", svr_-&gt;loc_id_, leaderCommitIndex, site_id);
+
+        while(commitStart &lt;= svr_-&gt;commitIndex){
+          Log_info("server %d applying commit index %d to the state machine", svr_-&gt;loc_id_, commitStart);
+          Log_info("printing commit index %d and logsize %d", commitStart, svr_-&gt;logEntries.size());
+          svr_-&gt;app_next_(*(svr_-&gt;logEntries[commitStart].cmd));
+          commitStart++;
+        }
+      }
+      svr_-&gt;resetHeartbeatTimeoutStamp();
+    }
+    *electionTimeoutReset = true;
+  }  
+  defer-&gt;reply();                                      
+}
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("receive an rpc: %s", req.c_str());
+  *res = "world";
+  defer-&gt;reply();
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,228 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-JayaramKrovvidi/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-JayaramKrovvidi/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+namespace janus {
+
+bool ShardMasterServiceImpl::IsLeader() {
+  RaftServer& rs = GetRaftServer();
+  bool is_leader;
+  uint64_t term;
+  rs.GetState(&is_leader, &term);
+  return is_leader;
+}
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match64-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  RaftServer& r = GetRaftServer();
+</FONT>  if(IsLeader()) {
+    Log_info("Node %d :: Join", r.site_id_);
+    uint64_t index, term;
+    RaftServer& rs = GetRaftServer();
+    
+    string opid = "Join" + std::to_string(join_idx++);
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s -&gt; data_.push_back(opid);
+    s -&gt; data_.push_back(mapToString(gid_server_map));
+    shared_ptr&lt;Marshallable&gt; cmd = s;
+    rs.Start(cmd, &index, &term);
+
+    uncommitted_opids.insert(opid);
+    
+    for(int i=1; i&lt;=3; ++i) {
+      Coroutine::Sleep(i*300000);
+      if(uncommitted_opids.find(opid) == uncommitted_opids.end()) break;
+    }
+    *ret = uncommitted_opids.find(opid) != uncommitted_opids.end() ? KV_TIMEOUT : KV_SUCCESS;
+  } else {
+    *ret = KV_NOTLEADER;
+  }
+  defer-&gt;reply();
+}
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match64-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  RaftServer& r = GetRaftServer();
+</FONT>  if(IsLeader()) {
+    Log_info("Node %d :: Leave", r.site_id_);
+    uint64_t index, term;
+    RaftServer& rs = GetRaftServer();
+    
+    string opid = "Leave" + std::to_string(leave_idx++);
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s -&gt; data_.push_back(opid);
+    s -&gt; data_.push_back(vectorToString(gids));
+    shared_ptr&lt;Marshallable&gt; cmd = s;
+    rs.Start(cmd, &index, &term);
+
+    uncommitted_opids.insert(opid);
+    
+    for(int i=1; i&lt;=3; ++i) {
+      Coroutine::Sleep(i*300000);
+      if(uncommitted_opids.find(opid) == uncommitted_opids.end()) break;
+    }
+    *ret = uncommitted_opids.find(opid) != uncommitted_opids.end() ? KV_TIMEOUT : KV_SUCCESS;
+  } else {
+    *ret = KV_NOTLEADER;
+  }
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match64-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  RaftServer& r = GetRaftServer();
+</FONT>  if(IsLeader()) {
+    Log_info("Node %d :: Move", r.site_id_);
+    uint64_t index, term;
+    RaftServer& rs = GetRaftServer();
+    
+    string opid = "Move" + std::to_string(move_idx++);
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s -&gt; data_.push_back(opid);
+    s -&gt; data_.push_back(std::to_string(shard));
+    s -&gt; data_.push_back(std::to_string(gid));
+    shared_ptr&lt;Marshallable&gt; cmd = s;
+    rs.Start(cmd, &index, &term);
+
+    uncommitted_opids.insert(opid);
+    
+    for(int i=1; i&lt;=3; ++i) {
+      Coroutine::Sleep(i*300000);
+      if(uncommitted_opids.find(opid) == uncommitted_opids.end()) break;
+    }
+    *ret = uncommitted_opids.find(opid) != uncommitted_opids.end() ? KV_TIMEOUT : KV_SUCCESS;
+  } else {
+    *ret = KV_NOTLEADER;
+  }
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match64-1.html#3" TARGET="1"><IMG SRC="../../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+  // your code here
+  RaftServer& r = GetRaftServer();
+</FONT>  if(IsLeader()) {
+    Log_info("Node %d :: Query", r.site_id_);
+    while(uncommitted_opids.size() &gt; 0) {
+      Coroutine::Sleep(100000);
+    }
+    if(config_no == -1 || config_no &gt; configs_.size()) *config = configs_[configs_.size()];
+    else *config = configs_[config_no];
+    *ret = KV_SUCCESS;
+  } else {
+    *ret = KV_NOTLEADER;
+  } 
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  // your code here
+  ShardConfig config = configs_.size() &gt; 0 ? configs_.rbegin()-&gt;second : ShardConfig();
+  auto v = dynamic_cast&lt;MultiStringMarshallable*&gt;(&m);
+  ShardConfig new_config = config.createCopy();
+  string opid= v-&gt;data_[0];
+  string op_type = opid.substr(0, opid.find_first_of("0123456789"));
+  new_config.number++;
+
+  if(op_type == "Join") {
+    std::map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt; join_map = stringToMap(v-&gt;data_[1]);
+    new_config.group_servers_map_.insert(join_map.begin(), join_map.end());
+    new_config.BalanceShards();
+  } else if(op_type == "Leave") {
+    std::vector&lt;uint32_t&gt; gids = stringToVector(v-&gt;data_[1]);
+    for(auto gid : gids) {
+      new_config.group_servers_map_.erase(gid);
+    }
+    new_config.BalanceShards();
+  } else if(op_type == "Move") {
+    uint32_t shard = std::stoi(v-&gt;data_[1]);
+    uint32_t gid = std::stoi(v-&gt;data_[2]);
+    new_config.shard_group_map_[shard] = gid;
+  }
+  configs_.insert({new_config.number, new_config});
+  uncommitted_opids.erase(opid);
+}
+
+std::string ShardMasterServiceImpl::vectorToString(const std::vector&lt;uint32_t&gt;& gids) {
+  std::stringstream ss;
+  if (!gids.empty()) {
+    std::copy(gids.begin(), gids.end() - 1, std::ostream_iterator&lt;uint32_t&gt;(ss, ","));
+    ss &lt;&lt; gids.back();
+  }
+  return ss.str();
+}
+
+std::vector&lt;uint32_t&gt; ShardMasterServiceImpl::stringToVector(const std::string& str) {
+  std::vector&lt;uint32_t&gt; result;
+  std::stringstream ss(str);
+
+  uint32_t value;
+  while (ss &gt;&gt; value) {
+    result.push_back(value);
+    ss.ignore(); // Ignore the comma
+  }
+
+  return result;
+}
+
+std::string ShardMasterServiceImpl::mapToString(const std::map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map) {
+  std::stringstream ss;
+  for (const auto& entry : gid_server_map) {
+    ss &lt;&lt; entry.first &lt;&lt; ":" &lt;&lt; vectorToString(entry.second) &lt;&lt; ";";
+  }
+  return ss.str();
+}
+
+std::string ShardMasterServiceImpl::mapToString(const std::map&lt;uint32_t, uint32_t&gt;& shard_group_map) {
+  std::stringstream ss;
+  for (const auto& entry : shard_group_map) {
+    ss &lt;&lt; entry.first &lt;&lt; ":" &lt;&lt; entry.second &lt;&lt; ";";
+  }
+  return ss.str();
+}
+
+std::map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt; ShardMasterServiceImpl::stringToMap(const std::string& str) {
+  std::map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt; result;
+  std::stringstream ss(str);
+
+  std::string entry;
+  while (std::getline(ss, entry, ';')) {
+    std::stringstream entryStream(entry);
+    // split with colon and wxtract the key and value
+    std::string keyStr, valueStr;
+    std::getline(entryStream, keyStr, ':');
+    std::getline(entryStream, valueStr, ':');
+    uint32_t key = std::stoi(keyStr);
+    std::vector&lt;uint32_t&gt; value = stringToVector(valueStr);
+    result.insert({key, value});
+  }
+
+  return result;
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  return cli;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

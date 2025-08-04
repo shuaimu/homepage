@@ -1,0 +1,175 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-AlexandraJeong/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-mihirkestur/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match214-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  /* 
+  Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  */
+  /* your code here */
+  if(GetRaftServer().isLeader == 0){
+</FONT>    Log_info("[PUT] I am not the leader %d", GetRaftServer().loc_id_);
+    return KV_NOTLEADER;
+  }
+  else{
+    // Coroutine::CreateRun([this, oid, k, v, &timeout]() {
+      uint64_t index;
+      uint64_t term;
+      auto cmd = make_shared&lt;MultiStringMarshallable&gt;();
+      cmd-&gt;data_.push_back(to_string(oid));
+      cmd-&gt;data_.push_back("put");
+      cmd-&gt;data_.push_back(k);
+      cmd-&gt;data_.push_back(v);
+      auto marshallableCmd = std::static_pointer_cast&lt;Marshallable&gt;(cmd);
+      put_f=false;
+      auto resp = GetRaftServer().Start(marshallableCmd, &index, &term);
+      // Log_info("THIS IS %d %d", index, term);
+      Coroutine::Sleep(400000);
+      if(put_f == true){
+        return KV_SUCCESS;
+      }
+    // });
+  }
+  return KV_TIMEOUT;
+}
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+  if(GetRaftServer().isLeader == 0){
+    Log_info("[Append] I am not the leader %d", GetRaftServer().loc_id_);
+    return KV_NOTLEADER;
+  }
+  else{
+    // Coroutine::CreateRun([this, oid, k, v, &timeout]() {
+      uint64_t index;
+      uint64_t term;
+      auto cmd = make_shared&lt;MultiStringMarshallable&gt;();
+      cmd-&gt;data_.push_back(to_string(oid));
+      cmd-&gt;data_.push_back("append");
+      cmd-&gt;data_.push_back(k);
+      cmd-&gt;data_.push_back(v);
+      auto marshallableCmd = std::static_pointer_cast&lt;Marshallable&gt;(cmd);
+      app_f=false;
+      auto resp = GetRaftServer().Start(marshallableCmd, &index, &term);
+      // Log_info("THIS IS %d %d", index, term);
+      Coroutine::Sleep(400000);
+      if(app_f == true){
+        return KV_SUCCESS;
+      }
+    // });
+  }
+  return KV_TIMEOUT;
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+  /* your code here */
+  if(GetRaftServer().isLeader == 0){
+    Log_info("[GET] I am not the leader %d", GetRaftServer().loc_id_);
+    return KV_NOTLEADER;
+  }
+  else{
+    // Coroutine::CreateRun([this, oid, k, v, &timeout]() {
+      uint64_t index;
+      uint64_t term;
+      auto cmd = make_shared&lt;MultiStringMarshallable&gt;();
+      cmd-&gt;data_.push_back(to_string(oid));
+      cmd-&gt;data_.push_back("get");
+      cmd-&gt;data_.push_back(k);
+      // cmd-&gt;data_.push_back(*v);
+      auto marshallableCmd = std::static_pointer_cast&lt;Marshallable&gt;(cmd);
+      get_f=false;
+      auto resp = GetRaftServer().Start(marshallableCmd, &index, &term);
+      Coroutine::Sleep(400000);
+      // Log_info("[%d] THIS IS %d %d", GetRaftServer().loc_id_, index, term);
+      if(get_f == true){
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match214-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        *v = kvStore[k];
+        return KV_SUCCESS;
+      }
+    // });
+  }
+  return KV_TIMEOUT;
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  auto v = (MultiStringMarshallable*)(&m);
+  /* your code here */
+  auto data = v-&gt;data_;
+</FONT>  if(data[1] == "put"){
+    Log_info("PUTT %d [%d:%d]!", GetRaftServer().loc_id_, data[2], data[3]);
+    kvStore[data[2]] = data[3];
+    put_f=true;
+  }
+  else if(data[1] == "append"){
+    Log_info("APPEND %d [%d:%d]!", GetRaftServer().loc_id_, data[2], data[3]);
+    // kvStore[data[2]] += data[3];
+    if (kvStore.find(data[2]) != kvStore.end()) {
+      kvStore[data[2]] += data[3];
+    } 
+    else {
+      kvStore[data[2]] = data[3];
+    }
+    app_f=true;
+  }
+  else if(data[1] == "get"){
+    Log_info("GET %d [%d]!", GetRaftServer().loc_id_, data[2]);
+    // data[3] = kvStore[data[2]];
+    get_f=true;
+    // Log_info("I GOT %s %s %s", data[1].c_str(),data[2].c_str(),data[3].c_str());
+  }
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

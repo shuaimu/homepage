@@ -1,0 +1,247 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-BruceWang3077/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-coladog/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+
+
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  /* 
+  Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  */
+  /* your code here */
+
+  // Log_info("[+] %d | Put | oid: %lld | k: %s | v: %s",
+  //     sp_log_svr_-&gt;site_id_, oid, k.c_str(), v.c_str());
+
+  if (IsOIDDuplicated(oid)) {
+    // Log_info("[+] KV_SUCCESS");
+    return KV_SUCCESS;
+  }
+    
+
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match73-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+
+  bool *signal;
+</FONT>  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lk(mtx_);
+    notifiers[oid] = false;
+    signal = &notifiers[oid];
+  }
+
+  uint64_t index, term;
+  shared_ptr&lt;Marshallable&gt; cmd(s);
+  if (!GetRaftServer().Start(cmd, &index, &term)) {
+    // Log_info("[+] KV_NOTLEADER");
+    return KV_NOTLEADER;
+  } else {
+    termReceived[oid] = term;
+
+    for (int i = 0; i &lt; REQUEST_TIMEOUT_ROUND; i++) {
+      Coroutine::Sleep(BUSY_LOOP_SLEEP_US);
+      if (signal)
+        break;
+    }
+  }
+
+  if (!*signal) {
+    // Log_info("[+] KV_TIMEOUT");
+    return KV_TIMEOUT;
+  }
+
+  // Log_info("[+] KV_SUCCESS");
+  return KV_SUCCESS;
+}
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+  // Log_info("[+] %d | Append | oid: %lld", sp_log_svr_-&gt;site_id_, oid);
+
+  if (IsOIDDuplicated(oid)) 
+    return KV_SUCCESS;
+
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match73-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("append");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+
+  bool *signal;
+</FONT>  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lk(mtx_);
+    notifiers[oid] = false;
+    signal = &notifiers[oid];
+  }
+
+  uint64_t index, term;
+  shared_ptr&lt;Marshallable&gt; cmd(s);
+  if (!GetRaftServer().Start(cmd, &index, &term)) {
+    // Log_info("[+] KV_NOTLEADER");
+
+    return KV_NOTLEADER;
+  } else {
+    termReceived[oid] = term;
+
+    for (int i = 0; i &lt; REQUEST_TIMEOUT_ROUND; i++) {
+      Coroutine::Sleep(BUSY_LOOP_SLEEP_US);
+      if (signal)
+        break;
+    }
+  }
+
+  if (!*signal) {
+    Log_info("[+] KV_TIMEOUT");
+    return KV_TIMEOUT;
+  }
+
+  return KV_SUCCESS;
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+  /* your code here */
+  // Log_info("[+] %d | Get | oid: %lld", sp_log_svr_-&gt;site_id_, oid);
+
+  if (IsOIDDuplicated(oid)) {
+    std::lock_guard&lt;std::recursive_mutex&gt; lk(mtx_);
+    *v = executedRequests[oid];
+    return KV_SUCCESS;
+  }
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match73-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("get");
+  s-&gt;data_.push_back(k);
+
+  bool *signal;
+</FONT>  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lk(mtx_);
+    notifiers[oid] = false;
+    signal = &notifiers[oid];
+  }
+
+  uint64_t index, term;
+  shared_ptr&lt;Marshallable&gt; cmd(s);
+  if (!GetRaftServer().Start(cmd, &index, &term)) {
+    return KV_NOTLEADER;
+  } else {
+    termReceived[oid] = term;
+
+    for (int i = 0; i &lt; REQUEST_TIMEOUT_ROUND; i++) {
+      Coroutine::Sleep(BUSY_LOOP_SLEEP_US);
+      if (signal)
+        break;
+    }
+  }
+
+  if (!*signal)
+    return KV_TIMEOUT;
+
+  *v = executedRequests[oid];
+  return KV_SUCCESS;
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  auto v = (MultiStringMarshallable*)(&m);
+  /* your code here */
+
+  uint64_t oid = strToUint64(v-&gt;data_[0]);
+  std::string opType = v-&gt;data_[1];
+  // uint64_t cmdIdx = stoi(v-&gt;data_[2]);
+
+  // Log_info("[+] %d | OnNextCommand | oid: %d", sp_log_svr_-&gt;site_id_, oid);
+
+  if (IsOIDDuplicated(oid)) {
+
+  } else {
+    std::lock_guard&lt;std::recursive_mutex&gt; lk(mtx_);
+    if (opType == "put") {
+      std::string key   = v-&gt;data_[2];
+      std::string value = v-&gt;data_[3];
+      kv[key] = value;
+      executedRequests[oid] = "done";
+    } else if (opType == "append") {
+      std::string key   = v-&gt;data_[2];
+      std::string value = v-&gt;data_[3];
+      kv[key] += value;
+      executedRequests[oid] = "done";
+    } else if (opType == "get") {
+      std::string key   = v-&gt;data_[2];
+      executedRequests[oid] = kv[key];
+    } else {
+      verify(0);
+    }
+  }
+  bool isLeader;
+  uint64_t currentTerm;
+  GetRaftServer().GetState(&isLeader, &currentTerm);
+
+  std::lock_guard&lt;std::recursive_mutex&gt; lk(mtx_);
+  if (isLeader &&   
+      currentTerm == termReceived[oid]) {
+    verify(notifiers.find(oid) != notifiers.end());
+    notifiers[oid] = true;
+  }
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

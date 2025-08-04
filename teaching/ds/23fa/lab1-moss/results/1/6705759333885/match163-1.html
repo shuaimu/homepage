@@ -1,0 +1,562 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-cs16b004/src/deptran/raft/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-praksekar/src/deptran/raft/server.cc<p><PRE>
+
+
+#include "server.h"
+// #include "paxos_worker.h"
+#include "exec.h"
+#include "frame.h"
+#include "coordinator.h"
+#include "../classic/tpc_command.h"
+// #include &lt;sys/time.h&gt;
+#include &lt;unistd.h&gt;
+#include "commo.h"
+
+
+namespace janus {
+
+
+const char* svr_role_to_str[] = {"Follower", "Candidate", "Leader"};
+
+void cr_msleep(int ms) {
+  Coroutine::Sleep(ms*1000);
+}
+
+string entry_serialize(log_entry e) {
+  return to_string(e.term) + " " + to_string(e.cmd) + " ";
+}
+
+string log_serialize(vector&lt;log_entry&gt; log) { // this should be given a subcopy of the log
+  string res = "";
+  for (int i = 0; i &lt; log.size(); i++) {
+    res += entry_serialize(log[i]) + "\n";
+  }
+  return res;
+}
+
+log_entry entry_deserialize(string s) {
+  int term, cmd; 
+  istringstream entry(s);
+  entry &gt;&gt; term &gt;&gt; cmd;
+  return log_entry{term, cmd};
+}
+
+vector&lt;log_entry&gt; log_deserialize(string s) {
+  vector&lt;log_entry&gt; log;
+  string tok;
+  istringstream entries(s);
+  while (getline(entries, tok)) 
+    log.push_back(entry_deserialize(tok));
+  return log; 
+}
+
+string RaftServer::to_str() {
+  string log_str = "[";
+  // mtx_.lock();
+  for (int i = 0; i &lt; log.size(); i++) {
+    log_str.append("(" + to_string(log[i].cmd) + "," + to_string(log[i].term) + "),");   
+  }
+  log_str.append("]");
+  string nextIndex_str = "[";
+  for (int i = 0; i &lt; nextIndex.size(); i++) {
+    nextIndex_str.append(to_string(nextIndex[i]) + ",");
+  }
+  nextIndex_str.append("]");
+  char *buffer = new char[log_str.size() + 250];
+  sprintf(buffer, "S%d:T%d:C%d:R(%s)N:%s:L:%s", loc_id_, currentTerm, commitIndex, svr_role_to_str[role], nextIndex_str.c_str(), log_str.c_str());
+  // mtx_.unlock();
+  string res = buffer;
+  delete [] buffer;
+  return res;
+}
+
+void RaftServer::reset_indices() {
+  Log_info("%s resetting indices", to_str().data());
+  for (int i = 0; i &lt; nextIndex.size(); i++) { // • initialized to leader last log index + 1 (after election)
+    if (i == loc_id_)
+      nextIndex[i] = -1;
+    else
+      nextIndex[i] = log.size()-1+1;
+  }
+  for (int i = 0; i &lt; matchIndex.size(); i++) { // • initialized to 0, increases monotonically (after election)
+    if (i == loc_id_)
+      matchIndex[i] = -1;
+    else
+      matchIndex[i] = 0;
+  }
+  // nextIndex.assign(nextIndex.size(), log.size()-1+1); // • initialized to leader last log index + 1 (after election)
+  // matchIndex.assign(matchIndex.size(), 0); // • initialized to 0, increases monotonically (after election)
+}
+
+bool RaftServer::check_term(int other_term) { 
+  // mtx_.lock();
+  if (other_term &gt; currentTerm) { // • If RPC request or response contains term T &gt; currentTerm: set currentTerm = T, convert to follower (§5.1)
+    Log_info("%s other server has higher term %d than me (%d), reverting to follower, setting term = %d", to_str().data(), other_term, currentTerm, other_term);
+    currentTerm = other_term;
+    role = follower;
+    votedFor = -1; // we should reset who we voted for this term upon advancing to the next term
+    // mtx_.unlock();
+    return false;
+  }
+  // mtx_.unlock();
+  return true;
+}
+
+void RaftServer::apply_entry(int cmd) { 
+  auto cmdptr = make_shared&lt;TpcCommitCommand&gt;();
+  auto vpd_p = make_shared&lt;VecPieceData&gt;();
+  vpd_p-&gt;sp_vec_piece_data_ = make_shared&lt;vector&lt;shared_ptr&lt;SimpleCommand&gt;&gt;&gt;();
+  cmdptr-&gt;tx_id_ = cmd;
+  cmdptr-&gt;cmd_ = vpd_p;
+  auto cmdptr_m = dynamic_pointer_cast&lt;Marshallable&gt;(cmdptr);
+  Log_info("%s calling app_next_ on TpcCommitCommand with cmd %d", to_str().data(), cmdptr-&gt;tx_id_);
+  app_next_(*cmdptr_m);
+}
+
+void RaftServer::check_if_entries_can_be_applied() {
+  // Log_info("%s checking if entries can be applied to state machine", to_str().data());
+  if (commitIndex &gt; lastApplied) { // • If commitIndex &gt; lastApplied: increment lastApplied, apply log[lastApplied] to state machine
+    Log_info("%s, commitIndex(%d) &gt; lastApplied(%d), incrementing lastApplied and applying log[lastApplied]", to_str().data(), commitIndex, lastApplied);
+    lastApplied += 1;
+    apply_entry(log[lastApplied].cmd);
+  }
+}
+
+bool RaftServer::has_election_timeout_elapsed() { // • If election timeout elapses without receiving AppendEntries RPC from current leader or granting vote to candidate: convert to candidate
+  struct timeval curr;
+  gettimeofday(&curr, NULL);
+  long long currms = (((long long)curr.tv_sec)*1000)+(curr.tv_usec/1000);
+  long long lastms = (((long long)last_election_timer_start.tv_sec)*1000)+(last_election_timer_start.tv_usec/1000);
+  // Log_info("random: %lld", 300*((double) rand() / (RAND_MAX)));
+  int random_election_timeout = ELECTION_TIMEOUT_MS + 300*((double) rand() / (RAND_MAX));
+  if (currms - lastms &gt; random_election_timeout) {
+    Log_info("%s currms (%lld) - last_heartbeat_ms (%lld) = %lld &gt; election timeout %d, starting election", to_str().data(), 
+             currms, lastms, currms-lastms, random_election_timeout);
+    return true;
+  }
+  // Log_info("S%d:T%d: currms (%lld) - last_heartbeat_ms (%lld) = %lld !&gt; election timeout %d, NOT starting election", loc_id_, currentTerm, currms, lastms, currms-lastms, random_election_timeout);
+  return false;
+}
+
+bool RaftServer::send_and_count_reqvotes() { // • On conversion to candidate, start election:
+  Log_info("%s starting election", to_str().data());
+  tuple&lt;i32, bool_t&gt; reqv_results[N_SVRS]; 
+  for (int i = 0; i &lt; N_SVRS; i++) {
+    get&lt;i32&gt;(reqv_results[i]) = -1;
+  }
+  for (int i = 0; i &lt; N_SVRS; i++) { // • Send RequestVote RPCs to all other servers
+    if (i == loc_id_) continue;
+    Log_info("%s sending RequestVote to server %d", to_str().data(), i);
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match163-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    commo()-&gt;SendRequestVote(0, i, currentTerm, loc_id_, log.size()-1,  
+                              log[log.size()-1].term, &reqv_results[i]);
+</FONT>  }
+  cr_msleep(REQUESTVOTE_TIMEOUT_MS);
+  int votes = 1;
+  for (int i = 0; i &lt; N_SVRS; i++) { // process RequestVote replies
+    if (i == loc_id_) continue;
+    i32 ret_term = get&lt;i32&gt;(reqv_results[i]);
+    bool_t vote_granted = get&lt;bool_t&gt;(reqv_results[i]);
+    Log_info("%s received RequestVote reply from S%d: ret_term=%d, vote_granted=%d", to_str().data(), i, ret_term, vote_granted);
+    if (ret_term == -1) continue; // default -1 ret_term means we got no response, ignore this reply 
+    else if (!check_term(ret_term)) return false; // revert to follower if other server has bigger term, stop election
+    else if (vote_granted) { 
+      votes += 1;
+      Log_info("%s now has %d votes", to_str().data(), votes);
+      if (votes &gt; N_SVRS/2) { // • If votes received from majority of servers: become leader
+        Log_info("%s now has %d votes &gt; svrs/2 = %d, may become leader", to_str().data(), votes, N_SVRS/2);
+        return true;
+      }
+    }
+  }
+  Log_info("%s did not win election", to_str().data());
+  return false;
+}
+
+void RaftServer::send_heartbeats() { 
+  Log_info("%s sending EmptyAppendEntries (heartbeats) to other servers", to_str().data());
+  reset_election_timer(); // not explicitly mentioned in Fig. 2
+  i32 htbt_results[N_SVRS] = { }; // figure out how to declare length based on N_SVRS 
+  for (int i = 0; i &lt; N_SVRS; i++) {
+    htbt_results[i] = -1;
+  }
+  // mtx_.lock();
+  for (int i = 0; i &lt; N_SVRS; i++) {
+    if (i == loc_id_) continue;
+    commo()-&gt;SendEmptyAppendEntries(0, i, currentTerm, commitIndex, &htbt_results[i]);
+  }
+  // mtx_.unlock();
+  cr_msleep(EMPTYAPPENDENTRIES_TIMEOUT_MS);
+  for (int i = 0; i &lt; N_SVRS; i++) {
+    if (i == loc_id_) continue;
+    i32 ret_term = htbt_results[i];
+    if (ret_term == -1) continue; // default -1 ret_term means we got no response, ignore this reply 
+    // Log_info("%s received EmptyAppendEntries response from S%d: term = %d", to_str().data(), i, term);
+    else if (!check_term(ret_term)) 
+      break;
+  }
+}
+
+
+void RaftServer::reset_election_timer() { 
+  // mtx_.lock();
+  gettimeofday(&last_election_timer_start, NULL);
+  // mtx_.unlock();
+}
+
+void RaftServer::check_if_commitIndex_can_be_advanced() {
+  for (int n = commitIndex+1; n &lt; log.size(); n++) { // • If there exists an N such that N &gt; commitIndex, a majority of matchIndex[i] ≥ N, and log[N].term == currentTerm: set commitIndex = N (§5.3, §5.4).
+    int ct = 0;
+    for (int i = 0; i &lt; N_SVRS; i++)
+      if (matchIndex[i] &gt;= n || i == loc_id_) // we have a matchIndex that is the same as ourself
+        ct++;
+    if (ct &gt; matchIndex.size()/2 && log[n].term == currentTerm) {
+      Log_info("%s found N s.t. N &gt; commitIndex, a majority of matchIndex[i] ≥ N, and log[N].term == currentTerm, updating commitIndex to %d", to_str().data(),  n);
+      commitIndex = n;
+    }
+  }
+}
+
+void RaftServer::check_if_followers_need_replicating() {
+  tuple&lt;i32, bool_t&gt; apnd_entry_results[N_SVRS];
+  for (int i = 0; i &lt; N_SVRS; i++) {
+    get&lt;i32&gt;(apnd_entry_results[i]) = -1;
+  }
+  int myidx = log.size();
+  for (int i = 0; i &lt; N_SVRS; i++) {  // If last log index ≥ nextIndex for a follower: send AppendEntries RPC with log entries starting at nextIndex
+    if (i == loc_id_) continue;
+    if (nextIndex[i] &lt;= log.size()-1) {
+      string entries = log_serialize(vector&lt;log_entry&gt;(log.begin()+nextIndex[i], log.end()));
+      Log_info("%s server %d has nextIndex(%d) &lt;= lastLogIndex(%d), sending it an AppendEntries", to_str().data(), i, nextIndex[i], log.size()-1);
+      commo()-&gt;SendAppendEntries(0, i, currentTerm, loc_id_, nextIndex[i]-1, 
+                                  log[nextIndex[i]-1].term, entries, commitIndex, &apnd_entry_results[i]);
+    }
+  }
+  cr_msleep(APPENDENTRIES_TIMEOUT_MS); 
+  Log_info("%s processing AppendEntries replies", to_str().data());
+  for (int i = 0; i &lt; N_SVRS; i++) { // process AppendEntries replies
+    if (i == loc_id_) continue;
+    if (nextIndex[i] &lt;= log.size()-1) {
+      i32 ret_term = get&lt;i32&gt;(apnd_entry_results[i]);
+      bool_t success = get&lt;bool_t&gt;(apnd_entry_results[i]);
+      Log_info("%s received AppendEntries reply from server %d, ret_term=%d, success=%d", to_str().data(), i, ret_term, success);
+      if (ret_term == -1) continue; // default value, ignore reply that did not get response
+      else if (!check_term(ret_term)) return; // revert to follower if other server has bigger term
+      else if (success) { // • If successful: update nextIndex and matchIndex for follower (§5.3)
+        // nextIndex[i] = log.size(); 
+        // matchIndex[i] = log.size()-1;
+        nextIndex[i] = myidx;
+        matchIndex[i] = myidx-1;
+        Log_info("%s response was successful, setting nextIndex of %d and setting matchIndex to %d for server %d", to_str().data(), nextIndex[i], matchIndex[i], i);
+      }
+      else {
+        nextIndex[i]--; // • If AppendEntries fails because of log inconsistency: decrement nextIndex and retry (§5.3)
+        Log_info("%s response was unsuccessful, decrementing nextIndex to %d for server %d, will try AppendEntries again", to_str().data(), nextIndex[i], i);
+      }
+    }
+  }
+}
+
+bool RaftServer::is_cand_up_to_date(const uint64_t& lastLogIndex, const uint64_t& lastLogTerm, const uint64_t& candidateId) {
+  if (log[log.size()-1].term &lt; lastLogTerm) { // (5.4.1) If the logs have last entries with different terms, then the log with the later term is more up-to-date.
+    Log_info("%s our lastlogterm &lt; candidate's lastlogterm, granting vote for candidate %d", to_str().data(), candidateId);
+    return true;
+  } 
+  else if (log[log.size()-1].term == lastLogTerm) {
+    if (log.size()-1 &lt;= lastLogIndex) { // (5.4.1) If the logs end with the same term, then whichever log is longer is more up-to-date.
+      Log_info("%s candidate's log is equal to or longer than ours, granting vote for candidate %d", to_str().data(), candidateId);
+      return true;
+    } 
+  }
+  return false;
+}
+
+tuple&lt;i32, bool_t&gt; RaftServer::handleRequestVote(const uint64_t& term, 
+                                                 const uint64_t& candidateId,
+                                                 const uint64_t& lastLogIndex,
+                                                 const uint64_t& lastLogTerm) {
+  check_term(term); // revert to follower if candidate is of higher term, but still respond to vote 
+  if (term &lt; currentTerm) { // 1. Reply false if term &lt; currentTerm (§5.1)
+    Log_info("%s requesting server %d has term of %d &lt; my term of %d, rejecting vote", to_str().data(), candidateId, term, currentTerm);
+    return {currentTerm, false};
+  }
+  if ((votedFor == -1 || votedFor == candidateId) && is_cand_up_to_date(lastLogIndex, lastLogTerm, candidateId)) { // 2. If votedFor is null or candidateId, and candidate’s log is at least as up-to-date as receiver’s log, grant vote (§5.2, §5.4) votedFor = candidateId;
+    votedFor = candidateId;
+    reset_election_timer(); // • If election timeout elapses without receiving AppendEntries RPC from current leader or granting vote to candidate: convert to candidate
+    return {currentTerm, true};
+  }
+  Log_info("%s no conditions met; rejecting vote for candidate %d", to_str().data(), candidateId);
+  return {currentTerm, false};
+}
+
+void RaftServer::check_commitIndex_against_leaderCommit(const uint64_t& leaderCommit) {
+  if (leaderCommit &gt; commitIndex) { // 5. If leaderCommit &gt; commitIndex, set commitIndex = min(leaderCommit, index of last new entry)
+    Log_info("%s leaderCommit (%d), &gt; commitIndex (%d)", to_str().data(), leaderCommit, commitIndex);
+    commitIndex = min(leaderCommit, log.size()-1);
+    Log_info("%s setting commitIndex to min(leaderCommit, log.size()-1) = %d", to_str().data(), commitIndex);
+  }
+}
+
+tuple&lt;i32, bool_t&gt; RaftServer::handleAppendEntries(const uint64_t& term, 
+                                                   const uint64_t& leaderId, 
+                                                   const uint64_t& prevLogIndex, 
+                                                   const uint64_t& prevLogTerm, 
+                                                   const string& entries, 
+                                                   const uint64_t& leaderCommit) {
+  if (term &gt;= currentTerm)
+    apnd_entrs_during_election = true;
+  check_term(term); // • If RPC request or response contains term T &gt; currentTerm: set currentTerm = T, convert to follower (§5.1)
+  reset_election_timer();
+  tuple&lt;i32, bool_t&gt; reply;
+  if (term &lt; currentTerm) { // 1. Reply false if term &lt; currentTerm (§5.1)
+    Log_info("%s term &lt; currentTerm, returning false", to_str().data());
+    return {currentTerm, false};
+  }  
+  if (prevLogIndex &gt;= log.size() || log[prevLogIndex].term != prevLogTerm) { // 2. Reply false if log doesn’t contain an entry at prevLogIndex whose term matches prevLogTerm (§5.3)
+    Log_info("%s prevLogIndex term not equal to prevLogTerm, returning false", to_str().data());
+    return {currentTerm, false};
+  }
+  Log_info("%s found matching entry with leader %d: cmd=%d, term=%d", to_str().data(), leaderId, log[prevLogIndex].cmd, prevLogTerm);
+  vector&lt;log_entry&gt; entrs = log_deserialize(entries);
+  Log_info("%s erasing my entries after our matched index", to_str().data());
+  log.erase(log.begin()+prevLogIndex+1, log.end()); // 3. If an existing entry conflicts with a new one (same index but different terms), delete the existing entry and all that follow it (§5.3)
+  log.insert(log.end(), entrs.begin(), entrs.end()); // 4. Append any new entries not already in the log
+  Log_info("%s inserted leader's entries after our matched index", to_str().data());
+  check_commitIndex_against_leaderCommit(leaderCommit); // 5. If leaderCommit &gt; commitIndex, set commitIndex = min(leaderCommit, index of last new entry)
+  reply = {currentTerm, true};
+  // mtx_.unlock();
+  return reply;
+}
+
+i32 RaftServer::handleEmptyAppendEntries(const uint64_t& term, const uint64_t& leaderCommit) { 
+  if (term &gt;= currentTerm)
+    apnd_entrs_during_election = true;
+  check_term(term);
+  reset_election_timer();
+  check_commitIndex_against_leaderCommit(leaderCommit); // 5. If leaderCommit &gt; commitIndex, set commitIndex = min(leaderCommit, index of last new entry)
+  return currentTerm; 
+}
+
+RaftServer::RaftServer(Frame * frame) {
+  frame_ = frame ;
+  /* Your code here for server initialization. Note that this function is 
+     called in a different OS thread. Be careful about thread safety if 
+     you want to initialize variables here. */
+  // mtx_.lock();
+  role = follower;
+  currentTerm = 0;
+  votedFor = -1;
+  commitIndex = 0;
+  lastApplied = 0;
+  last_election_timer_start = {.tv_sec=0, .tv_usec=0};
+  nextIndex.assign(nextIndex.size(), log.size()-1+1); 
+  matchIndex.assign(matchIndex.size(), 0);
+  bool apnd_entrs_during_election = false;
+  // mtx_.unlock();
+  Log_info("%s RaftServer init finishing", to_str().data());
+}
+
+RaftServer::~RaftServer() {
+  /* Your code here for server teardown */
+
+}
+
+void RaftServer::Setup() {
+  Log_info("%s calling RaftServer Setup\n", to_str().data());
+  /* Your code here for server setup. Due to the asynchronous nature of the 
+     framework, this function could be called after a RPC handler is triggered. 
+     Your code should be aware of that. This function is always called in the 
+     same OS thread as the RPC handlers. */
+
+  Coroutine::CreateRun([this](){ // Rules for Followers, Candidates, and Leaders loop
+    while (true) { 
+      if (role == follower) {
+        followers(); // Followers (§5.2):
+      }
+      else if (role == candidate) {
+        candidates(); // Candidates (§5.2):
+      }
+      else if (role == leader) {
+        leaders(); // Leaders:
+      }
+    }
+  });
+  
+  Coroutine::CreateRun([this](){ // Rules for All Servers loop
+    all_servers(); // All Servers:
+  });
+
+  //   while (true) {
+  //     all_servers();
+  //     if (role == follower) 
+  //       followers();
+  //     if (role == candidate) {
+  //       candidates();
+  //       while (role == leader) {
+  //         leaders();
+  //         cr_msleep(HEARTBEAT_INTERVAL_MS);
+  //       }
+  //     }
+  //     cr_msleep(ELECTION_TIMEOUT_CHECK_INTERVAL_MS);
+  //   }
+  // });
+
+  //  Coroutine::CreateRun([this](){ 
+  //   all_servers();
+  //  });
+  //  Coroutine::CreateRun([this](){ 
+  //   followers();
+  //  });
+  //  Coroutine::CreateRun([this](){ 
+  //   candidates();
+  //  });
+  //  Coroutine::CreateRun([this](){ 
+  //   leaders();
+  //  });
+}
+
+void RaftServer::all_servers() {
+  while (true) {
+    check_if_entries_can_be_applied(); // • If commitIndex &gt; lastApplied: increment lastApplied, apply log[lastApplied] to state machine (§5.3)
+    cr_msleep(50);
+  }
+}
+
+void RaftServer::followers() {
+  while (role == follower) {
+    if (has_election_timeout_elapsed()) // • If election timeout elapses without receiving AppendEntries RPC from current leader or granting vote to candidate...
+      role = candidate; // ...convert to candidate
+    cr_msleep(ELECTION_TIMEOUT_CHECK_INTERVAL_MS);
+  }
+}
+
+void RaftServer::candidates() { // • On conversion to candidate, start election:
+  while (role == candidate) {
+    currentTerm += 1; // • Increment currentTerm
+    votedFor = loc_id_; // • Vote for self
+    reset_election_timer(); // • Reset election timer
+    apnd_entrs_during_election = false;
+    if (send_and_count_reqvotes()) { // • Send RequestVote RPCs to all other servers • If votes received from majority of servers...
+      reset_indices();
+      if (role != candidate) break;
+      if (apnd_entrs_during_election) { // • If AppendEntries RPC received from new leader... 
+        Log_info("%s AppendEntries received from leader during election, reverting to follower");
+        role = follower; // ...convert to follower
+      }
+      else role = leader; //  ...become leader
+    }
+    reset_indices();
+    while (role == candidate && !has_election_timeout_elapsed())  // • If election timeout elapses: start new election (just hold until next loop)
+      cr_msleep(ELECTION_TIMEOUT_CHECK_INTERVAL_MS);
+  }
+}
+
+void RaftServer::leaders() {
+  while (role == leader) {
+    send_heartbeats(); // • Upon election: send initial empty AppendEntries RPCs (heartbeat) to each server; repeat during idle periods to prevent election timeouts (§5.2)
+    if (role != leader) break;
+    check_if_followers_need_replicating(); // • If last log index ≥ nextIndex for a follower: send AppendEntries RPC with log entries starting at nextIndex
+    if (role != leader) break;
+    cr_msleep(50);
+    check_if_followers_need_replicating();
+    if (role != leader) break;
+    check_if_commitIndex_can_be_advanced(); // • If there exists an N such that N &gt; commitIndex, a majority of matchIndex[i] ≥ N, and log[N].term == currentTerm: set commitIndex = N (§5.3, §5.4).
+    if (role != leader) break;
+    cr_msleep(50);
+  }
+}
+
+
+bool RaftServer::Start(shared_ptr&lt;Marshallable&gt; &cmd, 
+                       uint64_t *index,
+                       uint64_t *term) {
+  /* Your code here. This function can be called from another OS thread. */
+  int command = dynamic_pointer_cast&lt;TpcCommitCommand&gt;(cmd)-&gt;tx_id_;
+  mtx_.lock();
+  if (role != leader) {
+    mtx_.unlock();
+    return false;
+  }
+  log.push_back(*(new log_entry{currentTerm, command})); // • If command received from client: append entry to local log, respond after entry applied to state machine (§5.3) Log_info("%s entering start as leader, added command %d to log with term %d", to_str().data(), command, currentTerm);
+  Log_info("%s processing command %d; returning index = %d, term = %d from Start", to_str().data(), command, log.size()-1, currentTerm);
+  *index = log.size()-1; 
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match163-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  *term = currentTerm;
+  mtx_.unlock();
+  return true;
+}
+
+void RaftServer::GetState(bool *is_leader, uint64_t *term) {
+  /* Your code here. This function can be called from another OS thread. */
+  // mtx_.lock();
+  *is_leader = (role == leader);
+  *term = currentTerm;
+  // mtx_.unlock();
+}
+
+void RaftServer::SyncRpcExample() {
+  /* This is an example of synchronous RPC using coroutine; feel free to 
+     modify this function to dispatch/receive your own messages. 
+     You can refer to the other function examples in commo.h/cc on how 
+     to send/recv a Marshallable object over RPC. */
+  Coroutine::CreateRun([this](){
+</FONT>    string res;
+    auto event = commo()-&gt;SendString(0, /* partition id is always 0 for lab1 */
+                                     0, "hello", &res);
+    // commo()-&gt;SendRequestVote(0, 0, 5, 2, 8, 4); // also doing SendRequestVote test
+    event-&gt;Wait(1000000); //timeout after 1000000us=1s
+    if (event-&gt;status_ == Event::TIMEOUT) {
+      Log_info("timeout happens");
+    } else {
+      Log_info("rpc response is: %s", res.c_str()); 
+    }
+  });
+}
+
+/* Do not modify any code below here */
+
+void RaftServer::Disconnect(const bool disconnect) {
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+  verify(disconnected_ != disconnect);
+  // global map of rpc_par_proxies_ values accessed by partition then by site
+  static map&lt;parid_t, map&lt;siteid_t, map&lt;siteid_t, vector&lt;SiteProxyPair&gt;&gt;&gt;&gt; _proxies{};
+  if (_proxies.find(partition_id_) == _proxies.end()) {
+    _proxies[partition_id_] = {};
+  }
+  RaftCommo *c = (RaftCommo*) commo();
+  if (disconnect) {
+    verify(_proxies[partition_id_][loc_id_].size() == 0);
+    verify(c-&gt;rpc_par_proxies_.size() &gt; 0);
+    auto sz = c-&gt;rpc_par_proxies_.size();
+    _proxies[partition_id_][loc_id_].insert(c-&gt;rpc_par_proxies_.begin(), c-&gt;rpc_par_proxies_.end());
+    c-&gt;rpc_par_proxies_ = {};
+    verify(_proxies[partition_id_][loc_id_].size() == sz);
+    verify(c-&gt;rpc_par_proxies_.size() == 0);
+  } else {
+    verify(_proxies[partition_id_][loc_id_].size() &gt; 0);
+    auto sz = _proxies[partition_id_][loc_id_].size();
+    c-&gt;rpc_par_proxies_ = {};
+    c-&gt;rpc_par_proxies_.insert(_proxies[partition_id_][loc_id_].begin(), _proxies[partition_id_][loc_id_].end());
+    _proxies[partition_id_][loc_id_] = {};
+    verify(_proxies[partition_id_][loc_id_].size() == 0);
+    verify(c-&gt;rpc_par_proxies_.size() == sz);
+  }
+  disconnected_ = disconnect;
+}
+
+bool RaftServer::IsDisconnected() {
+  return disconnected_;
+}
+
+} // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

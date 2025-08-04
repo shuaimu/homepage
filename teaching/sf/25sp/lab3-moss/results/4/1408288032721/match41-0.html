@@ -1,0 +1,272 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-js0753/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-js0753/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+namespace janus {
+
+
+
+void ShardMasterServiceImpl::AddGroupToTree(uint32_t gid){
+for(int m=0;m&lt;10;m++){
+  auto h = GroupHash(gid, m);
+  InsertToTree(this-&gt;root, h, gid);
+}
+}
+uint32_t ShardMasterServiceImpl::GroupHash(uint32_t gid, int m){
+  verify(m&gt;=0);
+  verify(m&lt;10);
+  return (gid*10 + m*36)%360;
+}
+uint32_t ShardMasterServiceImpl::ShardHash(uint32_t shard){
+  return (shard*36)%360;
+}
+
+void ShardMasterServiceImpl::InsertToTree(shared_ptr&lt;TreeNode&gt;& root, uint32_t h, uint32_t gid){
+  if(root==nullptr) root = make_shared&lt;TreeNode&gt;(TreeNode{gid,h,nullptr,nullptr});
+  else if(h&gt;root-&gt;value){
+    InsertToTree(root-&gt;right, h , gid);
+  }else{
+    InsertToTree(root-&gt;left, h , gid);
+  }
+}
+
+uint32_t ShardMasterServiceImpl::GetGroupForShard(shared_ptr&lt;TreeNode&gt; root, uint32_t shard_hash){
+  if(root==nullptr) return 0;
+  uint32_t val = 0;
+  if(shard_hash&gt;root-&gt;value){
+     val = GetGroupForShard(root-&gt;right, shard_hash);
+    }else{
+      // val = GetGroupForShard(root-&gt;left, shard_hash);
+      return root-&gt;group_id;
+    }
+    if(val==0) return root-&gt;group_id;
+    return val;
+}
+
+
+void ShardMasterServiceImpl::RedistributeShards(ShardConfig& new_config){
+for(int i=1;i&lt;=10;i++){
+  auto shard_hash = ShardHash(i);
+  new_config.shard_group_map_[i] = GetGroupForShard(this-&gt;root, shard_hash);
+}
+}
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match41-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back("join");
+</FONT>  for(auto itr=gid_server_map.begin();itr!=gid_server_map.end();itr++){
+    s-&gt;data_.push_back(to_string(itr-&gt;first));
+    auto group = (itr-&gt;second);
+    for(int i=0;i&lt;group.size();i++){
+      s-&gt;data_.push_back(to_string(group[i]));
+    }
+  }
+  RaftServer& raft_server = this-&gt;GetRaftServer();
+  uint64_t index;
+  uint64_t term;
+  auto cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  bool isLeader = raft_server.Start(cmd, &index, &term);
+  if(!isLeader){
+    //Log_info("SERVER NOT LEADER FOR INDEX %d", index);
+     *ret = KV_NOTLEADER;
+  }else{
+  Coroutine::Sleep(700000);  // wait 700ms for agreement
+  //Log_info("%d's commands size is %d index is %d",raft_server.site_id_, this-&gt;agreed_commands_size, index);
+  if(this-&gt;agreed_commands_size&lt;index ) {
+   //Log_info("JOIN TIMED OUT FOR INDEX %d", index);
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match41-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    *ret = KV_TIMEOUT;
+  }else
+  *ret = KV_SUCCESS;
+  }
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back("leave");
+</FONT>  for(int i=0;i&lt;gids.size();i++){
+      s-&gt;data_.push_back(to_string(gids[i]));
+    }
+  RaftServer& raft_server = this-&gt;GetRaftServer();
+  uint64_t index;
+  uint64_t term;
+  auto cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  bool isLeader = raft_server.Start(cmd, &index, &term);
+  if(!isLeader){
+    //Log_info("SERVER NOT LEADER FOR INDEX %d", index);
+     *ret = KV_NOTLEADER;
+  }else{
+  Coroutine::Sleep(700000);  // wait 700ms for agreement
+  //Log_info("%d's commands size is %d index is %d",raft_server.site_id_, this-&gt;agreed_commands_size, index);
+  if(this-&gt;agreed_commands_size&lt;index ) {
+    //Log_info("LEAVE TIMED OUT FOR INDEX %d", index);
+    *ret = KV_TIMEOUT;
+  }else
+  *ret = KV_SUCCESS; // DO RAFT?
+  }
+  defer-&gt;reply();
+}
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match41-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+</FONT>  s-&gt;data_.push_back("move");
+  s-&gt;data_.push_back(to_string(shard));
+  s-&gt;data_.push_back(to_string(gid));
+  RaftServer& raft_server = this-&gt;GetRaftServer();
+  uint64_t index;
+  uint64_t term;
+  auto cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  bool isLeader = raft_server.Start(cmd, &index, &term);
+  if(!isLeader){
+    //Log_info("SERVER NOT LEADER FOR INDEX %d", index);
+     *ret = KV_NOTLEADER;
+  }else{
+  Coroutine::Sleep(700000);  // wait 700ms for agreement
+  //Log_info("%d's commands size is %d index is %d",raft_server.site_id_, this-&gt;agreed_commands_size, index);
+  if(this-&gt;agreed_commands_size&lt;index ) {
+    //Log_info("MOVE TIMED OUT FOR INDEX %d", index);
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match41-1.html#3" TARGET="1"><IMG SRC="../../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    *ret = KV_TIMEOUT;
+  }else
+  *ret = KV_SUCCESS; // DO RAFT?
+  }
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+</FONT>  // your code here
+
+ //Log_info("QUERY REQUESTED");
+  // auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  // s-&gt;data_.push_back("query");
+  // RaftServer& raft_server = this-&gt;GetRaftServer();
+  // uint64_t index;
+  // uint64_t term;
+  // auto cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  // bool isLeader = raft_server.Start(cmd, &index, &term);
+  // if(!isLeader){
+  //  //Log_info("[QUERY] SERVER NOT LEADER FOR INDEX %d", index);
+  //    *ret = KV_NOTLEADER;
+  // }else{
+  // Coroutine::Sleep(700000);  // wait 700ms for agreement
+  // //Log_info("%d's commands size is %d index is %d",raft_server.site_id_, this-&gt;agreed_commands_size, index);
+  // if(this-&gt;agreed_commands_size&lt;index ) {
+  //  //Log_info("QUERY TIMED OUT FOR INDEX %d", index);
+  //   *ret = KV_TIMEOUT;
+  // }else{
+  *ret = KV_SUCCESS; // DO RAFT?
+   //Log_info("CONFIGS SIZE IS %d", this-&gt;configs_.size());
+  if(config_no==-1 || config_no&gt;=this-&gt;configs_.size()) {
+    *config = this-&gt;configs_[this-&gt;configs_.size()-1];
+  }
+  else{
+      *config = this-&gt;configs_[config_no];
+  }
+
+  // }
+  // }
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  // your code here
+  if(this-&gt;configs_.size()==0) {
+    this-&gt;configs_[0] = ShardConfig();
+    this-&gt;configs_[0].number = 0;
+  }
+  //Log_info("TOTAL CONFIGS : %d",this-&gt;configs_.size());
+  //Log_info("ON NEXT COMMAND CALLED FOR SHARDMASTER");
+  auto v = (MultiStringMarshallable*)(&m);
+  /* your code here */
+  //Log_info("vdata0 is %s", v-&gt;data_[0].c_str());
+  this-&gt;agreed_commands_size+=1;
+  std::string command_type = v-&gt;data_[0];
+  if(command_type=="join"){
+     map&lt;uint32_t,std::vector&lt;uint32_t&gt;&gt; gid_server_map;
+     for(int i=1;i&lt;v-&gt;data_.size();i+=6){
+      uint32_t gid = static_cast&lt;uint32_t&gt;(std::stoul(v-&gt;data_[i]));
+      //Log_info("FOR GID : %d : ", gid);
+      vector&lt;uint32_t&gt; temp;
+      for(int j=1;j&lt;=5;j++){
+        uint32_t server = static_cast&lt;uint32_t&gt;(std::stoul(v-&gt;data_[i+j]));
+        temp.push_back(server);
+        //Log_info("SERVER : %d ", server);
+      }
+      gid_server_map[gid] = temp;
+     }
+     //Log_info("GID SERVER MAP SIZE IS : %d", gid_server_map.size());
+    ShardConfig new_config = this-&gt;configs_[this-&gt;configs_.size()-1];
+  for(auto itr=gid_server_map.begin();itr!=gid_server_map.end();itr++){
+  new_config.group_servers_map_[itr-&gt;first]=itr-&gt;second;
+  AddGroupToTree(itr-&gt;first);
+  }
+  new_config.number = this-&gt;configs_.size();
+
+  // re distribute shards?
+  RedistributeShards(new_config);
+  this-&gt;configs_[this-&gt;configs_.size()] = new_config;
+  }
+  else if(command_type == "leave"){
+    std::vector&lt;uint32_t&gt; gids;
+    for(int i=1;i&lt;v-&gt;data_.size();i++)
+    gids.push_back(static_cast&lt;uint32_t&gt;(std::stoul(v-&gt;data_[i])));
+     auto gid_server_map = this-&gt;configs_[this-&gt;configs_.size()-1].group_servers_map_;
+  auto shard_group_map_ = this-&gt;configs_[this-&gt;configs_.size()-1].shard_group_map_;
+  ShardConfig new_config = ShardConfig();
+   for(int i=0;i&lt;gids.size();i++){
+    auto gid = gids[i];
+    gid_server_map.erase(gid);
+    auto shards = shard_group_map_[gid]; // redistribute?
+  }
+  new_config.group_servers_map_ = gid_server_map;
+  new_config.number = this-&gt;configs_.size();
+  this-&gt;root.reset();
+  for(auto itr=gid_server_map.begin();itr!=gid_server_map.end();itr++){
+  new_config.group_servers_map_[itr-&gt;first]=itr-&gt;second;
+  AddGroupToTree(itr-&gt;first);
+  }
+  RedistributeShards(new_config);
+  this-&gt;configs_[this-&gt;configs_.size()] = new_config;
+  }else if(command_type == "move"){
+    int32_t shard = static_cast&lt;uint32_t&gt;(std::stoul(v-&gt;data_[1]));
+    uint32_t gid = static_cast&lt;uint32_t&gt;(std::stoul(v-&gt;data_[2]));
+     ShardConfig new_config = this-&gt;configs_[configs_.size()-1];
+  new_config.number = this-&gt;configs_.size();
+  new_config.shard_group_map_[shard] = gid;
+  }
+  // else if(command_type == "query"){
+  // }
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  return cli;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

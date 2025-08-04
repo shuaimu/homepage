@@ -1,0 +1,136 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-bhaveshgawri/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-bhaveshgawri/src/shardkv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+int64_t ShardKvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match3-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_14.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  return ret;
+}
+
+shared_ptr&lt;Marshallable&gt; ShardKvServer::GenOperation(const string& op_type,
+                                                     const string& op_id,
+                                                     const string& key,
+                                                     const string& val) {
+  auto op = make_shared&lt;MultiStringMarshallable&gt;();
+  op -&gt; data_.push_back(op_type);
+  op -&gt; data_.push_back(op_id);
+  op -&gt; data_.push_back(key);
+  op -&gt; data_.push_back(val);
+  cout &lt;&lt; "[SHARD_KV] Op generated op_type: " &lt;&lt; op_type &lt;&lt; " | op_id: " &lt;&lt; op_id &lt;&lt; " | key: " &lt;&lt; key &lt;&lt; " | val: " &lt;&lt; val &lt;&lt; endl;
+  return op;
+}
+
+uint64_t ShardKvServer::ExecOperation(const string& op_type,
+                                      const string& op_id,
+                                      const string& key,
+</FONT>                                      const string& val) {
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match3-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  uint64_t ret = KV_TIMEOUT;
+  auto& raft = GetRaftServer();
+  cout &lt;&lt; "[SHARD_KV] Executing op, raft type: " &lt;&lt; raft.type &lt;&lt; " | site_id: " &lt;&lt; raft.site_id_ &lt;&lt; endl;
+
+  if (raft.type == 2) {
+    auto op = GenOperation(op_type, op_id, key, val);
+</FONT><A NAME="1"></A><FONT color = #00FF00><A HREF="match3-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_9.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+
+    uint64_t raft_term, raft_index;
+    raft.Start(op, &raft_index, &raft_term);
+
+    outstanding_requests_[op_id] = Reactor::CreateSpEvent&lt;IntEvent&gt;();    
+    outstanding_requests_[op_id] -&gt; Wait(1 * 1000 * 1000); // 1s
+
+    ret = outstanding_requests_[op_id] -&gt; status_ == Event::DONE ? KV_SUCCESS : KV_TIMEOUT;
+    outstanding_requests_.erase(op_id);
+  } else {
+    ret = KV_NOTLEADER;
+  } 
+  return ret;
+</FONT>}
+
+int ShardKvServer::Put(const uint64_t& oid, 
+                       const string& k,
+                       const string& v) {
+  cout &lt;&lt; "[SHARD_KV] Issuing PUT for key: " &lt;&lt; k &lt;&lt; " | value: " &lt;&lt; v &lt;&lt; endl; 
+  auto ret = ExecOperation(PUT, to_string(oid), k, v);
+  cout &lt;&lt; "[SHARD_KV] Success PUT for key: " &lt;&lt; k &lt;&lt; " | value: " &lt;&lt; v &lt;&lt; " | ret: " &lt;&lt; ret &lt;&lt; endl; 
+  
+  return ret;
+}
+
+int ShardKvServer::Append(const uint64_t& oid, 
+                          const string& k,
+                          const string& v) {
+  cout &lt;&lt; "[SHARD_KV] Issuing APPEND for key: " &lt;&lt; k &lt;&lt; " | value: " &lt;&lt; v &lt;&lt; endl;
+  auto ret = ExecOperation(APPEND, to_string(oid), k, v);
+  cout &lt;&lt; "[SHARD_KV] Success APPEND for key: " &lt;&lt; k &lt;&lt; " | value: " &lt;&lt; v &lt;&lt; " | ret: " &lt;&lt; ret &lt;&lt; endl;
+
+  return ret;
+}
+
+int ShardKvServer::Get(const uint64_t& oid, 
+                       const string& k,
+                       string* v) {
+  cout &lt;&lt; "[SHARD_KV] Issuing GET for key: " &lt;&lt; k &lt;&lt; endl;
+  auto ret = ExecOperation(GET, to_string(oid), k, DEFAULT_GET_VALUE);
+  cout &lt;&lt; "[SHARD_KV] Success GET for key: " &lt;&lt; k &lt;&lt; " | value: " &lt;&lt; v &lt;&lt; " | ret: " &lt;&lt; ret &lt;&lt; endl;
+
+  *v = ret == KV_SUCCESS && kv_store_.count(k) ? kv_store_[k] : DEFAULT_GET_VALUE;
+  return ret;
+}
+
+string ShardKvServer::UpdateKVStore(MultiStringMarshallable* op) {
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match3-0.html#3" TARGET="0"><IMG SRC="../../../bitmaps/tm_3_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  string op_type = op -&gt; data_[0], op_id = op -&gt; data_[1], key = op -&gt; data_[2], val = op -&gt; data_[3];
+  cout &lt;&lt; "[SHARD_KV] Agreement for op_type: " &lt;&lt; op_type &lt;&lt; " | op_id: " &lt;&lt; op_id &lt;&lt; " | key: " &lt;&lt; key &lt;&lt; " | val: " &lt;&lt; val &lt;&lt; endl;
+</FONT>  if (op_type == APPEND && kv_store_.count(key)) 
+    kv_store_[key] += val;
+  else if (op_type == PUT || op_type == APPEND)
+    kv_store_[key] = val; 
+  cout &lt;&lt; "[SHARD_KV] kvs["&lt;&lt;key&lt;&lt;"]: " &lt;&lt; kv_store_[key] &lt;&lt; endl; 
+  return op_id;
+}
+
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match3-0.html#4" TARGET="0"><IMG SRC="../../../bitmaps/tm_4_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void ShardKvServer::OnNextCommand(Marshallable& m) {
+  auto& raft = GetRaftServer();
+  cout &lt;&lt; "[SHARD_KV] app_next_() callback from site: " &lt;&lt; raft.site_id_ &lt;&lt; " | raft.type: " &lt;&lt; raft.type &lt;&lt; " | curr_leader: " &lt;&lt; raft.leaderId &lt;&lt; endl;
+</FONT>  if (raft.type == 2) {
+    string op_id = UpdateKVStore((MultiStringMarshallable*)(&m));
+    if (outstanding_requests_.count(op_id))
+      outstanding_requests_[op_id] -&gt; Set(1);
+  }
+}
+
+shared_ptr&lt;ShardKvClient&gt; ShardKvServer::CreateClient(Communicator* comm) {
+  auto cli = make_shared&lt;ShardKvClient&gt;();
+  cli-&gt;commo_ = comm;
+  verify(cli-&gt;commo_ != nullptr);
+  static uint32_t id = 0;
+  id++;
+  cli-&gt;cli_id_ = id; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

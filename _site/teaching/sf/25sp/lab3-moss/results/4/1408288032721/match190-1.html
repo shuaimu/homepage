@@ -1,0 +1,292 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-coladog/src/shardkv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-BruceWang3077/src/shardkv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus
+{
+
+  int64_t ShardKvServer::GetNextOpId()
+  {
+    verify(sp_log_svr_);
+    int64_t ret = sp_log_svr_-&gt;site_id_;
+    ret = ret &lt;&lt; 32;
+    ret = ret + op_id_cnt_++;
+    return ret;
+  }
+
+  int ShardKvServer::Put(const uint64_t &oid,
+                         const string &k,
+                         const string &v)
+  {
+    // lab_shard: fill in your code
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match190-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("put");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);
+    uint64_t *index = new uint64_t;
+</FONT>    uint64_t *term = new uint64_t;
+    std::shared_ptr&lt;Marshallable&gt; marshallablePtr = std::static_pointer_cast&lt;Marshallable&gt;(s);
+
+    //-------------------------------------
+    Log_debug("server %d call start() in put(%ld)", GetRaftServer().loc_id_, oid);
+    //-------------------------------------
+    if (!GetRaftServer().Start(marshallablePtr, index, term))
+    {
+      Log_debug("server %d is not leader, return", GetRaftServer().loc_id_);
+      return KV_NOTLEADER;
+    };
+    Log_debug("result from start: index: %ld, term: %ld", *index, *term);
+    int count = 5;
+    while (count-- &gt; 0)
+    {
+      Coroutine::Sleep(500000);
+      Log_debug("put sleep");
+      if (GetRaftServer().commit_index &gt;= *index)
+      {
+        return KV_SUCCESS;
+      }
+    }
+
+    // std::unique_lock&lt;std::mutex&gt; lk(kv_cv_m);
+    // kv_cv.wait_for(lk, std::chrono::milliseconds(1000));
+    Log_debug("it's server ending waiting in put()");
+    return KV_TIMEOUT;
+  }
+
+  int ShardKvServer::Append(const uint64_t &oid,
+                            const string &k,
+                            const string &v)
+  {
+    // lab_shard: fill in your code
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match190-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("append");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);
+    uint64_t *index = new uint64_t;
+</FONT>    uint64_t *term = new uint64_t;
+    std::shared_ptr&lt;Marshallable&gt; marshallablePtr = std::static_pointer_cast&lt;Marshallable&gt;(s);
+    //-------------------------------------
+    printf("server %d call start() in append(%ld) \n", GetRaftServer().loc_id_, oid);
+    //-------------------------------------
+    if (!GetRaftServer().Start(marshallablePtr, index, term))
+    {
+      return KV_NOTLEADER;
+    };
+    int count = 5;
+    while (count-- &gt; 0)
+    {
+      Coroutine::Sleep(500000);
+      Log_debug("append sleep");
+      if (GetRaftServer().commit_index &gt;= *index)
+      {
+        return KV_SUCCESS;
+      }
+    }
+    // database.append(k, v);
+    return KV_SUCCESS;
+  }
+
+  int ShardKvServer::Get(const uint64_t &oid,
+                         const string &k,
+                         string *v)
+  {
+    // lab_shard: fill in your code
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match190-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("get");
+    s-&gt;data_.push_back(k);
+    // s-&gt;data_.push_back(v);
+    uint64_t *index = new uint64_t;
+</FONT>    uint64_t *term = new uint64_t;
+
+    std::shared_ptr&lt;Marshallable&gt; marshallablePtr = std::static_pointer_cast&lt;Marshallable&gt;(s);
+    //-------------------------------------
+    printf("server %d call start() in append(%ld) \n", GetRaftServer().loc_id_, oid);
+
+    //-------------------------------------
+    if (!GetRaftServer().Start(marshallablePtr, index, term))
+    {
+      return KV_NOTLEADER;
+    };
+    int count = 5;
+    while (count-- &gt; 0)
+    {
+      Coroutine::Sleep(500000);
+      Log_debug("get sleep");
+      if (GetRaftServer().commit_index &gt;= *index)
+      {
+        *v = get(k);
+        return KV_SUCCESS;
+      }
+    }
+    // *v = database.get(k);
+    return KV_TIMEOUT;
+  }
+  int ShardKvServer::GetConfig(const uint64_t &oid, const string &new_sc, string *sc)
+  {
+    ShardConfig new_Config = ShardConfig::deserializeShardConfig(new_sc);
+    *sc = ShardConfig::serializeShardConfig(cur_config);
+    // sc-&gt;number = cur_config.number;
+    // for (auto x : cur_config.shard_group_map_)
+    // {
+    //   sc-&gt;shard_group_map_[x.first] = x.second;
+    // }
+    // for (auto x : cur_config.group_servers_map_)
+    // {
+    //   while (sc-&gt;group_servers_map_[x.first].size() &gt; 0)
+    //   {
+    //     sc-&gt;group_servers_map_[x.first].pop_back();
+    //   }
+    //   for (auto y : cur_config.group_servers_map_[x.first])
+    //   {
+    //     sc-&gt;group_servers_map_[x.first].push_back(y);
+    //   }
+    // }
+
+    if (new_Config.number &gt; cur_config.number)
+    {
+      auto s = make_shared&lt;MultiStringMarshallable&gt;();
+      s-&gt;sc = new_Config;
+      s-&gt;data_.push_back(to_string(oid));
+      s-&gt;data_.push_back("reconfig");
+      uint64_t *index = new uint64_t;
+      uint64_t *term = new uint64_t;
+      std::shared_ptr&lt;Marshallable&gt; marshallablePtr = std::static_pointer_cast&lt;Marshallable&gt;(s);
+      if (!GetRaftServer().Start(marshallablePtr, index, term))
+      {
+        Log_debug("server %d is not leader, return", GetRaftServer().loc_id_);
+        return KV_NOTLEADER;
+      };
+      Log_debug("result from start: index: %ld, term: %ld", *index, *term);
+      int count = 5;
+      while (count-- &gt; 0)
+      {
+        Coroutine::Sleep(500000);
+        Log_debug("get config sleep");
+        if (GetRaftServer().commit_index &gt;= *index)
+        {
+          return KV_SUCCESS;
+        }
+      }
+    }
+    else
+    {
+      return KV_SUCCESS;
+    }
+    return KV_TIMEOUT;
+  }
+  int ShardKvServer::CollectData(map&lt;string, string&gt; *data)
+  {
+    Log_debug("collect data at server %d", GetRaftServer().loc_id_);
+    if (GetRaftServer().status != RaftServer::LEADER)
+    {
+      return KV_NOTLEADER;
+    }
+    for (auto x : kv_store_)
+    {
+      data-&gt;insert(x);
+    }
+    return KV_SUCCESS;
+  }
+  int ShardKvServer::UpdateData(const uint64_t &oid,
+                                const map&lt;string, string&gt; &data)
+  {
+    Log_debug("received update call at server %d", GetRaftServer().loc_id_);
+    string received_data = serializeMap(data);
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("update");
+    s-&gt;data_.push_back(received_data);
+    uint64_t *index = new uint64_t;
+    uint64_t *term = new uint64_t;
+    std::shared_ptr&lt;Marshallable&gt; marshallablePtr = std::static_pointer_cast&lt;Marshallable&gt;(s);
+    if (!GetRaftServer().Start(marshallablePtr, index, term))
+    {
+      Log_debug("server %d is not leader, return", GetRaftServer().loc_id_);
+      return KV_NOTLEADER;
+    };
+    Log_debug("result from start: index: %ld, term: %ld", *index, *term);
+    int count = 5;
+    while (count-- &gt; 0)
+    {
+      Coroutine::Sleep(500000);
+      Log_debug("update sleep");
+      if (GetRaftServer().commit_index &gt;= *index)
+      {
+        return KV_SUCCESS;
+      }
+    }
+    return KV_TIMEOUT;
+  }
+  void ShardKvServer::OnNextCommand(Marshallable &m)
+  {
+    // lab_shard: fill in your code
+    auto v = (MultiStringMarshallable *)(&m);
+    /* your code here */
+    // int size = v-&gt;data_.size();
+    // for (int i = 0; i &lt; size; i++)
+    // {
+    //   printf("info %d: %s \n", i, v-&gt;data_.at(i));
+    // }
+    // Log_debug("before getting log");
+    std::unique_lock&lt;std::mutex&gt; lock(shard_kv_cv_m);
+    // Log_debug("after getting log");
+
+    if (v-&gt;data_.size() &gt; 1)
+    {
+      Log_debug("inside on next command with data.at(1):%s", v-&gt;data_.at(1));
+      if (v-&gt;data_.at(1) == "put")
+      {
+        put(v-&gt;data_.at(2), v-&gt;data_.at(3));
+      }
+      else if (v-&gt;data_.at(1) == "append")
+      {
+        append(v-&gt;data_.at(2), v-&gt;data_.at(3));
+      }
+      else if (v-&gt;data_.at(1) == "reconfig")
+      {
+        cur_config = v-&gt;sc;
+        Log_debug("config updated to %d", cur_config.number);
+      }
+      else if (v-&gt;data_.at(1) == "update")
+      {
+
+        map&lt;string, string&gt; received_data = deserializeMap(v-&gt;data_.at(2));
+        Log_debug("server %d starts updating, received data size: %d", GetRaftServer().loc_id_, received_data.size());
+        kv_store_.erase(kv_store_.begin(), kv_store_.end());
+        kv_store_.insert(received_data.begin(), received_data.end());
+      }
+    }
+  }
+
+  shared_ptr&lt;ShardKvClient&gt; ShardKvServer::CreateClient(Communicator *comm)
+  {
+    auto cli = make_shared&lt;ShardKvClient&gt;();
+    cli-&gt;commo_ = comm;
+    verify(cli-&gt;commo_ != nullptr);
+    static uint32_t id = 0;
+    id++;
+    cli-&gt;cli_id_ = id;
+    return cli;
+  }
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

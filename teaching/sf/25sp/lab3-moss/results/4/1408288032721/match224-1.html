@@ -1,0 +1,283 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-PranavDani/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-traj1998/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match224-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+namespace janus {
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_SHARD,
+                                     [] () -&gt; Marshallable* {
+                                       return new ArgumentMarshallable;
+                                     });
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+</FONT>  // your code here
+  auto s = make_shared&lt;ArgumentMarshallable&gt;();
+  int32_t num_operation = this-&gt;operation_no;
+  s-&gt;operation = "join";
+  s-&gt;config_no = config_no+1;
+  s-&gt;operation_no = num_operation;
+  s-&gt;gid_server_map = gid_server_map;
+  shared_ptr&lt;Marshallable&gt; cmd = s;
+  uint64_t index = 0;
+  uint64_t term = 0;
+  bool isLeader = 0;
+  this-&gt;GetRaftServer().GetState(&isLeader,&term);
+  if(isLeader){
+
+    cout&lt;&lt;s-&gt;operation;
+    Log_info("Server command operation: join config_no%d operation_no%d",s-&gt;config_no,s-&gt;operation_no);
+    this-&gt;operation_no+=1;
+    this-&gt;config_no+=1;
+    //Log_info("After in start operation no %d config_no %d",this-&gt;operation_no,this-&gt;config_no);
+    operations[num_operation] = 0;
+    //Log_info("THe size of operations before start %d",operations.size());
+    bool appended = this-&gt;GetRaftServer().Start(cmd,&index,&term);
+    Coroutine::Sleep(900000);
+    if(operations[num_operation]!=1)
+  	  *ret = KV_TIMEOUT;
+    else{
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match224-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      *ret = KV_SUCCESS;
+    }
+  }
+  else{
+    *ret = KV_NOTLEADER;
+  }
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+</FONT>  // your code here
+  auto s = make_shared&lt;ArgumentMarshallable&gt;();
+  int32_t num_operation = this-&gt;operation_no;
+  s-&gt;operation = "leave";
+  s-&gt;config_no = config_no+1;
+  s-&gt;gids = gids;
+  shared_ptr&lt;Marshallable&gt; cmd = s;
+  uint64_t index = 0;
+  uint64_t term = 0;
+  bool isLeader = 0;
+  this-&gt;GetRaftServer().GetState(&isLeader,&term);
+  if(isLeader){
+    cout&lt;&lt;s-&gt;operation;
+   // Log_info("Server command opeartion: leave config_no%d operation_no%d",s-&gt;config_no,s-&gt;operation_no);
+    this-&gt;operation_no++;
+    this-&gt;config_no++;
+    operations[num_operation] = 0;
+    bool appended = this-&gt;GetRaftServer().Start(cmd,&index,&term);
+    Coroutine::Sleep(900000);
+    if(operations[num_operation]!=1)
+      *ret = KV_TIMEOUT;
+    else{
+      *ret = KV_SUCCESS;
+    }
+  }
+  else{
+    *ret = KV_NOTLEADER;
+  }
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  auto s = make_shared&lt;ArgumentMarshallable&gt;();
+  int32_t num_operation = this-&gt;operation_no;
+  s-&gt;operation = "move";
+  s-&gt;config_no = config_no+1;
+  s-&gt;operation_no = num_operation;
+  s-&gt;shard = shard;
+  s-&gt;gid = gid;
+  shared_ptr&lt;Marshallable&gt; cmd = s;
+  uint64_t index = 0;
+  uint64_t term = 0;
+  bool isLeader = 0;
+  this-&gt;GetRaftServer().GetState(&isLeader,&term);
+  if(isLeader){
+    this-&gt;operation_no+=1;
+    this-&gt;config_no+=1;
+    operations[num_operation] = 0;
+    bool appended = this-&gt;GetRaftServer().Start(cmd,&index,&term);
+    Coroutine::Sleep(900000);
+    if(operations[num_operation]!=1){
+      *ret = KV_TIMEOUT;
+    }
+    else{
+      *ret = KV_SUCCESS;
+    }
+  }
+  else{
+    *ret = KV_NOTLEADER;
+  }
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Query(const int32_t& configNo, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+  // your code here
+  auto s = make_shared&lt;ArgumentMarshallable&gt;();
+  int32_t num_operation = this-&gt;operation_no;
+  s-&gt;operation = "query";
+  s-&gt;config_no = configNo;
+  int k = std::min(configNo,config_no);
+  if(k == -1){
+    k=config_no;
+  }
+  s-&gt;operation_no = num_operation;
+  shared_ptr&lt;Marshallable&gt; cmd = s;
+  uint64_t index = 0;
+  uint64_t term = 0;
+  bool isLeader = 0;
+  this-&gt;GetRaftServer().GetState(&isLeader,&term);
+  if(isLeader){
+    this-&gt;operation_no++;
+    operations[num_operation] = 0;
+    bool appended = this-&gt;GetRaftServer().Start(cmd,&index,&term);
+    Coroutine::Sleep(900000);
+    if(operations[num_operation]!=1)
+    { *ret = KV_TIMEOUT;
+    }
+    else{
+      *ret = KV_SUCCESS;
+      if(configs_.find(k)!=configs_.end()){
+        *config = configs_[k];
+      }
+    }
+    }
+    else{
+      *ret = KV_NOTLEADER;
+    }
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::RebalanceShard(ShardConfig config, int32_t configNo){
+
+  map&lt;uint32_t, uint32_t&gt; gid_shard_map;
+  int total_groups = config.group_servers_map_.size();
+  int min = 10/total_groups;
+  int max_groups = 10%total_groups;
+  for(auto i : config.group_servers_map_){
+    gid_shard_map[i.first]=0;
+  }
+  for(auto i : config.shard_group_map_){
+    uint32_t shard = i.first;
+    uint32_t group = i.second;
+    if(gid_shard_map.find(group)!=gid_shard_map.end()){
+      gid_shard_map[group] = gid_shard_map[group]+1;
+    }
+    else{
+      gid_shard_map[group] = 1;
+    }
+  }
+  for(auto i:config.shard_group_map_){
+    uint32_t shard = i.first;
+    uint32_t group = i.second;
+    if(gid_shard_map[group]&lt;=min && config.group_servers_map_.find(group)!=config.group_servers_map_.end()){
+      continue;
+    }
+    else if(config.group_servers_map_.find(group)!=config.group_servers_map_.end() && gid_shard_map[group]==min+1 && max_groups&gt;0){
+      max_groups--;
+      continue;
+    }
+    else{
+      for(auto i:gid_shard_map){
+        if(config.group_servers_map_.find(i.first)!=config.group_servers_map_.end() && i.second&lt;min){
+          config.shard_group_map_[shard] = i.first;
+          gid_shard_map[group]=gid_shard_map[group]-1;
+          gid_shard_map[i.first]=gid_shard_map[i.first]+1;
+          break;
+        }
+      }
+    }
+  }
+  configs_[configNo] = config;
+  
+}
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  // your code here
+  auto s = (ArgumentMarshallable*)(&m);
+  string operation = s-&gt;operation;
+  cout&lt;&lt;"OPERATION IN NEXT COMMAND"&lt;&lt;operation&lt;&lt;endl;
+  if(operation.compare("join")==0){
+    int32_t config_no_ = s-&gt;config_no;
+    int32_t operation_no_ = s-&gt;operation_no;
+    Log_info("ON next command opeartion: join config_no%d operation_no%d",config_no_,operation_no_);
+    map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt; gid_server_map = s-&gt;gid_server_map;
+    ShardConfig currentConfig = configs_[config_no_-1];
+    //Log_info("Getting current config");
+    ShardConfig newConfig = currentConfig;
+    map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt; current_gid_server_map = newConfig.group_servers_map_;
+    //Log_info("Getting current gid server map");
+    //Log_info("Group size%d",gid_server_map.size());
+    for(auto group:gid_server_map){
+        //Log_info("group id%d",group.first);
+        current_gid_server_map[group.first] = group.second;
+    }
+    //Log_info("Copied to gid server map");
+    newConfig.group_servers_map_ = current_gid_server_map;
+    newConfig.number = config_no_;
+    RebalanceShard(newConfig, config_no_);
+    Log_info("Operations log size%d",this-&gt;operations.size());
+    this-&gt;operations[operation_no_] = 1;
+
+  }
+  if(operation.compare("leave")==0){
+    int32_t config_no_ = s-&gt;config_no;
+    int32_t operation_no_ = s-&gt;operation_no;
+    //Log_info("ON next command opeartion: leave config_no%d operation_no%d",config_no_,operation_no_);
+    vector&lt;uint32_t&gt; gids = s-&gt;gids;
+    ShardConfig currentConfig = configs_[config_no_-1];
+    ShardConfig newConfig = currentConfig;
+    map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt; current_gid_server_map = newConfig.group_servers_map_;
+    for(auto& id:gids){
+      if(current_gid_server_map.find(id)!=current_gid_server_map.end()){
+        current_gid_server_map.erase(id);
+      }
+    }
+    newConfig.group_servers_map_ = current_gid_server_map;
+    newConfig.number = config_no_;
+    RebalanceShard(newConfig, config_no_);
+    operations[operation_no_] = 1;
+  }
+  if(operation.compare("move")==0){
+    int32_t config_no_ = s-&gt;config_no;
+    int32_t operation_no_ = s-&gt;operation_no;
+    //Log_info("ON next command opeartion: move config_no%d operation_no%d",config_no_,operation_no_);
+    int32_t shard = s-&gt;shard ;
+    uint32_t gid = s-&gt;gid;
+    ShardConfig currentConfig = configs_[config_no_-1];
+    ShardConfig newConfig = currentConfig;
+    map&lt;uint32_t, uint32_t&gt; current_shard_group_map = newConfig.shard_group_map_;
+    current_shard_group_map[shard] = gid;
+    newConfig.shard_group_map_ = current_shard_group_map;
+    newConfig.number = config_no_;
+    configs_[config_no_] = newConfig;
+    operations[operation_no_] = 1;
+
+  }
+  if(operation.compare("query")==0){
+    int32_t config_no_ = s-&gt;config_no;
+    int32_t operation_no_ = s-&gt;operation_no;
+    operations[operation_no_] = 1;
+    //Log_info("ON next command opeartion: query operation_no%d",operation_no_);
+  }
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  return cli;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

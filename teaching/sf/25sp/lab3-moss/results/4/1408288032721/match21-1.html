@@ -1,0 +1,162 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-ShubhamRJ/src/shardkv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-omkar-decode/src/shardkv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+int64_t ShardKvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int ShardKvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+    // lab_shard: fill in your code
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match21-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_8.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("put");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);
+
+    // Log_info("PUT: value is %s with oid %d on server %d (leader: %d)", v.c_str(), oid, GetRaftServer().loc_id_, GetRaftServer().state == ServerState::Leader);
+
+    uint64_t cmdIndex, leaderTerm;
+    shared_ptr&lt;Marshallable&gt; cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+    bool startAgreement = GetRaftServer().Start(cmd, &cmdIndex, &leaderTerm);
+    if (!startAgreement) {
+      return KV_NOTLEADER;
+</FONT>    }
+    this-&gt;outstanding_requests_[to_string(oid)] = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    this-&gt;outstanding_requests_[to_string(oid)]-&gt;Wait(OPERATION_TIMEOUT);
+    if (this-&gt;outstanding_requests_[to_string(oid)]-&gt;status_ == Event::DONE) {
+      shared_ptr&lt;IntEvent&gt; waitForCommit = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+      waitForCommit-&gt;Wait(WAIT_FOR_COMMIT);
+      kv_store_[k] = v;
+      return KV_SUCCESS;
+    }
+    return KV_TIMEOUT;
+}
+
+int ShardKvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+    // lab_shard: fill in your code
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match21-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_8.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("append");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);
+
+    uint64_t cmdIndex, leaderTerm;
+    shared_ptr&lt;Marshallable&gt; cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+    bool startAgreement = GetRaftServer().Start(cmd, &cmdIndex, &leaderTerm);
+    if (!startAgreement) {
+      // Log_info("server %d not leader, state is candidate (%d); follower (%d)", GetRaftServer().loc_id_, GetRaftServer().state == ServerState::Candidate, GetRaftServer().state == ServerState::Follower);
+      return KV_NOTLEADER;
+</FONT>    }
+    this-&gt;outstanding_requests_[to_string(oid)] = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    this-&gt;outstanding_requests_[to_string(oid)]-&gt;Wait(OPERATION_TIMEOUT);
+    if (this-&gt;outstanding_requests_[to_string(oid)]-&gt;status_ == Event::DONE) {
+      shared_ptr&lt;IntEvent&gt; waitForCommit = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+      waitForCommit-&gt;Wait(WAIT_FOR_COMMIT);
+      if (kv_store_.find(k) == kv_store_.end()) {
+        kv_store_[k] = v;
+      } else {
+        kv_store_[k] += v;
+      }
+      return KV_SUCCESS;
+    }
+    return KV_TIMEOUT;
+}
+
+int ShardKvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+    // lab_shard: fill in your code
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("get");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(*v);
+    // Log_info("GET: with oid %d on server %d (leader: %d)", oid, GetRaftServer().loc_id_, GetRaftServer().state == ServerState::Leader);
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match21-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    uint64_t cmdIndex, leaderTerm;
+    shared_ptr&lt;Marshallable&gt; cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+    bool startAgreement = GetRaftServer().Start(cmd, &cmdIndex, &leaderTerm);
+    if (!startAgreement) {
+      return KV_NOTLEADER;
+</FONT>    }
+
+    this-&gt;outstanding_requests_[to_string(oid)] = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    this-&gt;outstanding_requests_[to_string(oid)]-&gt;Wait(OPERATION_TIMEOUT);
+    if (this-&gt;outstanding_requests_[to_string(oid)]-&gt;status_ == Event::DONE) {
+      shared_ptr&lt;IntEvent&gt; waitForCommit = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+      waitForCommit-&gt;Wait(WAIT_FOR_COMMIT);
+      if (kv_store_.find(k) != kv_store_.end()) {
+        *v = kv_store_[k];
+        // Log_info("GET: returning value %s", keyValueStore[k].c_str());
+      } else {
+        *v = "";
+      }
+      return KV_SUCCESS;
+    }
+    return KV_TIMEOUT;
+}
+
+void ShardKvServer::OnNextCommand(Marshallable& m) {
+    // lab_shard: fill in your code
+    auto v = (MultiStringMarshallable*)(&m);
+    string oid = v-&gt;data_[0];
+    string operation = v-&gt;data_[1];
+    string k = v-&gt;data_[2];
+    string val = v-&gt;data_[3];
+
+    // if (operation == "put") {
+      // Log_info("OnNextCommand: put value %s with oid %s on server %d", val.c_str(), oid.c_str(), GetRaftServer().loc_id_);
+      // kv_store_[k] = val;
+    // } else if (operation == "append") {
+      // Log_info("OnNextCommand: append value %s to current value %s with oid %s on server %d", val.c_str(), keyValueStore[k].c_str(), oid.c_str(), GetRaftServer().loc_id_);
+      // if (kv_store_.find(k) == kv_store_.end()) {
+      //   kv_store_[k] = val;
+      // } else {
+      //   kv_store_[k] += val;
+      // }
+    // }
+
+    if (this-&gt;outstanding_requests_.find(oid) != this-&gt;outstanding_requests_.end()) {
+      this-&gt;outstanding_requests_[oid]-&gt;Set(1);
+    }
+}
+
+shared_ptr&lt;ShardKvClient&gt; ShardKvServer::CreateClient(Communicator* comm) {
+  auto cli = make_shared&lt;ShardKvClient&gt;();
+  cli-&gt;commo_ = comm;
+  verify(cli-&gt;commo_ != nullptr);
+  static uint32_t id = 0;
+  id++;
+  cli-&gt;cli_id_ = id; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -53,8 +53,8 @@ The schedule is tentative and subject to change.
 | Nov 13 | [Proof-of-work](notes/bitcoin.md)                                   |  Read [Bitcoin](readings/bitcoin.pdf)                                                          |
 | Nov 15 | Permissioned chain                                |  Read [Hyperledger Fabric](readings/fabric.pdf)                                                |
 | Nov 20 | Permissionless BFT                                |  Skim [Stellar](readings/stellar.pdf) and [Algorand](readings/algorand.pdf)                                                                                              |
-| Nov 22 | Presentation: Meta's day                                                        |                                                                                                |
-| Nov 27 | Web3                                                        |    Skim [Filecoin](readings/filecoin.pdf) and IPFS(readings/ipfs.pdf)                                                                                                |
+| Nov 22 | Presentation: Meta's day, on [Zoom](https://stonybrook.zoom.us/j/6741581240?pwd=NXlzMlBvVERBVGJjaWVGUklIZ0RwZz09)                                                       |                                                                                                |
+| Nov 27 | Web3                                                        |    Skim [Filecoin](readings/filecoin.pdf) and [IPFS](readings/ipfs.pdf)                                                                                                |
 | Nov 29 | Presentation                                                        |                                                                                                |
 | Dec 04 | Presentation                                                        |                                                                                                |
 | Dec 06 | Presentation                                                        |                                                                                                |

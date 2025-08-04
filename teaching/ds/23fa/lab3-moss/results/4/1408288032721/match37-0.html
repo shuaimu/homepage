@@ -1,0 +1,440 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-sayedbilalbari/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-sayedbilalbari/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include &lt;boost/serialization/map.hpp&gt;
+#include &lt;boost/serialization/vector.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+namespace janus {
+
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+  std::recursive_mutex my_mutex;
+  my_mutex.lock();
+  RaftServer& raft_server = GetRaftServer();
+  Log_info("Shard Master %lu -&gt; Got join request",raft_server.site_id_);
+  stringstream ss;
+  boost::archive::text_oarchive oarch(ss);
+  oarch &lt;&lt; gid_server_map;
+  MultiStringMarshallable m;
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  uint64_t tempRequestNumber = currentRequestNumber;
+  Log_info("Shard Master %lu -&gt; Assigned request %lu, join",raft_server.site_id_,tempRequestNumber);
+  currentRequestNumber++;
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match37-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  Log_info("Shard Master %lu -&gt; Updated currentRequestNumber to %lu",raft_server.site_id_,currentRequestNumber);
+  s-&gt;data_.push_back(to_string(tempRequestNumber));
+  s-&gt;data_.push_back("join");
+  s-&gt;data_.push_back(ss.str());
+  std::shared_ptr&lt;Marshallable&gt; my_command(s);
+  uint64_t index =0 ,term = 0;
+</FONT>  uint64_t *pointerToIndex = &index, *pointerToTerm = &term;
+  my_mutex.unlock();
+  Log_info("Shard Master %lu -&gt; Calling start for request %lu",raft_server.site_id_,tempRequestNumber);
+  if(raft_server.Start(my_command, pointerToIndex, pointerToTerm))
+  {
+    my_mutex.lock();
+    auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    my_waiting_requests[tempRequestNumber] = ev;
+    my_mutex.unlock();
+    Log_info("Shard Master %lu -&gt; Before waiting for request %lu",raft_server.site_id_,tempRequestNumber);
+    ev-&gt;Wait(1000000);
+    Log_info("Shard Master %lu -&gt; After waiting for request %lu",raft_server.site_id_,tempRequestNumber);
+    my_mutex.lock();
+    if(ev-&gt;status_ == Event::TIMEOUT)
+    {
+      Log_info("Shard Master %lu -&gt; request %lu timed out",raft_server.site_id_,tempRequestNumber);
+      *ret = KV_TIMEOUT;
+    }
+    else
+    {
+      Log_info("Shard Master %lu -&gt; request %lu successfully handled",raft_server.site_id_, tempRequestNumber);
+      *ret = KV_SUCCESS;
+    }
+    my_mutex.unlock();
+  }
+  else
+  {
+    *ret = KV_NOTLEADER;
+    Log_info("Shard Master %lu -&gt; Returning not leader for request %lu",raft_server.site_id_,tempRequestNumber);
+  }
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+  std::recursive_mutex my_mutex;
+  my_mutex.lock();
+  RaftServer& raft_server = GetRaftServer();
+  Log_info("Shard Master %lu -&gt; Got Leave request",raft_server.site_id_);
+  stringstream ss;
+  boost::archive::text_oarchive oarch(ss);
+  oarch &lt;&lt; gids;
+  MultiStringMarshallable m;
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  uint64_t tempRequestNumber = currentRequestNumber;
+  Log_info("Shard Master %lu -&gt; Assigned request %lu, Leave",raft_server.site_id_,tempRequestNumber);
+  currentRequestNumber++;
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match37-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  Log_info("Shard Master %lu -&gt; Updated currentRequestNumber to %lu",raft_server.site_id_,currentRequestNumber);
+  s-&gt;data_.push_back(to_string(tempRequestNumber));
+  s-&gt;data_.push_back("leave");
+  s-&gt;data_.push_back(ss.str());
+  std::shared_ptr&lt;Marshallable&gt; my_command(s);
+  uint64_t index =0 ,term = 0;
+</FONT>  uint64_t *pointerToIndex = &index, *pointerToTerm = &term;
+  my_mutex.unlock();
+  Log_info("Shard Master %lu -&gt; Calling start for request %lu",raft_server.site_id_,tempRequestNumber);
+  if(raft_server.Start(my_command, pointerToIndex, pointerToTerm))
+  {
+    my_mutex.lock();
+    auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    my_waiting_requests[tempRequestNumber] = ev;
+    my_mutex.unlock();
+    Log_info("Shard Master %lu -&gt; Before waiting for request %lu",raft_server.site_id_,tempRequestNumber);
+    ev-&gt;Wait(1000000);
+    Log_info("Shard Master %lu -&gt; After waiting for request %lu",raft_server.site_id_,tempRequestNumber);
+    my_mutex.lock();
+    if(ev-&gt;status_ == Event::TIMEOUT)
+    {
+      Log_info("Shard Master %lu -&gt; request %lu timed out",raft_server.site_id_,tempRequestNumber);
+      *ret = KV_TIMEOUT;
+    }
+    else
+    {
+      Log_info("Shard Master %lu -&gt; request %lu successfully handled",raft_server.site_id_);
+      *ret = KV_SUCCESS;
+    }
+    my_mutex.unlock();
+  }
+  else
+  {
+    *ret = KV_NOTLEADER;
+    Log_info("Shard Master %lu -&gt; Returning not leader for request %lu",raft_server.site_id_,tempRequestNumber);
+  }
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+  std::recursive_mutex my_mutex;
+  my_mutex.lock();
+  RaftServer& raft_server = GetRaftServer();
+  Log_info("Shard Master %lu -&gt; Got move request",raft_server.site_id_);
+  MultiStringMarshallable m;
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  uint64_t tempRequestNumber = currentRequestNumber;
+  Log_info("Shard Master %lu -&gt; Assigned request number %lu, move",raft_server.site_id_,tempRequestNumber);
+  currentRequestNumber++;
+  Log_info("Shard Master %lu -&gt; Updated currentRequestNumber to %lu",raft_server.site_id_,currentRequestNumber);
+  s-&gt;data_.push_back(to_string(tempRequestNumber));
+  s-&gt;data_.push_back("move");
+  s-&gt;data_.push_back(to_string(shard));
+  s-&gt;data_.push_back(to_string(gid));
+  std::shared_ptr&lt;Marshallable&gt; my_command(s);
+  uint64_t index =0 ,term = 0;
+  uint64_t *pointerToIndex = &index, *pointerToTerm = &term;
+  my_mutex.unlock();
+  Log_info("Shard Master %lu -&gt; calling start for request %lu",raft_server.site_id_,tempRequestNumber);
+  if(raft_server.Start(my_command, pointerToIndex, pointerToTerm))
+  {
+    my_mutex.lock();
+    auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    my_waiting_requests[tempRequestNumber] = ev;
+    my_mutex.unlock();
+    Log_info("Shard Master %lu -&gt; Before waiting for request %lu",raft_server.site_id_,tempRequestNumber);
+    ev-&gt;Wait(1000000);
+    Log_info("Shard Master %lu -&gt; After waiting for request %lu",raft_server.site_id_,tempRequestNumber);
+    my_mutex.lock();
+    if(ev-&gt;status_ == Event::TIMEOUT)
+    {
+      Log_info("Shard Master %lu -&gt; Request %lu timed out",raft_server.site_id_,tempRequestNumber);
+      *ret = KV_TIMEOUT;
+    }
+    else
+    {
+      Log_info("Shard Master %lu -&gt; Request %lu successfully handled",raft_server.site_id_,tempRequestNumber);
+      *ret = KV_SUCCESS;
+    }
+    my_mutex.unlock();
+  }
+  else
+  {
+    *ret = KV_NOTLEADER;
+    Log_info("Shard Master %lu -&gt; Returning not leader for request %lu",raft_server.site_id_,tempRequestNumber);
+  }
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+  std::recursive_mutex my_mutex;
+  my_mutex.lock();
+  RaftServer& raft_server = GetRaftServer();
+  Log_info("Shard Master %lu -&gt; Got query request",raft_server.site_id_);
+  MultiStringMarshallable m;
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  uint64_t tempRequestNumber = currentRequestNumber;
+  Log_info("Shard Master %lu -&gt; Assigned request number %lu, query",raft_server.site_id_,tempRequestNumber);
+  currentRequestNumber++;
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match37-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  s-&gt;data_.push_back(to_string(tempRequestNumber));
+  s-&gt;data_.push_back("query");
+  s-&gt;data_.push_back(to_string(config_no));
+  std::shared_ptr&lt;Marshallable&gt; my_command(s);
+  uint64_t index =0 ,term = 0;
+</FONT>  uint64_t *pointerToIndex = &index, *pointerToTerm = &term;
+  my_mutex.unlock();
+  Log_info("Shard Master %lu -&gt; Calling start for request %lu",raft_server.site_id_,tempRequestNumber);
+  if(raft_server.Start(my_command, pointerToIndex, pointerToTerm))
+  {
+    my_mutex.lock();
+    auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    my_waiting_requests[tempRequestNumber] = ev;
+    my_mutex.unlock();
+    Log_info("Shard Master %lu -&gt; Before waiting for request %lu",raft_server.site_id_,tempRequestNumber);
+    ev-&gt;Wait(1000000);
+    Log_info("Shard Master %lu -&gt; After waiting for request %lu",raft_server.site_id_,tempRequestNumber);
+    my_mutex.lock();
+    if(ev-&gt;status_ == Event::TIMEOUT)
+    {
+      Log_info("Shard Master %lu -&gt; Request %lu timed out",raft_server.site_id_,tempRequestNumber);
+      *ret = KV_TIMEOUT;
+    }
+    else
+    {
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match37-1.html#3" TARGET="1"><IMG SRC="../../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      Log_info("Shard Master %lu -&gt; Request %lu successfully handled",raft_server.site_id_,tempRequestNumber);
+      //Return required config or latest depending on the value requested
+      if(config_no==-1 || config_no&gt;currentConfiguration)
+        *config = configs_[currentConfiguration];
+      else
+        *config = configs_[config_no];
+      *ret = KV_SUCCESS;
+</FONT>    }
+    my_mutex.unlock();
+  }
+  else
+  {
+    *ret = KV_NOTLEADER;
+    Log_info("Shard Master %lu -&gt; Returning not leader for request %lu",raft_server.site_id_,tempRequestNumber);
+  }
+  defer-&gt;reply();
+}
+
+map&lt;uint32_t,vector&lt;uint32_t&gt;&gt; ShardMasterServiceImpl::GetServerToShardMapping()
+{
+  /*
+    This function iterates over all shards and gives back the group to shard mapping
+  */
+  map&lt;uint32_t,vector&lt;uint32_t&gt;&gt; my_mapping;
+  for(auto x:currentConfig.shard_group_map_)
+  {
+    my_mapping[x.second].push_back(x.first);
+  }
+  return my_mapping;
+}
+
+vector&lt;uint32_t&gt; ShardMasterServiceImpl::GetAllGroups()
+{
+  /*
+    This function returns all existing groups
+  */
+  vector&lt;uint32_t&gt; allGroups;
+  for(auto x:currentConfig.group_servers_map_)
+  {
+    allGroups.push_back(x.first);
+  }
+  return allGroups;
+}
+
+void ShardMasterServiceImpl::HandleJoin(map&lt;uint32_t, vector&lt;uint32_t&gt;&gt; gid_server_map)
+{
+  /*
+    This function handles all incoming joins
+  */
+  vector&lt;uint32_t&gt; incomingGroups;
+  //Add new servers to the group to server mapping and all incoming GIDS to a new vector
+  for(auto x:gid_server_map)
+  {
+    currentConfig.group_servers_map_[x.first] = x.second;
+    incomingGroups.push_back(x.first);
+  }
+  //In case of default configuration
+  if(currentConfiguration==0)
+  {
+    //Get all GIDS present
+    int currentTotalGroups = currentConfig.group_servers_map_.size();
+    int startingGroup = 0;
+    vector&lt;uint32_t&gt; allGroups = GetAllGroups();
+    //Redistribute shards among all groups in a round robin fashion
+    for(auto x:currentConfig.shard_group_map_)
+    {
+      currentConfig.shard_group_map_[x.first] = allGroups[startingGroup++];
+      startingGroup%=currentTotalGroups;
+    }
+    //Increase configuration number
+    currentConfiguration++;
+    currentConfig.number = currentConfiguration;
+    configs_[currentConfiguration] = currentConfig;
+  }
+  else
+  {
+    //Get all shards and replica groups to distributed them
+    int currentTotalShards = currentConfig.shard_group_map_.size();
+    int totalServers = currentConfig.group_servers_map_.size();
+    int maxShardLimit = currentTotalShards/totalServers;
+    //Get group to shard mapping
+    map&lt;uint32_t,vector&lt;uint32_t&gt;&gt; serverToShardMapping = GetServerToShardMapping();
+    vector&lt;uint32_t&gt; extraShards;
+    for(auto x:serverToShardMapping)
+    {
+      //Find all groups having over allocated shards and store the extra shards
+      if(x.second.size()&gt;maxShardLimit)
+      {
+        for(int i=maxShardLimit;i&lt;x.second.size();i++)
+          extraShards.push_back(x.second[i]);
+      }
+    }
+    //Distributed the extra shards among the total servers in a round robin fashion
+    int startingGroup = 0;
+    int incomingGroupTotal = incomingGroups.size();
+    for(auto x:extraShards)
+    {
+      currentConfig.shard_group_map_[x] = incomingGroups[startingGroup++];
+      startingGroup%=incomingGroupTotal;
+    }
+    //Update configuration
+    currentConfiguration++;
+    currentConfig.number = currentConfiguration;
+    configs_[currentConfiguration] = currentConfig;
+  }
+}
+
+void ShardMasterServiceImpl::HandleLeave(vector&lt;uint32_t&gt; gids)
+{
+  vector&lt;uint32_t&gt; remainingServers;
+  vector&lt;uint32_t&gt; redistributedShards;
+  unordered_map&lt;uint32_t,uint32_t&gt; leavingServers;
+  map&lt;uint32_t,vector&lt;uint32_t&gt;&gt; serverToShardMapping = GetServerToShardMapping();
+  //Get all leaving servers and erase them from group to server mapping
+  for(auto x: gids)
+  {  
+    leavingServers[x] = 1;
+    currentConfig.group_servers_map_.erase(x);
+  }
+  //In server to shard mapping, find leaving servers and store their shards and remaining servers also
+  for(auto x:serverToShardMapping)
+  {
+    if(leavingServers.find(x.first)!=leavingServers.end())
+    {
+      for(auto y:x.second)
+        redistributedShards.push_back(y);
+    }
+    else
+      remainingServers.push_back(x.first);
+  }
+  //Distribute extra shards among the remaining servers
+  int startingGroup = 0;
+  int totalRemainingGroups = remainingServers.size();
+  for(auto x:redistributedShards)
+  {
+    currentConfig.shard_group_map_[x] = remainingServers[startingGroup++];
+    startingGroup%=totalRemainingGroups;
+  }
+  currentConfiguration++;
+  currentConfig.number = currentConfiguration;
+  configs_[currentConfiguration] = currentConfig;
+}
+
+void ShardMasterServiceImpl::HandleQuery(uint32_t config_no)
+{
+  Log_info("Shard Master -&gt; Successfully processed query response for request");   
+}
+
+void ShardMasterServiceImpl::HandleMove(int32_t shard,uint32_t gid)
+{
+  //In case of move, update the shard to the new GID and store new config
+  currentConfig.shard_group_map_[shard] = gid;
+  currentConfiguration++;
+  currentConfig.number = currentConfiguration;
+  configs_[currentConfiguration] = currentConfig;
+  Log_info("Shard Master -&gt; Successfully processed move response");
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  std:recursive_mutex my_mutex;
+  my_mutex.lock();
+  RaftServer& raftServer = GetRaftServer();
+  Log_info("Shard Master %lu -&gt; Inside OnNextCommand",raftServer.site_id_);
+  auto v = (MultiStringMarshallable*)(&m);
+  string id = v-&gt;data_[0];
+  uint64_t id_int = stoull(id);
+  Log_info("Shard Master %lu -&gt; Inside OnNextCommand. Starting processing for request %lu",raftServer.site_id_,id_int);
+  string command = v-&gt;data_[1];
+  if(command == "join")
+  {
+    Log_info("Shard Master %lu -&gt; Inside OnNextCommand. Got Join, for request %lu",raftServer.site_id_,id_int);
+    stringstream ss2;
+    ss2 &lt;&lt; v-&gt;data_[2];
+    boost::archive::text_iarchive iarch(ss2);
+    map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt; new_map;
+    iarch &gt;&gt; new_map;
+    HandleJoin(new_map);
+  }
+  else if(command == "leave")
+  {
+    Log_info("Shard Master %lu -&gt; Inside OnNextCommand. Got Leave, for request %lu",raftServer.site_id_,id_int);
+    stringstream ss2;
+    ss2 &lt;&lt; v-&gt;data_[2];
+    boost::archive::text_iarchive iarch(ss2);
+    vector&lt;uint32_t&gt; new_vector;
+    iarch &gt;&gt; new_vector;
+    HandleLeave(new_vector);
+  }
+  else if(command == "move")
+  {
+    Log_info("Shard Master %lu -&gt; Inside OnNextCommand. Got Move, for request %lu",raftServer.site_id_,id_int);
+    uint32_t shard = stoull(v-&gt;data_[2]);
+    uint32_t gid = stoull(v-&gt;data_[3]);
+    HandleMove(shard,gid);
+  }
+  else
+  {
+    Log_info("Shard Master %lu -&gt; Inside OnNextCommand. Got Query, for request %lu",raftServer.site_id_,id_int);
+    uint32_t configNo = stoull(v-&gt;data_[2]);
+    HandleQuery(configNo);
+  }
+  if(raftServer.state=="leader" && my_waiting_requests.find(id_int)!=my_waiting_requests.end())
+  {
+    if(my_waiting_requests[id_int]-&gt;status_ != Event::TIMEOUT)
+      my_waiting_requests[id_int]-&gt;Set(1);
+    my_waiting_requests.erase(id_int);
+    Log_info("Shard Master %lu -&gt; Inside OnNext, Processed and deleted request %lu",raftServer.site_id_,id_int);
+  }
+  my_mutex.unlock();
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  Log_info("Inside createClient");
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  Log_info("Got object of client");
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  Log_info("Updated variables");
+  return cli;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,134 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-DeepshikaR/src/deptran/raft/commo.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-MintGreenTZ/src/deptran/raft/commo.cc<p><PRE>
+
+#include "commo.h"
+#include "../rcc/graph.h"
+#include "../rcc/graph_marshaler.h"
+#include "../command.h"
+#include "../procedure.h"
+#include "../command_marshaler.h"
+#include "raft_rpc.h"
+#include "macros.h"
+
+namespace janus {
+
+RaftCommo::RaftCommo(PollMgr* poll) : Communicator(poll) {
+}
+
+shared_ptr&lt;RaftRequestVoteQuorumEvent&gt;
+RaftCommo::BroadcastRequestVote(const parid_t par_id,
+                                const siteid_t candidate_id,
+                                const term_t candidate_term,
+                                const slotid_t last_log_index,
+                                const term_t last_log_term) {
+  auto proxies = rpc_par_proxies_[par_id];
+  int n = Config::GetConfig()-&gt;GetPartitionSize(par_id);
+  auto e = Reactor::CreateSpEvent&lt;RaftRequestVoteQuorumEvent&gt;(n, n/2+1);
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match43-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_10.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  for (auto& p : proxies) {
+    RaftProxy *proxy = (RaftProxy*) p.second;
+    FutureAttr fuattr;
+    fuattr.callback = [e](Future* fu) {
+      /* this is a handler that will be invoked when the RPC returns */
+      uint64_t term;
+      bool_t vote_granted;
+      /* retrieve RPC return values in order */
+      fu-&gt;get_reply() &gt;&gt; term;
+      fu-&gt;get_reply() &gt;&gt; vote_granted;
+      /* process the RPC response here */
+      e -&gt; FeedResponse(vote_granted, term);
+    };
+    /* Always use Call_Async(proxy, RPC name, RPC args..., fuattr)
+    * to asynchronously invoke RPCs */
+    Call_Async(proxy, RequestVote, candidate_term, candidate_id, last_log_index, last_log_term, fuattr);
+</FONT>  }
+  return e;
+}
+
+shared_ptr&lt;RaftAppendEntriesQuorumEvent&gt;
+RaftCommo::SendAppendEntries(const parid_t par_id,
+                              const siteid_t site_id,
+                              const term_t leader_term,
+                              const uint64_t leader_id,
+                              const slotid_t prev_log_index,
+                              const term_t prev_log_term,
+                              const shared_ptr&lt;Marshallable&gt; cmd,
+                              const slotid_t leader_commit) {
+  return this-&gt;AppendEntries(par_id, site_id, leader_term, leader_id, prev_log_index, prev_log_term, cmd, leader_commit, false);
+}
+
+shared_ptr&lt;RaftAppendEntriesQuorumEvent&gt;
+RaftCommo::BroadcastAppendEntries(const parid_t par_id,
+                                  const siteid_t site_id,
+                                  const term_t leader_term,
+                                  const uint64_t leader_id,
+                                  const slotid_t prev_log_index,
+                                  const term_t prev_log_term,
+                                  const shared_ptr&lt;Marshallable&gt; cmd,
+                                  const slotid_t leader_commit) {
+  return this-&gt;AppendEntries(par_id, site_id, leader_term, leader_id, prev_log_index, prev_log_term, cmd, leader_commit, true);
+}
+
+shared_ptr&lt;RaftAppendEntriesQuorumEvent&gt;
+RaftCommo::AppendEntries(const parid_t par_id,
+                          const siteid_t site_id,
+                          const term_t leader_term,
+                          const uint64_t leader_id,
+                          const slotid_t prev_log_index,
+                          const term_t prev_log_term,
+                          const shared_ptr&lt;Marshallable&gt; cmd,
+                          const slotid_t leader_commit,
+                          const bool broadcast) {
+  auto proxies = rpc_par_proxies_[par_id];
+  int n = Config::GetConfig()-&gt;GetPartitionSize(par_id);
+  auto e = Reactor::CreateSpEvent&lt;RaftAppendEntriesQuorumEvent&gt;(n, n/2+1);
+  for (auto& p : proxies) {
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match43-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    if (broadcast || p.first == site_id) {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [e](Future* fu) {
+        bool_t follower_append_OK;
+        fu-&gt;get_reply() &gt;&gt; follower_append_OK;
+        e -&gt; FeedResponse(follower_append_OK);
+</FONT>      };
+      /* wrap Marshallable in a MarshallDeputy to send over RPC */
+      MarshallDeputy md(cmd);
+      Call_Async(proxy, AppendEntries, leader_term, leader_id, prev_log_index, prev_log_term, md, leader_commit, fuattr);
+    }
+  }
+  return e;
+}
+
+shared_ptr&lt;IntEvent&gt; 
+RaftCommo::SendString(parid_t par_id, siteid_t site_id, const string& msg, string* res) {
+  auto proxies = rpc_par_proxies_[par_id];
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  for (auto& p : proxies) {
+    if (p.first == site_id) {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [res,ev](Future* fu) {
+        fu-&gt;get_reply() &gt;&gt; *res;
+        ev-&gt;Set(1);
+      };
+      /* wrap Marshallable in a MarshallDeputy to send over RPC */
+      Call_Async(proxy, HelloRpc, msg, fuattr);
+    }
+  }
+  return ev;
+}
+
+
+} // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,254 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-ShreyasBlues/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-ShreyasBlues/src/shardkv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+int64_t ShardKvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int ShardKvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+    // lab_shard: fill in your code
+
+  Log_info("Put Called...! "); 
+
+  switch (GetRaftServer().current_state_)
+  {
+    case 0:
+    case 1: Log_info("Shard Master returns KVNotLeader..!");
+            return KV_NOTLEADER;
+            break;
+
+    case 2:
+    
+    string x=std::to_string(oid);
+    Log_info("We in PUT LEADER Shard KVServer for OPID : %d ----&gt; &lt;---- Server : %d", oid, GetRaftServer().site_id_);
+
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("put");
+    s-&gt;data_.push_back(k);
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match2-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    s-&gt;data_.push_back(v);
+
+    auto sp_m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+
+    auto op_data = std::make_shared&lt;ShardKVOpData&gt;(ShardKVOpData{KV_TIMEOUT});
+    op_success.insert(std::make_pair(to_string(oid), op_data));
+
+    uint64_t index, term;
+    index = GetRaftServer().logs_.size();
+    term = GetRaftServer().current_term_;  
+
+    Log_info("Submit to RAFT..%d %d State : %d  CMD : %s", index, term, GetRaftServer().current_state_, x);
+</FONT><A NAME="4"></A><FONT color = #FF00FF><A HREF="match2-0.html#4" TARGET="0"><IMG SRC="../../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    bool isLeader = GetRaftServer().Start(sp_m, &index, &term);
+    Log_info("We complete Start %d", isLeader);
+
+    if(isLeader == false){
+      Log_info("We in Not leader for %d ", GetRaftServer().site_id_);
+</FONT>      return KV_NOTLEADER;
+    }
+    
+    op_data-&gt;cmit_evt.value_ = 0;
+    Log_info("PUT Event Value Set to -&gt; %d", op_data-&gt;cmit_evt.value_);
+    op_data-&gt;cmit_evt.WaitUntilGreaterOrEqualThan(1, 500000);
+
+    Log_info("Status Return from Put OPID : %s Return :%d", std::to_string(oid).c_str(), op_data-&gt;status);
+
+    return op_data-&gt;status;
+  }
+
+  return KV_TIMEOUT;
+
+/*     kv_store_[k] = v;
+    return KV_SUCCESS; */
+}
+
+int ShardKvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+    // lab_shard: fill in your code
+
+  Log_info("Append Called...! ");
+
+  switch (GetRaftServer().current_state_)
+  {
+    case 0:
+    case 1: Log_info("Shard Master returns KVNotLeader..!");
+            return KV_NOTLEADER;
+            break;
+
+    case 2:
+
+    string x=std::to_string(oid);    
+    Log_info("We in APPEND LEADER Shard KVServer for OPID : %d ----&gt; &lt;---- Server : %d", oid, GetRaftServer().site_id_);
+
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("append");
+    s-&gt;data_.push_back(k);
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match2-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    s-&gt;data_.push_back(v);
+
+    auto sp_m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+
+    auto op_data = std::make_shared&lt;ShardKVOpData&gt;(ShardKVOpData{KV_TIMEOUT});
+    op_success.insert(std::make_pair(to_string(oid), op_data));
+
+    uint64_t index, term;
+    index = GetRaftServer().logs_.size();
+    term = GetRaftServer().current_term_;
+
+    Log_info("Submit to RAFT..%d %d State : %d  CMD : %s!", index, term, GetRaftServer().current_state_, x.c_str());
+</FONT>    bool isLeader = GetRaftServer().Start(sp_m, &index, &term);
+    Log_info("We complete Start %d", isLeader);
+
+    if(isLeader == false){
+      return KV_NOTLEADER;
+    }
+
+    op_data-&gt;cmit_evt.WaitUntilGreaterOrEqualThan(1, 500000);
+
+    Log_info("Return from Append Status : %d", op_data-&gt;status);
+
+    return op_data-&gt;status;
+  }
+
+/*     if(kv_store_.count(k) &gt; 0){
+      kv_store_[k] += v;  
+    } else {
+      kv_store_[k] = v;
+    } */
+  return KV_TIMEOUT;
+}
+
+int ShardKvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+    // lab_shard: fill in your code
+
+  Log_info("Get Called...! ");
+
+  switch (GetRaftServer().current_state_)
+  {
+    case 0:
+    case 1: Log_info("Not Leader..!");
+    return KV_NOTLEADER;
+    break;
+
+    case 2:
+    
+    string x=std::to_string(oid);
+    Log_info("We in GET LEADER ShardKV Server ----&gt; &lt;---- Op ID : %s Key : %s and Server : %d", x.c_str(), k.c_str(), GetRaftServer().site_id_);
+
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("get");
+    s-&gt;data_.push_back(k);
+
+    auto sp_m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+
+    auto op_data = std::make_shared&lt;ShardKVOpData&gt;(ShardKVOpData{KV_TIMEOUT});
+    op_success.insert(std::make_pair(to_string(oid), op_data));
+
+    uint64_t index, term;
+    index = GetRaftServer().logs_.size();
+    term = GetRaftServer().current_term_;  
+
+    Log_info("Submit to RAFT..%d %d State : %d  CMD : %s!", index, term, GetRaftServer().current_state_);
+    bool isLeader = GetRaftServer().Start(sp_m, &index, &term);
+    Log_info("We complete Start %d", isLeader);
+
+    if(isLeader == false){
+      return KV_NOTLEADER;
+    }
+
+    Log_info("Coroutine WAIT START!!!!!!!!!!!!!!!!!!!!!!!!");
+    
+    op_data-&gt;cmit_evt.WaitUntilGreaterOrEqualThan(1, 500000);
+
+    Log_info("Coroutine WAIT DONEEEEEEEE!!!!!!!!!!!!!!!!!!!!!!!!");
+    Log_info("Return from GET Status : %d", op_data-&gt;status);
+    
+    if(op_data-&gt;status == KV_SUCCESS){
+      *v = kv_store_.at(k);
+      Log_info("Value from GET for Key %d : %d", k, *v);
+    }
+
+    return op_data-&gt;status;
+  }  
+  
+//  *v = kv_store_[k];
+  return KV_TIMEOUT;
+}
+
+void ShardKvServer::OnNextCommand(Marshallable& m) {
+    // lab_shard: fill in your code
+
+  Coroutine::CreateRun([&m, this](){ 
+  auto v = (MultiStringMarshallable*)(&m);
+  /* your code here */
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match2-0.html#3" TARGET="0"><IMG SRC="../../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  Log_info("We in OnNextCommand Shard KV Server ----&gt; &lt;---- CMD : %s for Server State : %d and OPD : %s Key : %s", v-&gt;data_.at(1).c_str(),sp_log_svr_-&gt;site_id_, v-&gt;data_.at(0).c_str(), v-&gt;data_.at(2).c_str());
+
+  if(v-&gt;data_.at(1) == "put"){
+</FONT>    Log_info("We in OnNextCommand PUT Shard KV Server ----&gt; &lt;---- for Server State : %d and OPD : %s Key : %s Value : %s", sp_log_svr_-&gt;site_id_, v-&gt;data_.at(0).c_str(), v-&gt;data_.at(2).c_str(), v-&gt;data_.at(3).c_str());
+    Log_info("KV STORE SIZE : %d ", kv_store_.size());
+    kv_store_[v-&gt;data_.at(2)] = v-&gt;data_.at(3);
+    Log_info("AFTER KV STORE SIZE : %d ", kv_store_.size());
+  } 
+  else if(v-&gt;data_.at(1) == "append"){
+    auto it = kv_store_.find(v-&gt;data_.at(2));
+    if (it != kv_store_.end()) {
+        kv_store_[v-&gt;data_.at(2)] = kv_store_[v-&gt;data_.at(2)] + v-&gt;data_.at(3);
+    } else {
+        kv_store_[v-&gt;data_.at(2)] = v-&gt;data_.at(3);
+    }
+  } 
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match2-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_11.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  if(GetRaftServer().current_state_ == 2 && op_success.find(v-&gt;data_.at(0)) != op_success.end()){
+    Log_info("OnNextCommand Event OPD: %s Value is : %d and status : %d", v-&gt;data_.at(0).c_str(), op_success.at(v-&gt;data_.at(0))-&gt;cmit_evt.value_, op_success.at(v-&gt;data_.at(0))-&gt;status);
+    op_success.at(v-&gt;data_.at(0))-&gt;status = KV_SUCCESS;
+    op_success.at(v-&gt;data_.at(0))-&gt;cmit_evt.Set(1);  
+    Log_info("OnNextCommand Set's Event OPD : %s Value to : %d and status : %d", v-&gt;data_.at(0).c_str(), op_success.at(v-&gt;data_.at(0))-&gt;cmit_evt.value_, op_success.at(v-&gt;data_.at(0))-&gt;status);
+</FONT>  }
+  
+  });
+}
+
+shared_ptr&lt;ShardKvClient&gt; ShardKvServer::CreateClient(Communicator* comm) {
+  auto cli = make_shared&lt;ShardKvClient&gt;();
+  cli-&gt;commo_ = comm;
+  verify(cli-&gt;commo_ != nullptr);
+  static uint32_t id = 0;
+  id++;
+  cli-&gt;cli_id_ = id; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,423 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-Sirneij/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-Sirneij/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+namespace janus
+{
+  uint64_t ShardMasterCommand::global_cmd_id_counter = 0;
+
+  static int volatile x1 =
+      MarshallDeputy::RegInitializer(MarshallDeputy::CMD_SHARD_MASTER,
+                                     []() -&gt; Marshallable *
+                                     {
+                                       return new ShardMasterCommand;
+                                     });
+
+  void ShardMasterServiceImpl::rebalanceShards(ShardConfig *config)
+  {
+    int minShardsPerGroup = NShards / config-&gt;group_servers_map_.size();
+    std::map&lt;uint32_t, std::vector&lt;int&gt;&gt; distribution; // GID to shards
+    std::vector&lt;int&gt; unassignedShards;
+
+    // Initialize distribution map for each group
+    for (auto const &group : config-&gt;group_servers_map_)
+    {
+      distribution[group.first] = std::vector&lt;int&gt;();
+    }
+
+    // Distribute current shards and collect unassigned shards
+    for (int shard = 1; shard &lt;= NShards; ++shard)
+    {
+      uint32_t gid = config-&gt;shard_group_map_[shard];
+      if (gid != 0)
+      {
+        distribution[gid].push_back(shard);
+      }
+      else
+      {
+        unassignedShards.push_back(shard);
+      }
+    }
+
+    auto areShardsBalanced = [&]() -&gt; bool
+    {
+      int sum = 0;
+      for (auto const &entry : distribution)
+      {
+        int shardCount = entry.second.size();
+        if (shardCount &lt; minShardsPerGroup)
+        {
+          return false;
+        }
+        sum += shardCount;
+      }
+      return sum == NShards;
+    };
+
+    // Balance shards across groups
+    while (!areShardsBalanced())
+    {
+      for (auto &entry : distribution)
+      {
+        // Fill each group to minimum capacity
+        while (!unassignedShards.empty() && entry.second.size() &lt; minShardsPerGroup)
+        {
+          entry.second.push_back(unassignedShards.front());
+          unassignedShards.erase(unassignedShards.begin());
+        }
+
+        // Steal shard from another group if necessary
+        if (unassignedShards.empty() && entry.second.size() &lt; minShardsPerGroup)
+        {
+          for (auto &entry2 : distribution)
+          {
+            if (entry2.second.size() &gt; minShardsPerGroup)
+            {
+              entry.second.push_back(entry2.second.front());
+              entry2.second.erase(entry2.second.begin());
+              break;
+            }
+          }
+        }
+      }
+
+      // Distribute any remaining unassigned shards
+      for (auto &entry : distribution)
+      {
+        if (!unassignedShards.empty())
+        {
+          entry.second.push_back(unassignedShards.front());
+          unassignedShards.erase(unassignedShards.begin());
+        }
+      }
+    }
+
+    // Update the config with the new shard assignments
+    for (auto const &entry : distribution)
+    {
+      for (int shard : entry.second)
+      {
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match99-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        config-&gt;shard_group_map_[shard] = entry.first;
+      }
+    }
+  }
+
+  void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt; &gid_server_map, uint32_t *ret, rrr::DeferredReply *defer)
+  {
+    // your code here
+    // Log_info("SharedMasterServiceImpl::Join");
+
+    auto cmd = std::make_shared&lt;ShardMasterCommand&gt;();
+</FONT>    cmd-&gt;type = "Join";
+    cmd-&gt;gid_server_map = gid_server_map;
+
+    shared_ptr&lt;Marshallable&gt; ret_mar = cmd;
+
+    uint64_t index, term;
+    bool is_leader;
+
+    is_leader = GetRaftServer().Start(ret_mar, &index, &term);
+    if (is_leader)
+    {
+      auto startTime = std::chrono::high_resolution_clock::now();
+      while (true)
+      {
+        if ((std::chrono::high_resolution_clock::now() - startTime) &gt; std::chrono::seconds(10))
+        {
+          *ret = KV_TIMEOUT;
+          break;
+        }
+        if (committed_cmds_.count(cmd-&gt;cmd_id) &gt; 0)
+        {
+          std::lock_guard&lt;std::recursive_mutex&gt; lock(shard_master_mutex_);
+          ShardConfig newConfig;
+          if (configs_.empty())
+          {
+            newConfig.number = 1;
+          }
+          else
+          {
+            newConfig = configs_.rbegin()-&gt;second;
+            newConfig.number += 1;
+          }
+
+          for (const auto &entry : gid_server_map)
+          {
+            newConfig.group_servers_map_[entry.first] = entry.second;
+          }
+
+          rebalanceShards(&newConfig);
+
+          configs_[newConfig.number] = newConfig;
+
+          // Log_info("SharedMasterServiceImpl::Join: config = %s", ConfigToString(newConfig).c_str());
+
+          *ret = KV_SUCCESS;
+          break;
+        }
+
+        Coroutine::Sleep(1000);
+      }
+    }
+    else
+    {
+      *ret = KV_NOTLEADER;
+    }
+
+    defer-&gt;reply();
+  }
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match99-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt; &gids, uint32_t *ret, rrr::DeferredReply *defer)
+  {
+    auto cmd = std::make_shared&lt;ShardMasterCommand&gt;();
+</FONT>    cmd-&gt;type = "Leave";
+    cmd-&gt;gids = gids;
+
+    shared_ptr&lt;Marshallable&gt; ret_mar = cmd;
+
+    uint64_t index, term;
+    bool is_leader = GetRaftServer().Start(ret_mar, &index, &term);
+    if (is_leader)
+    {
+      auto startTime = std::chrono::high_resolution_clock::now();
+      while (true)
+      {
+        if ((std::chrono::high_resolution_clock::now() - startTime) &gt; std::chrono::seconds(10))
+        {
+          *ret = KV_TIMEOUT;
+          break;
+        }
+        if (committed_cmds_.count(cmd-&gt;cmd_id) &gt; 0)
+        {
+          std::lock_guard&lt;std::recursive_mutex&gt; lock(shard_master_mutex_);
+          ShardConfig newConfig = configs_.rbegin()-&gt;second;
+          newConfig.number += 1;
+
+          for (const auto gid : gids)
+          {
+            for (auto &shard : newConfig.shard_group_map_)
+            {
+              if (shard.second == gid)
+              {
+                shard.second = 0; // Assign to invalid GID
+              }
+            }
+            newConfig.group_servers_map_.erase(gid);
+          }
+
+          rebalanceShards(&newConfig);
+
+          configs_[newConfig.number] = newConfig;
+
+          // Log_info("SharedMasterServiceImpl::Leave: config = %s", ConfigToString(newConfig).c_str());
+          *ret = KV_SUCCESS;
+          break;
+        }
+        Coroutine::Sleep(1000);
+      }
+    }
+    else
+    {
+      *ret = KV_NOTLEADER;
+    }
+
+    defer-&gt;reply();
+  }
+
+  void ShardMasterServiceImpl::Move(const int32_t &shard, const uint32_t &gid, uint32_t *ret, rrr::DeferredReply *defer)
+  {
+    // your code here
+    // Log_info("SharedMasterServiceImpl::Move");
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(shard_master_mutex_);
+    ShardConfig &latest_config = configs_.rbegin()-&gt;second;
+    // Validate shard ID
+    if (shard &lt; 0 || shard &gt;= latest_config.shard_group_map_.size())
+    {
+      *ret = KV_TIMEOUT;
+    }
+    else if (latest_config.group_servers_map_.count(gid) &gt; 0 && latest_config.shard_group_map_[shard] != gid)
+    {
+
+      auto cmd = std::make_shared&lt;ShardMasterCommand&gt;();
+      cmd-&gt;type = "Move";
+      cmd-&gt;shard = shard;
+      cmd-&gt;gid = gid;
+
+      shared_ptr&lt;Marshallable&gt; ret_mar = cmd;
+
+      uint64_t index, term;
+      bool is_leader;
+
+      is_leader = GetRaftServer().Start(ret_mar, &index, &term);
+      if (is_leader)
+      {
+        auto startTime = std::chrono::high_resolution_clock::now();
+        while (true)
+        {
+          if ((std::chrono::high_resolution_clock::now() - startTime) &gt; std::chrono::seconds(10))
+          {
+            *ret = KV_TIMEOUT;
+            break;
+          }
+          if (committed_cmds_.count(cmd-&gt;cmd_id) &gt; 0)
+          {
+            ShardConfig new_config = latest_config;
+            new_config.number += 1;
+            new_config.shard_group_map_[shard] = gid;
+
+            configs_[new_config.number] = new_config;
+            // Log_info("SharedMasterServiceImpl::Move: config = %s", ConfigToString(new_config).c_str());
+            *ret = KV_SUCCESS;
+            break;
+          }
+
+          Coroutine::Sleep(1000);
+        }
+      }
+      else
+      {
+        *ret = KV_NOTLEADER;
+      }
+    }
+    else
+    {
+      *ret = KV_TIMEOUT;
+    }
+
+    defer-&gt;reply();
+  }
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match99-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  void ShardMasterServiceImpl::Query(const int32_t &config_no, uint32_t *ret, ShardConfig *config, rrr::DeferredReply *defer)
+  {
+    // your code here
+    // Log_info("SharedMasterServiceImpl::Query");
+    auto cmd = std::make_shared&lt;ShardMasterCommand&gt;();
+</FONT>    cmd-&gt;type = "Query";
+    cmd-&gt;config_no = config_no;
+
+    shared_ptr&lt;Marshallable&gt; ret_mar = cmd;
+
+    uint64_t index, term;
+    bool is_leader;
+
+    is_leader = GetRaftServer().Start(ret_mar, &index, &term);
+
+    if (is_leader)
+    {
+      auto startTime = std::chrono::high_resolution_clock::now();
+      while (true)
+      {
+        if ((std::chrono::high_resolution_clock::now() - startTime) &gt; std::chrono::seconds(10))
+        {
+          *ret = KV_TIMEOUT;
+          break;
+        }
+
+        if (committed_cmds_.count(cmd-&gt;cmd_id) &gt; 0)
+        {
+          std::lock_guard&lt;std::recursive_mutex&gt; lock(shard_master_mutex_);
+          // If the configuration number is -1 or bigger than the biggest known configuration number, return the latest configuration
+          if (config_no &lt; 0 || config_no &gt;= configs_.size())
+          {
+            *config = configs_.rbegin()-&gt;second;
+            // Log_info("SharedMasterServiceImpl::Query: Latest config = %s, config_no = %d, configs_.size() = %d", ConfigToString(*config).c_str(), config_no, configs_.size());
+          }
+          else
+          {
+            // Otherwise, return the configuration with the specified number
+            // Log_info("SharedMasterServiceImpl::Query: config_no = %d", config_no);
+            *config = configs_[config_no];
+          }
+          *ret = KV_SUCCESS;
+          break;
+        }
+        Coroutine::Sleep(1000);
+      }
+    }
+    else
+    {
+      *ret = KV_NOTLEADER;
+    }
+
+    defer-&gt;reply();
+  }
+
+  void ShardMasterServiceImpl::OnNextCommand(Marshallable &m)
+  {
+    // your code here
+    auto v = static_cast&lt;ShardMasterCommand *&gt;(&m);
+    auto lambda = [this, &v]()
+    {
+      std::lock_guard&lt;std::recursive_mutex&gt; lock(shard_master_mutex_);
+      // Log_info("SharedMasterServiceImpl::OnNextCommand: cmd_id = %lu", v-&gt;cmd_id);
+      committed_cmds_.insert(v-&gt;cmd_id);
+    };
+    Coroutine::CreateRun(lambda);
+  }
+
+  // do not change anything below
+  shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient()
+  {
+    auto cli = make_shared&lt;ShardMasterClient&gt;();
+    cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+    uint32_t id = sp_log_svr_-&gt;site_id_;
+    return cli;
+  }
+
+  std::string ShardMasterServiceImpl::ConfigToString(const ShardConfig &config)
+  {
+    std::stringstream ss;
+    ss &lt;&lt; "ShardConfig: number = " &lt;&lt; config.number &lt;&lt; ", shard_group_map_ = {";
+
+    for (auto iter = config.shard_group_map_.begin(); iter != config.shard_group_map_.end();)
+    {
+      ss &lt;&lt; iter-&gt;first &lt;&lt; ": " &lt;&lt; iter-&gt;second;
+      if (++iter != config.shard_group_map_.end())
+      {
+        ss &lt;&lt; ", ";
+      }
+    }
+
+    ss &lt;&lt; "}, group_servers_map_ = {";
+    for (auto group_iter = config.group_servers_map_.begin(); group_iter != config.group_servers_map_.end();)
+    {
+      ss &lt;&lt; group_iter-&gt;first &lt;&lt; ": [";
+      auto &servers = group_iter-&gt;second;
+      for (auto server_iter = servers.begin(); server_iter != servers.end();)
+      {
+        ss &lt;&lt; *server_iter;
+        if (++server_iter != servers.end())
+        {
+          ss &lt;&lt; ", ";
+        }
+      }
+      ss &lt;&lt; "]";
+      if (++group_iter != config.group_servers_map_.end())
+      {
+        ss &lt;&lt; ", ";
+      }
+    }
+
+    ss &lt;&lt; "}";
+    return ss.str();
+  }
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

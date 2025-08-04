@@ -1,0 +1,291 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-ShubhamRJ/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-ShubhamRJ/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+namespace janus {
+
+int64_t ShardMasterServiceImpl::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  uint64_t term, index;
+  const uint64_t op_id = GetNextOpId();
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("join");
+  int32_t sz = gid_server_map.size();
+  s-&gt;data_.push_back(to_string(sz));
+  for (auto it = gid_server_map.begin(); it != gid_server_map.end(); it++){
+    s-&gt;data_.push_back(to_string(it-&gt;first));
+    int32_t sz2 = it-&gt;second.size();
+    s-&gt;data_.push_back(to_string(sz2));
+    for (auto it2 = it-&gt;second.begin(); it2 != it-&gt;second.end(); it2++){
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match81-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      s-&gt;data_.push_back(to_string(*it2));
+    }
+  }
+  shared_ptr&lt;Marshallable&gt; m = static_pointer_cast&lt;Marshallable&gt;(s);
+  bool status = GetRaftServer().Start(m, &index, &term);
+  if(!status){
+</FONT>    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match81-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    return;
+  }
+  int timeout = 10000000;
+  while(timeout){
+    if(op_id_map_.find(to_string(op_id)) != op_id_map_.end() && op_id_map_[to_string(op_id)]){
+      *ret = KV_SUCCESS;
+</FONT>      defer-&gt;reply();
+      return;
+    }
+    Coroutine::Sleep(100000);
+    timeout -= 100000;
+  }
+  *ret = KV_TIMEOUT;
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  uint64_t term, index;
+  const uint64_t op_id = GetNextOpId();
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("leave");
+  int32_t sz = gids.size();
+  s-&gt;data_.push_back(to_string(sz));
+  for (auto it = gids.begin(); it != gids.end(); it++){
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match81-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    s-&gt;data_.push_back(to_string(*it)); 
+  }
+  shared_ptr&lt;Marshallable&gt; m = static_pointer_cast&lt;Marshallable&gt;(s);
+  bool status = GetRaftServer().Start(m, &index, &term);
+  if(!status){
+</FONT>    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+    return;
+  }
+  int timeout = 10000000;
+  while(timeout){
+    if(op_id_map_.find(to_string(op_id)) != op_id_map_.end() && op_id_map_[to_string(op_id)]){
+      *ret = KV_SUCCESS;
+      defer-&gt;reply();
+      return;
+    }
+    Coroutine::Sleep(100000);
+    timeout -= 100000;
+  }
+  *ret = KV_TIMEOUT;
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  uint64_t term, index;
+  const uint64_t op_id = GetNextOpId();
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("move");
+  s-&gt;data_.push_back(to_string(shard));
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match81-1.html#3" TARGET="1"><IMG SRC="../../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  s-&gt;data_.push_back(to_string(gid));
+  shared_ptr&lt;Marshallable&gt; m = static_pointer_cast&lt;Marshallable&gt;(s);
+  bool status = GetRaftServer().Start(m, &index, &term);
+  if(!status){
+</FONT>    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+    return;
+  }
+  int timeout = 10000000;
+  while(timeout){
+    if(op_id_map_.find(to_string(op_id)) != op_id_map_.end() && op_id_map_[to_string(op_id)]){
+      *ret = KV_SUCCESS;
+      defer-&gt;reply();
+      return;
+    }
+    Coroutine::Sleep(100000);
+    timeout -= 100000;
+  }
+  *ret = KV_TIMEOUT;
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+  // your code here
+  const uint64_t op_id = GetNextOpId();
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("query");
+  s-&gt;data_.push_back(to_string(config_no));
+  uint64_t term, index;
+  shared_ptr&lt;Marshallable&gt; m = static_pointer_cast&lt;Marshallable&gt;(s);
+  bool status = GetRaftServer().Start(m, &index, &term);
+  if(!status){
+    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+    return;
+  }
+  int timeout = 10000000;
+  while(timeout){
+    if(op_id_map_.find(to_string(op_id)) != op_id_map_.end() && op_id_map_[to_string(op_id)]){
+      if(config_no == -1){
+        *config = configs_.rbegin()-&gt;second;
+      }
+      else{
+        *config = configs_[config_no];
+      }
+      *ret = KV_SUCCESS;
+      defer-&gt;reply();
+      return;
+    }
+    Coroutine::Sleep(100000);
+    timeout -= 100000;
+  }
+  *ret = KV_TIMEOUT;
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  // your code here
+  auto v = (MultiStringMarshallable *)(&m);
+  if(v-&gt;data_[1] == "join"){
+    // Deserialize
+    if(configs_.size() == 0){
+      configs_[0] = ShardConfig();
+    }
+    auto old_config = configs_.rbegin()-&gt;second;
+    map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt; new_gid_server_map(old_config.group_servers_map_);
+    int32_t sz = stoi(v-&gt;data_[2]);
+    for(int i=0; i&lt;sz; i++){
+      uint32_t gid = stoi(v-&gt;data_[3+sz*i]);
+      int32_t sz2 = stoi(v-&gt;data_[4+sz*i]);
+      vector&lt;uint32_t&gt; servers;
+      for(int j=0; j&lt;sz2; j++){
+        servers.push_back(stoi(v-&gt;data_[5+sz*i+j]));
+      }
+      new_gid_server_map[gid] = servers;
+    }
+    // TODO: Update configs_
+    vector&lt;uint32_t&gt; gids;
+    for(auto it=new_gid_server_map.begin(); it != new_gid_server_map.end(); it++){
+      gids.push_back(it-&gt;first);
+    }
+    vector&lt;uint32_t&gt; shards;
+    for(auto it = old_config.shard_group_map_.begin(); it != old_config.shard_group_map_.end(); it++){
+      shards.push_back(it-&gt;first);
+    }
+    
+    int32_t new_no_of_groups = gids.size();
+    int32_t no_of_shards = shards.size();
+    int32_t no_of_shards_per_group = 5;
+    int32_t no_of_shards_left = no_of_shards % new_no_of_groups;
+    map&lt;uint32_t, uint32_t&gt; new_shard_group_map;
+    int cnt = 0;
+    int cur_gid = 0;
+    while(cnt &lt; no_of_shards){
+      new_shard_group_map[shards[cnt]] = gids[cur_gid];
+      cnt++;
+      if(cnt == no_of_shards_per_group && cur_gid &lt; new_no_of_groups - 1){
+        cur_gid++;
+      }
+    }
+    auto new_shard_config = ShardConfig();
+    new_shard_config.number = old_config.number+1;
+    new_shard_config.group_servers_map_ = new_gid_server_map;
+    new_shard_config.shard_group_map_ = new_shard_group_map;
+    configs_[new_shard_config.number] = new_shard_config;
+  }
+  else if(v-&gt;data_[1] == "leave"){
+    // Deserialize
+    auto old_config = configs_.rbegin()-&gt;second;
+    map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt; gid_server_map(old_config.group_servers_map_);
+    int sz = stoi(v-&gt;data_[2]);
+    for(int i=0; i&lt;sz; i++){
+      uint32_t gid = stoi(v-&gt;data_[i+3]);
+      gid_server_map.erase(gid);
+    }
+
+    vector&lt;uint32_t&gt; gids;
+    for(auto it = gid_server_map.begin(); it != gid_server_map.end(); it++){
+      gids.push_back(it-&gt;first);
+    }
+    vector&lt;uint32_t&gt; shards;
+    for(auto it = old_config.shard_group_map_.begin(); it != old_config.shard_group_map_.end(); it++){
+      shards.push_back(it-&gt;first);
+    }
+    int32_t new_no_of_groups = gids.size();
+    int32_t no_of_shards = shards.size();
+    int32_t no_of_shards_per_group = 5;
+    int32_t no_of_shards_left = no_of_shards % new_no_of_groups;
+    map&lt;uint32_t, uint32_t&gt; new_shard_group_map;
+    int cnt = 0;
+    int cur_gid = 0;
+    while(cnt &lt; no_of_shards){
+      new_shard_group_map[shards[cnt]] = gids[cur_gid];
+      cnt++;
+      if(cnt == no_of_shards_per_group && cur_gid &lt; new_no_of_groups - 1){
+        cur_gid++;
+      }
+    }
+    auto new_shard_config = ShardConfig();
+    new_shard_config.number = old_config.number+1;
+    new_shard_config.group_servers_map_ = gid_server_map;
+    new_shard_config.shard_group_map_ = new_shard_group_map;
+    configs_[new_shard_config.number] = new_shard_config;
+  }
+  else if(v-&gt;data_[1] == "move"){
+    // Deserialize
+    int32_t shard = stoi(v-&gt;data_[2]);
+    uint32_t gid = stoi(v-&gt;data_[3]);
+    // Logging
+    // TODO: Update configs_
+    auto old_config = configs_.rbegin()-&gt;second;
+    map&lt;uint32_t, uint32_t&gt; new_shard_group_map(old_config.shard_group_map_);
+    new_shard_group_map[shard] = gid;
+
+    auto new_shard_config = ShardConfig();
+    new_shard_config.number = old_config.number+1;
+    new_shard_config.group_servers_map_ = old_config.group_servers_map_;
+    new_shard_config.shard_group_map_ = new_shard_group_map;
+    configs_[new_shard_config.number] = new_shard_config;
+  }
+  else if(v-&gt;data_[1] == "query"){
+    // No op
+  }
+  op_id_map_[v-&gt;data_[0]] = true;
+  return;
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  return cli;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

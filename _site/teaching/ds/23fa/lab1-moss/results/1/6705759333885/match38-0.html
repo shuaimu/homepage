@@ -1,0 +1,160 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-Sagor054/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-Sagor054/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+
+void RaftServiceImpl::HandleRequestVote(const uint64_t& candidateId,
+                                        const uint64_t& candidateTerm,
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match38-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                        const uint64_t& candidateLogTerm,
+                                        const uint64_t& candidateLogLength,
+                                        uint64_t *retTerm,
+                                        bool_t *vote_granted,
+                                        rrr::DeferredReply* defer) {
+  svr_-&gt;m.lock();
+  
+  bool validTerm = (candidateTerm &gt; svr_-&gt;currentTerm) || (candidateTerm == svr_-&gt;currentTerm && (svr_-&gt;votedFor == -1 || svr_-&gt;votedFor == candidateId));
+</FONT>  
+  int logSize = svr_-&gt;terms.size();
+  bool updatedLog = logSize == 0 || ((candidateLogTerm &gt; svr_-&gt;terms[logSize - 1]) || (candidateLogTerm == svr_-&gt;terms[logSize - 1] && candidateLogLength &gt;= logSize)); 
+
+  if (validTerm && updatedLog) {
+    svr_-&gt;currentTerm = candidateTerm;
+    svr_-&gt;currentRole = FOLLOWER;
+    svr_-&gt;votedFor = candidateId;
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match38-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    *vote_granted = true;
+    svr_-&gt;t_start = std::chrono::steady_clock::now();
+  }  else {
+    *vote_granted = false;
+  }
+  *retTerm = svr_-&gt;currentTerm;
+  svr_-&gt;m.unlock();
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleAppendEntries(const uint64_t& leaderId,
+</FONT>                                          const uint64_t& leaderTerm,
+                                          const uint64_t& prefixLength,
+                                          const uint64_t& prefixLogTerm,
+                                          const std::vector&lt;MarshallDeputy&gt;& cmds,
+                                          const std::vector&lt;uint64_t&gt;& terms,
+                                          const uint64_t& leaderCommitIndex,
+                                          uint64_t *retTerm,
+                                          uint64_t *matchedIndex,
+                                          bool_t *success,
+                                          rrr::DeferredReply* defer) {
+  /* Your code here */
+  // Log_info("HandleAppendEntries called.. Received: %d, Sent: %d", svr_-&gt;site_id_, leaderId);
+  svr_-&gt;m.lock();
+  if (svr_-&gt;currentTerm &gt; leaderTerm) {
+    *matchedIndex = -1;
+    *success = false;
+  } else {
+      svr_-&gt;currentTerm = leaderTerm;
+      svr_-&gt;currentRole = FOLLOWER;
+      svr_-&gt;currentLeader = leaderId;
+      svr_-&gt;t_start = std::chrono::steady_clock::now();
+
+      if (prefixLength &gt; svr_-&gt;commands.size()
+              || (prefixLength &gt; 0 && prefixLogTerm != svr_-&gt;terms[prefixLength - 1])) {
+      *matchedIndex = 0;
+      *success = false;
+      } else {
+        if (svr_-&gt;currentTerm &lt; leaderTerm) svr_-&gt;votedFor = -1;
+        
+        svr_-&gt;currentTerm = leaderTerm;
+        *matchedIndex = prefixLength + cmds.size();
+        *success = true;
+
+        if (cmds.size() &gt; 0 && prefixLength &lt; svr_-&gt;commands.size() && svr_-&gt;terms[prefixLength] != terms[0]){
+          while(svr_-&gt;commands.size() &gt; prefixLength) {
+            svr_-&gt;commands.pop_back();
+            svr_-&gt;terms.pop_back();
+          }
+        }
+
+        if (prefixLength + cmds.size() &gt; svr_-&gt;commands.size()) {
+          for (int i = svr_-&gt;commands.size() - prefixLength; i &lt; terms.size(); i++) {
+            std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(cmds[i]).sp_data_;
+            svr_-&gt;commands.push_back(cmd);
+            svr_-&gt;terms.push_back(terms[i]);
+          }
+        }
+
+        // Log_info("[Follower: %d] leaderCommitIndex %d, svr_-&gt;commitLength: %d ", svr_-&gt;site_id_, leaderCommitIndex, svr_-&gt;commitLength);
+        if (leaderCommitIndex &gt; svr_-&gt;commitLength) {
+          for (int i = svr_-&gt;commitLength; i &lt; leaderCommitIndex; i++) {
+            svr_-&gt;app_next_(*svr_-&gt;commands[i]);
+            // Log_info("[Follower: %d] app_next_ called for index: %d", svr_-&gt;site_id_, i);
+          }
+          svr_-&gt;commitLength = leaderCommitIndex;
+          // Log_info("[HandleAppendEntries_Log] CommitLength for Server: %d is now %d", svr_-&gt;site_id_, svr_-&gt;commitLength);
+        }
+      }
+  }
+  *retTerm = svr_-&gt;currentTerm;
+  svr_-&gt;m.unlock();
+  defer-&gt;reply();
+}
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match38-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void RaftServiceImpl::HandleHeartBeat(const uint64_t& leaderId,
+                                          const uint64_t& leaderTerm,
+                                          uint64_t *retTerm,
+                                          bool_t *isAlive,
+                                          rrr::DeferredReply* defer) {
+  // std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(md_cmd).sp_data_;
+  svr_-&gt;m.lock();
+  // Log_info("Handle HeartBeat.. Lid: %d, LeaderTerm: %d, sId: %d, sTerm: %d", leaderTerm, leaderId, svr_-&gt;site_id_, svr_-&gt;currentTerm);
+  if (leaderTerm &gt;= svr_-&gt;currentTerm) {
+</FONT>    if (leaderTerm &gt; svr_-&gt;currentTerm) svr_-&gt;votedFor = -1;
+
+    svr_-&gt;currentTerm = leaderTerm;
+    svr_-&gt;currentLeader = leaderId;
+    svr_-&gt;currentRole = FOLLOWER;
+    *isAlive = true;
+    svr_-&gt;t_start = std::chrono::steady_clock::now();
+  } else {
+    *isAlive = false;
+  }
+  *retTerm = svr_-&gt;currentTerm;
+  svr_-&gt;m.unlock();
+  defer-&gt;reply();
+}
+
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("receive an rpc: %s from %d", req.c_str(), svr_-&gt;site_id_);
+  *res = "world";
+  defer-&gt;reply();
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

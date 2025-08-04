@@ -1,0 +1,86 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-demonicode/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-demonicode/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+ 
+void RaftServiceImpl::HandleRequestVote(const uint64_t& arg1,
+                                        const uint64_t& arg2,
+                                        const uint64_t& arg3,
+                                        const uint64_t& arg4,
+                                        uint64_t *ret1,
+                                        bool_t *vote_granted,
+                                        rrr::DeferredReply* defer) {
+  /* Your code here */
+  // void RequestVoteHandlerFunction(uint64_t &term, uint64_t &candidateId, uint64_t &lastLogIndex, uint64_t &lastLogTerm, uint64_t *currentTerm, bool *voteGranted);
+  svr_-&gt;RequestVoteHandlerFunction(arg1, arg2, arg3, arg4, ret1, vote_granted);
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleAppendEntries(const MarshallDeputy& md_cmd,
+                                          const uint64_t& cmdLogIndex,
+                                          const uint64_t& cmdLogTerm,
+                                          const uint64_t& leaderTerm,
+                                          const uint64_t& leaderIdToUpdate,
+                                          const uint64_t& prevLogIndex,
+                                          const uint64_t& prevLogTerm,
+                                          const uint64_t& leaderCommitIndex,
+                                          uint64_t *termToUpdateForAppendEntries,
+                                          bool_t *followerAppendOK,
+                                          rrr::DeferredReply* defer) {
+  /* Your code here */
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match138-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_11.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(md_cmd).sp_data_;
+  svr_-&gt;AppendEntriesHandlerFunction(cmd, cmdLogIndex, cmdLogTerm, leaderTerm, leaderIdToUpdate, prevLogIndex, prevLogTerm, leaderCommitIndex, 
+</FONT>                                      termToUpdateForAppendEntries, followerAppendOK);
+                                      Log_info("it came in HandleAppendEntries");
+  // *termToUpdateForAppendEntries = 0;
+  // *followerAppendOKAppendEntries  = false;
+  Log_info("HandleAppendEntries done");
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t& leaderTerm,
+                                               const uint64_t& leaderIdToUpdate,
+                                               const uint64_t& prevLogIndex,
+                                               const uint64_t& prevLogTerm,
+                                               const uint64_t& leaderCommit,
+                                               uint64_t *termToUpdateForAppendEntries,
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match138-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_12.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                               bool_t *followerAppendOK,
+                                               rrr::DeferredReply* defer) {
+  svr_-&gt;EmptyAppendEntriesHandlerFunction(leaderTerm, leaderIdToUpdate, prevLogIndex, prevLogTerm, leaderCommit, termToUpdateForAppendEntries, followerAppendOK);
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+</FONT>                                     string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  *res = "world";
+  defer-&gt;reply();
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

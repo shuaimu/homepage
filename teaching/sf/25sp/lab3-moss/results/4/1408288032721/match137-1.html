@@ -1,0 +1,269 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-JayaramKrovvidi/src/shardkv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-jashwanthkumar89/src/shardkv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match137-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+int64_t ShardKvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+shardid_t Key2Shard(string key) {
+</FONT>  shardid_t shard = 0;
+  verify(key.length()&gt;0);
+  char x = key[0];
+  shard = x - '0';
+  shard %= 10; // N shards is 10
+  return shard;
+}
+
+int ShardKvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+    // lab_shard: fill in your code
+
+  Log_info("Calling put with key %s, and value %s", k, v);
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match137-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  RaftServer& svr = GetRaftServer();
+
+  // if(sc.shard_group_map_[Key2Shard(k)] != svr.partition_id_) return KV_NOTINCONFIG;
+
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back(PUT);
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+</FONT>
+  auto m = shared_ptr&lt;Marshallable&gt;(s);
+  uint64_t log_index;
+  uint64_t log_term;
+
+  // if( (int)(0.8*(svr.persister-&gt;RaftStateSize())) &gt;= (int)maxraftstate_) {
+  //   Log_info("Taking snapshot : %d", svr.persister-&gt;RaftStateSize());
+  //   RaftSnapshot();
+  // }
+
+  bool_t ans = svr.Start(m, &log_index, &log_term);
+  Log_info("ans : %d", (uint64_t) ans);
+  if(!ans) return KV_NOTLEADER;
+
+  uint64_t timeout_ = 5000*1000;
+  uint64_t timeoutstep_ = 100*1000;
+
+  while(timeout_ &gt; timeoutstep_) {
+
+    if(timeout_ &lt;= timeoutstep_) {
+      Coroutine::Sleep(timeoutstep_);
+      // timeout_ = 0;
+    }
+    Coroutine::Sleep(timeoutstep_);
+    timeout_ -= timeoutstep_;
+    if(timeout_ %1000000 == 0) {
+      svr.Start(m, &log_index, &log_term);
+      Log_info("ans : %d", (uint64_t) ans);
+      Log_info("pushed_again");
+    }
+    if(kv_map_oid.find(to_string(oid)) != kv_map_oid.end()) {
+      break;
+    }
+  }
+
+  if(kv_map_oid.find(to_string(oid)) != kv_map_oid.end()) return KV_SUCCESS;
+  return KV_TIMEOUT;
+
+
+
+
+}
+
+int ShardKvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+    // lab_shard: fill in your code
+  RaftServer& svr = GetRaftServer();
+
+  // if(sc.shard_group_map_[Key2Shard(k)] != svr.partition_id_) return KV_NOTINCONFIG;
+
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back(APPEND);
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  auto m = (shared_ptr&lt;Marshallable&gt;*)(&s);
+  // auto m = shared_ptr&lt;Marshallable&gt;((Marshallable*)(&s));
+  uint64_t log_index;
+  uint64_t log_term;
+
+  // if(0.8*(svr.persister-&gt;RaftStateSize()) &gt;= maxraftstate_) {
+  // if( (int)(0.8*(svr.persister-&gt;RaftStateSize())) &gt;= (int)maxraftstate_) {
+  //   Log_info("Taking snapshot : %d", svr.persister-&gt;RaftStateSize());
+  //   RaftSnapshot();
+  // }
+
+  bool_t ans = svr.Start(*m, &log_index, &log_term);
+  Log_info("ans : %d", (uint64_t) ans);
+  if(!ans) return KV_NOTLEADER;
+
+  uint64_t timeout_ = 500*1000;
+  uint64_t timeoutstep_ = 100*1000;
+
+  string resulting_value = kv_map.find(k) == kv_map.end()?v:kv_map[k]+v;
+
+  while(timeout_ &gt; timeoutstep_) {
+
+    if(timeout_ &lt;= timeoutstep_) {
+      Coroutine::Sleep(timeoutstep_);
+      // timeout_ = 0;
+    }
+    Coroutine::Sleep(timeoutstep_);
+    timeout_ -= timeoutstep_;
+
+    if(kv_map_oid.find(to_string(oid)) != kv_map_oid.end()) {
+      break;
+    }
+  }
+
+  if(kv_map_oid.find(to_string(oid)) != kv_map_oid.end())  return KV_SUCCESS;
+  return KV_TIMEOUT;
+}
+
+int ShardKvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+    // lab_shard: fill in your code
+  RaftServer& svr = GetRaftServer();
+
+  // if(sc.shard_group_map_[Key2Shard(k)] != svr.partition_id_) return KV_NOTINCONFIG;
+
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back(GET);
+  s-&gt;data_.push_back(k);
+
+
+  uint64_t timeout_ = 500*1000;
+  uint64_t timeoutstep_ = 100*1000;
+
+  auto m = (shared_ptr&lt;Marshallable&gt;*)(&s);
+  // auto m = (shared_ptr) v;
+  uint64_t log_index;
+  uint64_t log_term;
+
+  // if(0.8*(svr.persister-&gt;RaftStateSize()) &gt;= maxraftstate_) {
+  // Log_info("RaftStateSize : %d, maxraftstate_: %d", (int)(0.8*(svr.persister-&gt;RaftStateSize())), (int) maxraftstate_);
+  // if( (int)(0.8*(svr.persister-&gt;RaftStateSize())) &gt;= (int)maxraftstate_) {
+  //   Log_info("Taking snapshot : %d", svr.persister-&gt;RaftStateSize());
+  //   RaftSnapshot();
+  // }
+
+  bool_t ans = svr.Start(*m, &log_index, &log_term);
+  Log_info("ans : %d", (uint64_t) ans);
+
+  if(!ans) return KV_NOTLEADER;
+
+  while(timeout_ &gt; timeoutstep_) {
+
+    if(timeout_ &lt;= timeoutstep_) {
+      Coroutine::Sleep(timeoutstep_);
+      // timeout_ = 0;
+    }
+    Coroutine::Sleep(timeoutstep_);
+    timeout_ -= timeoutstep_;
+
+    if(kv_map_oid.find(to_string(oid)) != kv_map_oid.end()) {
+      break;
+    }
+  }
+  
+  if(kv_map_oid.find(to_string(oid)) == kv_map_oid.end()) return KV_TIMEOUT;
+  
+  
+  *v = kv_map[k];
+  return KV_SUCCESS;
+}
+
+void ShardKvServer::OnNextCommand(Marshallable& m) {
+    // lab_shard: fill in your code
+
+  auto v = (MultiStringMarshallable*)(&m);
+  RaftServer& svr = GetRaftServer();
+  // if(svr.persister-&gt;SnapshotSize() != -1) {
+
+  //   auto mm = svr.persister-&gt;ReadSnapshot();
+  //   shared_ptr&lt;SnapshotMarshallable&gt; sm = dynamic_pointer_cast&lt;SnapshotMarshallable&gt;(mm);
+
+  //   if(sm-&gt;last_included_index &gt; snapshot_last_included_index) {
+  //     kv_map.clear();
+  //     for(int i=0;i&lt;sm-&gt;keys.size();i++) {
+  //       kv_map[sm-&gt;keys[i]] = sm-&gt;values[i];
+  //     }
+  //   }
+  // }
+
+  // Log_info("RaftStateSize : %d, maxraftstate_: %d", (int)(0.8*(svr.persister-&gt;RaftStateSize())), (int) maxraftstate_);
+  // if( (int)(0.8*(svr.persister-&gt;RaftStateSize())) &gt;= (int)maxraftstate_) {
+  //   Log_info("Taking snapshot : %d", svr.persister-&gt;RaftStateSize());
+  //   RaftSnapshot();
+  // }
+
+  // auto v = shared_ptr&lt;MultiStringMarshallable&gt;(m);
+  Log_info("Entering OnNextCommand");
+  string op = v-&gt;data_[1].c_str();
+  cout &lt;&lt; op &lt;&lt; endl;
+  Log_info("op: %s, Entering OnNextCommand", op.c_str());
+  string key = v-&gt;data_[2].c_str();
+  Log_info("key: %s, Entering OnNextCommand", key.c_str());
+
+  kv_map_oid[v-&gt;data_[0].c_str()] = op+" "+key;
+  cout &lt;&lt; "opid : " &lt;&lt; v-&gt;data_[0].c_str() &lt;&lt; endl;
+  // for (auto i : kv_map_oid) 
+  //     cout &lt;&lt; i.first &lt;&lt; " \t\t\t " &lt;&lt; i.second &lt;&lt; endl;
+  if(v-&gt;data_.size() == 3) return;
+
+  string value = v-&gt;data_[3].c_str();
+
+  if(op == PUT) {
+    kv_map[key] = value;
+    Log_info("put in Onnext, key: %s, value : %s, kv_map[key] : %s", key.c_str(), value.c_str(), kv_map[key].c_str());
+  } else if(op == APPEND) {
+    Log_info("append in Onnext, key: %s, value : %s, kv_map[key] : %s", key.c_str(), value.c_str(), kv_map[key].c_str());
+    if(kv_map.find(key) == kv_map.end()) {
+      kv_map[key] = value;
+    } else {
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match137-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      kv_map[key] += value;
+    }
+  }
+}
+
+shared_ptr&lt;ShardKvClient&gt; ShardKvServer::CreateClient(Communicator* comm) {
+  auto cli = make_shared&lt;ShardKvClient&gt;();
+  cli-&gt;commo_ = comm;
+</FONT>  verify(cli-&gt;commo_ != nullptr);
+  static uint32_t id = 0;
+  id++;
+  cli-&gt;cli_id_ = id; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

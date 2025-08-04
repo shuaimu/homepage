@@ -1,0 +1,247 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-aadarsh0301/src/shardkv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-js0753/src/shardkv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+int64_t ShardKvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+// ShardKvServer::ShardKvServer(){
+//   PollMaster();
+// }
+
+void ShardKvServer::SerializeServerMap(shared_ptr&lt;MultiStringMarshallable&gt; s, map&lt;uint32_t, vector&lt;uint32_t&gt;&gt; gid_server_map){
+  // auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back("server_map_begin");
+  for(auto itr=gid_server_map.begin();itr!=gid_server_map.end();itr++){
+    s-&gt;data_.push_back(to_string(itr-&gt;first));
+    auto group = (itr-&gt;second);
+    for(int i=0;i&lt;group.size();i++){  // 5
+      s-&gt;data_.push_back(to_string(group[i]));
+    }
+  }
+  // s-&gt;data_.push_back("server_map_end");
+}
+
+void ShardKvServer::SerializeShardGroupMap(shared_ptr&lt;MultiStringMarshallable&gt; s, map&lt;uint32_t, uint32_t&gt; shard_group_map){
+  // auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back("shard_group_begin");
+  for(auto itr=shard_group_map.begin();itr!=shard_group_map.end();itr++){  // 10
+    // s-&gt;data_.push_back(to_string(itr-&gt;first));
+    s-&gt;data_.push_back(to_string(itr-&gt;second));
+  }
+}
+
+int ShardKvServer::Reconfig(const int32_t& number,
+  const map&lt;uint32_t, uint32_t&gt;& shard_group_map_,
+  const map&lt;uint32_t, vector&lt;uint32_t&gt;&gt;& group_servers_map_) {
+    // lab_shard: fill in your code
+    //Log_info("RECIEVED RECONFIG REQUEST");
+      auto s = make_shared&lt;MultiStringMarshallable&gt;();
+      s-&gt;data_.push_back("reconfig");
+      s-&gt;data_.push_back(to_string(number));
+      SerializeServerMap(s, group_servers_map_);
+      SerializeShardGroupMap(s, shard_group_map_);
+      RaftServer& raft_server = this-&gt;GetRaftServer();
+      uint64_t index;
+      uint64_t term;
+      auto cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+      bool isLeader = raft_server.Start(cmd, &index, &term);
+      if(!isLeader) return KV_NOTLEADER;
+      Coroutine::Sleep(700000);  // wait 700ms for agreement
+      //Log_info("HERE I AM !!");
+      if(this-&gt;agreed_commands_size&lt;index ) {
+       //Log_info("%d's commands size is %d index is %d  oid is %d",raft_server.site_id_, this-&gt;agreed_commands_size, index);
+        return KV_TIMEOUT;
+      }
+      // also check oid matches!!!!
+     //Log_info("RECONFIG AGREEMENT DONE");
+      return KV_SUCCESS;
+}
+
+int ShardKvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+    // lab_shard: fill in your code
+    
+   //Log_info("PUT CALLED");
+    RaftServer& raft_server = this-&gt;GetRaftServer();
+    bool isLeader = raft_server.IsLeader();
+    if(!isLeader) return KV_NOTLEADER;
+    auto client = CreateClient(raft_server.commo_);
+    auto shard = client-&gt;Key2Shard(k);
+   //Log_info("GOT SHARD %d", shard);
+   //Log_info("CONFIG NUMBER IS : %d", config_number);
+   //Log_info("PARTITION ID IS %d SHARD GROUP is %d", raft_server.partition_id_, this-&gt;shard_group_map[shard]);
+    if(raft_server.partition_id_!= this-&gt;shard_group_map[shard]) return KV_NOTSHARDOWNER;
+      auto s = make_shared&lt;MultiStringMarshallable&gt;();
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match98-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      s-&gt;data_.push_back(to_string(oid));
+      s-&gt;data_.push_back("put");
+      s-&gt;data_.push_back(k);
+      s-&gt;data_.push_back(v);
+      
+      uint64_t index;
+      uint64_t term;
+      auto cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+</FONT>      isLeader = raft_server.Start(cmd, &index, &term);
+      if(!isLeader) return KV_NOTLEADER;
+      Coroutine::Sleep(700000);  // wait 700ms for agreement
+     //Log_info("[PUT] %d's commands size is %d index is %d ",raft_server.site_id_, this-&gt;agreed_commands_size, index);
+      if(this-&gt;agreed_commands_size&lt;index ) return KV_TIMEOUT;
+      // also check oid matches!!!!
+      return KV_SUCCESS;
+}
+
+int ShardKvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+    // lab_shard: fill in your code
+    RaftServer& raft_server = this-&gt;GetRaftServer();
+    auto client = CreateClient(raft_server.commo_);
+    auto shard = client-&gt;Key2Shard(k);
+    if(raft_server.partition_id_!= this-&gt;shard_group_map[shard]) return KV_NOTSHARDOWNER;
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match98-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("append");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  uint64_t index;
+  uint64_t term;
+  auto cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+</FONT>  bool isLeader = raft_server.Start(cmd, &index, &term);
+  if(!isLeader){
+    //Log_info("SERVER NOT LEADER FOR INDEX %d", index);
+     return KV_NOTLEADER;
+  }
+  Coroutine::Sleep(700000);  // wait 700ms for agreement
+  //Log_info("%d's commands size is %d index is %d  oid is %d",raft_server.site_id_, this-&gt;agreed_commands_size, index,  to_string(oid));
+  if(this-&gt;agreed_commands_size&lt;index ) {
+    //Log_info("APPEND TIMED OUT FOR INDEX %d", index);
+    return KV_TIMEOUT;
+  }
+  return KV_SUCCESS;
+}
+
+int ShardKvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+    // lab_shard: fill in your code
+    RaftServer& raft_server = this-&gt;GetRaftServer();
+    auto client = CreateClient(raft_server.commo_);
+    auto shard = client-&gt;Key2Shard(k);
+    if(raft_server.partition_id_!= this-&gt;shard_group_map[shard]) return KV_NOTSHARDOWNER;
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match98-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("get");
+  s-&gt;data_.push_back(k);
+  // s-&gt;data_.push_back(*v);
+  uint64_t index;
+  uint64_t term;
+  auto cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  bool isLeader = raft_server.Start(cmd, &index, &term);
+</FONT>  if(!isLeader) return KV_NOTLEADER;
+  Coroutine::Sleep(700000);  // wait 700ms for agreement
+  //Log_info("[GET] %d's commands size is %d index is %d  oid is %d",raft_server.site_id_, this-&gt;agreed_commands_size, index,  to_string(oid));
+  if(this-&gt;agreed_commands_size&lt;index) return KV_TIMEOUT;
+  *v = this-&gt;kv_store_[k];
+  return KV_SUCCESS;
+}
+
+void ShardKvServer::OnNextCommand(Marshallable& m) {
+    // lab_shard: fill in your code
+  auto v = (MultiStringMarshallable*)(&m);
+  /* your code here */
+  // this-&gt;agreedCommands.push_back(v);
+  //Log_info("vdata0 is %s", v-&gt;data_[0].c_str());
+  
+  this-&gt;agreed_commands_size+=1;
+  std::string command_type = v-&gt;data_[1];
+  if(v-&gt;data_[0]=="reconfig"){
+   //Log_info("RECONFIGURING...");
+      this-&gt;config_number = stoi(v-&gt;data_[1]);
+    //  map&lt;uint32_t,std::vector&lt;uint32_t&gt;&gt; gid_server_map;
+      int i=3;
+      while(v-&gt;data_[i]!="shard_group_begin"){
+        uint32_t gid = static_cast&lt;uint32_t&gt;(std::stoi(v-&gt;data_[i]));
+        //Log_info("FOR GID : %d : ", gid);
+        vector&lt;uint32_t&gt; temp;
+        for(int j=1;j&lt;=5;j++){
+          uint32_t server = static_cast&lt;uint32_t&gt;(std::stoi(v-&gt;data_[i+j]));
+          temp.push_back(server);
+          //Log_info("SERVER : %d ", server);
+        }
+      gid_server_map[gid] = temp;
+      i+=6;
+     }
+    //Log_info("DESERIALIZED GID SERVER MAP");
+     i++;
+     for(int j=1;j&lt;=10;j++)
+     shard_group_map[j] = stoi(v-&gt;data_[i++]);
+    //Log_info("DESERIALIZED SHARD GROUP MAP");
+      RaftServer& raft_server = this-&gt;GetRaftServer();
+      auto client = CreateClient(raft_server.commo_);
+      unordered_map&lt;int,uint32_t&gt; send_shards_to;
+      for(int i=1;i&lt;=10;i++){
+        if(this-&gt;shard_group_map[i]!=raft_server.partition_id_ ){
+          send_shards_to[i] =  this-&gt;gid_server_map[this-&gt;shard_group_map[i]][0];
+        }
+      }
+      for(auto itr=kv_store_.begin();itr!=kv_store_.end();itr++){
+        auto shard = client-&gt;Key2Shard(itr-&gt;first);
+        if(send_shards_to.find(shard)!=send_shards_to.end()){
+          // siteid_t group_leader;
+          // auto event = GetGroupLeader(send_shards_to[shard], &group_leader);
+          // auto event = SendKvTo(itr-&gt;first, itr-&gt;second, group_leader);
+          // client-&gt;Put(itr-&gt;first, itr-&gt;second);
+          this-&gt;kv_store_.erase(itr-&gt;first);
+        }
+      }
+   //Log_info("DONE WITH RECONFIG");
+  }
+  else if(command_type!="get"){
+  string key = v-&gt;data_[2];
+  string value = v-&gt;data_[3];
+  if(command_type == "put"){
+    this-&gt;kv_store_[key] = value;
+  }else if(command_type == "append"){
+    this-&gt;kv_store_[key] += value;
+  }
+  }
+  // CHECK FOR ANY SHARDS THAT SHOULD BE MIGRATED!!!!
+  //Log_info("%d's kv server's agreed_commands_size is %d", raft_server.site_id_, this-&gt;agreed_commands_size);
+}
+
+shared_ptr&lt;ShardKvClient&gt; ShardKvServer::CreateClient(Communicator* comm) {
+  auto cli = make_shared&lt;ShardKvClient&gt;();
+  cli-&gt;commo_ = comm;
+  verify(cli-&gt;commo_ != nullptr);
+  static uint32_t id = 0;
+  id++;
+  cli-&gt;cli_id_ = id; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

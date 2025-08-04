@@ -1,0 +1,318 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-js0753/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-akshat2602/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+namespace janus
+{
+  static int volatile sh_x1 =
+      MarshallDeputy::RegInitializer(
+          15,
+          []() -&gt; Marshallable *
+          {
+            return new ConfigMarshallable;
+          });
+
+  void ShardMasterServiceImpl::ProcessCommands(shared_ptr&lt;ConfigMarshallable&gt; &cm, uint32_t *ret, ShardConfig *config, rrr::DeferredReply *defer)
+  {
+    Log_info("SHARD: starting agreement");
+
+    shared_ptr&lt;Marshallable&gt; m = cm;
+    uint64_t index, term;
+    auto check_for_leader = this-&gt;GetRaftServer().Start(m, &index, &term);
+    if (!check_for_leader)
+    {
+      Log_info("SHARD: No leader");
+      *ret = SHARD_NOTLEADER;
+      defer-&gt;reply();
+      return;
+    }
+    Log_info("SHARD: agreement done");
+    auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;(5);
+    config_to_ev_[cm-&gt;operation_id] = ev;
+    Log_info("SHARD: Waiting for event to be triggered");
+    ev-&gt;Wait(3000000);
+    Log_info("SHARD: Event triggered");
+    if (ev-&gt;status_ == Event::TIMEOUT)
+    {
+      Log_info("SHARD: Event timeout");
+      *ret = SHARD_TIMEOUT;
+      defer-&gt;reply();
+      return;
+    }
+    else if (ev-&gt;value_ == 5)
+    {
+      Log_info("SHARD: Event found in commands");
+      UpdateConfig(cm-&gt;OP, cm, config);
+      *ret = SHARD_SUCCESS;
+      defer-&gt;reply();
+      return;
+    }
+    else
+    {
+      Log_info("SHARD: Event not found");
+      *ret = SHARD_TIMEOUT;
+      defer-&gt;reply();
+      return;
+    }
+    *ret = SHARD_SUCCESS;
+    defer-&gt;reply();
+    return;
+  }
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match140-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt; &gid_server_map, uint32_t *ret, rrr::DeferredReply *defer)
+  {
+    auto cm = make_shared&lt;ConfigMarshallable&gt;();
+    auto op_id = getNextOperationId();
+</FONT>    cm-&gt;operation_id = op_id;
+    cm-&gt;OP = ShardCommand::JOIN;
+    cm-&gt;gid_server_map = gid_server_map;
+    auto temp_shard = ShardConfig{};
+    return ProcessCommands(cm, ret, &temp_shard, defer);
+  }
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match140-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt; &gids, uint32_t *ret, rrr::DeferredReply *defer)
+  {
+    auto cm = make_shared&lt;ConfigMarshallable&gt;();
+    auto op_id = getNextOperationId();
+</FONT>    cm-&gt;operation_id = op_id;
+    cm-&gt;OP = ShardCommand::LEAVE;
+    cm-&gt;gids = gids;
+    auto temp_shard = ShardConfig{};
+    return ProcessCommands(cm, ret, &temp_shard, defer);
+  }
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match140-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  void ShardMasterServiceImpl::Move(const int32_t &shard, const uint32_t &gid, uint32_t *ret, rrr::DeferredReply *defer)
+  {
+    auto cm = make_shared&lt;ConfigMarshallable&gt;();
+</FONT>    auto op_id = getNextOperationId();
+    cm-&gt;operation_id = op_id;
+    cm-&gt;OP = ShardCommand::MOVE;
+    cm-&gt;shard = shard;
+    cm-&gt;gid = gid;
+    auto temp_shard = ShardConfig{};
+    return ProcessCommands(cm, ret, &temp_shard, defer);
+  }
+  void ShardMasterServiceImpl::Query(const int32_t &config_no, uint32_t *ret, ShardConfig *config, rrr::DeferredReply *defer)
+  {
+    auto cm = make_shared&lt;ConfigMarshallable&gt;();
+    auto op_id = getNextOperationId();
+    cm-&gt;operation_id = op_id;
+    cm-&gt;OP = ShardCommand::QUERY;
+    cm-&gt;query_config_no = config_no;
+    return ProcessCommands(cm, ret, config, defer);
+  }
+
+  void ShardMasterServiceImpl::OnNextCommand(Marshallable &m)
+  {
+    auto config_marshal_ = (ConfigMarshallable *)(&m);
+
+    auto cm = make_shared&lt;ConfigMarshallable&gt;();
+    cm-&gt;OP = config_marshal_-&gt;OP;
+    cm-&gt;operation_id = config_marshal_-&gt;operation_id;
+    if (config_marshal_-&gt;OP == ShardCommand::JOIN)
+    {
+      cm-&gt;gid_server_map = config_marshal_-&gt;gid_server_map;
+    }
+    else if (config_marshal_-&gt;OP == ShardCommand::LEAVE)
+    {
+      cm-&gt;gids = config_marshal_-&gt;gids;
+    }
+    else if (config_marshal_-&gt;OP == ShardCommand::MOVE)
+    {
+      cm-&gt;shard = config_marshal_-&gt;shard;
+      cm-&gt;gid = config_marshal_-&gt;gid;
+    }
+    else if (config_marshal_-&gt;OP == ShardCommand::QUERY)
+    {
+      cm-&gt;query_config_no = config_marshal_-&gt;query_config_no;
+    }
+
+    if (config_to_ev_.find(config_marshal_-&gt;operation_id) != config_to_ev_.end())
+    {
+      Log_info("SHARD: Event found");
+      config_to_ev_[config_marshal_-&gt;operation_id]-&gt;Set(5);
+    }
+    else
+    {
+      auto temp_shard = ShardConfig{};
+      UpdateConfig(config_marshal_-&gt;OP, cm, &temp_shard);
+    }
+  }
+
+  void ShardMasterServiceImpl::UpdateConfig(uint64_t OP, shared_ptr&lt;ConfigMarshallable&gt; &cm, ShardConfig *config)
+  {
+    if (OP == ShardCommand::JOIN)
+    {
+      ShardConfig sc;
+      CreateCopyConfig(&sc);
+      Log_info("CONFIG NO: %d", sc.number);
+
+      // Loop through the map and add the new servers to the group
+      for (auto it = cm-&gt;gid_server_map.begin(); it != cm-&gt;gid_server_map.end(); it++)
+      {
+        auto gid = it-&gt;first;
+        auto servers = it-&gt;second;
+
+        sc.group_servers_map_[gid] = servers;
+        Log_info("SHARD: Group added %d", gid);
+        Log_info("SHARD: Number of servers: %d", sc.group_servers_map_[gid].size());
+        Log_info("SHARD: Number of groups: %d", sc.group_servers_map_.size());
+      }
+      Rebalance(&sc);
+
+      configs_[global_config_no_] = sc;
+    }
+    else if (OP == ShardCommand::LEAVE)
+    {
+      ShardConfig sc;
+      CreateCopyConfig(&sc);
+      Log_info("CONFIG NO: %d", sc.number);
+      // Loop through the vector and remove the servers from the group
+      for (auto it = cm-&gt;gids.begin(); it != cm-&gt;gids.end(); it++)
+      {
+        auto gid = *it;
+        if (sc.group_servers_map_.find(gid) != sc.group_servers_map_.end())
+        {
+          Log_info("SHARD: Group removed %d", gid);
+          sc.group_servers_map_.erase(gid);
+        }
+      }
+      Rebalance(&sc);
+
+      configs_[global_config_no_] = sc;
+    }
+    else if (OP == ShardCommand::MOVE)
+    {
+      ShardConfig sc;
+      CreateCopyConfig(&sc);
+
+      // Move the shard from one group to another
+      auto gid = cm-&gt;gid;
+      auto shard = cm-&gt;shard;
+      if (sc.shard_group_map_.find(shard) != sc.shard_group_map_.end())
+      {
+        sc.shard_group_map_[shard] = gid;
+      }
+    }
+    else if (OP == ShardCommand::QUERY)
+    {
+      // Return the config for the given config number
+      int32_t config_no = cm-&gt;query_config_no;
+
+      config-&gt;number = configs_[global_config_no_].number;
+      config-&gt;shard_group_map_ = configs_[global_config_no_].shard_group_map_;
+      config-&gt;group_servers_map_ = configs_[global_config_no_].group_servers_map_;
+    }
+    else
+    {
+      Log_info("SHARD: Invalid operation");
+    }
+  }
+
+  void ShardMasterServiceImpl::Rebalance(ShardConfig *config)
+  {
+    // Create a map of group to number of shards
+    config-&gt;createGroupShardMap();
+    // Check if any group has no shard assigned to it and assign it a shard
+    for (auto it = config-&gt;group_shard_map_.begin(); it != config-&gt;group_shard_map_.end(); it++)
+    {
+      auto gid = it-&gt;first;
+      auto shard = it-&gt;second;
+      if (shard.size() == 0)
+      {
+        Log_info("SHARD: Group %d has no shard", gid);
+        auto temp_group = config-&gt;getGidMaxShard();
+        config-&gt;shard_group_map_[config-&gt;group_shard_map_[temp_group][0]] = gid;
+        Log_info("SHARD: Shard %d moved from group %d to group %d", config-&gt;group_shard_map_[temp_group][0], temp_group, gid);
+        config-&gt;group_shard_map_[gid].push_back(config-&gt;group_shard_map_[temp_group][0]);
+        config-&gt;group_shard_map_[temp_group].erase(config-&gt;group_shard_map_[temp_group].begin());
+      }
+    }
+
+    // Check if any shard is assigned to a group which does not exist and assign it to 0
+    for (auto it = config-&gt;shard_group_map_.begin(); it != config-&gt;shard_group_map_.end(); it++)
+    {
+      auto shard = it-&gt;first;
+      auto gid = it-&gt;second;
+      if (config-&gt;group_servers_map_.find(gid) == config-&gt;group_servers_map_.end())
+      {
+        Log_info("SHARD: Shard %d is assigned to a group which does not exist", shard);
+        auto temp_gid = config-&gt;getGidMinShard();
+        config-&gt;shard_group_map_[shard] = 0;
+        config-&gt;group_shard_map_[gid].clear();
+        // Remove the gid from group_shard_map_
+        config-&gt;group_shard_map_.erase(gid);
+      }
+    }
+
+    // Check if any shard is not assigned to any group and assign it to the group with least shards except the hidden group 0
+    for (auto it = config-&gt;shard_group_map_.begin(); it != config-&gt;shard_group_map_.end(); it++)
+    {
+      auto shard = it-&gt;first;
+      auto gid = it-&gt;second;
+      if (gid == 0)
+      {
+        Log_info("SHARD: Shard %d is not assigned to any group", shard);
+        auto temp_gid = config-&gt;getGidMinShard();
+        config-&gt;shard_group_map_[shard] = temp_gid;
+        Log_info("SHARD: Shard %d moved from group %d to group %d", shard, gid, temp_gid);
+        config-&gt;group_shard_map_[temp_gid].push_back(shard);
+      }
+    }
+
+    // Check if any group has more than the average number of shards and move the extra shards to the group with least shards
+    auto avg_shard = config-&gt;shard_group_map_.size() / config-&gt;group_servers_map_.size();
+    for (auto it = config-&gt;group_shard_map_.begin(); it != config-&gt;group_shard_map_.end(); it++)
+    {
+      auto gid = it-&gt;first;
+      auto shard = it-&gt;second;
+      while (shard.size() &gt; avg_shard)
+      {
+        Log_info("SHARD: Group %d has more than the average number of shards", gid);
+        auto temp_gid = config-&gt;getGidMinShard();
+        config-&gt;shard_group_map_[config-&gt;group_shard_map_[gid][config-&gt;group_shard_map_[gid].size() - 1]] = temp_gid;
+        Log_info("SHARD: Shard %d moved from group %d to group %d", config-&gt;group_shard_map_[gid][config-&gt;group_shard_map_[gid].size() - 1], gid, temp_gid);
+        config-&gt;group_shard_map_[temp_gid].push_back(config-&gt;group_shard_map_[gid][config-&gt;group_shard_map_[gid].size() - 1]);
+        config-&gt;group_shard_map_[gid].erase(config-&gt;group_shard_map_[gid].end() - 1);
+        // Update the 'shard' variable after the move
+        shard = config-&gt;group_shard_map_[gid];
+      }
+    }
+  }
+
+  void ShardMasterServiceImpl::CreateCopyConfig(ShardConfig *config)
+  {
+    config-&gt;shard_group_map_ = configs_[global_config_no_].shard_group_map_;
+    config-&gt;group_servers_map_ = configs_[global_config_no_].group_servers_map_;
+    global_config_no_ = global_config_no_ + 1;
+    config-&gt;number = global_config_no_;
+    return;
+  }
+
+  // do not change anything below
+  shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient()
+  {
+    auto cli = make_shared&lt;ShardMasterClient&gt;();
+    cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+    uint32_t id = sp_log_svr_-&gt;site_id_;
+    return cli;
+  }
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,423 @@
+<HTML>
+<HEAD>
+<TITLE>./spring19/gauravkaushik/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./spring19/gauravkaushik/src/shardkv/server.go<p><PRE>
+package shardkv
+
+
+// import "shardmaster"
+import (
+	"labrpc"
+	"log"
+	"os"
+	"shardmaster"
+	"time"
+)
+import "raft"
+import "sync"
+import "labgob"
+
+const loglevel = 2
+const TIMEOUT = 200
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match36-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_7.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+const WATCH_CONFIG_CHANGE_TIMEOUT = 100
+
+type Level int
+
+const (
+	INFO  Level = 1
+	DEBUG Level = 2
+)
+
+func DPrintf(level Level, format string, a ...interface{}) (n int, err error) {
+	if level &gt;= loglevel {
+		f, err := os.OpenFile("log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+		if err != nil {
+			log.Fatalf("error opening file: %v", err)
+		}
+		defer f.Close()
+
+		log.SetOutput(f)
+		log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+		log.Printf(format, a...)
+	}
+	return
+}
+
+type Op struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+	Key string
+	Value string
+	OpType string
+	ClientId int64
+	RequestId int64
+</FONT>}
+
+type ShardKV struct {
+	mu           sync.Mutex
+	me           int
+	rf           *raft.Raft
+	applyCh      chan raft.ApplyMsg
+	make_end     func(string) *labrpc.ClientEnd
+	gid          int
+	masters      []*labrpc.ClientEnd
+	maxraftstate int // snapshot if log grows this big
+
+	// Your definitions here.
+	mck *shardmaster.Clerk
+	dataStore map[string]string
+	servedRequests map[int64]int64
+	waitingRoutines map[int](chan raft.ApplyMsg)
+	killed bool
+	groupSendingChannel chan map[string]string
+	groupReceivingChannel chan map[string]string
+	lastConfigNum int
+}
+
+
+func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
+	// Your code here.
+
+	kv.mu.Lock()
+	latestConfig := kv.mck.Query(-1)
+	shard := key2shard(args.Key)
+	if latestConfig.Shards[shard] != kv.gid {
+		DPrintf(DEBUG,"KVServer() Get() Suno Bhai.. group %d handles this shard %d. mera group %d", latestConfig.Shards[shard], shard, kv.gid)
+		reply.Err = ErrWrongGroup
+		kv.mu.Unlock()
+		return
+	}
+	//kv.mu.Unlock()
+	//DPrintf(DEBUG, "KVServer Get() me %d KeyKaShard %d mera GID %d", kv.me, shard, kv.gid)
+
+
+	op := Op{}
+	op.Key = args.Key
+	op.ClientId = args.ClientId
+	op.RequestId = args.RequestId
+	op.OpType = "Get"
+
+	//kv.mu.Lock()
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match36-0.html#7" TARGET="0"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	logIdx, _, isLeader := kv.rf.Start(op) //TODO unlock here itself and try
+	me := kv.me
+	kv.mu.Unlock()
+
+	if !isLeader {
+		reply.WrongLeader = true
+		return
+	}
+
+	kv.mu.Lock()
+
+	waitCh := make(chan raft.ApplyMsg, 1)
+</FONT><A NAME="9"></A><FONT color = #FF00FF><A HREF="match36-0.html#9" TARGET="0"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.waitingRoutines[logIdx] = waitCh
+	kv.mu.Unlock()
+
+	for {
+		select {
+
+		case msg := &lt;-waitCh:
+</FONT>			DPrintf(DEBUG,"###########################################")
+			DPrintf(DEBUG, "KVServer Get() mein apply hone k baad notification aya  me %d %v", me, op)
+
+<A NAME="11"></A><FONT color = #00FF00><A HREF="match36-0.html#11" TARGET="0"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			kv.mu.Lock()
+			delete(kv.waitingRoutines, logIdx)
+			kv.mu.Unlock()
+
+			if msg.CommandIndex == logIdx && msg.Command == op {
+
+
+				kv.mu.Lock()
+</FONT><A NAME="6"></A><FONT color = #00FF00><A HREF="match36-0.html#6" TARGET="0"><IMG SRC="../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				value, isPresent := kv.dataStore[op.Key]
+				if !isPresent {
+					value = ""
+					reply.Err = ErrNoKey
+				} else {
+					reply.Err = OK
+				}
+				kv.mu.Unlock()
+</FONT>
+				reply.Value = value
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match36-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				DPrintf(DEBUG, "KVServer Get aya gaya match hua me %d Op %v reply %v", me, op, *reply)
+
+				return
+			} else {
+				DPrintf(DEBUG, "KVServer Get me %d WrongLeader %v", me, op)
+				reply.WrongLeader = true
+				return
+			}
+
+
+		case &lt;-time.After(TIMEOUT * time.Millisecond):
+			kv.mu.Lock()
+			_, isLeader := kv.rf.GetState()
+
+			if !isLeader {
+				DPrintf(DEBUG, "KVServer me %d TimedOut %v", me, op)
+				delete(kv.waitingRoutines, logIdx)
+				reply.WrongLeader = true
+				kv.mu.Unlock()
+				return
+			}
+
+			kv.mu.Unlock()
+		}
+	}
+
+}
+
+func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+</FONT>	// Your code here.
+	kv.mu.Lock()
+	latestConfig := kv.mck.Query(-1)
+	shard := key2shard(args.Key)
+	if latestConfig.Shards[shard] != kv.gid {
+		DPrintf(DEBUG,"KVServer() Put() Suno Bhai.. group %d handles this shard %d. mera group %d", latestConfig.Shards[shard], shard, kv.gid)
+		reply.Err = ErrWrongGroup
+		kv.mu.Unlock()
+		return
+	}
+	//DPrintf(DEBUG, "KVServer Put Put() me %d KeyKaShard %d mera GID %d", kv.me, shard, kv.gid)
+	op := Op{}
+	op.Key = args.Key
+	op.Value = args.Value
+	op.OpType = args.Op
+	op.ClientId = args.ClientId
+	op.RequestId = args.RequestId
+
+	//kv.mu.Lock()
+<A NAME="8"></A><FONT color = #00FFFF><A HREF="match36-0.html#8" TARGET="0"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	logIdx, _, isLeader := kv.rf.Start(op)
+	me := kv.me
+	kv.mu.Unlock()
+
+	if !isLeader {
+		reply.WrongLeader = true
+		return
+	}
+
+	kv.mu.Lock()
+
+	waitCh := make(chan raft.ApplyMsg, 1)
+</FONT><A NAME="10"></A><FONT color = #FF0000><A HREF="match36-0.html#10" TARGET="0"><IMG SRC="../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.waitingRoutines[logIdx] = waitCh
+	kv.mu.Unlock()
+
+	for {
+		select {
+
+		case msg := &lt;-waitCh:
+</FONT>			DPrintf(DEBUG,"###########################################")
+			DPrintf(DEBUG, "KVServer Put me %d apply hone k baad notification aya %v", me, op)
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match36-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_11.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			kv.mu.Lock()
+			delete(kv.waitingRoutines, logIdx)
+			kv.mu.Unlock()
+
+			if msg.CommandIndex == logIdx && msg.Command == op {
+				DPrintf(DEBUG, "KVServer Put me %d gaya aya match hua %v", me, op)
+				reply.Err = OK
+			} else {
+				DPrintf(DEBUG, "KVServer Put me %d WrongLeader %v", me, op)
+				reply.WrongLeader = true
+			}
+
+			return
+
+		case &lt;-time.After(TIMEOUT * time.Millisecond):
+
+			kv.mu.Lock()
+
+			_, isLeader := kv.rf.GetState()
+			if !isLeader {
+				DPrintf(DEBUG, "KVServer Put me %d TimedOut %v", me, op)
+				reply.WrongLeader = true
+				delete(kv.waitingRoutines, logIdx)
+				kv.mu.Unlock()
+				return
+			}
+
+			kv.mu.Unlock()
+		}
+	}
+}
+
+//
+// the tester calls Kill() when a ShardKV instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *ShardKV) Kill() {
+	kv.rf.Kill()
+	// Your code here, if desired.
+	kv.mu.Lock()
+	kv.killed = true
+	kv.mu.Unlock()
+}
+
+
+//
+// servers[] contains the ports of the servers in this group.
+//
+// me is the index of the current server in servers[].
+//
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+//
+// the k/v server should snapshot when Raft's saved state exceeds
+// maxraftstate bytes, in order to allow Raft to garbage-collect its
+// log. if maxraftstate is -1, you don't need to snapshot.
+//
+// gid is this group's GID, for interacting with the shardmaster.
+//
+// pass masters[] to shardmaster.MakeClerk() so you can send
+// RPCs to the shardmaster.
+//
+// make_end(servername) turns a server name from a
+// Config.Groups[gid][i] into a labrpc.ClientEnd on which you can
+// send RPCs. You'll need this to send RPCs to other groups.
+//
+// look at client.go for examples of how to use masters[]
+// and make_end() to send RPCs to the group owning a specific shard.
+//
+// StartServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int, gid int, masters []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *ShardKV {
+</FONT>	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+
+	kv := new(ShardKV)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+	kv.make_end = make_end
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match36-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.gid = gid
+	kv.masters = masters
+
+	// Your initialization code here.
+	kv.killed = false
+	kv.dataStore = make(map[string]string, 0)
+	kv.waitingRoutines = make(map[int](chan raft.ApplyMsg), 0)
+	kv.servedRequests = make(map[int64]int64, 0)
+
+	// Use something like this to talk to the shardmaster:
+	kv.mck = shardmaster.MakeClerk(kv.masters)
+</FONT>
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+	kv.lastConfigNum = 0
+
+	//go kv.watchForConfigChange()
+	go kv.applyToStateMachine()
+
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match36-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	return kv
+}
+
+func (kv *ShardKV) applyToStateMachine() {
+	for {
+		kv.mu.Lock()
+		if kv.killed {
+			kv.mu.Unlock()
+			return
+		}
+		me := kv.me
+		kv.mu.Unlock()
+
+		msg := &lt;-kv.applyCh
+		if msg.Command == nil {
+			DPrintf(DEBUG, "KVServer Apply me %d raft se NIL aya %v", me, msg)
+		} else {
+			op := msg.Command.(Op)
+			DPrintf(DEBUG,"###########################################")
+</FONT>			DPrintf(DEBUG, "KVServer Apply me %d raft se message aya %v", me, op)
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match36-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_10.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			kv.mu.Lock()
+			requestId, isPresent := kv.servedRequests[op.ClientId]
+
+			if !isPresent || requestId != op.RequestId {
+				DPrintf(DEBUG, "KVServer Apply me %d NewRequest %v", me, op)
+				kv.servedRequests[op.ClientId] = op.RequestId
+
+				if op.OpType == "Put" {
+					kv.dataStore[op.Key] = op.Value
+				} else if op.OpType == "Append" {
+					value, exists := kv.dataStore[op.Key]
+					if !exists {
+						value = ""
+					}
+					kv.dataStore[op.Key] = value + op.Value
+				}
+			} else {
+				DPrintf(DEBUG, "KVServer Apply me %d DuplicateRequest %v", me, op)
+			}
+
+			waitCh, exists := kv.waitingRoutines[msg.CommandIndex]
+			kv.mu.Unlock()
+
+			if exists {
+				DPrintf(DEBUG, "KVServer Apply me %d notify kardo listeners ko %v", me, op)
+				waitCh &lt;- msg
+			} else {
+				DPrintf(DEBUG, "KVServer Apply me %d no listeners %v", me, op)
+</FONT>			}
+
+		}
+	}
+}
+
+func (kv *ShardKV) watchForConfigChange() {
+
+	for {
+		kv.mu.Lock()
+		if kv.killed {
+			kv.mu.Unlock()
+			return
+		}
+
+		config := kv.mck.Query(-1)
+		me := kv.me
+		if config.Num &gt; kv.lastConfigNum {
+			DPrintf(DEBUG,"KVServer me %d mera group '%d' config change ho gaya. Migration shuru karna padega. shardmaster_ka_client %v", me, kv.gid, kv.mck)
+			kv.lastConfigNum = config.Num
+		}
+
+		kv.mu.Unlock()
+		time.Sleep(WATCH_CONFIG_CHANGE_TIMEOUT * time.Millisecond)
+
+	}
+
+
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

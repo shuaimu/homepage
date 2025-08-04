@@ -1,0 +1,173 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-a-preet/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-imtoobose/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+shared_ptr&lt;Marshallable&gt; KvServer::GetMarshallableLogCmd(uint64_t operationId, CommandType cmdType, string k, string v){
+  auto logEntry = make_shared&lt;MultiStringMarshallable&gt;();
+  logEntry-&gt;data_.push_back(to_string(operationId));
+  logEntry-&gt;data_.push_back(to_string(cmdType));
+  logEntry-&gt;data_.push_back(k);
+  logEntry-&gt;data_.push_back(v);
+  return dynamic_pointer_cast&lt;Marshallable&gt;(logEntry);
+}
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  auto logEntry = GetMarshallableLogCmd(oid, CommandType::PUT, k, v);
+  uint64_t index, term;
+  // Log_info("[%d] in put, before eventmap [%d], (%d:%d)", sp_log_svr_-&gt;loc_id_, oid, k, v);
+  auto isLeader = GetRaftServer().Start(logEntry, &index, &term);
+  if (!isLeader) {
+    return KV_NOTLEADER;
+  }
+
+  eventMap[oid] = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  eventMap[oid]-&gt;Wait(EVENT_TIMEOUT);
+  if (eventMap[oid]-&gt;IsTimeout()) {
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match124-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    eventMap.erase(oid);
+    return KV_TIMEOUT;
+  }
+
+  eventMap.erase(oid);
+  // Log_info("[%d] done with put %d:%d (%d)", sp_log_svr_-&gt;loc_id_, k, v, dataStore[k]);
+  return KV_SUCCESS;
+}
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  auto logEntry = GetMarshallableLogCmd(oid, CommandType::APPEND, k, v);
+</FONT>  uint64_t index, term;
+  auto isLeader = GetRaftServer().Start(logEntry, &index, &term);
+  if (!isLeader)
+  {
+    return KV_NOTLEADER;
+  }
+
+  // Log_info("[%d] in append, before eventmap [%d], (%d:%d)", sp_log_svr_-&gt;loc_id_, oid, k, v);
+  eventMap[oid] = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  eventMap[oid]-&gt;Wait(EVENT_TIMEOUT);
+  if (eventMap[oid]-&gt;IsTimeout())
+  {
+    // Log_info("[%d]append timed out [%d] - (%d:%d)", sp_log_svr_-&gt;loc_id_, oid, k, v);
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match124-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    eventMap.erase(oid);
+    return KV_TIMEOUT;
+  }
+
+  eventMap.erase(oid);
+  // Log_info("[%d] done with append %d:%d (%d)", sp_log_svr_-&gt;loc_id_, k, v, dataStore[k]);
+  return KV_SUCCESS;
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+  /* your code here */
+  auto logEntry = GetMarshallableLogCmd(oid, CommandType::GET, k);
+</FONT>  uint64_t index, term;
+  auto isLeader = GetRaftServer().Start(logEntry, &index, &term);
+  if (!isLeader)
+  {
+    return KV_NOTLEADER;
+  }
+
+  // Log_info("[%d] in get before eventmap %d", sp_log_svr_-&gt;loc_id_, k);
+  eventMap[oid] = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  eventMap[oid]-&gt;Wait(EVENT_TIMEOUT);
+  if (eventMap[oid]-&gt;IsTimeout())
+  {
+    eventMap.erase(oid);
+    return KV_TIMEOUT;
+  }
+  eventMap.erase(oid);
+  
+  if (dataStore.find(k) != dataStore.end())
+  {
+    // Log_info("in get");
+    *v = dataStore.at(k);
+  }
+  else
+  {
+    *v = "";
+  }
+
+  // Log_info("[%d] done with get %d:%d (%d)", sp_log_svr_-&gt;loc_id_, k, *v, dataStore[k]);
+  return KV_SUCCESS;
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  auto v = (MultiStringMarshallable*)(&m);
+  /* your code here  */ 
+  auto opId = uint64_t(std::stoul(v-&gt;data_.at(0)));
+  auto operation = CommandType(std::stoi(v-&gt;data_.at(1)));
+  auto key = v-&gt;data_.at(2);
+  auto value = v-&gt;data_.at(3);
+  
+
+  switch (operation) {
+    case CommandType::PUT:
+      dataStore[key] = value;
+      break;
+    case CommandType::GET:
+      break;
+    case CommandType::APPEND:
+      if (dataStore.find(key) != dataStore.end())
+      {
+        dataStore[key] += value;
+      }
+      else
+      {
+        dataStore[key] = value;
+      }
+      break;
+    default:
+      return;
+  }
+  if (eventMap.find(opId) != eventMap.end()) {
+    eventMap.at(opId)-&gt;Set(1);
+  }
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

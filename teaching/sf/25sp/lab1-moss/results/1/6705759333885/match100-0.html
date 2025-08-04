@@ -1,0 +1,230 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-ameya-zope/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-ameya-zope/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+
+void RaftServiceImpl::HandleRequestVote(const uint64_t& arg1,
+                                        const uint64_t& arg2,
+                                        const uint64_t& arg3,
+                                        const uint64_t& arg4,
+                                        uint64_t *ret1,
+                                        bool_t *vote_granted,
+                                        rrr::DeferredReply* defer) {
+  /* Your code here */
+  this-&gt;svr_-&gt;mutexVotedInCurrentTerm.lock();
+  if(arg1&lt;this-&gt;svr_-&gt;currTerm) {
+    *vote_granted=false;
+  }
+  else if((arg1&gt;this-&gt;svr_-&gt;currTerm || (arg1==this-&gt;svr_-&gt;currTerm && this-&gt;svr_-&gt;votedInCurrentTerm==false))
+      && this-&gt;svr_-&gt;lastCommittedIndex&lt;=arg3) {
+    this-&gt;svr_-&gt;isLeader=0;
+    *vote_granted=true;
+    Log_info("Server %lu Granting vote to %llu",this-&gt;svr_-&gt;site_id_,arg2);
+    this-&gt;svr_-&gt;votedInCurrentTerm=true;
+    Log_info("RequestVote: Updating currTerm of Server %lu from %lld to %lld",this-&gt;svr_-&gt;site_id_,this-&gt;svr_-&gt;currTerm,arg1);
+    this-&gt;svr_-&gt;currTerm=arg1;
+    this-&gt;svr_-&gt;timeoutLevel=this-&gt;svr_-&gt;getNewElectionTimeout();
+  }
+  else {
+    Log_info("Vote Already Granted by Server %lu in term %llu",this-&gt;svr_-&gt;site_id_,this-&gt;svr_-&gt;currTerm);
+    *vote_granted=false;
+  }
+  this-&gt;svr_-&gt;mutexVotedInCurrentTerm.unlock();
+
+  *ret1 = 1;
+  defer-&gt;reply();
+}
+
+
+void RaftServiceImpl::HandleAppendEntries(const parid_t& par_id,
+                                          const siteid_t& site_id,
+                                          const uint64_t& arg1,
+                                          const uint64_t& arg2,
+                                          const uint64_t& arg3,
+                                          const uint64_t& arg4,
+                                          const vector&lt;MarshallDeputy&gt;& arg5,
+                                          const uint64_t& arg6,
+                                          const MarshallDeputy& md_cmd,
+                                          bool_t *followerAppendOK,
+                                          uint64_t *copiedTill,
+                                          rrr::DeferredReply* defer) {
+  /* Your code here */
+    // if follower is connected accept append entries 
+    // PENDING : Check here if followerTerm and followerLastLogIndex are consistent with the leader. If not then
+    // replace with leaders (term,log,lastLogIndex) and then accept the append entries.
+    // Note that in the below log adjustment, I have not considred deleting follower log entries because
+    // I am matching the leader log and follower log till the point they are equal and then forgetting the rest of 
+    // the follower log and appending to the follower log from the point of unequal entries. 
+    this-&gt;svr_-&gt;appendEntriesHeartbeat.lock();
+    std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(md_cmd).sp_data_;
+    auto& command1 = dynamic_cast&lt;TpcCommitCommand&&gt;(*cmd);
+    Log_info("HandleAppendEntries received by server=%lu, command=%d, learderTerm=%llu, leaderPrevLogIndex=%llu leaderPrevLogTerm=%llu",this-&gt;svr_-&gt;site_id_,command1.tx_id_,arg1,arg3,arg4);
+    if(arg4&lt;this-&gt;svr_-&gt;lastLogTerm || (arg4==this-&gt;svr_-&gt;lastLogTerm && arg3&lt;this-&gt;svr_-&gt;lastLogIndex)) {
+      //Idempotency : if this server is on a higher term, then ignore the append entries RPC.
+      Log_info("Idempotency Used : followerLastLogIndex=%lld followerLastLogTerm=%lld leaderLastLogIndex=%lld leaderLastLogTerm=%lld",
+        this-&gt;svr_-&gt;lastLogIndex, this-&gt;svr_-&gt;lastLogTerm, arg3,arg4);
+        *followerAppendOK=false;
+        *copiedTill=0;
+    }
+    else {
+      //if there exists a lag, then fix it and then apply current AppendEntriesRPC
+      // PENDING : Fix log line
+      Log_info("Follower %lu found Lagging During AppendEntries cmd=%llu, followerLastLogIndex=%lld, followerLastLogTerm=%lld, leaderLastLogIndex=%lld, leaderLastLogTerm=%lld",
+          this-&gt;svr_-&gt;site_id_,command1.tx_id_,this-&gt;svr_-&gt;lastLogIndex,this-&gt;svr_-&gt;lastLogTerm,arg3,arg4);
+      int ptr1=0;
+      int ptr2=0;
+      Log_info("Attempting to Fix Lagging Follower %lu",this-&gt;svr_-&gt;site_id_);
+      while(ptr1&lt;arg5.size() && ptr2&lt;this-&gt;svr_-&gt;log.size()) {
+        std::shared_ptr&lt;Marshallable&gt; ptr1Cmd = const_cast&lt;MarshallDeputy&&gt;(arg5[ptr1]).sp_data_;
+        std::shared_ptr&lt;Marshallable&gt; ptr2Cmd = this-&gt;svr_-&gt;log[ptr2];
+        auto& commandPtr1 = dynamic_cast&lt;TpcCommitCommand&&gt;(*ptr1Cmd);
+        auto& commandPtr2 = dynamic_cast&lt;TpcCommitCommand&&gt;(*ptr2Cmd);
+
+        if(commandPtr1.tx_id_!=commandPtr2.tx_id_) { 
+          Log_info("Lagging Server %lu, ptr1==ptr2==%d Found UNEQUAL ptr1Cmd=%d ptr2Cmd=%d",
+            this-&gt;svr_-&gt;site_id_, commandPtr1.tx_id_, 
+            commandPtr2.tx_id_);           
+          break;
+        }
+        Log_info("Lagging Server %lu, ptr1==ptr2==%d Found Equal command=%d",this-&gt;svr_-&gt;site_id_, ptr1,commandPtr1.tx_id_);
+        ptr1++;
+        ptr2++;
+      }
+
+      while(ptr1&lt;arg3) {
+        std::shared_ptr&lt;Marshallable&gt; ptrCmdTemp = const_cast&lt;MarshallDeputy&&gt;(arg5[ptr1]).sp_data_;
+        auto& commandTemp = dynamic_cast&lt;TpcCommitCommand&&gt;(*ptrCmdTemp);
+        this-&gt;svr_-&gt;app_next_(*ptrCmdTemp);
+        this-&gt;svr_-&gt;lastCommittedIndex++;
+        this-&gt;svr_-&gt;lastLogIndex++;
+        Log_info("Lagging Server %lu, Fixed command=%d",this-&gt;svr_-&gt;site_id_,commandTemp.tx_id_);
+        ptr1++;
+      }
+
+      // convert arg5 to vector&lt;shared_ptr&lt;Marshallable&gt;&gt;
+      vector&lt;shared_ptr&lt;Marshallable&gt;&gt; arg5SharedPtrMarshallable;
+      for(int i=0;i&lt;arg5.size();i++) {
+        std::shared_ptr&lt;Marshallable&gt; tempCmd = const_cast&lt;MarshallDeputy&&gt;(arg5[i]).sp_data_;
+        arg5SharedPtrMarshallable.push_back(tempCmd);
+      }
+      this-&gt;svr_-&gt;log=arg5SharedPtrMarshallable;
+      this-&gt;svr_-&gt;lastLogTerm=arg4;
+      *copiedTill=this-&gt;svr_-&gt;log.size();
+      
+      *followerAppendOK = true;
+    }
+    this-&gt;svr_-&gt;appendEntriesHeartbeat.unlock();
+  defer-&gt;reply();
+}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match100-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("receive an rpc: %s", req.c_str());
+  *res = "world";
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t& leaderTerm,
+                                      const uint64_t& leaderId,
+                                      const uint64_t& leaderLogIndex,
+                                      const vector&lt;MarshallDeputy&gt;& log,
+</FONT><A NAME="1"></A><FONT color = #00FF00><A HREF="match100-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                     string* res,
+                                     bool_t* success,
+                                     uint64_t* copiedTill,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  // Log_info("Recieved Heartbeat by Server %lu from leaderId=%d in term %llu", this-&gt;svr_-&gt;site_id_,leaderId,leaderTerm);
+  //Add the lastLogIndex and log to the heartbeat. 
+  *res = "Heartbeat Recieved";
+</FONT>  this-&gt;svr_-&gt;timeoutLevel=this-&gt;svr_-&gt;getNewElectionTimeout();
+  // Log_info("Heartbeat : Recieved by %lu from leader=%llu, leaderTerm=%llu currServerTerm=%llu leaderLastLogIndex=%llu currServerLastLogIndex=%llu",this-&gt;svr_-&gt;site_id_,leaderId,leaderTerm, this-&gt;svr_-&gt;currTerm ,leaderLogIndex, this-&gt;svr_-&gt;lastCommittedIndex);
+
+  if(this-&gt;svr_-&gt;isLeader==true && ((this-&gt;svr_-&gt;currTerm&lt;leaderTerm) || this-&gt;svr_-&gt;lastCommittedIndex &lt; leaderLogIndex)) {
+      Log_info("HB: Leader %d Stepping down as past leader server :%d serverTerm=%d leaderTerm=%d ",leaderId,this-&gt;svr_-&gt;site_id_,this-&gt;svr_-&gt;currTerm, leaderTerm);
+      this-&gt;svr_-&gt;isLeader=0;
+    }
+  this-&gt;svr_-&gt;appendEntriesHeartbeat.lock();
+  // If this server was leader in past term, and it recieves heartbeat from leader with higher term,
+    // it steps down as leader. 
+  if(this-&gt;svr_-&gt;currTerm&lt;leaderTerm || this-&gt;svr_-&gt;lastLogIndex&lt;leaderLogIndex) {
+    
+    this-&gt;svr_-&gt;currTerm=leaderTerm;
+    this-&gt;svr_-&gt;votedInCurrentTerm=false;
+
+    Log_info("HB: leader %d Follower %lu Lagging followerLastLogIndex=%lld, followerLastLogTerm=%lld, leaderLastLogIndex=%lld, leaderLastLogTerm=%lld",
+          leaderId, this-&gt;svr_-&gt;site_id_,this-&gt;svr_-&gt;lastLogIndex,this-&gt;svr_-&gt;lastLogTerm,leaderLogIndex,leaderTerm);
+    int ptr1=0;//index of first unequal in leader log
+    int ptr2=0;// index of first unequal in follower log
+    Log_info("HB: leader %d Attempting to Fix Lagging Follower %lu",leaderId,this-&gt;svr_-&gt;site_id_);
+    while(ptr1&lt;log.size() && ptr2&lt;this-&gt;svr_-&gt;lastLogIndex) {
+      std::shared_ptr&lt;Marshallable&gt; ptr1Cmd = const_cast&lt;MarshallDeputy&&gt;(log[ptr1]).sp_data_;
+      std::shared_ptr&lt;Marshallable&gt; ptr2Cmd = this-&gt;svr_-&gt;log[ptr2];
+      auto& command1 = dynamic_cast&lt;TpcCommitCommand&&gt;(*ptr1Cmd);
+      auto& command2 = dynamic_cast&lt;TpcCommitCommand&&gt;(*ptr2Cmd);
+
+      if(command1.tx_id_!=command2.tx_id_) { 
+        Log_info("HB :Leader %d Lagging Server %lu, Found UNEQUAL ptr1Cmd=%d ptr2Cmd=%d",
+            leaderId,this-&gt;svr_-&gt;site_id_, command1.tx_id_, 
+            command2.tx_id_);           
+        break;
+      }
+      Log_info("HB: Leader %d Lagging Server %lu, ptr1==ptr2==%d Found Equal command=%d",leaderId ,this-&gt;svr_-&gt;site_id_,ptr1, command1.tx_id_);
+      ptr1++;
+      ptr2++;
+    }
+
+    while(ptr1&lt;leaderLogIndex) {
+      std::shared_ptr&lt;Marshallable&gt; ptrCmdTemp = const_cast&lt;MarshallDeputy&&gt;(log[ptr1]).sp_data_;
+      auto& tempCmd = dynamic_cast&lt;TpcCommitCommand&&gt;(*ptrCmdTemp);
+      this-&gt;svr_-&gt;app_next_(*ptrCmdTemp);
+      this-&gt;svr_-&gt;lastCommittedIndex++;
+      this-&gt;svr_-&gt;lastLogIndex++;
+      Log_info("Heartbeat: Lagging Server %lu, Fixed command=%llu ptr1=%d leaderLogIndex=%d",this-&gt;svr_-&gt;site_id_,tempCmd.tx_id_, ptr1, leaderLogIndex);
+      ptr1++;
+    }
+
+    // convert arg5 to vector&lt;shared_ptr&lt;Marshallable&gt;&gt;
+    vector&lt;shared_ptr&lt;Marshallable&gt;&gt; logSharedPtrMarshallable;
+    for(int i=0;i&lt;log.size();i++) {
+      std::shared_ptr&lt;Marshallable&gt; tempCmd = const_cast&lt;MarshallDeputy&&gt;(log[i]).sp_data_;
+      logSharedPtrMarshallable.push_back(tempCmd);
+    }
+    Log_info("Heartbeat: Updated currTerm of Server %lu from %lld to %lld and lastLogIndex from %llu to %lld",this-&gt;svr_-&gt;site_id_,this-&gt;svr_-&gt;currTerm,leaderTerm, this-&gt;svr_-&gt;lastLogIndex, leaderLogIndex);
+    this-&gt;svr_-&gt;lastLogIndex=leaderLogIndex;
+    this-&gt;svr_-&gt;lastCommittedIndex=leaderLogIndex;
+    this-&gt;svr_-&gt;log=logSharedPtrMarshallable;
+  }
+  *copiedTill=log.size();
+  *success=true;
+  this-&gt;svr_-&gt;appendEntriesHeartbeat.unlock();
+  defer-&gt;reply();
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -18,7 +18,9 @@ Stony Brook University <br>
 
 <hr>
 
-## News
+## News 
+* Dec 2024, Received SBU Research Excellence Award. Thank you Seawolves!
+* Jun 2024, CausalMesh accepted to PVLDB 24 (VLDB '25)!
 * Sep 2023, Awarded LARGE (Co-PI). Thanks NSF!
 * May 2023, NCC accepted to OSDI '23!
 * Feb 2023, Awarded CAREER. Thanks NSF!

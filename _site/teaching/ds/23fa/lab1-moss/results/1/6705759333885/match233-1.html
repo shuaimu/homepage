@@ -1,0 +1,241 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-himanshu-ckh/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-jnukin/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+
+void RaftServiceImpl::HandleRequestVote(const uint64_t& candidate_term,
+                                        const uint64_t& candidate_id, 
+                                        const uint64_t& candidate_prev_log_index, 
+                                        const uint64_t& candidate_prev_log_term, 
+                                        uint64_t* response_term, 
+                                        bool_t* vote_granted, 
+                                        rrr::DeferredReply* defer) {
+  /* Your code here */
+  // Log_info("Waiting for Lock - Service side Request Vote, candidate %d - server %d", candidate_id, svr_-&gt;site_id_);
+  lock_guard&lt;recursive_mutex&gt; lock(svr_-&gt;mtx_);
+  // Log_info("Service side Request Vote, candidate %d - server %d", candidate_id, svr_-&gt;site_id_);
+  uint64_t cur_term  = svr_-&gt;currentTerm;
+  uint64_t cur_prev_log_index = svr_-&gt;GetPrevLogIndex();
+  uint64_t cur_prev_log_term = svr_-&gt;GetPrevLogTerm();
+
+  if(candidate_term&lt;cur_term){
+    // Log_info("Rejecting RequestVote from server %d for term %d, current term for receiver %d is %d", candidate_id, candidate_term, svr_-&gt;site_id_, svr_-&gt;currentTerm);
+    *response_term = cur_term;
+    *vote_granted = false;
+  }
+  else{
+    // svr_-&gt;currentTerm = candidate_term;
+    if(candidate_term == cur_term){
+        if (svr_-&gt;votedFor != candidate_id) {
+          // Log_info("Server %d rejected vote from %d since already voted for %d for term %d", svr_-&gt;site_id_, candidate_id, svr_-&gt;votedFor, svr_-&gt;currentTerm);
+        }
+        *response_term = cur_term;
+        *vote_granted = svr_-&gt;votedFor==candidate_id;
+    }
+    else{
+      // Log_info("Starting log matching, candiate prev_term is %d, prev_idx is %d, server %d has %d and %d for term %d", candidate_prev_log_term, candidate_prev_log_index,
+      // svr_-&gt;site_id_, cur_prev_log_term, cur_prev_log_index, candidate_term);
+      if(candidate_prev_log_term &gt; cur_prev_log_term){
+        // Log_info("Server %d granted vote to candidate %d for term %d", svr_-&gt;site_id_, candidate_id, candidate_term);
+        *response_term = cur_term;
+        *vote_granted = true;
+        svr_-&gt;votedFor = candidate_id;
+        svr_-&gt;currentTerm = candidate_term;
+      }
+      else if(candidate_prev_log_term == cur_prev_log_term){
+        if(candidate_prev_log_index&gt;=cur_prev_log_index){
+          // Log_info("Server %d granted vote to candidate %d for term %d", svr_-&gt;site_id_, candidate_id, candidate_term);
+          *response_term = cur_term;
+          *vote_granted = true;
+          svr_-&gt;votedFor = candidate_id;
+          svr_-&gt;currentTerm = candidate_term;
+        }
+        else{
+          // Log_info("Server %d rejected vote from %d for term %d due to failing log matching", svr_-&gt;site_id_, candidate_id, candidate_term);
+          *response_term = cur_term;
+          *vote_granted = false;
+        }
+      }
+      else{
+        // Log_info("Server %d rejected vote from %d for term %d due to failing log matching 2", svr_-&gt;site_id_, candidate_id, candidate_term);
+        *response_term = cur_term;
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match233-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        *vote_granted = false;
+      }
+    }
+  }
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleAppendEntries(const vector&lt;MarshallDeputy&gt; &allCmds, 
+                                          const uint64_t& leader_term, 
+                                          const uint64_t& leader_id, 
+                                          const uint64_t& leader_prev_log_index, 
+</FONT>                                          const uint64_t& leader_prev_log_term, 
+                                          const uint64_t& leader_commit_index, 
+                                          uint64_t* response_term,
+                                          bool_t *followerAppendOK,
+                                          rrr::DeferredReply* defer) {
+  /* Your code here */
+  // std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(md_cmd).sp_data_;
+  lock_guard&lt;recursive_mutex&gt; lock(svr_-&gt;mtx_);
+  // Log_info("RPC AppendEntries Recieved, %d", svr_-&gt;site_id_);
+  vector&lt;shared_ptr&lt;Marshallable&gt;&gt; cmds;
+  // const_cast&lt;MarshallDeputy&&gt;(md_cmd).sp_data_
+  for(auto &c: allCmds){
+    cmds.push_back(const_cast&lt;MarshallDeputy&&gt;(c).sp_data_);
+  }
+
+  uint64_t cur_term  = svr_-&gt;currentTerm;
+  uint64_t cur_prev_log_index = svr_-&gt;GetPrevLogIndex();
+  uint64_t cur_prev_log_term = svr_-&gt;GetPrevLogTerm();
+  // Log_info("RPC AppendEntries Recieved by Server %d, Term: %d, prev_log_index: %d, prev_log_term: %d", svr_-&gt;site_id_, cur_term, cur_prev_log_index, cur_prev_log_term);
+
+  if(leader_term&lt;cur_term){
+    // Log_info("RPC AppendEntries at Server : %d, Case: Leader needs to update term", svr_-&gt;site_id_);
+    *response_term = cur_term;
+    *followerAppendOK = false;
+  }
+  else if(cur_prev_log_index&lt;leader_prev_log_index){
+    // Log_info("RPC AppendEntries at Server : %d, Case: Follwer Log is smaller, send more logs", svr_-&gt;site_id_);
+    *response_term = cur_term;
+    *followerAppendOK = false;
+  }
+  else if(leader_prev_log_index &lt; svr_-&gt;log.size() && svr_-&gt;log[leader_prev_log_index].term != leader_prev_log_term){
+    // Log_info("RPC AppendEntries at Server : %d, Case: Follwer Term at prev log doesny match. Follwer Term: %d, Leader Term: %d", svr_-&gt;site_id_, svr_-&gt;log[leader_prev_log_index].term, leader_prev_log_term);
+    *response_term = cur_term;
+    *followerAppendOK = false;
+  }
+  else{
+      // Log_info("RPC AppendEntries at Server : %d, Case: Adding Logs", svr_-&gt;site_id_);
+      // if(cur_prev_log_index&gt;-1)
+        svr_-&gt;log.erase(svr_-&gt;log.begin()+leader_prev_log_index+1,svr_-&gt;log.end());
+      for(auto c: cmds){
+        LogEntryNik le(leader_term, c);
+        svr_-&gt;log.push_back(le);
+      }
+      // if(leader_commit_index&gt;svr_-&gt;commitIndex){
+      //   auto y = min(leader_commit_index, svr_-&gt;log.size());
+      //   for(int x = svr_-&gt;commitIndex+1;x&lt;=y;x++){
+      //     svr_-&gt;app_next_(*(svr_-&gt;log[x].cmd));
+      //   }
+      //   svr_-&gt;commitIndex = y;
+      // }
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match233-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      *response_term =cur_term;
+      *followerAppendOK = true;
+  }
+  // Log_info("RPC AppendEntries Commit update, leader_commit: %d, svr %d commit_index: %d", svr_-&gt;site_id_ , leader_commit_index, svr_-&gt;commitIndex);
+  // if(leader_commit_index &gt; svr_-&gt;commitIndex){
+  //   auto y = min(leader_commit_index, svr_-&gt;log.size());
+  //   for(int x = svr_-&gt;commitIndex+1;x&lt;=y;x++){
+  //     svr_-&gt;app_next_(*(svr_-&gt;log[x].cmd));
+  //   }
+  //   svr_-&gt;commitIndex = y;
+  //   Log_info("RPC AppendEntries Commit updated svr %d commit_index: %d, leader Commit INdex: %d", svr_-&gt;site_id_ ,svr_-&gt;commitIndex, leader_commit_index);
+  // }
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleSendEmptyAppendEntries(const uint64_t& leader_term, 
+                                          const uint64_t& leader_id, 
+                                          const uint64_t& leader_prev_log_index, 
+</FONT>                                          const uint64_t& leader_prev_log_term, 
+                                          const uint64_t& leader_commit_index, 
+                                          uint64_t* response_term,
+                                          bool_t *followerAppendOK,
+                                          rrr::DeferredReply* defer) {
+  /* Your code here */
+  //lock_guard&lt;recursive_mutex&gt; lock(svr_-&gt;mtx_);
+  // Log_info("Waiting for Lock - Service side HandleSendEmptyAppendEntries, leader %d - server %d", leader_id, svr_-&gt;site_id_);
+  lock_guard&lt;recursive_mutex&gt; lock(svr_-&gt;mtx_);
+  // Log_info("Service side HandleSendEmptyAppendEntries, leader %d - server %d", leader_id, svr_-&gt;site_id_);
+  // Log_info("Service side HandleSendEmptyAppendEntries, leader commit %d - server %d", leader_commit_index, svr_-&gt;commitIndex);
+  uint64_t cur_term  = svr_-&gt;currentTerm;
+  uint64_t cur_prev_log_index = svr_-&gt;GetPrevLogIndex();
+  uint64_t cur_prev_log_term = svr_-&gt;GetPrevLogTerm();
+
+  // if(leader_term&lt;cur_term){
+  //   Log_info("condition one");
+  //   *response_term = cur_term;
+  //   *followerAppendOK = false;
+  // }
+  // else{
+  //     Log_info("condition three");
+  //     *response_term =cur_term;
+  //     *followerAppendOK = true;
+  //     svr_-&gt;ElectionTimer.reset();
+  //     svr_-&gt;currState = ServerState::FOLLOWER;
+  // }
+  // Log_info("cur_term check");
+  // Log_info("leader_term: %d, cur_term: %d",leader_term, cur_term);
+  // Log_info("cur_prev_log_index: %d, leader_prev_log_index: %d",cur_prev_log_index, leader_prev_log_index);
+  // Log_info("svr_-&gt;log[leader_prev_log_index].term : %d, leader_prev_log_term: %d", svr_-&gt;log[leader_prev_log_index].term, leader_prev_log_term);
+  
+  if(leader_term&lt;cur_term){
+    // Log_info("condition one");
+    *response_term = cur_term;
+    *followerAppendOK = false;
+  }
+  // else if(cur_prev_log_index&lt;leader_prev_log_index || svr_-&gt;log[leader_prev_log_index].term != leader_prev_log_term){
+  //   Log_info("condition two");
+  //   *response_term = cur_term;
+  //   *followerAppendOK = false;
+  // }
+  else{
+      svr_-&gt;currentTerm = leader_term;
+      // Log_info("condition three");
+      *response_term =svr_-&gt;currentTerm;
+      *followerAppendOK = true;
+      svr_-&gt;ElectionTimer.start();
+      svr_-&gt;currState = ServerState::FOLLOWER;
+      // Log_info("condition three 1");
+      if(leader_commit_index &gt; svr_-&gt;commitIndex){
+        // Log_info("RPC HeartBeat - Commit Starting svr %d commit_index: %d", svr_-&gt;site_id_ ,svr_-&gt;commitIndex);
+        auto y = min(leader_commit_index, svr_-&gt;log.size());
+        for(int x = svr_-&gt;commitIndex;x&lt;y;x++){
+          svr_-&gt;app_next_(*(svr_-&gt;log[x].cmd));
+        }
+        svr_-&gt;commitIndex = y;
+        // Log_info("RPC HeartBeat - Commit updated svr %d commit_index: %d", svr_-&gt;site_id_ ,svr_-&gt;commitIndex);
+      }
+      // Log_info("condition three 2");
+  }
+  // Log_info("end of call");
+
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("receive an rpc: %s", req.c_str());
+  *res = "world";
+  defer-&gt;reply();
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,209 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-NamanJ9810/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-NamanJ9810/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+  //
+}
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  /* 
+  Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  */
+  /* your code here */
+  Log_info("Called Put function of kvserver.");
+  bool isLeader = 0;
+  bool* ptr_isLeader = &isLeader;
+  uint64_t term = 0;
+  uint64_t* ptr_term = &term;
+  GetRaftServer().GetState(ptr_isLeader,ptr_term);
+  if(isLeader == 0)
+  {
+    return KV_NOTLEADER;
+  }
+  else if(oplog.find(to_string(oid))!=oplog.end())
+  {
+    return KV_SUCCESS;
+  }
+  else
+  {
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match202-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("put");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);
+</FONT>    std::shared_ptr&lt;Marshallable&gt; marshallablePtr(s);
+    uint64_t ind = 0;
+    uint64_t term = 0;
+    uint64_t *ptr_ind = &ind;
+    uint64_t *ptr_term = &term;
+    bool raft = GetRaftServer().Start(marshallablePtr,ptr_ind,ptr_term);
+    Log_info("Back to kvserver put");
+    Coroutine::Sleep(200000);
+    Log_info("After coroutine Sleep");
+    if(oplog.find(s-&gt;data_[0])!=oplog.end())
+    {
+      return KV_SUCCESS;
+    }
+    else
+    {
+      return KV_TIMEOUT;
+    }
+  }
+}
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+  Log_info("Called Append function of kvserver.");
+  bool isLeader = 0;
+  bool* ptr_isLeader = &isLeader;
+  uint64_t term = 0;
+  uint64_t* ptr_term = &term;
+  GetRaftServer().GetState(ptr_isLeader,ptr_term);
+  if(isLeader == 0)
+  {
+    return KV_NOTLEADER;
+  }
+  else if(oplog.find(to_string(oid))!=oplog.end())
+  {
+    return KV_SUCCESS;
+  }
+  else
+  {
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("append");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);
+    std::shared_ptr&lt;Marshallable&gt; marshallablePtr(s);
+    uint64_t ind = 0;
+    uint64_t term = 0;
+    uint64_t *ptr_ind = &ind;
+    uint64_t *ptr_term = &term;
+    bool raft = GetRaftServer().Start(marshallablePtr,ptr_ind,ptr_term);
+    Log_info("Back to kvserver append");
+    Coroutine::Sleep(200000);
+    Log_info("After coroutine Sleep");
+    if(oplog.find(s-&gt;data_[0])!=oplog.end())
+    {
+      return KV_SUCCESS;
+    }
+    else
+    {
+      return KV_TIMEOUT;
+    }
+  }
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+  /* your code here */
+  Log_info("Called Get function of kvserver.");
+  bool isLeader = 0;
+  bool* ptr_isLeader = &isLeader;
+  uint64_t term = 0;
+  uint64_t* ptr_term = &term;
+  GetRaftServer().GetState(ptr_isLeader,ptr_term);
+  if(isLeader == 0)
+  {
+    return KV_NOTLEADER;
+  }
+  else if(oplog.find(to_string(oid))!=oplog.end())
+  {
+    *v = mp[k];
+    return KV_SUCCESS;
+  }
+  else
+  {
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match202-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("get");
+    s-&gt;data_.push_back(k);
+    std::shared_ptr&lt;Marshallable&gt; marshallablePtr(s);
+</FONT>    uint64_t ind = 0;
+    uint64_t term = 0;
+    uint64_t *ptr_ind = &ind;
+    uint64_t *ptr_term = &term;
+    bool raft = GetRaftServer().Start(marshallablePtr,ptr_ind,ptr_term);
+    Log_info("Back to kvserver get");
+    Coroutine::Sleep(200000);
+    Log_info("After coroutine Sleep");
+    if(oplog.find(s-&gt;data_[0])!=oplog.end())
+    {
+      *v = mp[s-&gt;data_[2]];
+      return KV_SUCCESS;
+    }
+    else
+    {
+      return KV_TIMEOUT;
+      //
+    }
+  }
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  auto v = (MultiStringMarshallable*)(&m);
+  /* your code here */
+  oplog.insert(v-&gt;data_[0]);
+  if(v-&gt;data_[1]=="put")
+  {
+    mp[v-&gt;data_[2]] = v-&gt;data_[3];
+  }
+  else if(v-&gt;data_[1]=="append")
+  {
+    string temp = mp[v-&gt;data_[2]];
+    mp[v-&gt;data_[2]] = temp+v-&gt;data_[3];
+  }
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

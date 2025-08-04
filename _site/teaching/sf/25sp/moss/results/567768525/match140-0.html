@@ -1,0 +1,302 @@
+<HTML>
+<HEAD>
+<TITLE>./spring19/vidhya-sri/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./spring19/vidhya-sri/src/kvraft/server.go<p><PRE>
+package raftkv
+
+import (
+	"bytes"
+	"fmt"
+	"labgob"
+	"labrpc"
+	"log"
+	"raft"
+	"sync"
+)
+
+const Debug = 0
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+type Op struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+
+	Key      string
+	Value    string
+	Op       string
+	ClientNo int
+	CmdNo    int
+}
+
+type Reply struct {
+	WrongLeader bool
+	Err         Err
+	Value       string
+}
+
+type KVServer struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	maxraftstate    int               // snapshot if log grows this bigx
+	channelMap      map[int]chan int  //map used to store unique channel for every get/put/append request
+	keyvaluestore   map[string]string //keyvalue store which hold all the committed key,value pairs
+	duplicateCmdMap map[int]int       //map to check for Duplicate cmds
+	persister       *raft.Persister
+	exitChan        chan bool
+}
+
+type Duplicate struct {
+	cmdNo int
+	cmd   string
+}
+
+//handles both get and put requests from clients
+func (kv *KVServer) getPutUtil(op Op, reply *Reply, key string) {
+	_, isLeader := kv.rf.GetState()
+	kv.mu.Lock()
+
+	//if it is a leader, check whether the cmd is a duplicate one using lsn.
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match140-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	if isLeader {
+		if lsn, ok := kv.duplicateCmdMap[op.ClientNo]; ok {
+			cmdNo := op.CmdNo
+			if cmdNo &lt;= lsn {
+</FONT>				reply.WrongLeader = false
+				reply.Value = kv.keyvaluestore[op.Key]
+				kv.mu.Unlock()
+				return
+			}
+		}
+	} else {
+		reply.WrongLeader = true
+		kv.mu.Unlock()
+		return
+	}
+
+	kv.mu.Unlock()
+
+	index, term, isLeader := kv.rf.Start(op)
+
+	if isLeader {
+		receiverChan := make(chan int)
+
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match140-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		kv.mu.Lock()
+		kv.channelMap[index] = receiverChan
+		kv.mu.Unlock()
+
+		select {
+		case currentTerm := &lt;-receiverChan:
+</FONT>			if currentTerm != term {
+				reply.WrongLeader = true
+			} else {
+				reply.WrongLeader = false
+				if op.Op == "Get" {
+					//get the value from keyvalue store
+					kv.mu.Lock()
+					if val, ok := kv.keyvaluestore[key]; ok {
+						reply.Value = val
+					} else {
+						reply.Value = ""
+					}
+					kv.mu.Unlock()
+				}
+			}
+		}
+		kv.deleteCommittedIndexFromMap(index)
+	} else {
+		reply.WrongLeader = true
+	}
+}
+
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match140-1.html#7" TARGET="1"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *KVServer) deleteCommittedIndexFromMap(index int) {
+	kv.mu.Lock()
+	delete(kv.channelMap, index)
+	kv.mu.Unlock()
+}
+
+func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
+</FONT>	op := Op{args.Key, "", "Get", args.ClientNo, args.CmdNo}
+	r := Reply{}
+	kv.getPutUtil(op, &r, args.Key)
+	reply.WrongLeader = r.WrongLeader
+	reply.Value = r.Value
+}
+
+func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	op := Op{args.Key, args.Value, args.Op, args.ClientNo, args.CmdNo}
+	r := Reply{}
+	kv.getPutUtil(op, &r, args.Key)
+	reply.WrongLeader = r.WrongLeader
+}
+
+//function receives cmds from RAFT which are committed. These cmds are then applied to the state machine.
+func (kv *KVServer) receiveAppliedCommands() {
+	for {
+		select {
+		case &lt;-kv.exitChan:
+			return
+
+		case msg := &lt;-kv.applyCh:
+			kv.mu.Lock()
+
+			//when cmd is snap update state machine with the state from the persister
+			if msg.CommandIndex == -1 {
+
+				kv.readSnapshot(msg.Command.([]byte))
+			} else {
+				var op Op
+				op = msg.Command.(Op)
+				lsn, _ := kv.duplicateCmdMap[op.ClientNo]
+				//check for duplicate cmds using lsn(lastsequencenumber)
+				if op.CmdNo &gt; lsn {
+					//update keyvalue store if put/append
+					if op.Op != "Get" {
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match140-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+						if op.Op == "Put" {
+							kv.keyvaluestore[op.Key] = ""
+						}
+						kv.keyvaluestore[op.Key] = kv.keyvaluestore[op.Key] + op.Value
+					}
+					kv.duplicateCmdMap[op.ClientNo] = op.CmdNo
+</FONT>				}
+			}
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match140-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			raftStateSize := kv.persister.RaftStateSize()
+
+			//when raftSize reaches the threshold, then inform raft to snapshot and trim its log
+			if kv.maxraftstate &gt; 0 && raftStateSize &gt;= int(float64(kv.maxraftstate)*0.95) {
+				kv.rf.TrimLogAndSaveSnapshotWithState(msg.CommandIndex, kv.getSnapshotInBytes())
+</FONT>			}
+
+			if kv.channelMap[msg.CommandIndex] != nil {
+				kv.rf.Mu.Lock()
+				term := kv.rf.CurrentTerm
+				kv.rf.Mu.Unlock()
+				kv.channelMap[msg.CommandIndex] &lt;- term
+			}
+
+			kv.mu.Unlock()
+
+		}
+	}
+}
+
+func (kv *KVServer) readSnapshot(data []byte) {
+	if data == nil || len(data) &lt; 1 {
+		return
+	}
+
+<A NAME="8"></A><FONT color = #00FFFF><A HREF="match140-1.html#8" TARGET="1"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+
+	var snapshot map[string]string
+	var duplicate map[int]int
+</FONT>
+	if d.Decode(&snapshot) != nil ||
+		d.Decode(&duplicate) != nil {
+		fmt.Println("Error while decoding")
+	} else {
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match140-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		kv.keyvaluestore = snapshot
+		kv.duplicateCmdMap = duplicate
+	}
+}
+
+func (kv *KVServer) getSnapshotInBytes() []byte {
+	x := new(bytes.Buffer)
+	f := labgob.NewEncoder(x)
+</FONT><A NAME="0"></A><FONT color = #FF0000><A HREF="match140-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	f.Encode(kv.keyvaluestore)
+	f.Encode(kv.duplicateCmdMap)
+	snapshot := x.Bytes()
+
+	return snapshot
+}
+
+//
+// the tester calls Kill() when a KVServer instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *KVServer) Kill() {
+	kv.rf.Kill()
+	close(kv.exitChan)
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Raft to
+// form the fault-tolerant key/value service.
+// ClientNo is the index of the current server in servers[].
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+// the k/v server should snapshot when Raft's saved state exceeds maxraftstate bytes,
+// in order to allow Raft to garbage-collect its log. if maxraftstate is -1,
+// you don't need to snapshot.
+// StartKVServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
+</FONT>	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+
+	kv := new(KVServer)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+	kv.channelMap = make(map[int]chan int)
+	kv.keyvaluestore = make(map[string]string)
+	kv.duplicateCmdMap = make(map[int]int)
+	kv.persister = persister
+
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match140-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.exitChan = make(chan bool)
+
+	//update the state machine with the persisted values
+	kv.rf.Mu.Lock()
+	snapshot := kv.rf.Persister.ReadSnapshot()
+	kv.rf.Mu.Unlock()
+
+	kv.mu.Lock()
+	kv.readSnapshot(snapshot)
+	kv.mu.Unlock()
+
+	//receive commands from raft
+	go kv.receiveAppliedCommands()
+
+	return kv
+</FONT>}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

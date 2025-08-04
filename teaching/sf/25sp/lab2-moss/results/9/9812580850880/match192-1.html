@@ -1,0 +1,216 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-ameya-zope/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-dysfunctional-sc/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+    verify(sp_log_svr_);
+    int64_t ret = sp_log_svr_-&gt;site_id_;
+    ret = ret &lt;&lt; 32;
+    ret = ret + op_id_cnt_++;
+    return ret; 
+}
+
+int KvServer::Put(const uint64_t& oid,
+                  const string& k,
+                  const string& v) {
+  /*
+  Your are recommended to use MultiStringMarshallable as the format
+  for the log entries. Here is an example how you can use it.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  */
+  /* your code here */
+  // createCoroutine
+  // var.wait
+  //  Coroutine::CreateRun([this](){
+        auto s = make_shared&lt;MultiStringMarshallable&gt;();
+        string oid_ = to_string(oid);
+        s-&gt;data_.push_back(oid_);
+        s-&gt;data_.push_back("put");
+        s-&gt;data_.push_back(k);
+        s-&gt;data_.push_back(v);
+        Log_info("kvserver %d - received put - oid %s\n",sp_log_svr_-&gt;site_id_,oid_.c_str());
+        shared_ptr&lt;IntEvent&gt; ev=NULL;
+        bool isLeader=false;
+        {
+          std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+          uint64_t dummy=0;
+          uint64_t *index,*term;
+          index = term = &dummy;
+          shared_ptr&lt;Marshallable&gt; m(s);
+          isLeader = GetRaftServer().Start(m,index,term);
+          Log_info("kvserver %d - put - isLeader %d",sp_log_svr_-&gt;site_id_,isLeader?1:0);
+          if(!isLeader) return KV_NOTLEADER;
+          ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+          eventmachine[oid_] = ev;
+        }
+        Log_info("kvserver %d waiting for put %s",sp_log_svr_-&gt;site_id_,oid_.c_str());
+        ev-&gt;Wait(MYTIMEOUT);
+        {
+          std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+          eventmachine.erase(oid_);
+          if(ev-&gt;status_ == Event::TIMEOUT){
+            Log_info("kvserver %d - put - oid %s TIMEOUT",sp_log_svr_-&gt;site_id_,oid_.c_str());
+            return KV_TIMEOUT;
+          }
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match192-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+          Log_info("kvserver %d - put - oid %s SUCCESS",sp_log_svr_-&gt;site_id_,oid_.c_str());
+          return KV_SUCCESS;
+        }
+    //});
+}
+
+int KvServer::Append(const uint64_t& oid,
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+  //Coroutine::CreateRun([this](){
+      auto s = make_shared&lt;MultiStringMarshallable&gt;();
+</FONT>      string oid_ = to_string(oid);
+      s-&gt;data_.push_back(oid_);
+      s-&gt;data_.push_back("append");
+      s-&gt;data_.push_back(k);
+      s-&gt;data_.push_back(v);
+      Log_info("kvserver %d - received append - oid %s",sp_log_svr_-&gt;site_id_,oid_.c_str());
+      shared_ptr&lt;IntEvent&gt; ev;
+      bool isLeader=false;
+
+      {
+        std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+        uint64_t dummy=0;
+        uint64_t *index,*term;
+        index = term = &dummy;
+        shared_ptr&lt;Marshallable&gt; m(s);
+        isLeader = GetRaftServer().Start(m,index,term);
+        Log_info("kvserver %d - append - isLeader %d",sp_log_svr_-&gt;site_id_,isLeader?1:0);
+        if(!isLeader) return KV_NOTLEADER;
+        ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+        eventmachine[oid_] = ev;
+      }
+      Log_info("kvserver %d waiting for append %s",sp_log_svr_-&gt;site_id_,oid_.c_str());
+      ev-&gt;Wait(MYTIMEOUT);
+      {
+        std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+        eventmachine.erase(oid_);
+        if(ev-&gt;status_ == Event::TIMEOUT){
+          Log_info("kvserver %d - append - oid %s TIMEOUT",sp_log_svr_-&gt;site_id_,oid_.c_str());
+          return KV_TIMEOUT;
+        }
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match192-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        Log_info("kvserver %d - append - oid %s SUCCESS",sp_log_svr_-&gt;site_id_,oid_.c_str());
+        return KV_SUCCESS;
+      }
+  //});
+}
+
+int KvServer::Get(const uint64_t& oid,
+                  const string& k,
+                  string* v) {
+  /* your code here */
+  //Coroutine::CreateRun([this](){
+  Log_info("kvserver received get\n");
+</FONT>      auto s = make_shared&lt;MultiStringMarshallable&gt;();
+      string oid_ = to_string(oid);
+      s-&gt;data_.push_back(oid_);
+      s-&gt;data_.push_back("get");
+      s-&gt;data_.push_back(k);
+      Log_info("kvserver %d - received get - oid %s",sp_log_svr_-&gt;site_id_,oid_.c_str());
+      shared_ptr&lt;IntEvent&gt; ev;
+      bool isLeader=false;
+      {
+        std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+        uint64_t dummy=0;
+        uint64_t *index,*term;
+        index = term = &dummy;
+        shared_ptr&lt;Marshallable&gt;m(s);
+        isLeader = GetRaftServer().Start(m,index,term);
+        Log_info("kvserver %d - get - isLeader %d",sp_log_svr_-&gt;site_id_,isLeader?1:0);
+        if(!isLeader) return KV_NOTLEADER;
+        ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+        eventmachine[oid_] = ev;
+      }
+      Log_info("kvserver %d waiting for get %s",sp_log_svr_-&gt;site_id_,oid_.c_str());
+      ev-&gt;Wait(MYTIMEOUT);
+      {
+        std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+        eventmachine.erase(oid_);
+        if(ev-&gt;status_ == Event::TIMEOUT){
+          Log_info("kvserver %d - get - oid %s TIMEOUT",sp_log_svr_-&gt;site_id_,oid_.c_str());
+          return KV_TIMEOUT;
+        }
+        *v = getmachine[oid_];
+        getmachine.erase(oid_);
+        Log_info("kvserver %d - get - oid %s SUCCESS",sp_log_svr_-&gt;site_id_,oid_.c_str());
+        return KV_SUCCESS;
+      }
+  //});
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  auto v = (MultiStringMarshallable*)(&m);
+  /* your code here */
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+  string oid_ = v-&gt;data_[0];
+  string type = v-&gt;data_[1];
+  string key =  v-&gt;data_[2];
+  Log_info("kvserver %d - onNextCommand - oid %s - type %s - key %s\n",sp_log_svr_-&gt;site_id_,oid_.c_str(),type.c_str(),key.c_str());
+  if(type=="put"){
+      string value = v-&gt;data_[3];
+      hashmachine[key]=value;
+  }else if(type=="append"){
+      string value = v-&gt;data_[3];
+      if(hashmachine.find(key)==hashmachine.end()){
+          hashmachine[key]=value;
+      }else{
+          hashmachine[key]+=value;
+      }
+  }else if(type=="get"){
+    string value = hashmachine[key];
+    getmachine[oid_] = value;
+  }else{
+    Log_info("kvserver %d - onNextCommand - UNKNOWN TYPE ERROR\n",sp_log_svr_-&gt;site_id_);
+  }
+  auto it = eventmachine.find(oid_);
+  if(it!=eventmachine.end()){
+    if(it-&gt;second!=NULL) it-&gt;second-&gt;Set(1);
+    Log_info("kvserver %d - onNextCommand - oid %s EVENT PROCESSED\n",sp_log_svr_-&gt;site_id_,oid_.c_str());
+  }
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++;
+  return cli;
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

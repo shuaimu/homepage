@@ -1,0 +1,238 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-Nitish5499-1/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-Nitish5499-1/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  /* 
+  Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  */
+  /* your code here */
+
+  uint64_t term = 0;
+  uint64_t index = 0;
+
+  if(GetRaftServer().serverType != LEADER){
+    return KV_NOTLEADER;
+  }
+
+  std::recursive_mutex mtx;
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+
+  auto cmd = shared_ptr&lt;Marshallable&gt;(s);
+
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+
+  Log_info("leader %d inserting oid %lu to the queue", GetRaftServer().loc_id_, oid);
+
+  mtx.lock();
+  queue[to_string(oid)] = ev;
+  mtx.unlock();
+
+  if(!GetRaftServer().Start(cmd, &index, &term)){
+    return KV_NOTLEADER;
+  }
+  else{
+    ev-&gt;Wait(1200000);
+
+    if(ev-&gt;status_ == Event::TIMEOUT){
+      Log_info("leader %d sending timeout event for put for oid %lu", GetRaftServer().loc_id_, oid);
+      return KV_TIMEOUT;
+    }
+    else{
+      return KV_SUCCESS;
+    } 
+  } 
+}
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+  uint64_t term = 0;
+  uint64_t index = 0;
+
+  Log_info("leader %d received append request for oid %lu", GetRaftServer().loc_id_, oid);
+  if(GetRaftServer().serverType != LEADER){
+    return KV_NOTLEADER;
+  }
+
+  std::recursive_mutex mtx;
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+
+  Log_info("leader %d inserting oid %lu to the queue", GetRaftServer().loc_id_, oid);
+  
+  mtx.lock();
+  queue[to_string(oid)] = ev;
+  mtx.unlock();
+
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("append");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+
+  auto cmd = shared_ptr&lt;Marshallable&gt;(s);
+
+  if(!GetRaftServer().Start(cmd, &index, &term)){
+    return KV_NOTLEADER;
+  }
+  else{
+    ev-&gt;Wait(2700000);
+    
+    // std::recursive_mutex mtx;
+    // std::lock_guard&lt;std::recursive_mutex&gt; lock_guard(mtx);
+    if(ev-&gt;status_ == Event::TIMEOUT){
+      Log_info("leader %d sending timeout event for append for oid %lu", GetRaftServer().loc_id_, oid);
+      return KV_TIMEOUT;
+    }
+    else{
+      Log_info("kvserver appending success key");
+      return KV_SUCCESS;
+    }
+  }
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+  /* your code here */
+
+  uint64_t term = 0;
+  uint64_t index = 0;
+
+  Log_info("leader %d received get request for oid %lu", GetRaftServer().loc_id_, oid);
+  if(GetRaftServer().serverType != LEADER){
+    return KV_NOTLEADER;
+  }
+  
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("get");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back("value");
+
+  auto cmd = shared_ptr&lt;Marshallable&gt;(s);
+
+  std::recursive_mutex mtx;
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+
+  Log_info("leader %d inserting oid %lu to the queue", GetRaftServer().loc_id_, oid);
+  
+  mtx.lock();
+  queue[to_string(oid)] = ev;
+  mtx.unlock();
+
+  if(!GetRaftServer().Start(cmd, &index, &term)){
+    return KV_NOTLEADER;
+  }
+  else{
+    ev-&gt;Wait(1200000);
+
+    if(ev-&gt;status_ == Event::TIMEOUT){
+      Log_info("leader %d sending timeout event for get for oid %lu", GetRaftServer().loc_id_, oid);
+      return KV_TIMEOUT;
+    }
+    else{
+      mtx.lock();
+      *v = datamap[k];
+      mtx.unlock();
+    }
+
+    Log_info("leader %d sending success event for oid %lu", GetRaftServer().loc_id_, oid);
+    return KV_SUCCESS;
+  }
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match150-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  auto v = (MultiStringMarshallable*)(&m);
+  /* your code here */
+  string oid = v-&gt;data_[0];
+  string type = v-&gt;data_[1];
+  string key = v-&gt;data_[2];
+</FONT>  string value = v-&gt;data_[3];
+
+  Log_info("server %d on next command oid %lu", GetRaftServer().loc_id_, stoull(oid));
+
+  std::recursive_mutex mtx;
+  if(type == "append"){
+    Log_info("server %d, entering append on next", GetRaftServer().loc_id_);
+    mtx.lock();
+    if(datamap.find(key) != datamap.end()){
+      datamap[key] += value;
+    }
+    else{
+      datamap[key] = value;
+    }
+    mtx.unlock();
+  }
+  if(type == "put"){
+    Log_info("server %d, entering put onnext", GetRaftServer().loc_id_);
+    mtx.lock();
+    datamap[key] = value;
+    mtx.unlock();
+  }
+  if(GetRaftServer().serverType == LEADER){
+    Log_info("leader %d oid %lu inside on next for leader", GetRaftServer().loc_id_, stoull(oid));
+    Log_info("leader %d going to set event in on next", GetRaftServer().loc_id_);
+    if(queue.find(oid) != queue.end()){
+      Log_info("leader %d setting event in on next", GetRaftServer().loc_id_);
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match150-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      queue[oid]-&gt;Set(1);
+    }
+  }
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+</FONT>  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

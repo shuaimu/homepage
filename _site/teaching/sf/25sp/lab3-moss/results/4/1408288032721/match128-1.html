@@ -1,0 +1,159 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-jashwanthkumar89/src/shardkv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-ahuja-gautam/src/shardkv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+int64_t ShardKvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int ShardKvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+    // lab_shard: fill in your code
+  RaftServer& raftServer = GetRaftServer();
+   Log_info("(KVPUT0) called for kvServer=%d, key=%s, val=%s", raftServer.site_id_, k, v);
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+
+  shared_ptr&lt;Marshallable&gt; cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+
+
+  bool_t isLeader = false;
+  uint64_t* index= new uint64_t();
+  uint64_t* term = new uint64_t();
+
+  isLeader = raftServer.Start(cmd, index, term);
+  if(!isLeader) return KV_NOTLEADER;
+  else {
+    auto coro = Coroutine::CurrentCoroutine();
+    Log_info("Current coro = %s kvserver=%d", coro, raftServer.site_id_);
+    coro-&gt;Sleep(1000 * 900);
+  }
+
+  if((*processedQueries).count(to_string(oid)) &lt;= 0) return KV_TIMEOUT;
+   Log_info("(KVPUT1) Returning SUCCESS=%d, key=%s, val=%s",raftServer.site_id_, k, v);
+  return KV_SUCCESS;
+}
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match128-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+int ShardKvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+    // lab_shard: fill in your code
+     RaftServer& raftServer = GetRaftServer();
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("append");
+</FONT>  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+
+  Log_info("(KVAPPEND0) called for kvServer=%d, key=%s, val=%s", raftServer.site_id_, k, v);
+
+  shared_ptr&lt;Marshallable&gt; cmd =  dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  bool_t isLeader = false;
+  uint64_t* index= new uint64_t();
+  uint64_t* term = new uint64_t();
+
+  isLeader = raftServer.Start(cmd, index, term);
+  if(!isLeader) return KV_NOTLEADER;
+  else {
+    auto coro = Coroutine::CurrentCoroutine();
+    Log_info("Current coro = %s kvserver=%d", coro,raftServer.site_id_);
+    coro-&gt;Sleep(1000 * 900);
+  }
+
+  Log_info("(KVAPPEND1) called for kvServer=%d, key=%s, val=%s", raftServer.site_id_, k, v);
+
+  if((*processedQueries).count(to_string(oid)) &lt;= 0) return KV_TIMEOUT;
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match128-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  return KV_SUCCESS;
+}
+
+int ShardKvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+    // lab_shard: fill in your code
+    RaftServer& raftServer = GetRaftServer();
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("get");
+</FONT>  s-&gt;data_.push_back(k);
+  
+  Log_info("(KVGET0) called for kvServer=%d, key=%s, val=%s", raftServer.site_id_, k, v);
+  shared_ptr&lt;Marshallable&gt; cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  bool_t isLeader = false;
+  uint64_t* index= new uint64_t();
+  uint64_t* term = new uint64_t();
+
+ isLeader = raftServer.Start(cmd, index, term);
+  if(!isLeader) return KV_NOTLEADER;
+  else {
+    auto coro = Coroutine::CurrentCoroutine();
+    Log_info("Current coro = %s kvserver=%d", coro, raftServer.site_id_);
+    coro-&gt;Sleep(1000 * 900);
+  }
+
+  if((kv_store_).count(k) &gt; 0) {
+      *v = (kv_store_)[k];
+  } else {
+    *v = "DUMMY";
+  }
+  Log_info("(KVGET1) called for kvServer=%d, key=%s, val=%s", raftServer.site_id_, k, v);
+
+  if((*processedQueries).count(to_string(oid)) &lt;= 0) return KV_TIMEOUT;
+  return KV_SUCCESS;
+}
+
+void ShardKvServer::OnNextCommand(Marshallable& m) {
+    // lab_shard: fill in your code
+    auto v = (MultiStringMarshallable*)(&m);
+  auto commands = v-&gt;data_;
+  string cmdType = commands[1];
+  RaftServer& raftServer = GetRaftServer();
+  (*processedQueries).insert(commands[0]);
+  if(cmdType == "put") {
+    Log_info("(OnNextCommand PUT) called for kvServer=%d type=APPEND", raftServer.site_id_);
+    string key = commands[2];
+    (kv_store_)[key] = commands[3];
+  } else if (cmdType == "append") {
+    Log_info("(OnNextCommand APPEND) called for kvServer=%d type=PUT", raftServer.site_id_);
+    string key = commands[2];
+   (kv_store_)[key] += commands[3];
+  } else {
+    Log_info("(OnNextCommand GET) called for kvServer=%d type=GET", raftServer.site_id_);
+  }
+}
+
+shared_ptr&lt;ShardKvClient&gt; ShardKvServer::CreateClient(Communicator* comm) {
+  auto cli = make_shared&lt;ShardKvClient&gt;();
+  cli-&gt;commo_ = comm;
+  verify(cli-&gt;commo_ != nullptr);
+  static uint32_t id = 0;
+  id++;
+  cli-&gt;cli_id_ = id;
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,249 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-PranavDani/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-PranavDani/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+  RaftServiceImpl::RaftServiceImpl(TxLogServer* sched)
+    : svr_((RaftServer*)sched) {
+    struct timespec curr_time;
+    clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+    srand(curr_time.tv_nsec);
+  }
+
+
+  // void RaftServiceImpl::HandleRequestVote(const uint64_t& arg1,
+  //   const uint64_t& arg2,
+  //   uint64_t* ret1,
+  //   bool_t* vote_granted,
+  //   rrr::DeferredReply* defer) {
+  //   /* Your code here */
+  //   *ret1 = 0;
+  //   *vote_granted = false;
+  //   defer-&gt;reply();
+  // }
+  // Original version
+
+
+  // Handles all the requestVote RPC calls from a server.
+  void RaftServiceImpl::HandleRequestVote(const uint64_t& term,
+    const uint64_t& candidateId, const uint64_t& lastLogIndex,
+    const uint64_t& lastLogTerm,
+    int64_t* currentTerm,
+    int64_t* vote_granted,
+    rrr::DeferredReply* defer) {
+
+    int svrLastLogIndex = svr_-&gt;retLastLogIndex();
+    int svrLastLogTerm = svr_-&gt;retLastLogTerm();
+
+
+    if (term &gt; svr_-&gt;currentTerm) {
+      Log_info("%d server Term out of date", svr_-&gt;loc_id_);
+      svr_-&gt;becomeFollower(term);
+    }
+
+    Log_info("Server %d received request from %d for term %d with lastlogindex %d and lastlogterm %d and my index %d and term %d", svr_-&gt;loc_id_, candidateId, term, lastLogIndex, lastLogTerm, svr_-&gt;retLastLogIndex(), svr_-&gt;retLastLogTerm());
+
+
+    if ((svr_-&gt;currentTerm == term) && (svr_-&gt;votedFor == -1 || svr_-&gt;votedFor == candidateId)
+      && ((lastLogTerm &gt; svrLastLogTerm) || (lastLogTerm == svrLastLogTerm && lastLogIndex &gt;= svrLastLogIndex))) {
+      *vote_granted = 1;
+      svr_-&gt;votedFor = candidateId;
+      Log_info("Server %d voted for %d", svr_-&gt;loc_id_, svr_-&gt;votedFor);
+      svr_-&gt;resetTimer();
+      // svr_-&gt;currentTerm = term;
+      // Log_info("Reached here and voted for: %d %d", candidateId, *vote_granted);
+    }
+    else {
+      *vote_granted = 0;
+    }
+
+    *currentTerm = svr_-&gt;currentTerm;
+
+    Log_info("Server %d giving response to %d and voting %d for term %d", svr_-&gt;loc_id_, candidateId, *vote_granted, *currentTerm);
+
+    defer-&gt;reply();
+  }
+
+
+  // Consider depricated, but HandleAppendEntries is built over this logic.
+  void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t& term,
+    const uint64_t& candidateId,
+    int64_t* currentTerm,
+    int64_t* vote_granted,
+    rrr::DeferredReply* defer) {
+
+    // Log_info("Append entry for term %d from Server %d", term, candidateId);
+
+    if (term &gt; svr_-&gt;currentTerm) {
+      Log_info("%d server term out of date", svr_-&gt;loc_id_);
+      svr_-&gt;becomeFollower(term);
+    }
+
+    *vote_granted = 0;
+
+    if (term == svr_-&gt;currentTerm) {
+      if (svr_-&gt;state != "follower") {
+        svr_-&gt;becomeFollower(term);
+      }
+      svr_-&gt;resetTimer();
+      *vote_granted = 1;
+    }
+
+    /* Your code here */
+
+    *currentTerm = svr_-&gt;currentTerm;
+
+    Log_info("Server %d replied with term %d and granted %d", svr_-&gt;loc_id_, svr_-&gt;currentTerm, *vote_granted);
+    defer-&gt;reply();
+  }
+
+
+  // Test sample to see how the function works.
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match225-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  void RaftServiceImpl::HandleExampleRpc(const string& req,
+    string* res,
+    rrr::DeferredReply* defer) {
+    /* Your code here */
+    Log_info("receive an rpc: %s", req.c_str());
+    *res = svr_-&gt;state;
+</FONT>    Log_info("Reply kar diya");
+    defer-&gt;reply();
+  }
+
+  // void RaftServiceImpl::HandleAppendEntries(const MarshallDeputy& md_cmd,
+  //   bool_t* followerAppendOK,
+  //   rrr::DeferredReply* defer) {
+  //   /* Your code here */
+  //   std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(md_cmd).sp_data_;
+  //   *followerAppendOK = false;
+  //   defer-&gt;reply();
+  // }  //Original version
+
+
+  // Receives AppendEntry RPC calls and handles it accordingly.
+  void RaftServiceImpl::HandleAppendEntries(const uint64_t& term, const uint64_t& candidateId,
+    const uint64_t& prevLogIndex, const uint64_t& prevLogTerm, const vector&lt;MarshallDeputy&gt;& logEntryCommand,
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match225-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    const vector&lt;uint32_t&gt;& logEntryTerm, const uint64_t& leaderCommit,
+    int64_t* currentTerm,
+    int64_t* Success,
+    rrr::DeferredReply* defer) {
+    /* Your code here */
+
+
+    vector&lt;shared_ptr&lt;Marshallable&gt;&gt; commandEntries;
+    for (int i = 0; i &lt; logEntryCommand.size(); i++) {
+</FONT>      shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(logEntryCommand[i]).sp_data_;
+      commandEntries.push_back(cmd);
+    }
+
+
+    Log_info("Server %d Append entry for term %d from Server %d with leadercommit %d (currentCommit %d, size %d)", svr_-&gt;loc_id_, term, candidateId, leaderCommit, svr_-&gt;commitIndex, logEntryCommand.size());
+
+    if (term &gt; svr_-&gt;currentTerm) {
+      Log_info("%d server term out of date", svr_-&gt;loc_id_);
+      svr_-&gt;becomeFollower(term);
+    }
+
+    *Success = 0;
+
+    if (term == svr_-&gt;currentTerm) {
+      if (svr_-&gt;state != "follower") {
+        svr_-&gt;becomeFollower(term);
+      }
+      svr_-&gt;resetTimer();
+
+      Log_info("Reaching here");
+
+
+      if ((prevLogIndex == -1) || (prevLogIndex &lt; svr_-&gt;log.size() && prevLogTerm == svr_-&gt;log[prevLogIndex].term)) {
+        *Success = 1;
+
+        Log_info("Log size for server %d is %d with prevlogterm %d and prevlogIndex %d", svr_-&gt;loc_id_, svr_-&gt;log.size(), prevLogTerm, prevLogIndex);
+
+        int logInsertIndex = prevLogIndex + 1;  //assuming correct
+        int newEntriesIndex = 0;
+
+
+        while (true) {
+
+          if (logInsertIndex &gt;= svr_-&gt;log.size() || newEntriesIndex &gt;= commandEntries.size()) {
+            break;
+          }
+          if (svr_-&gt;log[logInsertIndex].term != logEntryTerm[newEntriesIndex]) {
+            break;
+          }
+
+          logInsertIndex++;
+          newEntriesIndex++;
+        }
+
+        if (newEntriesIndex &lt; commandEntries.size()) {
+          Log_info("Server %d Inserting Entries from %d to %d Received Append from %d", svr_-&gt;loc_id_, logInsertIndex, newEntriesIndex, candidateId);
+
+          svr_-&gt;log.erase(svr_-&gt;log.begin() + logInsertIndex, svr_-&gt;log.end());
+
+          for (int i = newEntriesIndex; i &lt; commandEntries.size(); i++) {
+
+            svr_-&gt;log.push_back({ commandEntries[i], (int)logEntryTerm[i] });   //change i
+            Log_info("Server %d Inserted an entry at index %d", svr_-&gt;loc_id_, i);
+
+          }
+
+          //  Check again later
+
+          // svr_-&gt;log.insert(svr_-&gt;log.end(), commandEntries.begin() + newEntriesIndex, commandEntries.end());
+          // svr_-&gt;commitIndex = leaderCommit;
+
+
+        }
+
+
+      }
+
+      Log_info("reaching here with %d leaderCommit %d and %d servercommit %d", candidateId, leaderCommit, svr_-&gt;loc_id_, svr_-&gt;commitIndex);
+      if ((int)leaderCommit &gt; (int)svr_-&gt;commitIndex) {
+        svr_-&gt;commitIndex = min((int)leaderCommit, (int)(svr_-&gt;log.size() - 1));
+
+        Log_info("Server %d setting commit index to %d", svr_-&gt;loc_id_, svr_-&gt;commitIndex);
+        svr_-&gt;commitEntry();
+      }
+
+
+    }
+
+
+    *currentTerm = svr_-&gt;currentTerm;
+    Log_info("Server %d replied with term %d and granted %d", svr_-&gt;loc_id_, svr_-&gt;currentTerm, *Success);
+
+    defer-&gt;reply();
+  }
+
+
+  // This RPC helped to understand how the calls are handled.
+  void RaftServiceImpl::HandleHelloRpc(const string& req,
+    string* res,
+    rrr::DeferredReply* defer) {
+    /* Your code here */
+    Log_info("receive an rpc: %s", req.c_str());
+    *res = "world";
+    Log_info("Reply kar diya");
+    defer-&gt;reply();
+  }
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

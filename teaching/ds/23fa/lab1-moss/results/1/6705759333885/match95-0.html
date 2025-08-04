@@ -1,0 +1,202 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-NamanJ9810/src/deptran/raft/commo.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-NamanJ9810/src/deptran/raft/commo.cc<p><PRE>
+
+#include "commo.h"
+#include "../rcc/graph.h"
+#include "../rcc/graph_marshaler.h"
+#include "../command.h"
+#include "../procedure.h"
+#include "../command_marshaler.h"
+#include "raft_rpc.h"
+#include "macros.h"
+
+namespace janus {
+
+RaftCommo::RaftCommo(PollMgr* poll) : Communicator(poll) {
+}
+
+shared_ptr&lt;IntEvent&gt; 
+RaftCommo::SendRequestVote(parid_t par_id,
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match95-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                            siteid_t site_id,
+                       locid_t candidateId,
+                       uint64_t lastLogIndex,
+                       uint64_t lastLogTerm,
+                       uint64_t candidateTerm,
+                       uint64_t* resTerm,
+                       bool_t* voteGranted,
+                       bool_t* revertServer) {
+</FONT>  
+  Log_info("RPC Call SendRequestVote for candidate %lli ",candidateId);
+  auto proxies = rpc_par_proxies_[par_id];
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  for (auto& p : proxies) {
+    if (p.first == site_id) {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [resTerm,voteGranted,revertServer,ev](Future* fu) {
+        fu-&gt;get_reply() &gt;&gt; *resTerm;
+        fu-&gt;get_reply() &gt;&gt; *voteGranted;
+        fu-&gt;get_reply() &gt;&gt; *revertServer;
+        ev-&gt;Set(1);
+      };
+      Call_Async(proxy, RequestVote, candidateId, lastLogIndex, lastLogTerm, candidateTerm, fuattr);
+    }
+  }
+  return ev;
+}
+
+/*void RaftCommo::SendRequestVote(parid_t par_id,
+                                siteid_t site_id,
+                                uint64_t candidateId,
+                                uint64_t lastLogIndex,
+                                uint64_t lastLogTerm,
+                                uint64_t candidateTerm) {
+  
+  Log_info("RPC Call SendRequestVote"); 
+  auto proxies = rpc_par_proxies_[par_id];
+  for (auto& p : proxies) {
+    if (p.first != site_id) {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [](Future* fu) {
+        // this is a handler that will be invoked when the RPC returns 
+        uint64_t ret1;
+        bool_t vote_granted;
+        /* retrieve RPC return values in order 
+        fu-&gt;get_reply() &gt;&gt; ret1;
+        fu-&gt;get_reply() &gt;&gt; vote_granted;
+        /* process the RPC response here 
+      };
+      /* Always use Call_Async(proxy, RPC name, RPC args..., fuattr)
+      * to asynchronously invoke RPCs 
+      Call_Async(proxy, RequestVote, candidateId, lastLogIndex, lastLogTerm, currentTerm, fuattr);
+    }
+  }
+}*/
+
+shared_ptr&lt;IntEvent&gt; 
+RaftCommo::SendAppendEntries(parid_t par_id,
+                                siteid_t site_id,
+                                uint64_t lastLogIndex,
+                                uint64_t lastLogTerm,
+                                uint64_t leaderTerm,
+                                locid_t leaderId,
+                                uint64_t leaderCommit,
+                                uint64_t appendTerm,
+                                shared_ptr&lt;Marshallable&gt; cmd,
+                                uint64_t* resTerm,
+                                bool_t* revertServer,
+                                bool_t* followerAppendOK,
+                                bool_t* decrement,
+                                uint64_t* followerLogSize) {
+  /*
+   * More example code for sending a single RPC to server at site_id
+   * You may modify and use this function or just use it as a reference
+   */
+  Log_info("RPC Call AppendEntries for leader %lli to server %lli",leaderId,site_id); 
+  auto proxies = rpc_par_proxies_[par_id];
+  //Log_info("130 running in leader %lli",loc_id_);
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  //Log_info("132 running in leader %lli",loc_id_);
+  for (auto& p : proxies) {
+    if (p.first == site_id) {
+      //Log_info("135 running in leader %lli",loc_id_);
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      //Log_info("138 running in leader %lli",loc_id_);
+      fuattr.callback = [resTerm,revertServer,followerAppendOK,followerLogSize,decrement,ev](Future* fu) {
+        fu-&gt;get_reply() &gt;&gt; *resTerm;
+        fu-&gt;get_reply() &gt;&gt; *revertServer;
+        fu-&gt;get_reply() &gt;&gt; *followerAppendOK;
+        fu-&gt;get_reply() &gt;&gt; *decrement;
+        fu-&gt;get_reply() &gt;&gt; *followerLogSize;
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match95-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        ev-&gt;Set(1);
+      };
+      //Log_info("148 running in leader %lli",loc_id_);
+      MarshallDeputy md(cmd);
+      //Log_info("150 running in leader %lli",loc_id_);
+      //Log_info("Before async call of leader %lli to server %lli",leaderId,site_id);
+      Call_Async(proxy, AppendEntries, lastLogIndex, lastLogTerm, leaderTerm, leaderId, leaderCommit,appendTerm, md, fuattr);
+</FONT>      //Log_info("After async call of leader %lli to server %lli",leaderId,site_id);
+    }
+  }
+  return ev;
+}
+
+shared_ptr&lt;IntEvent&gt; 
+RaftCommo::SendHeartbeat(parid_t par_id,
+                                siteid_t site_id,
+                                uint64_t lastLogIndex,
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match95-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                uint64_t lastLogTerm,
+                                uint64_t leaderTerm,
+                                locid_t leaderId,
+                                uint64_t leaderCommit,
+                                uint64_t* resTerm,
+                                bool_t* revertServer,
+                                bool_t* followerAppendOK,
+                                bool_t* decrement) {
+  
+  Log_info("RPC Call SendHeartbeat for leader %lli to server %lli",leaderId,site_id); 
+</FONT>  auto proxies = rpc_par_proxies_[par_id];
+  //Log_info("130 running in leader %lli",loc_id_);
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  //Log_info("132 running in leader %lli",loc_id_);
+  for (auto& p : proxies) {
+    if (p.first == site_id) {
+      //Log_info("135 running in leader %lli",loc_id_);
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      //Log_info("138 running in leader %lli",loc_id_);
+      fuattr.callback = [resTerm,revertServer,followerAppendOK,decrement,leaderId,ev,p](Future* fu) {
+        fu-&gt;get_reply() &gt;&gt; *resTerm;
+        fu-&gt;get_reply() &gt;&gt; *revertServer;
+        fu-&gt;get_reply() &gt;&gt; *followerAppendOK;
+        fu-&gt;get_reply() &gt;&gt; *decrement;
+        ev-&gt;Set(1);
+      };
+      //Log_info("148 running in leader %lli",loc_id_);
+      //Log_info("150 running in leader %lli",loc_id_);
+      //Log_info("Before async call of leader %lli to server %lli",leaderId,site_id);
+      Call_Async(proxy, Heartbeat, lastLogIndex, lastLogTerm, leaderTerm, leaderId, leaderCommit, fuattr);
+      //Log_info("After async call of leader %lli to server %lli",leaderId,site_id);
+    }
+  }
+  return ev;
+}
+
+shared_ptr&lt;IntEvent&gt; 
+RaftCommo::SendString(parid_t par_id, siteid_t site_id, const string& msg, string* res) {
+  Log_info("RPC Call SendString"); 
+  auto proxies = rpc_par_proxies_[par_id];
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  for (auto& p : proxies) {
+    if (p.first == site_id) {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [res,ev](Future* fu) {
+        fu-&gt;get_reply() &gt;&gt; *res;
+        ev-&gt;Set(1);
+      };
+      /* wrap Marshallable in a MarshallDeputy to send over RPC */
+      Call_Async(proxy, HelloRpc, msg, fuattr);
+    }
+  }
+  return ev;
+}
+
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

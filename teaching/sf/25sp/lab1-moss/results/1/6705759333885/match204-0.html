@@ -1,0 +1,111 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-a-preet/src/deptran/raft/commo.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-a-preet/src/deptran/raft/commo.cc<p><PRE>
+
+#include "commo.h"
+#include "../rcc/graph.h"
+#include "../rcc/graph_marshaler.h"
+#include "../command.h"
+#include "../procedure.h"
+#include "../command_marshaler.h"
+#include "raft_rpc.h"
+#include "macros.h"
+#include "server.h"
+
+namespace janus {
+
+RaftCommo::RaftCommo(PollMgr* poll) : Communicator(poll) {
+}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match204-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_9.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void RaftCommo::SendRequestVote(parid_t par_id,
+                                siteid_t site_id,
+                                uint64_t term,
+                                uint64_t candidateId,
+                                uint64_t lastLogIndex,
+                                uint64_t lastLogTerm,
+                                bool_t &vote_granted,
+                                bool_t &success) {
+  /*
+   * Example code for sending a single RPC to server at site_id
+   * You may modify and use this function or just use it as a reference
+   */
+
+  auto proxies = rpc_par_proxies_[par_id];
+</FONT>  for (auto& p : proxies) {
+    if (p.first == site_id) {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [site_id, &vote_granted, &success](Future* fu) {
+        fu-&gt;get_reply() &gt;&gt; vote_granted;
+        success = true;
+        // Log_info("receive an rpc: request vote from site %lu: %d", site_id, vote_granted);
+      };
+      /* wrap Marshallable in a MarshallDeputy to send over RPC */
+      // Log_info("send an rpc: term: %lu, candidateId: %lu, lastLogIndex: %lu, lastLogTerm: %lu", term, candidateId, lastLogIndex, lastLogTerm);
+      Call_Async(proxy, RequestVote, term, candidateId, lastLogIndex, lastLogTerm, fuattr);
+    }
+  }
+}
+
+void RaftCommo::SendAppendEntries(parid_t par_id,
+                                  siteid_t site_id,
+                                  uint64_t term,
+                                  uint64_t prevLogIndex,
+                                  uint64_t prevLogTerm,
+                                  const vector&lt;MarshallDeputy&gt;& entries,
+                                  const vector&lt;uint64_t&gt;& entry_terms,
+                                  uint64_t leaderCommit,
+                                  uint64_t& svr_term, 
+                                  bool_t& success) {
+  /*
+   * More example code for sending a single RPC to server at site_id
+   * You may modify and use this function or just use it as a reference
+   */
+  auto proxies = rpc_par_proxies_[par_id];
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match204-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_8.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  for (auto& p : proxies) {
+    if (p.first == site_id) {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [&svr_term, &success](Future* fu) {
+</FONT>        fu-&gt;get_reply() &gt;&gt; svr_term;
+        fu-&gt;get_reply() &gt;&gt; success;
+      };
+      /* wrap Marshallable in a MarshallDeputy to send over RPC */
+      Call_Async(proxy, AppendEntries, term, prevLogIndex, prevLogTerm, entries, entry_terms, leaderCommit, fuattr);
+    }
+  }
+}
+
+shared_ptr&lt;IntEvent&gt; 
+RaftCommo::SendString(parid_t par_id, siteid_t site_id, const string& msg, string* res) {
+  auto proxies = rpc_par_proxies_[par_id];
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  for (auto& p : proxies) {
+    if (p.first == site_id) {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [res,ev](Future* fu) {
+        fu-&gt;get_reply() &gt;&gt; *res;
+        ev-&gt;Set(1);
+      };
+      /* wrap Marshallable in a MarshallDeputy to send over RPC */
+      Call_Async(proxy, HelloRpc, msg, fuattr);
+    }
+  }
+  return ev;
+}
+
+
+} // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

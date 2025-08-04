@@ -1,0 +1,279 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-cs16b004/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-cs16b004/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+bool RaftServiceImpl::canVote(siteid_t candidate_id){
+  return (svr_-&gt;voted_for == candidate_id || svr_-&gt;voted_for ==-1);
+}
+bool RaftServiceImpl::isLatestLog( uint64_t candidate_last_log_term,int64_t received_log_index){
+
+  if(candidate_last_log_term &gt; svr_-&gt;last_log_term){
+    return true;
+  }else if(candidate_last_log_term == svr_-&gt;last_log_term && received_log_index &gt;= svr_-&gt;last_log_index){
+    return true;
+  }else{
+    if(svr_-&gt;last_log_index &gt; 330){
+      Log_info("Server %d Didn't Grant vote because my last log index is %d and last log term is %d",svr_-&gt;site_id_,svr_-&gt;last_log_index,svr_-&gt;last_log_term);
+      Log_info("And candidates last log index is %d and last log term is %d",received_log_index,candidate_last_log_term);
+    }
+    return false;
+  }
+}
+/*Handle request vote by comparing term and received log index term should be given priority*/
+void RaftServiceImpl::HandleRequestVote( const siteid_t& candidate_id,
+                                        const uint64_t& candidate_term,
+                                        const uint64_t& received_log_index,
+                                        const uint64_t& candidate_last_log_term,
+
+                                        uint64_t* ret1,
+                                        bool_t* vote_granted,
+                                        rrr::DeferredReply* defer) {
+
+  if(svr_-&gt;last_log_index &gt;=330){
+    Log_info("Received a vote request from %d at %d",candidate_id, svr_-&gt;site_id_);
+  }
+  /*Vote atmost once in a given term */
+  svr_-&gt;mtx_.lock();
+  if(svr_-&gt;current_term == candidate_term
+                      && canVote(candidate_id)
+                      && isLatestLog( candidate_last_log_term, received_log_index)){
+    *ret1 = candidate_term;
+    svr_-&gt;current_term = candidate_term;
+    svr_-&gt;my_state=Follower;
+    svr_-&gt;voted_for = candidate_id;
+    *vote_granted = 1;
+
+    //svr_-&gt;resetTimer();
+
+
+  }else if (svr_-&gt;current_term &lt; candidate_term
+    && isLatestLog(candidate_last_log_term,received_log_index)){
+      *ret1 = candidate_term;
+      svr_-&gt;current_term = candidate_term;
+      svr_-&gt;my_state=Follower;
+      svr_-&gt;voted_for = candidate_id;
+      *vote_granted = 1;
+
+      //svr_-&gt;resetTimer();
+
+  }
+
+  else{
+      if(svr_-&gt;current_term &lt; candidate_term){
+        svr_-&gt;current_term = candidate_term;
+        State last_state = svr_-&gt;my_state;
+        svr_-&gt;my_state = Follower;
+        if(last_state == Leader){
+          svr_-&gt;startTimer();
+        }
+      }
+      *ret1=svr_-&gt;current_term;
+      *vote_granted=false;
+  }
+  svr_-&gt;  mtx_.unlock();
+  defer-&gt;reply();
+
+}
+/*Dumb Append Entries for heartBeats only handles based on term received .....
+ can be optimised to send prevlog and other info so leader can
+ send appendentries with latest leaned values;*/
+void RaftServiceImpl::HandleEmptyAppendEntries(const siteid_t&  leaderId,
+                                          const uint64_t& leaderTerm,
+                                          const int64_t& l_commitIndex,
+                                          bool_t *followerAppendOK,
+                                          uint64_t *followerTerm,
+                                          uint64_t *followerIndex,
+                                          rrr::DeferredReply* defer) {
+  /* Your code here */
+    svr_-&gt;mtx_.lock();
+    if(leaderTerm &gt;= svr_-&gt;current_term){
+        svr_-&gt;resetTimer();
+
+      svr_-&gt;current_term=leaderTerm;
+      // int last_commit = svr_-&gt;commit_index;
+      svr_-&gt;commit_index = (l_commitIndex&lt;svr_-&gt;last_log_index)?l_commitIndex:svr_-&gt;last_log_index;
+      //Log_info("Received Commit Index %d and las log index is %d",l_commitIndex,svr_-&gt;last_log_index);
+      // while(last_commit&lt;=svr_-&gt;commit_index && last_commit &gt;=0){
+      //            Log_info("Commit Entry at index| %d |on server| %d|",last_commit,svr_-&gt;site_id_);
+      //
+      //             svr_-&gt;app_next_(*(svr_-&gt;logs[last_commit].cmd));
+      //             last_commit++;
+      // }
+      svr_-&gt;my_state=Follower;
+      *followerAppendOK=true;
+      *followerTerm=svr_-&gt;current_term;
+      *followerIndex=svr_-&gt;last_log_index;
+
+    }else{
+  *followerAppendOK=false;
+  *followerTerm = svr_-&gt;current_term;
+  *followerIndex=svr_-&gt;last_log_index;
+
+  }
+  svr_-&gt;mtx_.unlock();
+      defer-&gt;reply();
+
+}
+bool RaftServiceImpl::matchPreviousEntry(int64_t c_prevLogIndex, uint64_t c_prevLogTerm){
+  if(svr_-&gt;logs.empty() ){
+    return true;
+  }else if (c_prevLogIndex &gt; svr_-&gt;last_log_index ){
+    //Log_info("Didn't match here at server %d c_prevLogIndex %d, svr_-&gt; last_logIndex %d",svr_-&gt;site_id_, c_prevLogIndex,svr_-&gt;last_log_index);
+    return false;
+  }else if (svr_-&gt;logs[c_prevLogIndex].term == c_prevLogTerm){
+    return true;
+  }else{
+    //Log_info("Didn't match here2 at server %d, c_prevLogIndex %d, c_prevLogTerm %d, prev log term %d",svr_-&gt;site_id_,c_prevLogIndex,c_prevLogTerm,svr_-&gt;logs[c_prevLogIndex].term);
+    return false;
+  }
+}
+void RaftServiceImpl::HandleAppendEntries(const  siteid_t& leaderId,
+                            const  uint64_t& leaderTerm,
+                            const int64_t& prevLogIndex,
+                            const int64_t& prevLogTerm,
+                            const int64_t& leaderCommit,
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match139-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                            const vector&lt;MarshallDeputy&gt;& cmds,
+                            //const MarshallDeputy& md_cmd,
+                            const vector&lt;uint64_t&gt;& cmd_terms,
+                            bool_t* followerAppendOK,
+                            uint64_t* followerTerm,
+                            rrr::DeferredReply* defer){
+
+  //std::shared_ptr&lt;vector&lt;Marshallable&gt;&gt; cmds = dynamic_pointer_cast&lt;MarshallDeputy&&gt;(md_cmd).sp_data_;
+  vector&lt;LogEntry&gt;newEntries;
+</FONT>  for(int i=0;i&lt;cmds.size();i++){
+    std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(cmds[i]).sp_data_;
+    newEntries.push_back(LogEntry(cmd_terms[i],cmd));
+  }
+  svr_-&gt;mtx_.lock();
+  if(svr_-&gt;current_term &gt; leaderTerm){
+  //  cout&lt;&lt;"I "&lt;&lt;svr_-&gt;site_id_&lt;&lt;" Replying false because my term is "&lt;&lt;svr_-&gt;current_term&lt;&lt;endl;
+    *followerAppendOK = false;
+    *followerTerm = svr_-&gt;current_term;
+  }else if ( !matchPreviousEntry(prevLogIndex, prevLogTerm)){
+    //cout&lt;&lt;"I "&lt;&lt;svr_-&gt;site_id_&lt;&lt;" Replying false because didn't match at index "&lt;&lt;prevLogIndex&lt;&lt;" and term "&lt;&lt;prevLogTerm&lt;&lt;" Log size is "&lt;&lt;svr_-&gt;logs.size()&lt;&lt;endl;
+    *followerAppendOK = false;
+    *followerTerm = svr_-&gt;current_term;
+  }else if( matchPreviousEntry(prevLogIndex, prevLogTerm)){
+    //Log_info("Entry matched at %d and term %d on server %d",prevLogIndex,prevLogTerm,svr_-&gt;site_id_);
+    svr_-&gt;resetTimer();
+    if(svr_-&gt;logs.empty()){
+      /*If log empty push new entry*/
+      svr_-&gt;logs.insert(svr_-&gt;logs.end(),newEntries.begin(),newEntries.end());
+
+    }else {
+      /*If not empty erase all entries after that and append new entry*/
+      svr_-&gt;logs.erase(svr_-&gt;logs.begin()+prevLogIndex+1,svr_-&gt;logs.end());
+        svr_-&gt;logs.insert(svr_-&gt;logs.end(),newEntries.begin(),newEntries.end());
+    }
+    svr_-&gt;current_term  = leaderTerm;
+      svr_-&gt;last_log_index = svr_-&gt;logs.size()-1;
+    svr_-&gt;last_log_term = svr_-&gt;logs[svr_-&gt;last_log_index].term;
+    if(svr_-&gt;last_log_index&gt;331){
+      Log_info("Appended at Server %d cmd: term %d from index %d to index %d",svr_-&gt;site_id_,svr_-&gt;last_log_term,prevLogIndex+1 ,svr_-&gt;last_log_index);
+    }
+    /*followers's  commit_index is set by leader via heartbeats: this action is safe because leader is most up to date in majority
+    and also as a part of Empty AppendEntries */
+    svr_-&gt;commit_index = (leaderCommit &lt; svr_-&gt;last_log_index)?leaderCommit:svr_-&gt;last_log_index;
+    State last_state = svr_-&gt;my_state;
+    svr_-&gt;my_state=Follower;
+    if(last_state == Leader){
+      svr_-&gt;startTimer();
+    }
+  //  Log_info("Append OK log entry received from %d at index %d and term %d on server %d"
+    //                  , leaderId, svr_-&gt;last_log_index, svr_-&gt;last_log_term, svr_-&gt;site_id_);
+    *followerAppendOK=true;
+    *followerTerm=svr_-&gt;current_term;
+  }
+  svr_-&gt;mtx_.unlock();
+  defer-&gt;reply();
+  }
+/*Better HeartBeat Implementation*/
+  void RaftServiceImpl::HandleEmptyAppendEntries2(const  siteid_t& leaderId,
+                              const  uint64_t& leaderTerm,
+                              const int64_t& prevLogIndex,
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match139-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                              const int64_t& prevLogTerm,
+                              const int64_t& leaderCommit,
+                              bool_t* followerAppendOK,
+                              uint64_t* followerTerm,
+                              rrr::DeferredReply* defer){
+
+    //std::shared_ptr&lt;vector&lt;Marshallable&gt;&gt; cmds = dynamic_pointer_cast&lt;MarshallDeputy&&gt;(md_cmd).sp_data_;
+
+    if(svr_-&gt;current_term &gt; leaderTerm){
+    //  cout&lt;&lt;"I "&lt;&lt;svr_-&gt;site_id_&lt;&lt;" Replying false because my term is "&lt;&lt;svr_-&gt;current_term&lt;&lt;endl;
+      *followerAppendOK = false;
+      *followerTerm = svr_-&gt;current_term;
+</FONT>    }else if ( !matchPreviousEntry(prevLogIndex, prevLogTerm)){
+    //   if(svr_-&gt;last_log_index &lt;330){
+      // svr_-&gt;resetTimer();
+    // }
+      //svr_-&gt;timer_val-=50000;
+      //cout&lt;&lt;"I "&lt;&lt;svr_-&gt;site_id_&lt;&lt;" Replying false because didn't match at index "&lt;&lt;prevLogIndex&lt;&lt;" and term "&lt;&lt;prevLogTerm&lt;&lt;" Log size is "&lt;&lt;svr_-&gt;logs.size()&lt;&lt;endl;
+      *followerAppendOK = false;
+      *followerTerm = svr_-&gt;current_term;
+    }else if( matchPreviousEntry(prevLogIndex, prevLogTerm)){
+      //Log_info("Entry matched at %d and term %d on server %d",prevLogIndex,prevLogTerm,svr_-&gt;site_id_);
+      svr_-&gt;resetTimer();
+      int i=0;
+      // if(svr_-&gt;last_log_index &gt; 330){
+      //   if(i%3==0){
+      //     Log_info("reset Timer is called on server %d  dfrom server %d",svr_-&gt;site_id_, leaderId);
+      //   }
+      //   i++;
+      // }
+      svr_-&gt;current_term  = leaderTerm;
+        svr_-&gt;last_log_index = svr_-&gt;logs.size()-1;
+      svr_-&gt;last_log_term = svr_-&gt;logs[svr_-&gt;last_log_index].term;
+
+      svr_-&gt;commit_index = (leaderCommit &lt; svr_-&gt;last_log_index)?leaderCommit:svr_-&gt;last_log_index;
+      State last_state = svr_-&gt;my_state;
+      svr_-&gt;my_state=Follower;
+      if(last_state == Leader){
+        svr_-&gt;startTimer();
+      }
+    //  Log_info("Append OK log entry received from %d at index %d and term %d on server %d"
+      //                  , leaderId, svr_-&gt;last_log_index, svr_-&gt;last_log_term, svr_-&gt;site_id_);
+      *followerAppendOK=true;
+      *followerTerm=svr_-&gt;current_term;
+    }
+
+    defer-&gt;reply();
+    }
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  svr_-&gt;resetTimer();
+  Log_info("receive an rpc: %s at %d", req.c_str(), svr_-&gt;site_id_);
+  *res = "world";
+  defer-&gt;reply();
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

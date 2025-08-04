@@ -1,0 +1,78 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-AlexandraJeong/src/deptran/raft/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-AlexandraJeong/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+void RaftServiceImpl::HandleRequestVote(const uint64_t& c_term, 
+                                      const uint64_t& c_id, 
+                                      const uint64_t& last_log_index, 
+                                      const uint64_t& last_log_term, 
+                                      uint64_t* f_term, 
+                                      bool_t* vote_granted, 
+                                      rrr::DeferredReply* defer) {
+  /* Your code here */
+  svr_-&gt;OnVoteRequested(c_term, c_id, last_log_index, last_log_term, f_term, vote_granted, defer);
+}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match74-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_22.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void RaftServiceImpl::HandleAppendEntries(const uint64_t& l_term, 
+                                          const uint64_t& l_id, 
+                                          const uint64_t& prev_log_index, 
+                                          const uint64_t& prev_log_term, 
+                                          const std::vector&lt;uint64_t&gt;& terms, 
+                                          const std::vector&lt;MarshallDeputy&gt;& mds,
+                                          const uint64_t& l_commit, 
+                                          uint64_t* append_status,
+                                          uint64_t* f_term, 
+                                          rrr::DeferredReply* defer) {
+</FONT>  /* Your code here */
+  // don't commit if serverterm is higher than leaderterm
+  // or if doesnt contain log at prevlogindex
+  // or if prevlogterm doesnt match log at that index (if mismatch, delete all following logs)
+  svr_-&gt;OnAppendEntries(l_term, l_id, prev_log_index, prev_log_term, terms, mds, l_commit, append_status, f_term, defer);
+}
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match74-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_10.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t& l_term, 
+                                            const uint64_t& prev_log_index, 
+                                            const uint64_t& prev_log_term, 
+                                            const uint64_t& l_commit, 
+                                            uint64_t* f_term, 
+                                            rrr::DeferredReply* defer){
+</FONT>                                            
+  svr_-&gt;OnHeartbeat(l_term, prev_log_index, prev_log_term, l_commit, f_term, defer);
+}
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  Print("Got string in %ld", svr_-&gt;id_);
+  Log_info("receive an rpc: %s", req.c_str());
+  *res = "world";
+  defer-&gt;reply();
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

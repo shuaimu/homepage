@@ -1,0 +1,293 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-gokuu13/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-ojasdeshpande10-1/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+namespace janus {
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(15,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiMapMarshallable;
+                                     });
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match202-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+int64_t ShardMasterServiceImpl::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+</FONT>  // your code here
+  //Log_info("In join function ----&gt;");
+  int64_t commd_id = GetNextOpId();
+  *ret = 0;
+  auto evJoin = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  auto commd = make_shared&lt;MultiMapMarshallable&gt;();
+  commd-&gt;action_marshal = 0;
+  commd-&gt;cmd_id = commd_id;
+  commd-&gt;gsm_marshal = gid_server_map;
+  janus::RaftServer& svr_ = GetRaftServer();
+  Log_info("in server %d", svr_.loc_id_);
+  shared_ptr&lt;Marshallable&gt; cmd_raft = commd;
+  uint64_t index;
+  uint64_t term;
+  if(!svr_.Start(cmd_raft,&index,&term)) {
+    Log_info("not leader");
+    *ret=KV_NOTLEADER;
+  }
+  else {
+    Log_info("Waiting for replication");
+    Event_map.insert({commd_id,evJoin});
+
+    evJoin-&gt;Wait(3000000);
+    if(evJoin-&gt;get()) {
+      Log_info("join returning success");
+      *ret = KV_SUCCESS;
+    }
+    else {
+      Log_info("join returning timeout");
+      *ret = KV_TIMEOUT;
+    }
+  }
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  Log_info("In Leave function ----&gt;");
+  int64_t commd_id = GetNextOpId();
+  *ret = 0;
+  auto evLeave = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  auto commd = make_shared&lt;MultiMapMarshallable&gt;();
+  commd-&gt;action_marshal=1;
+  commd-&gt;cmd_id = commd_id;
+  commd-&gt;gids_marshal = gids;
+  janus::RaftServer& svr_ = GetRaftServer();
+  Log_info("in server %d", svr_.loc_id_);
+  shared_ptr&lt;Marshallable&gt; cmd_raft = commd;
+  uint64_t index;
+  uint64_t term;
+  if(!svr_.Start(cmd_raft,&index,&term)) {
+    Log_info("not leader");
+    *ret=KV_NOTLEADER;
+  }
+  else {
+    Log_info("Waiting for replication");
+    Event_map.insert({commd_id,evLeave});
+    evLeave-&gt;Wait(3000000);
+    if(evLeave-&gt;get()) {
+      *ret = KV_SUCCESS;
+    }
+    else {
+      *ret = KV_TIMEOUT;
+    }
+  }
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match202-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+    // your code here
+  // Log_info("In Move function ----&gt;");
+  // int unique_config_num;
+  // if(!configs_.empty()) {
+  //   ShardConfig newConfig = configs_.rbegin()-&gt;second;
+  //   unique_config_num = newConfig.number;
+  // }
+  // else {
+  //   unique_config_num = 0;
+  // }
+  // *ret = 0;
+  // auto evMove = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  // auto commd = make_shared&lt;MultiMapMarshallable&gt;();
+  // commd-&gt;action_marshal=2;
+  // commd-&gt;shard_marshal=shard;
+  // commd-&gt;gid_marshal = gid;
+  // janus::RaftServer& svr_ = GetRaftServer();
+  // Log_info("in server %d", svr_.loc_id_);
+  // shared_ptr&lt;Marshallable&gt; cmd_raft = commd;
+  // uint64_t index;
+  // uint64_t term;
+  // if(!svr_.Start(cmd_raft,&index,&term)) {
+  //   Log_info("not leader");
+  //   *ret=KV_NOTLEADER;
+  // }
+  // else {
+  //   Log_info("The unique config number is %d for Move", unique_config_num);
+  //   Log_info("Waiting for replication");
+  //   Event_map.insert({unique_config_num,evMove});
+  //   evMove-&gt;Wait(3000000);
+  //   if(evMove-&gt;get()) {
+  //     *ret = KV_SUCCESS;
+  //   }
+  //   else {
+  //     *ret = KV_TIMEOUT;
+  //   }
+  // }
+  // defer-&gt;reply();
+  // defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+</FONT>  // your code here
+  Log_info("In Query function ----&gt;");
+  int64_t commd_id = GetNextOpId();
+  int32_t temp_config_no=config_no;
+  *ret = 0;
+  if(config_no == -1) {
+    ShardConfig lastConfig = configs_.rbegin()-&gt;second;
+    temp_config_no=lastConfig.number;
+  }
+  auto evQuery = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  auto commd = make_shared&lt;MultiMapMarshallable&gt;();
+  commd-&gt;action_marshal=3;
+  commd-&gt;cmd_id = commd_id;
+  commd-&gt;config_no_marshal=temp_config_no;
+  Log_info("Suspect1");
+  janus::RaftServer& svr_ = GetRaftServer();
+  Log_info("Suspect2");
+  Log_info("in server %d", svr_.loc_id_);
+  shared_ptr&lt;Marshallable&gt; cmd_raft = commd;
+  uint64_t index;
+  uint64_t term;
+  if(!svr_.Start(cmd_raft,&index,&term)) {
+    Log_info("not leader");
+    *ret=KV_NOTLEADER;
+  }
+  else {
+    Log_info("Waiting for replication");
+    Event_map.insert({commd_id,evQuery});
+    evQuery-&gt;Wait(3000000);
+    if(evQuery-&gt;get()) {
+      *config = configs_[temp_config_no];
+      *ret = KV_SUCCESS;
+    }
+    else {
+      *ret = KV_TIMEOUT;
+    }
+  }
+  defer-&gt;reply();
+}
+uint32_t ShardMasterServiceImpl::getNewGroupforShard(const int32_t& shard, ShardConfig* config,const uint32_t& gid) {
+  map&lt;uint32_t, uint32_t&gt; shard_count{};
+  uint32_t min_Shard_count = 0;
+  for(auto mapping: config-&gt;shard_group_map_) {
+    if(mapping.second!=gid)
+    shard_count[mapping.second]++;
+  }
+  uint32_t newGrp = 0;
+  int i=0;
+  for(auto mapping : shard_count) {
+    if(i==0) {
+      min_Shard_count=mapping.second;
+      newGrp=mapping.first;
+    }
+    if(mapping.second&lt;min_Shard_count) {
+      min_Shard_count=mapping.second;
+      newGrp=mapping.first;
+    }
+    i++;
+  }
+  return newGrp;
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  // your code here
+  //auto v = dynamic_pointer_cast&lt;MultiMapMarshallable&gt;(m);
+  Log_info("in next Command for shardmaster");
+  auto v = (MultiMapMarshallable*)(&m);
+  if(v-&gt;action_marshal == 0) {
+    ShardConfig newConfig;
+    if(!configs_.empty()) {
+      newConfig = configs_.rbegin()-&gt;second;
+    }
+    else {
+      newConfig = ShardConfig();
+    }
+    for (const auto& mapping : v-&gt;gsm_marshal) {
+          uint32_t groupID = mapping.first;
+          const std::vector&lt;uint32_t&gt;& serverList = mapping.second;
+          newConfig.group_servers_map_[groupID] = serverList;
+          for (uint32_t serverID : serverList) {
+            if(serverID%10!=0) {
+              newConfig.shard_group_map_[serverID % 10] = groupID;
+            }
+            else {
+              newConfig.shard_group_map_[10] = groupID;
+            }
+              
+          }
+    }    
+    newConfig.number++;
+    configs_[newConfig.number] = newConfig;
+    Log_info("the config number checked in join is %d",newConfig.number);
+    if(Event_map.find(v-&gt;cmd_id)!=Event_map.end()) {
+       Log_info("join in event map");
+      Event_map[v-&gt;cmd_id]-&gt;Set(1);
+    }
+    else {
+      Log_info("join not in event map");
+    }  
+  }
+  else if(v-&gt;action_marshal == 1) {
+    ShardConfig newConfig;
+    if(!configs_.empty()) {
+      newConfig = configs_.rbegin()-&gt;second;
+    }
+    else {
+      newConfig = ShardConfig();
+    }
+
+    for(uint32_t Gid: v-&gt;gids_marshal) {
+      newConfig.group_servers_map_.erase(Gid);
+      for(auto& mapping : newConfig.shard_group_map_) {
+        if(mapping.second == Gid) {
+          mapping.second = getNewGroupforShard(mapping.first,&newConfig,Gid);
+        }
+      }
+    }
+    newConfig.number++;
+    configs_[newConfig.number] = newConfig;
+    if(Event_map.find(v-&gt;cmd_id)!=Event_map.end()) {
+      Event_map[v-&gt;cmd_id]-&gt;Set(1);
+    }
+
+  }
+  else if(v-&gt;action_marshal == 2) {
+
+  }
+  else if(v-&gt;action_marshal == 3) {
+    if(configs_.find(v-&gt;config_no_marshal) != configs_.end()) {
+      if(Event_map.find(v-&gt;cmd_id) != Event_map.end()) {
+        Log_info("Setting event value for query");
+        Event_map[v-&gt;cmd_id]-&gt;Set(1);
+      }
+    }
+
+  }
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  Log_info(" IN Create Client ");
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  return cli;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

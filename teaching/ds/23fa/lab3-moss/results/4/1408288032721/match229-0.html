@@ -1,0 +1,191 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-Rajas-Mateti/src/shardkv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-Rajas-Mateti/src/shardkv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+int64_t ShardKvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match229-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_26.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int ShardKvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+    // lab_shard: fill in your code
+  kv_store_[k] = v;
+  //   auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  //   s-&gt;data_.push_back(to_string(oid));
+  //   s-&gt;data_.push_back("put");
+  //   s-&gt;data_.push_back(k);
+  //   s-&gt;data_.push_back(v);
+  //   auto cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  //   uint64_t index;
+  //   uint64_t term;
+  //   Log_info("Sending Put");
+  //   bool_t agreement = GetRaftServer().Start(cmd, &index, &term);
+  //   Log_info("Sent Put");
+  //   auto event = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  //   if (agreement)
+  //   {
+  //     event-&gt;Wait(600000);
+  //     if (operationdB.find(to_string(oid) + "put") != operationdB.end() &&
+  //         operationdB[to_string(oid) + "put"] == true)
+  //       return KV_SUCCESS;
+  //     else
+  //     {
+  //       // Log_info("Put No leader : %d", sp_log_svr_-&gt;loc_id_);
+  //       return KV_NOTLEADER;
+  //     }
+  // }
+  // else if(!agreement)
+  //   return KV_NOTLEADER;
+  // else
+  //   return KV_TIMEOUT;
+
+  return KV_SUCCESS;
+}
+
+int ShardKvServer::Append(const uint64_t& oid, 
+                     const string& k,
+</FONT>                     const string& v) {
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match229-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_15.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  kv_store_[k] += v;
+  // Log_info("Sending Append");
+  // auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  // s-&gt;data_.push_back(to_string(oid));
+  // s-&gt;data_.push_back("append");
+  // s-&gt;data_.push_back(k);
+  // s-&gt;data_.push_back(v);
+  // auto cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  // uint64_t index;
+  // uint64_t term;
+  // bool_t agreement = GetRaftServer().Start(cmd, &index, &term);
+  // auto event = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  // if(agreement){
+  //   string s = to_string(oid) + "append";
+  //   //Log_info("Operation Id = %s", s.c_str());
+  //   event-&gt;Wait(600000);
+  //   if(operationdB.find(to_string(oid)+"append") != operationdB.end() && 
+  //      operationdB[to_string(oid)+"append"] == true)
+  //     return KV_SUCCESS;
+  //   else{
+  //     //Log_info("Append No leader : %d", sp_log_svr_-&gt;loc_id_);
+  //     return KV_NOTLEADER;
+  //   }
+  // }
+  // else if(!agreement)
+  //   return KV_NOTLEADER;
+  // else
+  //   return KV_TIMEOUT;
+
+  return KV_SUCCESS;
+}
+
+int ShardKvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+</FONT>  *v = kv_store_.at(k);
+  return KV_SUCCESS;
+  // Log_info("Sending Get");
+  // auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  // s-&gt;data_.push_back(to_string(oid));
+  // s-&gt;data_.push_back("get");
+  // s-&gt;data_.push_back(k);
+  // //s-&gt;data_.push_back(v);
+  // auto cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  // uint64_t index;
+  // uint64_t term;
+  // bool_t agreement = GetRaftServer().Start(cmd, &index, &term);
+  // auto event = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  // //Log_info("Agreement %d", agreement);
+  // //Log_info("Ops Id in GET= %s", k.c_str()11);
+  // event-&gt;Wait(600000);
+
+  // if (agreement)
+  // {
+  //   if(operationdB.find(to_string(oid)+"get") != operationdB.end() && 
+  //      operationdB[to_string(oid)+"get"] == true){
+  //       *v = kv_store_.at(k);
+  //       return KV_SUCCESS;
+  //   }
+  //   else{
+  //     //Log_info("Get No leader : %d", sp_log_svr_-&gt;loc_id_);
+  //     return KV_NOTLEADER;
+  //   }  
+  // }
+  // else if(!agreement){
+  //   if(operationdB.find(to_string(oid)+"get") != operationdB.end() && 
+  //      operationdB[to_string(oid)+"get"] == true){
+  //       *v = kv_store_.at(k);
+  //       return KV_SUCCESS;
+  //   }
+  //   else
+  //     return KV_NOTLEADER;
+  // }
+  // else
+  //   return KV_TIMEOUT;
+}
+
+void ShardKvServer::OnNextCommand(Marshallable& m) {
+    // lab_shard: fill in your code
+  // auto v = (MultiStringMarshallable*)(&m);
+  // string opId = v-&gt;data_[0];
+  // string ops = v-&gt;data_[1];
+  // string key = v-&gt;data_[2];
+  // if(ops == "put"){
+  //   Log_info("SVR : %d, Ops Id in on Next PUT= %s", sp_log_svr_-&gt;site_id_,key.c_str());
+  //   string value = v-&gt;data_[3];
+  //   kv_store_[key] = value;
+  //   operationdB[opId + ops] = true;
+  // }
+  // else if(ops == "append"){
+  //   Log_info("SVR : %d, Ops Id in on Next APPEND= %s", sp_log_svr_-&gt;site_id_,key.c_str());
+  //   string value = v-&gt;data_[3];
+  //   kv_store_[key] += value;
+  //   operationdB[opId + ops] = true;
+  // }
+  // else if(ops == "get"){
+  //   Log_info("SVR : %d, Ops Id in on Next GET= %s", sp_log_svr_-&gt;site_id_,key.c_str());
+  //   operationdB[opId + ops] = true;
+  // }
+
+  // for(auto i:operationdB){
+  //   Log_info("Ops DB: %s", i.first.c_str());
+  // }
+
+  // for(auto i: dB){
+  //   Log_info("key = %s, value = %s", i.first.c_str(), i.second.c_str());
+  // }
+  // Log_info("-------------------------------");
+  /* your code here */
+}
+
+shared_ptr&lt;ShardKvClient&gt; ShardKvServer::CreateClient(Communicator* comm) {
+  auto cli = make_shared&lt;ShardKvClient&gt;();
+  cli-&gt;commo_ = comm;
+  verify(cli-&gt;commo_ != nullptr);
+  static uint32_t id = 0;
+  id++;
+  cli-&gt;cli_id_ = id; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

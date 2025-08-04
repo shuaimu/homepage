@@ -1,0 +1,126 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-shrh18/src/shardkv/client.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-NamanJ9810/src/shardkv/client.cc<p><PRE>
+
+
+#include "client.h"
+#include "server.h"
+#include "../shardmaster/service.h"
+#include "../shardmaster/client.h"
+
+namespace janus {
+
+int ShardKvClient::Op(function&lt;int(uint32_t*)&gt; func) {
+  uint64_t t1 = Time::now();
+  while (true) {
+    uint64_t t2 = Time::now();
+    if (t2 - t1 &gt; 10000000) {
+      return KV_TIMEOUT;
+    }
+    uint32_t ret = 0;
+    int r1; 
+    //Log_info("Before calling function for leader_idx_ %lli in Op",leader_idx_);
+    r1 = func(&ret);
+    if (r1 == ETIMEDOUT || ret == KV_TIMEOUT) {
+      leader_idx_ = (leader_idx_+1) % 5;
+      return KV_TIMEOUT;
+    }
+    if (ret == KV_SUCCESS) {
+      return KV_SUCCESS;
+    }
+    if (ret == KV_NOTLEADER) {
+      //Log_info("Before updating leader_idx_ in Op:%lli",leader_idx_);
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match172-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      leader_idx_ = (leader_idx_+1) % 5;
+      //Log_info("After updating leader_idx_ in Op:%lli",leader_idx_);
+
+    }
+  }
+
+}
+
+int ShardKvClient::Put(const string& k, const string& v) {
+  shardid_t shard_id = Key2Shard(k);
+  Log_info("Leader before updating: %lli",leader_idx_);
+</FONT>  auto smc = make_shared&lt;ShardMasterClient&gt;();
+  Log_info("Before creating client");
+  smc-&gt;commo_ = commo_;
+  Log_info("After creating client");
+  //smc.leader_idx_ = sms.sp_log_svr_-&gt;site_id_;
+  //auto cli = sms.CreateClient();
+  ShardConfig config;
+  ShardConfig* ptr_config = &config;
+  //sms.Query(-1,ptr_ret,ptr_config,);
+  Log_info("Before calling query from Shardmaster client");
+  uint32_t ret = smc-&gt;Query(-1,ptr_config);
+  Log_info("After calling query from Shardmaster client");
+  uint32_t partition = config.shard_group_map_[shard_id];
+  Log_info("Partition: %lli",partition);
+  return Op([&](uint32_t* r)-&gt;int{
+    return Proxy(partition*5 + leader_idx_).Put(GetNextOpId(), k, v, r);
+  });
+}
+
+ShardKvProxy& ShardKvClient::Proxy(siteid_t site_id) {
+  verify(commo_);
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match172-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  auto p = (ShardKvProxy*)commo_-&gt;rpc_proxies_.at(site_id);
+  return *p; 
+}
+
+int ShardKvClient::Append(const string& k, const string& v) {
+  shardid_t shard_id = Key2Shard(k);
+  Log_info("Leader before updating: %lli",leader_idx_);
+</FONT>  auto smc = make_shared&lt;ShardMasterClient&gt;();
+  Log_info("Before creating client");
+  smc-&gt;commo_ = commo_;
+  Log_info("After creating client");
+  //smc.leader_idx_ = sms.sp_log_svr_-&gt;site_id_;
+  //auto cli = sms.CreateClient();
+  ShardConfig config;
+  ShardConfig* ptr_config = &config;
+  //sms.Query(-1,ptr_ret,ptr_config,);
+  Log_info("Before calling query from Shardmaster client");
+  uint32_t ret = smc-&gt;Query(-1,ptr_config);
+  Log_info("After calling query from Shardmaster client");
+  uint32_t partition = config.shard_group_map_[shard_id];
+  Log_info("Partition: %lli",partition);
+  return Op([&](uint32_t* r)-&gt;int{
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match172-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    return Proxy(partition * 5 + leader_idx_).Append(GetNextOpId(), k, v, r);
+  });
+}
+
+int ShardKvClient::Get(const string& k, string* v) {
+  shardid_t shard_id = Key2Shard(k);
+  Log_info("Leader before updating: %lli",leader_idx_);
+</FONT>  auto smc = make_shared&lt;ShardMasterClient&gt;();
+  Log_info("Before creating client");
+  smc-&gt;commo_ = commo_;
+  Log_info("After creating client");
+  //smc.leader_idx_ = sms.sp_log_svr_-&gt;site_id_;
+  //auto cli = sms.CreateClient();
+  ShardConfig config;
+  ShardConfig* ptr_config = &config;
+  //sms.Query(-1,ptr_ret,ptr_config,);
+  Log_info("Before calling query from Shardmaster client");
+  uint32_t ret = smc-&gt;Query(-1,ptr_config);
+  Log_info("After calling query from Shardmaster client");
+  uint32_t partition = config.shard_group_map_[shard_id];
+  Log_info("Partition: %lli",partition);
+  return Op([&](uint32_t* r)-&gt;int{
+    return Proxy(partition * 5 + leader_idx_).Get(GetNextOpId(), k, r, v);
+  });
+}
+
+} // namesapce janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

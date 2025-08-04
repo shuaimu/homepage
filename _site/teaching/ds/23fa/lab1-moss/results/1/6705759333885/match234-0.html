@@ -1,0 +1,168 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-hieuqm/src/deptran/raft/commo.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-hieuqm/src/deptran/raft/commo.cc<p><PRE>
+
+#include "commo.h"
+#include "../rcc/graph.h"
+#include "../rcc/graph_marshaler.h"
+#include "../command.h"
+#include "../procedure.h"
+#include "../command_marshaler.h"
+#include "raft_rpc.h"
+#include "macros.h"
+
+namespace janus {
+
+RaftCommo::RaftCommo(PollMgr* poll) : Communicator(poll) {
+}
+
+shared_ptr&lt;RaftVoteEvent&gt;
+RaftCommo::SendRequestVote(parid_t par_id,
+                           siteid_t site_id,
+                           uint64_t candidate_term,
+                           uint64_t candidate_id,
+                           uint64_t last_idx,
+                           uint64_t last_term) {
+
+  auto proxies = rpc_par_proxies_[par_id];
+  int num_servers = proxies.size();
+  int majority = std::ceil(double(num_servers) / 2);
+  auto ev = Reactor::CreateSpEvent&lt;RaftVoteEvent&gt;(num_servers, majority);
+  // Log_debug("Server %d, num proxies %d, majority %d, candidate for term %d", site_id, proxies.size(), majority, candidate_term);
+  ev-&gt;FeedResponse(candidate_term, true); // vote for self
+
+  for (auto& p : proxies) {
+    if (p.first == site_id)
+      continue;
+
+    RaftProxy *proxy = (RaftProxy*) p.second;
+    FutureAttr fuattr;
+    fuattr.callback = [ev](Future* fu) {
+      uint64_t term;
+      bool_t vote_granted = 0;
+      fu-&gt;get_reply() &gt;&gt; term;
+      fu-&gt;get_reply() &gt;&gt; vote_granted;
+      ev-&gt;FeedResponse(term, vote_granted);
+    };
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match234-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    Call_Async(proxy, RequestVote, candidate_term, candidate_id, last_idx,
+               last_term, fuattr);
+  }
+
+  return ev;
+}
+
+void RaftCommo::SendAppendEntries(parid_t par_id,
+                                  siteid_t site_id,
+                                  siteid_t dest_id,
+                                  uint64_t leader_term,
+                                  uint64_t leader_id,
+</FONT>                                  uint64_t prev_log_index,
+                                  uint64_t prev_log_term,
+                                  vector&lt;shared_ptr&lt;Marshallable&gt;&gt; cmds,
+                                  uint64_t leader_commit_index,
+                                  shared_ptr&lt;struct AppendStatus&gt;& status) {
+  auto proxies = rpc_par_proxies_[par_id];
+  auto p = proxies[dest_id];
+
+  RaftProxy *proxy = (RaftProxy*) p.second;
+  FutureAttr fuattr;
+  callback_func cb_func = update_index_func;
+  uint64_t follower_accept_idx = prev_log_index + cmds.size();
+  fuattr.callback = [p, leader_term, status, cb_func, follower_accept_idx](Future* fu) {
+    uint64_t follower_term;
+    uint8_t follower_append_ok = 0;
+    fu-&gt;get_reply() &gt;&gt; follower_term;
+    fu-&gt;get_reply() &gt;&gt; follower_append_ok;
+    Log_debug("AppendEntries response from %d: term %ld, ok: %d",
+          p.first, follower_term, follower_append_ok & 1);
+    if (follower_append_ok && follower_term == leader_term) {
+      status-&gt;success = true;
+      cb_func(p.first, follower_accept_idx);
+    } else if (!follower_append_ok && follower_term == UINT64_MAX) {
+      status-&gt;disconnected = true;
+    } else if (!follower_append_ok && follower_term &gt; leader_term) {
+      status-&gt;is_old_leader = true;
+    }
+    status-&gt;done = true;
+  };
+  vector&lt;MarshallDeputy&gt; mds;
+  for (auto& cmd : cmds) {
+    MarshallDeputy md(cmd);
+    mds.push_back(md);
+  }
+
+  Call_Async(proxy, AppendEntries, leader_term, leader_id, prev_log_index,
+             prev_log_term, mds, leader_commit_index, fuattr);
+}
+
+// shared_ptr&lt;IntEvent&gt;
+void
+RaftCommo::SendEmptyAppendEntries(parid_t par_id,
+                                       siteid_t site_id,
+                                       siteid_t dest_id,
+                                       uint64_t leader_term,
+                                       uint64_t prev_log_index,
+                                       uint64_t prev_log_term,
+                                       uint64_t leader_commit_index,
+                                       shared_ptr&lt;struct AppendStatus&gt;& status) {
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  auto proxies = rpc_par_proxies_[par_id];
+  auto p = proxies[dest_id];
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match234-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  RaftProxy *proxy = (RaftProxy*) p.second;
+  FutureAttr fuattr;
+  fuattr.callback = [p,ev,status,dest_id,leader_term](Future* fu) mutable {
+    uint64_t follower_term;
+    uint8_t follower_append_ok;
+</FONT>    fu-&gt;get_reply() &gt;&gt; follower_term;
+    fu-&gt;get_reply() &gt;&gt; follower_append_ok;
+    status-&gt;success = true;
+    if (!follower_append_ok)
+      status-&gt;success = false;
+    if (follower_term &gt; leader_term && follower_term != UINT64_MAX) {
+      status-&gt;success = true;
+      status-&gt;is_old_leader = true;
+    }
+    // Log_debug("heartbeat response from %d: term %ld, ok: %d",
+    //       p.first, follower_term, follower_append_ok & 1);
+
+    // ev-&gt;Set(1);
+  };
+  Call_Async(proxy, EmptyAppendEntries, leader_term, prev_log_index, prev_log_term,
+             leader_commit_index, fuattr);
+
+  // return ev;
+}
+
+shared_ptr&lt;IntEvent&gt; 
+RaftCommo::SendString(parid_t par_id, siteid_t site_id, const string& msg, string* res) {
+  auto proxies = rpc_par_proxies_[par_id];
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  for (auto& p : proxies) {
+    if (p.first == site_id) {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [res,ev](Future* fu) {
+        fu-&gt;get_reply() &gt;&gt; *res;
+        ev-&gt;Set(1);
+      };
+      /* wrap Marshallable in a MarshallDeputy to send over RPC */
+      Call_Async(proxy, HelloRpc, msg, fuattr);
+    }
+  }
+  return ev;
+}
+
+
+} // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

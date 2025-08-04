@@ -1,0 +1,514 @@
+<HTML>
+<HEAD>
+<TITLE>./spring19/rahulmadiwale/src/shardmaster/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./spring19/rahulmadiwale/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+import (
+    "raft"
+    "time"
+)
+import "labrpc"
+import "sync"
+import "labgob"
+
+
+type ShardMaster struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	// Your data here.
+
+	configs []Config // indexed by config num
+	isAlive               bool
+	commitChannels        map[int]chan raft.ApplyMsg
+	clientPreviousRequest map[int64]int64
+}
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match221-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+type Op struct {
+	// Your data here.
+	Type      string
+	Args interface{}
+}
+
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+    // Your code here.
+
+    op := Op{
+        Type:"join",
+        Args:*args,
+</FONT>    }
+
+    sm.mu.Lock()
+    index, _, isLeader := sm.rf.Start(op)
+    sm.mu.Unlock()
+
+    if isLeader {
+
+        _, _ = DPrintf("Received join from %d for %d", args.ClerkId, args.RequestId)
+        sm.mu.Lock()
+        commitChannel := make(chan raft.ApplyMsg, 1)
+        sm.commitChannels[index] = commitChannel
+        sm.mu.Unlock()
+
+        for {
+            select {
+            case &lt;- commitChannel:
+
+                sm.mu.Lock()
+                delete(sm.commitChannels, index)
+                sm.mu.Unlock()
+
+                reply.Err = OK
+                _, _ = DPrintf("Join on %d complete successfully", args.RequestId)
+                return
+
+            case &lt;- time.After(120 * time.Millisecond):
+                _, isLeader := sm.rf.GetState()
+                sm.mu.Lock()
+                if !isLeader || !sm.isAlive {
+                    delete(sm.commitChannels, index)
+                    sm.mu.Unlock()
+                    reply.WrongLeader = true
+                    return
+                }
+                sm.mu.Unlock()
+            }
+        }
+
+    } else {
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match221-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        reply.WrongLeader = true
+    }
+
+}
+
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+    // Your code here.
+    op := Op{
+        Type:"leave",
+        Args:*args,
+</FONT>    }
+
+    sm.mu.Lock()
+    index, _, isLeader := sm.rf.Start(op)
+    sm.mu.Unlock()
+
+    if isLeader {
+
+        _, _ = DPrintf("Received leave from %d for %d", args.ClerkId, args.RequestId)
+        sm.mu.Lock()
+        commitChannel := make(chan raft.ApplyMsg, 1)
+        sm.commitChannels[index] = commitChannel
+        sm.mu.Unlock()
+
+        for {
+            select {
+            case &lt;- commitChannel:
+
+                sm.mu.Lock()
+                delete(sm.commitChannels, index)
+                sm.mu.Unlock()
+
+                reply.Err = OK
+                _, _ = DPrintf("Leave on %d complete successfully", args.RequestId)
+                return
+
+            case &lt;- time.After(120 * time.Millisecond):
+                _, isLeader := sm.rf.GetState()
+                sm.mu.Lock()
+                if !isLeader || !sm.isAlive {
+                    delete(sm.commitChannels, index)
+                    sm.mu.Unlock()
+                    reply.WrongLeader = true
+                    return
+                }
+                sm.mu.Unlock()
+            }
+        }
+    } else {
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match221-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        reply.WrongLeader = true
+    }
+}
+
+
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+	// Your code here.
+    op := Op{
+        Type:"move",
+        Args:*args,
+</FONT>    }
+
+    sm.mu.Lock()
+    index, _, isLeader := sm.rf.Start(op)
+    sm.mu.Unlock()
+
+    if isLeader {
+
+        _, _ = DPrintf("Received Move from %d for %d", args.ClerkId, args.RequestId)
+
+        sm.mu.Lock()
+
+        commitChannel := make(chan raft.ApplyMsg, 1)
+        sm.commitChannels[index] = commitChannel
+
+        sm.mu.Unlock()
+
+        for {
+            select {
+            case &lt;- commitChannel:
+
+                sm.mu.Lock()
+                delete(sm.commitChannels, index)
+                sm.mu.Unlock()
+
+                reply.Err = OK
+                _, _ = DPrintf("Move on %d complete successfully", args.RequestId)
+                return
+
+            case &lt;- time.After(120 * time.Millisecond):
+                _, isLeader := sm.rf.GetState()
+                sm.mu.Lock()
+                if !isLeader || !sm.isAlive {
+                    delete(sm.commitChannels, index)
+                    sm.mu.Unlock()
+                    reply.WrongLeader = true
+                    return
+                }
+                sm.mu.Unlock()
+            }
+        }
+    } else {
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match221-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        reply.WrongLeader = true
+    }
+}
+
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+	// Your code here.
+    op := Op{
+        Type:"query",
+        Args:*args,
+</FONT>    }
+
+
+    sm.mu.Lock()
+    index, _, isLeader := sm.rf.Start(op)
+    sm.mu.Unlock()
+
+    if isLeader {
+
+        _, _ = DPrintf("Received query from %d for %d, Num = %d, len = %d, waiting for index = %d", args.ClerkId, args.RequestId, args.Num, len(sm.configs), index)
+
+
+        sm.mu.Lock()
+
+        commitChannel := make(chan raft.ApplyMsg, 1)
+        sm.commitChannels[index] = commitChannel
+
+        sm.mu.Unlock()
+
+        for {
+            select {
+            case &lt;- commitChannel:
+
+                sm.mu.Lock()
+                delete(sm.commitChannels, index)
+                sm.mu.Unlock()
+
+                reply.Err = OK
+                sm.mu.Lock()
+                if args.Num &gt;= 0 && args.Num &lt; len(sm.configs) {
+                    _, _ = DPrintf("aaaaaaaaaaaaaaaaaaa")
+                    reply.Config = sm.configs[args.Num]
+                } else {
+                    _, _ = DPrintf("bbbbbbbbbbbbbbbbbbbbbb")
+                    reply.Config = sm.configs[len(sm.configs) - 1]
+                    _, _ = DPrintf("%d", reply.Config.Num)
+                }
+                sm.mu.Unlock()
+                _, _ = DPrintf("Query on %d complete successfully", args.RequestId)
+                return
+
+            case &lt;- time.After(120 * time.Millisecond):
+                _, isLeader := sm.rf.GetState()
+                sm.mu.Lock()
+                if !isLeader || !sm.isAlive {
+                    delete(sm.commitChannels, index)
+                    sm.mu.Unlock()
+                    reply.WrongLeader = true
+                    return
+                }
+                sm.mu.Unlock()
+            }
+        }
+
+    } else {
+        reply.WrongLeader = true
+    }
+}
+
+
+
+func (sm *ShardMaster) applyCommands() {
+
+    for {
+
+        sm.mu.Lock()
+        if !sm.isAlive {
+            sm.mu.Unlock()
+            break
+        }
+        sm.mu.Unlock()
+
+        msg := &lt;- sm.applyCh
+        sm.mu.Lock()
+
+        if msg.Command != nil {
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match221-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+            op := msg.Command.(Op)
+
+            if op.Type == "join" {
+                sm.join(op.Args.(JoinArgs))
+            } else if op.Type == "leave" {
+                sm.leave(op.Args.(LeaveArgs))
+            } else if op.Type == "move" {
+                sm.move(op.Args.(MoveArgs))
+</FONT>            }
+        }
+
+        commitChannel, hasChannel := sm.commitChannels[msg.CommandIndex]
+        if hasChannel {
+            _, _ = DPrintf("Message received on applyChannel sending")
+            commitChannel &lt;- msg
+        } else {
+           _, _ = DPrintf("Message received on applyChannel but NOT sending")
+        }
+
+        sm.mu.Unlock()
+    }
+
+}
+
+
+func (sm *ShardMaster) join(args JoinArgs) {
+
+    _, _ = DPrintf("Executing Join %d", args.RequestId)
+
+    prevConfig := sm.configs[len(sm.configs) - 1]
+
+    config := Config{}
+
+    groups := make(map[int][]string)
+
+    for k, v := range prevConfig.Groups {
+        groups[k] = v
+    }
+
+    config.Num = prevConfig.Num + 1
+    config.Shards = prevConfig.Shards
+    config.Groups = groups
+
+    for GID, servers := range args.Servers {
+        config.Groups[GID] = servers
+    }
+
+    _, _ = DPrintf("%d JOIN calling re-balance on %d, len = %d", sm.me, args.RequestId, len(config.Groups))
+
+    sm.configs = append(sm.configs, config)
+    sm.balanceLoad("join")
+
+}
+
+func (sm *ShardMaster) leave(args LeaveArgs) {
+
+
+    prevConfig := sm.configs[len(sm.configs) - 1]
+    config := Config{}
+
+    groups := make(map[int][]string)
+
+    for k, v := range prevConfig.Groups {
+        groups[k] = v
+    }
+
+    config.Num = prevConfig.Num + 1
+    config.Shards = prevConfig.Shards
+    config.Groups = groups
+
+    for _, removeGID := range args.GIDs {
+        delete(config.Groups, removeGID)
+    }
+    _, _ = DPrintf("Executing Leave %d, len = %d", args.RequestId, len(config.Groups))
+
+    for _, removeGID := range args.GIDs {
+        for shard, gid := range config.Shards {
+            if gid == removeGID {
+                config.Shards[shard] = 0
+            }
+        }
+    }
+
+    _, _ = DPrintf("%d LEAVE calling re-balance on %d, len = %d", sm.me, args.RequestId, len(config.Groups))
+
+    sm.configs = append(sm.configs, config)
+
+    if len(config.Groups) &gt; 0 {
+        sm.balanceLoad("leave")
+    }
+
+
+}
+
+func (sm *ShardMaster) move(args MoveArgs) {
+
+    prevConfig := sm.configs[len(sm.configs) - 1]
+    config := Config{}
+
+    groups := make(map[int][]string)
+
+    for k, v := range prevConfig.Groups {
+        groups[k] = v
+    }
+
+    config.Num = prevConfig.Num + 1
+    config.Shards = prevConfig.Shards
+    config.Groups = groups
+
+    config.Shards[args.Shard] = args.GID
+    sm.configs = append(sm.configs, config)
+}
+
+
+func (sm *ShardMaster) balanceLoad(command string) {
+
+    _, _ = DPrintf("balanceLoad called from %s", command)
+
+	mapping := make(map[int][]int)
+	orphanShards := make([]int, 0)
+
+	config := &sm.configs[len(sm.configs) - 1]
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match221-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	for groupID := range config.Groups {
+		mapping[groupID] = make([]int, 0)
+	}
+
+	// get all shards assigned to 0
+	for shard, groupID := range config.Shards {
+		if groupID == 0 {
+			orphanShards = append(orphanShards, shard)
+		} else {
+            mapping[groupID] = append(mapping[groupID], shard)
+		}
+	}
+
+	balance := NShards / len(config.Groups)
+</FONT>
+    // get extra shards from overloaded groups
+    for groupId := range mapping {
+		for len(mapping[groupId]) &gt; balance {
+			shard := mapping[groupId][0]
+			orphanShards = append(orphanShards, shard)
+			mapping[groupId] = mapping[groupId][1:]
+			config.Shards[shard] = 0
+		}
+	}
+
+    // assign shards to underloaded groups
+	for groupId := range mapping {
+		for len(mapping[groupId]) &lt; balance {
+			shard := orphanShards[0]
+			orphanShards = orphanShards[1:]
+			mapping[groupId] = append(mapping[groupId], shard)
+			config.Shards[shard] = groupId
+		}
+	}
+
+	// distribute remaining shards evenly
+	for len(orphanShards) &gt; 0 {
+		for groupID := range mapping {
+			if len(orphanShards) &gt; 0 {
+				shard := orphanShards[0]
+				orphanShards = orphanShards[1:]
+				mapping[groupID] = append(mapping[groupID], shard)
+				config.Shards[shard] = groupID
+			}
+		}
+	}
+
+}
+
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+	// Your code here, if desired.
+	sm.mu.Lock()
+    _, _ = DPrintf("##########################################################Killed")
+	sm.isAlive = false
+	sm.mu.Unlock()
+}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+	return sm.rf
+}
+
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	sm := new(ShardMaster)
+	sm.me = me
+
+	sm.configs = make([]Config, 1)
+	sm.configs[0].Groups = map[int][]string{}
+
+	labgob.Register(Op{})
+
+
+	sm.applyCh = make(chan raft.ApplyMsg)
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+
+	// Your code here.
+	sm.isAlive = true
+	sm.commitChannels  = make(map[int]chan raft.ApplyMsg)
+    labgob.Register(JoinArgs{})
+    labgob.Register(LeaveArgs{})
+    labgob.Register(MoveArgs{})
+    labgob.Register(QueryArgs{})
+
+    _, _ = DPrintf("Starting Server %d", sm.me)
+
+	go sm.applyCommands()
+
+	return sm
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

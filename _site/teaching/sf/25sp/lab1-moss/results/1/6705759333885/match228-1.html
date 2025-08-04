@@ -1,0 +1,580 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-Dhavall07/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-shivani232/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+
+void RaftServiceImpl::HandleRequestVote(const uint64_t& candidate_id,
+                                        const uint64_t& term,
+                                        const uint64_t& last_log_term,
+                                        const uint64_t& last_log_index,
+                                        uint64_t *ret1,
+                                        bool_t *vote_granted,
+                                        rrr::DeferredReply* defer) {
+
+
+  ////Log_info("!!!! site_id: %d,  self_term: %d , candidate_id: %d, candidate_term: %d ", svr_-&gt;site_id_, svr_-&gt;cur_term, candidate_id, term);
+  //Log_info("&& Handle Req Vote: Follower: %d CandiateID: %d Candidate_term: %d last_log_term: %d last_log_index: %d", svr_-&gt;loc_id_, candidate_id, term, last_log_term, last_log_index);
+  if (term &lt; svr_-&gt;cur_term)
+  {
+    //Log_info("&& Reqvote false. follower term greater. term: %d", svr_-&gt;cur_term);
+    *vote_granted = false;
+    *ret1 = svr_-&gt;cur_term;
+  }
+  else
+  {
+
+    if (term &gt; svr_-&gt;cur_term){
+      //Log_info("&& Leader term greater");
+     // svr_-&gt;mtx_.lock();
+      svr_-&gt;state = SERVER_STATE_FOLLOWER;
+      /*reset timer*/
+      svr_-&gt;timed_out = false;
+      svr_-&gt;cur_term = term;
+      svr_-&gt;voted_for = -1 ;
+      //svr_-&gt;mtx_.unlock();
+    }
+
+    *vote_granted = false;
+    *ret1 = svr_-&gt;cur_term;
+    int my_last_log_term = 0;
+    
+    if(svr_-&gt;log_terms
+    .size()){
+      my_last_log_term = svr_-&gt;log_terms.back();
+    }
+    bool log_upto_date = (last_log_term &gt; my_last_log_term ) || (
+      last_log_term == my_last_log_term && last_log_index &gt;= svr_-&gt;log_terms.size());
+
+    int logOk = 0;
+    if(log_upto_date){
+      logOk = 1;
+    }
+    //Log_info("&& Log_uptodate: %d voted_for: %d", logOk, svr_-&gt;voted_for);
+
+    if ((svr_-&gt;voted_for == -1 || svr_-&gt;voted_for == candidate_id) && log_upto_date)
+    {
+
+      // svr_-&gt;mtx_.lock();
+      svr_-&gt;voted_for = candidate_id;
+      *vote_granted = true;
+      svr_-&gt;state = SERVER_STATE_FOLLOWER;
+      svr_-&gt;cur_term = term;
+      svr_-&gt;timed_out = false;
+    //  svr_-&gt;mtx_.unlock();
+      *ret1 = svr_-&gt;cur_term;
+    }
+  }
+
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t& term,
+                                          const uint64_t& leader_id,
+                                          const uint64_t& prev_log_index,
+                                          const uint64_t& prev_log_term,
+                                          const uint64_t& leader_commit,
+                                          //const MarshallDeputy& md_cmd,
+                                          bool_t *followerAppendOK,
+                                          uint64_t*follower_term,
+                                          rrr::DeferredReply* defer) {
+
+  
+  *followerAppendOK = true;
+  if( term &lt; svr_-&gt;cur_term){
+    *followerAppendOK = false;
+  }else if (term &gt; svr_-&gt;cur_term){
+    
+
+   // svr_-&gt;mtx_.lock();
+    svr_-&gt;cur_term = term;
+    svr_-&gt;state = SERVER_STATE_FOLLOWER;
+    svr_-&gt;voted_for = -1;
+    svr_-&gt;timed_out = false;
+   // svr_-&gt;mtx_.unlock();
+  }else{
+
+
+    /* for empty append entries if the term is equal to leader's term, set current leader*/
+    //svr_-&gt;mtx_.lock();
+    svr_-&gt;cur_leader = leader_id;
+    svr_-&gt;timed_out = false;
+    //svr_-&gt;mtx_.unlock();
+    /*reset  self election timeout as we know the leader is present.*/
+  }
+  
+  *follower_term = svr_-&gt;cur_term;
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleAppendEntries(const uint64_t& leader_term,
+                                          const uint64_t& leader_id,
+                                          const uint64_t& prev_log_index,
+                                          const uint64_t& prev_log_term,
+                                          const uint64_t& leader_commit,
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match228-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                          const vector&lt;uint64_t&gt;& terms,
+                                          const vector&lt;MarshallDeputy&gt;& md_cmds,
+                                          bool_t *followerAppendOK,
+                                          uint64_t*follower_term,
+                                          uint64_t*set_next_index,
+                                          rrr::DeferredReply* defer) {
+</FONT>
+
+  if( svr_-&gt;cur_term &gt; leader_term){
+      *followerAppendOK = false;
+      *follower_term = svr_-&gt;cur_term;
+      defer-&gt;reply();
+      return;
+    }
+  
+  bool_t commited = false;
+  svr_-&gt;timed_out = false;
+  
+  if(leader_term &gt; svr_-&gt;cur_term){
+    svr_-&gt;cur_term = leader_term;
+    svr_-&gt;voted_for = -1;
+    svr_-&gt;timed_out = false;
+
+  }
+  if(leader_term == svr_-&gt;cur_term){
+    svr_-&gt;state = SERVER_STATE_FOLLOWER;
+    svr_-&gt;timed_out = false;
+    svr_-&gt;cur_leader = leader_id;
+    *followerAppendOK = true;
+  }
+
+  bool_t can_append;
+  // check if term at prev log index matches
+  bool_t prev_term_matches = (prev_log_index == 0) || (svr_-&gt;log_terms[prev_log_index-1] == prev_log_term);
+  // check if follower has log atleast as long as prev_log_index
+  bool_t is_log_eq_long = (svr_-&gt;log_terms.size()&gt;= prev_log_index);
+
+  //can_append = (terms.size()) && (svr_-&gt;log_terms.size()&gt;= prev_log_index) && prev_term_matches;
+  can_append = is_log_eq_long && prev_term_matches;
+
+
+  if((svr_-&gt;cur_term == leader_term) && can_append){
+
+    // check if the follower already has the log entries sent, and verify if they are consistent
+
+    // Log_info("### AE Follower: %d prev_log_index: %d  prev_log_term: %d leader: %d",svr_-&gt;loc_id_,prev_log_index,prev_log_term,leader_id);
+    // Log_info("### terms.size(): %d", terms.size());
+    
+    // if leader has entries to send but foloowers log is loonger than what leader thinks, need to check if the extra entries of follower's log match with leaders
+    if(terms.size()&& (svr_-&gt;log_terms.size()&gt;prev_log_index)){
+      
+      int ind  = svr_-&gt;log_terms.size();
+      int leader_log_length = prev_log_index + terms.size();
+      if (leader_log_length &lt; ind){
+        ind = leader_log_length;
+      }
+      
+      ind--;
+
+      // check if follower's last term matches the corresponding entry term in leader, if not, truncate the follower's log
+
+      if(svr_-&gt;log_terms[ind]!= terms[ind-prev_log_index]){
+        Log_info("##Term mismatch truncating entries in follower: %d Length before: %d ",svr_-&gt;loc_id_, svr_-&gt;log_terms.size());
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match228-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        svr_-&gt;log_terms.erase(svr_-&gt;log_terms.begin()+prev_log_index, svr_-&gt;log_terms.end());
+        svr_-&gt;log_cmds.erase(svr_-&gt;log_cmds.begin()+prev_log_index, svr_-&gt;log_cmds.end());
+</FONT>        Log_info("## After truncating entries in follower: %d Length: %d",svr_-&gt;loc_id_,svr_-&gt;log_terms.size());
+
+      }
+    }
+
+    //Log_info("At 2");
+
+    
+    // After making both logs consistent, append remaining entries:
+    // If leader log &gt; follower log - append
+    if((prev_log_index + terms.size())&gt; svr_-&gt;log_terms.size()){
+      int start = svr_-&gt;log_terms.size() - prev_log_index;
+      svr_-&gt;mtx_.lock();
+      for(int i =start;i&lt;terms.size();i++){
+        
+        svr_-&gt;log_terms.push_back(terms[i]);
+        svr_-&gt;log_cmds.push_back(
+          const_cast&lt;MarshallDeputy&&gt;(md_cmds[i]).sp_data_
+        );
+        
+
+        Log_info("Follower: %d Pushed Term: %d at index: %d", svr_-&gt;loc_id_, svr_-&gt;log_terms.back(),svr_-&gt;log_terms.size() );
+
+      }
+      svr_-&gt;mtx_.unlock();
+    }
+
+   
+
+
+    if(svr_-&gt;commit_index &lt; svr_-&gt;log_cmds.size() && leader_commit &gt; svr_-&gt;commit_index){
+      // Todo: try end = min(leader_commit, logs.size)
+      svr_-&gt;mtx_.lock();
+      for(int i = svr_-&gt;commit_index; i&lt;leader_commit;i++){
+        Log_info("i: %d",i);
+        
+        
+        svr_-&gt;app_next_(*svr_-&gt;log_cmds[i]);
+        
+        
+        Log_info(" !@@ Follower: %d Commiting  term: %d at index: %d    AE Req: leader_id: %d leader_term: %d prev_log_index: %d prev_log_term: %d ",svr_-&gt;loc_id_, svr_-&gt;log_terms[i], i+1, leader_id, leader_term, prev_log_index,prev_log_term);
+
+      }
+      svr_-&gt;commit_index = leader_commit;
+      svr_-&gt;mtx_.unlock();
+      
+      svr_-&gt;timed_out = false;
+    }
+
+    *followerAppendOK = true;
+    *set_next_index = svr_-&gt;log_terms.size()+1;
+    *follower_term = svr_-&gt;cur_term;
+    //svr_-&gt;timed_out = false;
+
+
+  }else{
+    // if follower log length less than prevLog index, st next index as the current log length so that leader can send previous entries in the next call
+
+    *followerAppendOK = false;
+    *set_next_index = svr_-&gt;log_terms.size() + 1;
+    *follower_term = svr_-&gt;cur_term;
+    
+    if(! is_log_eq_long){
+      *set_next_index = svr_-&gt;log_terms.size() + 1;
+    }else if(prev_log_index && !prev_term_matches){
+      *set_next_index = prev_log_index;
+    }
+     //svr_-&gt;timed_out = false;
+
+  }
+
+
+
+  defer-&gt;reply();
+
+  }
+ 
+
+
+
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  //////Log_info("receive an rpc: %s", req.c_str());
+  *res = "world";
+  defer-&gt;reply();
+}
+
+} // namespace janus;
+
+
+
+
+/**
+
+void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t& term,
+                                          const uint64_t& leader_id,
+                                          const uint64_t& prev_log_index,
+                                          const uint64_t& prev_log_term,
+                                          const uint64_t& leader_commit,
+                                          //const MarshallDeputy& md_cmd,
+                                          bool_t *followerAppendOK,
+                                          uint64_t*follower_term,
+                                          rrr::DeferredReply* defer) {
+
+  
+  *followerAppendOK = true;
+  if( term &lt; svr_-&gt;cur_term){
+    *followerAppendOK = false;
+  }else if (term &gt; svr_-&gt;cur_term){
+    
+
+    svr_-&gt;mtx_.lock();
+    svr_-&gt;cur_term = term;
+    svr_-&gt;state = SERVER_STATE_FOLLOWER;
+    svr_-&gt;voted_for = -1;
+    svr_-&gt;timed_out = false;
+    svr_-&gt;mtx_.unlock();
+  }else{
+
+
+    /// for empty append entries if the term is equal to leader's term, set current leader
+    svr_-&gt;mtx_.lock();
+    svr_-&gt;cur_leader = leader_id;
+    svr_-&gt;timed_out = false;
+    svr_-&gt;mtx_.unlock();
+    //reset  self election timeout as we know the leader is present
+  }
+  
+  *follower_term = svr_-&gt;cur_term;
+  defer-&gt;reply();
+}
+
+*/
+
+/*
+
+void RaftServiceImpl::HandleAppendEntries(const int64_t& leader_term,
+                                          const int64_t& leader_id,
+                                          const int64_t& prev_log_index,
+                                          const int64_t& prev_log_term,
+                                          const int64_t& leader_commit,
+                                          const vector&lt;int&gt;& terms,
+                                          const vector&lt;MarshallDeputy&gt;& md_cmds,
+                                          bool_t *followerAppendOK,
+                                          int64_t*follower_term,
+                                          int64_t*set_next_index,
+                                          rrr::DeferredReply* defer) {
+
+  bool_t is_cmd = (md_cmd.size()&gt;0);
+  *set_next_index = svr_-&gt;log.size()+1;
+
+  // Empty heartbeat
+  if(!is_cmd){
+
+    //////Log_info("!!! !!!HB Leader: %d follower: %d prev_log_index: %d prev_log_term: %d md_cmd.size(): %d ",leader_id, svr_-&gt;loc_id_, prev_log_index, prev_log_term, md_cmd.size());
+
+    *decrease_next_index = false;
+    *followerAppendOK = true;
+    *set_next_index = svr_-&gt;log.size()+1;
+    if( leader_term &lt; svr_-&gt;cur_term){
+      *followerAppendOK = false;
+      *follower_term = svr_-&gt;cur_term;
+      defer-&gt;reply();
+      return;
+    }else if (leader_term &gt; svr_-&gt;cur_term){
+      
+
+      svr_-&gt;mtx_.lock();
+      svr_-&gt;cur_term = leader_term;
+      svr_-&gt;state = SERVER_STATE_FOLLOWER;
+      svr_-&gt;voted_for = -1;
+      svr_-&gt;timed_out = false;
+      svr_-&gt;mtx_.unlock();
+    }else{
+
+      //for empty append entries if the term is equal to leader's term, set current leader
+      svr_-&gt;mtx_.lock();
+      svr_-&gt;cur_leader = leader_id;
+      svr_-&gt;timed_out = false;
+      svr_-&gt;mtx_.unlock();
+      //reset  self election timeout as we know the leader is present.
+    }
+  
+  *follower_term = svr_-&gt;cur_term;
+
+  }
+  // Append entries if cmd present
+  else{
+
+
+    std::shared_ptr&lt;Marshallable&gt; cmd;
+    cmd = const_cast&lt;MarshallDeputy&&gt;(md_cmd[0]).sp_data_;
+    *followerAppendOK = false;
+    *follower_term = svr_-&gt;cur_term;
+    Log_info("!!! AEStart leader: %d follower: %d prev_log_index: %d prev_log_term: %d", leader_id, svr_-&gt;loc_id_, prev_log_index, prev_log_term);
+    
+    if(leader_term &lt; svr_-&gt;cur_term){
+      ////Log_info("!!!! At2");
+    *followerAppendOK = false;
+    *decrease_next_index = false;
+    *set_next_index = svr_-&gt;log.size()+1;
+    *follower_term = svr_-&gt;cur_term;
+    defer-&gt;reply();
+    return;
+    }
+    
+    else if(leader_term &gt; svr_-&gt;cur_term){
+
+      //Become follower do not append and do not decrease next index
+      
+      svr_-&gt;cur_term = leader_term;
+      svr_-&gt;state = SERVER_STATE_FOLLOWER;
+      svr_-&gt;voted_for = -1;
+      svr_-&gt;timed_out = false;
+      *followerAppendOK = true;
+      *follower_term = svr_-&gt;cur_term;
+      *decrease_next_index = true;
+      *set_next_index = svr_-&gt;log.size()+1;
+      
+  }else{
+
+      svr_-&gt;timed_out = false;      
+       //if leader term = follower term
+      // if my size is 0
+      if(svr_-&gt;log.size()== 0 && prev_log_index == 0 && prev_log_term ==0){
+
+        // append normally for the first time
+         
+          *followerAppendOK = true;
+          *follower_term = svr_-&gt;cur_term;
+          *decrease_next_index = false;
+
+          RaftLog new_entry;
+          new_entry.cmd = cmd;
+          new_entry.index = 1;
+          new_entry.term = entry_term;
+
+          svr_-&gt;mtx_.lock();
+          svr_-&gt;cur_leader = leader_id;
+          svr_-&gt;log.push_back(new_entry);
+          svr_-&gt;last_applied = svr_-&gt;log.size();
+          svr_-&gt;timed_out = false;
+          svr_-&gt;mtx_.unlock();
+          *set_next_index = 2;
+          Log_info("****** Follower %d Log Contents**********",svr_-&gt;loc_id_);
+          if(svr_-&gt;log.size()){
+            for(int i =0;i&lt;svr_-&gt;log.size();i++){
+              Log_info(" Log: I: %d  Index: %d term: %d CMDint :%d CMD: %s",i,svr_-&gt;log[i].index,svr_-&gt;log[i].term,svr_-&gt;log[i].cmd,svr_-&gt;log[i].cmd);
+            }
+          }   
+
+      }
+      // if my log is less than leaders prev log index return false so that server can decrement nextIndex
+      // missing entries, send my expected next index to leader so that he can send me entries after that point
+      else if(svr_-&gt;log.size()&lt; prev_log_index){
+       
+        *followerAppendOK = false;
+        *follower_term = svr_-&gt;cur_term;
+        *decrease_next_index = true;
+        *set_next_index = svr_-&gt;log.size()+1;
+        *follower_term = svr_-&gt;cur_term;
+        // returning now as there's no point to commit entries matched till now as we don't know if they are even legit
+        defer-&gt;reply();
+        return; 
+
+      }
+      
+      // same no of entries
+      //if(svr_-&gt;log.size() == prev_log_index)
+      else {
+        
+        // If terms at prevlog index match-- append
+        if(svr_-&gt;log[prev_log_index-1].term == prev_log_term){
+        
+          *followerAppendOK = true;
+          *follower_term = svr_-&gt;cur_term;
+          *decrease_next_index = false;
+          
+          RaftLog new_entry;
+          new_entry.cmd = cmd;
+          new_entry.index = prev_log_index+1;
+          new_entry.term = entry_term;
+
+          svr_-&gt;mtx_.lock();
+          svr_-&gt;cur_leader = leader_id;
+          svr_-&gt;log.push_back(new_entry);
+          svr_-&gt;timed_out = false;
+          svr_-&gt;last_applied = new_entry.index;
+          svr_-&gt;mtx_.unlock();
+          *set_next_index = svr_-&gt;log.size()+1;
+          
+
+          Log_info("****** Follower %d Log Contents**********",svr_-&gt;loc_id_);
+          if(svr_-&gt;log.size()){
+            for(int i =0;i&lt;svr_-&gt;log.size();i++){
+              Log_info(" Log: I: %d  Index: %d term: %d CMDint :%d CMD: %s",i,svr_-&gt;log[i].index,svr_-&gt;log[i].term,svr_-&gt;log[i].cmd,svr_-&gt;log[i].cmd);
+            }
+          }   
+
+        }else{
+          
+          // if same log size but last terms don't match delete the last entry and leader will decrement its next index
+          // reply false if log doesn't contain an entry at prev log index whose term matches prev log term
+          // remove the entry, ask leader to decrement next index
+          svr_-&gt;log.pop_back();
+          *followerAppendOK = false;
+          *follower_term = svr_-&gt;cur_term;
+          *decrease_next_index = true;
+          *set_next_index = svr_-&gt;log.size()+1;
+          svr_-&gt;timed_out = false;
+
+          defer-&gt;reply();
+          return; 
+        }
+      
+        //If an existing entry conflicts with the new one, remove it and all entries after that/
+        if(svr_-&gt;log[prev_log_index].term != entry_term){
+          uint64_t index_to_remove = prev_log_index;
+          svr_-&gt;log.erase(svr_-&gt;log.begin()+index_to_remove, svr_-&gt;log.end());
+          
+          *followerAppendOK = false;
+          *decrease_next_index = true;
+          *follower_term = svr_-&gt;cur_term;
+          *set_next_index = svr_-&gt;log.size()+1;
+           svr_-&gt;timed_out = false;
+          
+          
+          defer-&gt;reply();
+          return; 
+       }
+     
+      }
+    }
+
+  }
+ 
+  // irrespective of incoming command/empty cmd, if log exists, commit
+  if(svr_-&gt;log.size()&& leader_commit &gt; svr_-&gt;commit_index ){
+
+    //if leaderCommit&gt;commitIndex, set commitIndex = min(leaderCommit, index of last new entry), 
+    //   commit all the entries from prev commit index to current commit indexkkkkk 
+
+        uint64_t new_commit_point = svr_-&gt;log.size();
+        
+        if(leader_commit &lt; new_commit_point){
+          new_commit_point = leader_commit;  
+        }
+        int start_point = svr_-&gt;commit_index;
+
+        //Log_info(" !!!! Loc_id: %d Start point: %d  New commit point: %d",svr_-&gt;loc_id_,start_point, new_commit_point);
+
+        for(int i = start_point;i&lt;new_commit_point;i++){
+          
+          svr_-&gt;app_next_(*svr_-&gt;log[i].cmd);
+          
+          Log_info("##### Commit follower: %d log_index: %d  term: %d cmd:%d cmd: %s", svr_-&gt;loc_id_, svr_-&gt;log[i].index, svr_-&gt;log[i].term, svr_-&gt;log[i].cmd, svr_-&gt;log[i].cmd);
+          
+          
+        }
+        
+        svr_-&gt;commit_index = new_commit_point;
+        svr_-&gt;cur_leader = leader_id;
+        svr_-&gt;timed_out = false;
+
+  }
+
+*set_next_index = svr_-&gt;log.size()+1;
+*follower_term = svr_-&gt;cur_term;
+defer-&gt;reply();
+}
+
+
+
+
+*/</PRE>
+</PRE>
+</BODY>
+</HTML>

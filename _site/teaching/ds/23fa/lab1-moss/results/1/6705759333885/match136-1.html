@@ -1,0 +1,188 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-4molybdenum2/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-hieuqm/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+void RaftServiceImpl::HandleRequestVote(const uint64_t& candidate_term,
+                                        const uint64_t& candidate_id,
+                                        const uint64_t& candidate_last_idx,
+                                        const uint64_t& candidate_last_term,
+                                        uint64_t *term,
+                                        uint8_t *vote_granted,
+                                        rrr::DeferredReply* defer) {
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(svr_-&gt;mtx_);
+  *term = svr_-&gt;CurrentTerm();
+  *vote_granted = 0;
+  // Log_debug("Inside server %d HandleRequestVote, candidate request term %d, current term %d",
+           // svr_-&gt;loc_id_, candidate_term, svr_-&gt;CurrentTerm());
+
+  if (candidate_term &gt; svr_-&gt;CurrentTerm() &&
+      svr_-&gt;VotedTerm() != candidate_term) {
+    // Log_debug("Inside server %d HandleRequestVote, candidate last term %d, current term %d, candidate last index %d, current index %d",
+           // svr_-&gt;loc_id_, candidate_last_term, svr_-&gt;CurrentTerm(), candidate_last_idx,
+           // svr_-&gt;CommitIndex());
+    if ((candidate_last_idx &gt;= svr_-&gt;CommitIndex()) &&
+        (candidate_last_term &gt;= svr_-&gt;LastLogTerm())) {
+      svr_-&gt;UpdateVoteTerm(candidate_term);
+      svr_-&gt;UpdateVote(candidate_id);
+      svr_-&gt;UpdateTerm(candidate_term);
+      svr_-&gt;UpdateTimestamp();
+      *term = svr_-&gt;CurrentTerm();
+      *vote_granted = 1;
+      // Log_debug("Inside server %d HandleRequestVote, voted for %d", svr_-&gt;loc_id_,
+               // candidate_id);
+    }
+  }
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t& leader_term,
+                                               const uint64_t& prev_log_index,
+                                               const uint64_t& prev_log_term,
+                                               const uint64_t& leader_commit_index,
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match136-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                               uint64_t *term,
+                                               uint8_t *success,
+                                               rrr::DeferredReply* defer) {
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(svr_-&gt;mtx_);
+  bool prev_log_matches = true;
+</FONT>  if (leader_term &gt;= svr_-&gt;CurrentTerm() ||
+      svr_-&gt;CurrentRole() == ServerRole::CANDIDATE) {
+    // Log_debug("Inside server %d HandleEmptyAppendEntries, current term %ld, leader_term %ld", svr_-&gt;loc_id_, svr_-&gt;CurrentTerm(), leader_term);
+
+    if (svr_-&gt;logs.size() &gt;= prev_log_index) {
+      if ((svr_-&gt;logs[prev_log_index].term != prev_log_term ||
+          leader_term &gt; svr_-&gt;CurrentTerm())) {
+        *success = 0;
+        prev_log_matches = false;
+        if (svr_-&gt;committed_this_term) {
+          svr_-&gt;logs.erase(svr_-&gt;logs.begin()+1+prev_log_index, svr_-&gt;logs.end());
+          svr_-&gt;UpdateLastLogIndex();
+        Log_debug("in Hearbeat: server %d deleting entries, logs size afterwards: %ld",
+                  svr_-&gt;loc_id_, svr_-&gt;logs.size());
+        }
+      }
+    } else if (svr_-&gt;logs.size() &lt; prev_log_index) {
+      *success = 0;
+      prev_log_matches = false;
+    }
+
+    if (leader_commit_index &gt; svr_-&gt;CommitIndex() &&
+        svr_-&gt;LastApplied() != svr_-&gt;CommitIndex() &&
+        leader_term == svr_-&gt;CurrentTerm() &&
+        prev_log_index &gt;= svr_-&gt;LastLogIndex() &&
+        prev_log_matches) {
+      auto old_commit_index = svr_-&gt;CommitIndex();
+      svr_-&gt;UpdateCommitIndex(std::min(leader_commit_index, svr_-&gt;LastLogIndex()));
+      int i = old_commit_index + 1;
+      Log_debug("server %d received heartbeat, updating commit index to %ld, leader commit index %ld",
+                svr_-&gt;loc_id_, svr_-&gt;CommitIndex(), leader_commit_index);
+      while (i &lt;= svr_-&gt;CommitIndex()) {
+        svr_-&gt;app_next_(*(svr_-&gt;Logs()[i].cmd));
+        i++;
+      }
+      *success = 1;
+    }
+
+    svr_-&gt;UpdateTimestamp();
+    svr_-&gt;UpdateTerm(leader_term);
+    svr_-&gt;UpdateRole(ServerRole::FOLLOWER);
+  } else {
+    *success = 0;
+  }
+
+  *term = svr_-&gt;CurrentTerm();
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleAppendEntries(const uint64_t& leader_term,
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match136-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                          const uint64_t& leader_id,
+                                          const uint64_t& prev_log_index,
+                                          const uint64_t& prev_log_term,
+                                          const vector&lt;MarshallDeputy&gt;& md_cmds,
+                                          const uint64_t& leader_commit_index,
+                                          uint64_t *term,
+                                          uint8_t *success,
+                                          rrr::DeferredReply* defer) {
+
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(svr_-&gt;mtx_);
+</FONT>  // Reply false if term &lt; currentTerm
+  // Reply false if log doesn't contain an entry at prev_log_index whose term
+  // matches prev_log_term
+  svr_-&gt;UpdateTimestamp();
+  if ((leader_term &lt; svr_-&gt;CurrentTerm()) || 
+      ((svr_-&gt;GetLogEntryTerm(prev_log_index) != prev_log_term) &&
+       (svr_-&gt;CurrentRole() != ServerRole::CANDIDATE))) {
+    Log_debug("In Server %d HandleAppendEntries, leader %d, rejecting", svr_-&gt;loc_id_, leader_id);
+    Log_debug("leader term %ld, curent term %ld, prev log term %ld, my log entry term %ld",
+              leader_term, svr_-&gt;CurrentTerm(), prev_log_term, svr_-&gt;GetLogEntryTerm(prev_log_index));
+
+    *success = 0;
+  } else {
+    Log_debug("In Server %d HandleAppendEntries, leader %d, accepting", svr_-&gt;loc_id_, leader_id);
+
+    if (svr_-&gt;CurrentRole() != ServerRole::FOLLOWER)
+      svr_-&gt;UpdateRole(ServerRole::FOLLOWER);
+
+    svr_-&gt;UpdateTerm(leader_term);
+    *success = 1;
+
+    if (svr_-&gt;logs.size() &gt; prev_log_index) {
+      svr_-&gt;logs.erase(svr_-&gt;logs.begin()+1+prev_log_index, svr_-&gt;logs.end());
+      svr_-&gt;UpdateLastLogIndex();
+      // Log_debug("in AppendEntries: server %d deleting entries", svr_-&gt;loc_id_);
+    }
+
+    for (auto& md_cmd : md_cmds) {
+      std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(md_cmd).sp_data_;
+      svr_-&gt;AppendToLog(cmd);
+    }
+
+    if (leader_commit_index &gt; svr_-&gt;CommitIndex() &&
+        svr_-&gt;LastApplied() != svr_-&gt;CommitIndex()) {
+      auto old_commit_index = svr_-&gt;CommitIndex();
+      svr_-&gt;UpdateCommitIndex(std::min(leader_commit_index, svr_-&gt;LastLogIndex()));
+      int i = old_commit_index + 1;
+      while (i &lt;= svr_-&gt;CommitIndex()) {
+        svr_-&gt;app_next_(*(svr_-&gt;Logs()[i].cmd));
+        i++;
+        svr_-&gt;committed_this_term = true;
+      }
+    }
+  }
+  *term = svr_-&gt;CurrentTerm();
+  defer-&gt;reply();
+}
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_debug("receive an rpc: %s", req.c_str());
+  *res = "world";
+  defer-&gt;reply();
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

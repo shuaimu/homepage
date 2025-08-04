@@ -28,3 +28,10 @@ Stony Brook University <br>
 * Yida Wu (MS -\> Cloudera)
 * Ansh Khanna (MS -\> Google)
 * Julie Lee (BSMS -\> HP)
+* Devika Sudheer
+* Radhika Agarwal
+* Nilesh Gajwani 
+* Ray Zhang
+* Sethu Karthikeyan (MS) 
+* Chenyu Wang (MS)
+* Saumitra Bose (MS)

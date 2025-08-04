@@ -1,0 +1,488 @@
+<HTML>
+<HEAD>
+<TITLE>./github/KDF5000/MIT-6.824-2016/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github/KDF5000/MIT-6.824-2016/src/kvraft/server.go<p><PRE>
+package raftkv
+
+import (
+	"encoding/gob"
+	"labrpc"
+	"log"
+	"raft"
+	"sync"
+	"fmt"
+	"time"
+	"container/list"
+	"bytes"
+)
+
+const Debug = 1
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+
+type Op struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+	Client    int64
+	Sequence  int
+	Key       string
+	Value     string
+	Type      string
+	Err       Err
+}
+
+type RaftKV struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	maxraftstate int // snapshot if log grows this big
+
+	// Your definitions here.
+	persister      *raft.Persister
+	data           map[string]string
+	executedID     map[int64]int
+<A NAME="11"></A><FONT color = #00FF00><A HREF="match34-1.html#11" TARGET="1"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	notify         map[int][]chan Op
+	
+	Recv           chan raft.ApplyMsg
+	Msgs           *list.List
+	QuitCH         chan bool
+	
+	lastIncludedIndex int
+	lastIncludedTerm  int
+</FONT>
+}
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match34-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *RaftKV) persist() (int, int, bool) {
+	// Your code here.
+	// Example:
+	// w := new(bytes.Buffer)
+	// e := gob.NewEncoder(w)
+	// e.Encode(rf.xxx)
+	// e.Encode(rf.yyy)
+	// data := w.Bytes()
+	// rf.persister.SaveRaftState(data)
+
+	lastIncludedIndex := 0
+	lastIncludedTerm := 0
+	r := bytes.NewBuffer(kv.persister.ReadSnapshot())
+	d := gob.NewDecoder(r)
+	d.Decode(&lastIncludedIndex)
+	d.Decode(&lastIncludedTerm)
+	
+	w := new(bytes.Buffer)
+	e := gob.NewEncoder(w)
+	kv.mu.Lock()
+	
+	index := kv.lastIncludedIndex
+	term := kv.lastIncludedTerm
+	
+	if lastIncludedIndex &gt;= index {
+		kv.mu.Unlock()
+		return index, term, false
+	}
+
+	e.Encode(kv.lastIncludedIndex)
+	e.Encode(kv.lastIncludedTerm)
+	e.Encode(kv.data)
+	e.Encode(kv.executedID)
+</FONT><A NAME="5"></A><FONT color = #FF0000><A HREF="match34-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	data := w.Bytes()
+	kv.persister.SaveSnapshot(data)
+//	kv.rf.CutLog(index, term)
+	kv.mu.Unlock()
+	return index, term, true
+}
+
+func (kv *RaftKV) readPersist(data []byte) {
+	// Your code here.
+	// Example:
+	// r := bytes.NewBuffer(data)
+	// d := gob.NewDecoder(r)
+	// d.Decode(&rf.xxx)
+	// d.Decode(&rf.yyy)
+	r := bytes.NewBuffer(data)
+	d := gob.NewDecoder(r)
+//	kv.mu.Lock()
+	d.Decode(&kv.lastIncludedIndex)
+</FONT>	d.Decode(&kv.lastIncludedTerm)
+	d.Decode(&kv.data)
+	d.Decode(&kv.executedID)
+//	kv.mu.Unlock()	   
+}
+
+func (kv *RaftKV) Get(args *GetArgs, reply *GetReply) {
+	// Your code here.
+	op := Op{args.Client, args.Sequence, args.Key, "", "Get", ""}
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match34-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_12.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.mu.Lock()
+	if _, ok := kv.executedID[args.Client]; !ok {
+		kv.executedID[args.Client] = -1
+	}
+	index, term, isLeader := kv.rf.Start(op)
+	if !isLeader {
+		kv.mu.Unlock()
+		reply.WrongLeader = true
+		////fmt.Printf("%d is not leader.\n", kv.me)
+		return
+	}
+	////fmt.Printf("Client %d Call server %d Get Key Seq: %d, log index: %d\n", args.Client, kv.me,  args.Sequence, index)
+	////fmt.Printf("%d is leader\n", kv.me)
+	if _, ok := kv.notify[index]; !ok {
+		kv.notify[index] = make([]chan Op, 0)
+		////fmt.Printf("Client %d make notification channel on server %d in log index %d\n", args.Client, kv.me, index)
+	}
+	notifyMe := make(chan Op)
+	kv.notify[index] = append(kv.notify[index], notifyMe)
+	kv.mu.Unlock()
+	////fmt.Printf("%d is waiting for commit command Client:%d, Seq:%d \n", kv.me, args.Client, args.Sequence)
+	
+	var executedOp Op
+	var notified = false
+	for {
+		select {
+		case executedOp = &lt;- notifyMe:
+			notified = true
+			break
+		case &lt;- time.After(10*time.Millisecond):
+			kv.mu.Lock()
+			if currentTerm, _ := kv.rf.GetState(); term != currentTerm {
+				if kv.lastIncludedIndex &lt; index {
+					reply.WrongLeader = true
+					delete(kv.notify, index)
+					kv.mu.Unlock()
+					return
+				}
+			}
+			kv.mu.Unlock()
+		case &lt;- kv.QuitCH:
+			reply.Err = "ServerFail"
+			return
+		}
+		if notified {
+</FONT>			break
+		}
+	}
+	// executedOp := &lt;- notifyMe
+	////fmt.Printf("Client %d Seq %d Commited on server %d\n", args.Client, args.Sequence, kv.me)
+	reply.WrongLeader = false
+	if executedOp.Client != op.Client || executedOp.Sequence != op.Sequence {
+		reply.Err = "FailCommit"
+	} else {
+		if executedOp.Err == ErrNoKey {
+			reply.Err = ErrNoKey
+		} else {
+			reply.Value = executedOp.Value
+			reply.Err = OK
+		}
+	}
+	////fmt.Printf("reply.WrongLeader: %t, reply.Err: %s, server: %d\n", reply.WrongLeader, reply.Err, kv.me)
+	return
+}
+
+func (kv *RaftKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	// Your code here.
+	op := Op{args.Client, args.Sequence, args.Key, args.Value, args.Op, ""}
+	kv.mu.Lock()
+	if _, ok := kv.executedID[args.Client]; !ok {
+		////fmt.Printf("Client %d set seq as -1 on server %d\n", args.Client, kv.me)
+		kv.executedID[args.Client] = -1
+	}
+	index, term, isLeader := kv.rf.Start(op)
+	if !isLeader {
+		kv.mu.Unlock()
+		reply.WrongLeader = true
+		////fmt.Printf("%d is not leader.\n", kv.me)
+		return
+	}
+	// fmt.Printf("Client %d Call server PutAppend: %s, Seq: %d, log index: %d\n", args.Client, args.Op, args.Sequence, index)
+	////fmt.Printf("%d is leader\n", kv.me)
+	if _, ok := kv.notify[index]; !ok {
+		kv.notify[index] = make([]chan Op, 0)
+		////fmt.Printf("Client %d make notification channel on server %d in log index %d\n", args.Client, kv.me, index)
+	}
+	notifyMe := make(chan Op)
+	kv.notify[index] = append(kv.notify[index], notifyMe)
+	kv.mu.Unlock()
+	// fmt.Printf("%d is waiting for commit command Client:%d, Seq:%d \n", kv.me, args.Client, args.Sequence)
+	
+	var executedOp Op
+	notified := false
+	for {
+		select {
+		case executedOp = &lt;- notifyMe:
+			notified = true
+			break
+		case &lt;- time.After(10*time.Millisecond):
+			kv.mu.Lock()
+			if currentTerm, _ := kv.rf.GetState(); term != currentTerm {
+				if kv.lastIncludedIndex &lt; index {
+					reply.WrongLeader = true
+					delete(kv.notify, index)
+					kv.mu.Unlock()
+					return
+				}
+			}
+			kv.mu.Unlock()
+		case &lt;- kv.QuitCH:
+			reply.Err = "ServerFail"
+			return
+		}
+		if notified {
+			break
+		}
+	}
+	// executedOp := &lt;- notifyMe
+
+	////fmt.Printf("Client %d Seq %d Commited on server %d\n", args.Client, args.Sequence, kv.me)
+	reply.WrongLeader = false
+	////fmt.Printf("-------------------------------%t\n", reply.WrongLeader)
+	if executedOp.Client != op.Client || executedOp.Sequence != op.Sequence {
+		reply.Err = "FailCommit"
+	} else {
+		reply.Err = OK
+	}
+	////fmt.Printf("reply.WrongLeader: %t, reply.Err: %s, server: %d\n", reply.WrongLeader, reply.Err, kv.me)
+}
+
+//
+// the tester calls Kill() when a RaftKV instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+<A NAME="8"></A><FONT color = #00FFFF><A HREF="match34-1.html#8" TARGET="1"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *RaftKV) Kill() {
+	kv.rf.Kill()
+	// Your code here, if desired.
+	close(kv.QuitCH)
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Raft to
+// form the fault-tolerant key/value service.
+// me is the index of the current server in servers[].
+// the k/v server should store snapshots with persister.SaveSnapshot(),
+// and Raft should save its state (including log) with persister.SaveRaftState().
+// the k/v server should snapshot when Raft's saved state exceeds maxraftstate bytes,
+// in order to allow Raft to garbage-collect its log. if maxraftstate is -1,
+// you don't need to snapshot.
+// StartKVServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *RaftKV {
+</FONT>	// call gob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	gob.Register(Op{})
+
+	kv := new(RaftKV)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+
+	// Your initialization code here.
+
+	kv.applyCh = make(chan raft.ApplyMsg)
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match34-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+	kv.persister = persister
+	kv.data = make(map[string]string)
+	kv.executedID = make(map[int64]int)
+	kv.notify = make(map[int][]chan Op)
+	
+	kv.QuitCH = make(chan bool)
+	kv.Msgs = list.New()
+	kv.Recv = make(chan raft.ApplyMsg)
+	kv.lastIncludedIndex = 0
+	kv.lastIncludedTerm = 0
+	kv.readPersist(persister.ReadSnapshot())
+</FONT><A NAME="7"></A><FONT color = #0000FF><A HREF="match34-1.html#7" TARGET="1"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	if kv.rf.FirstIndex() &lt; kv.lastIncludedIndex {
+		kv.rf.CutLog(kv.lastIncludedIndex, kv.lastIncludedTerm)
+	} else if kv.rf.FirstIndex() &gt; kv.lastIncludedIndex {
+</FONT>		fmt.Println("error 2")
+	}
+	
+	go func() {
+		// for range kv.applyCh {
+		// 	//fmt.Printf("Receive apply msg, server:%d, client:%d, seq:%d, index:%d\n", kv.me, msg.Command.(Op).Client, msg.Command.(Op).Sequence, msg.Index)
+		// 	go kv.apply()
+
+		// }
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match34-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_9.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		for {
+			var (
+				recvChan chan raft.ApplyMsg
+				recvVal  raft.ApplyMsg
+			)
+			if kv.Msgs.Len() &gt; 0 {
+				recvChan = kv.Recv
+				recvVal = kv.Msgs.Front().Value.(raft.ApplyMsg)
+			}
+			select {
+			case msg := &lt;- kv.applyCh:
+				kv.Msgs.PushBack(msg)
+				////fmt.Println(kv.me, " append list at index:", msg.Index)
+			case recvChan &lt;- recvVal:
+				kv.Msgs.Remove(kv.Msgs.Front())
+				////fmt.Println(kv.me, " receiving command at index:", recvVal.Index)
+			case &lt;- kv.QuitCH:
+				return
+			}
+		}
+	} ()
+
+	go func() {
+		for {
+			select {
+			case msg := &lt;- kv.Recv:
+				////fmt.Println(kv.me, " is acquire kv.Recv lock")
+				kv.mu.Lock()
+				////fmt.Println(kv.me, " applying command at index:", msg.Index)
+				// kv.appliedEntry++
+				kv.applyCommand(msg)
+				kv.mu.Unlock()
+				////fmt.Println(kv.me, " release locks")
+			case &lt;- kv.QuitCH:
+				return
+			}
+		}
+	} ()
+
+	go func() {
+		if maxraftstate &lt;= 0 {
+			return
+		}
+		for {
+			select {
+			case &lt;- time.After(5 * time.Millisecond):
+				if kv.rf.BeginSnapshot() {
+					if persister.RaftStateSize() &gt;= maxraftstate {
+</FONT>						// fmt.Println(kv.me, " log too large")
+<A NAME="9"></A><FONT color = #FF00FF><A HREF="match34-1.html#9" TARGET="1"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+						index, term, ok := kv.persist()
+						if ok {
+							kv.rf.CutLog(index, term)
+							// fmt.Println(kv.me, " cut log to ", index)
+						}
+					}
+					kv.rf.EndSnapshot()
+				}
+			case &lt;- kv.QuitCH:
+				return
+</FONT>			}
+		}
+	} ()
+	
+	return kv
+}
+
+func (kv *RaftKV) applyCommand(msg raft.ApplyMsg) {
+	if msg.UseSnapshot {
+		// fmt.Println(kv.me, " receive snapshot through channel")
+		kv.readPersist(msg.Snapshot)
+		return
+	}
+	// fmt.Println(kv.me, " receiving command at index ", msg.Index)
+	kv.lastIncludedIndex = msg.Index
+<A NAME="10"></A><FONT color = #FF0000><A HREF="match34-1.html#10" TARGET="1"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.lastIncludedTerm = kv.rf.GetTerm(kv.lastIncludedIndex)
+	op := msg.Command.(Op)
+	logIndex := msg.Index
+	clientID := op.Client
+	opSequence := op.Sequence
+	res := Op{clientID, opSequence, op.Key, op.Value, op.Type, op.Err}
+</FONT>	// kv.mu.Lock()
+	////fmt.Printf("Server:%d, Command is %s, opSequence: %d, kv.executedID[client]: %d\n", kv.me, op.Type, opSequence, kv.executedID[clientID])
+
+	if _, ok := kv.executedID[clientID]; !ok {
+		kv.executedID[clientID] = -1
+	}
+    
+	if opSequence &gt; kv.executedID[clientID] {
+		////fmt.Printf("Log Index:%d\n", logIndex)
+		switch op.Type {
+		case "Get":
+			v, ok := kv.data[op.Key]
+			if !ok {
+				res.Err = ErrNoKey
+			} else {
+				res.Value = v
+			}
+			////fmt.Printf("Server:%d Get Value applied Client:%d, Seq: %d. Key:%s, Value:%s\n", kv.me, clientID, opSequence, op.Key, op.Value)
+			////fmt.Printf("Server:%d Get Value applied Client:%d, Seq: %d. Key:%s\n", kv.me, clientID, opSequence, op.Key)
+		case "Put":
+			kv.data[op.Key] = op.Value
+			////fmt.Printf("Server:%d Put Value applied Client:%d, Seq: %d. Key:%s, Value:%s\n", kv.me, clientID, opSequence, op.Key, op.Value)
+		case "Append":
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match34-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			_, ok := kv.data[op.Key]
+			if !ok {
+				kv.data[op.Key] = op.Value
+			} else {
+				kv.data[op.Key] += op.Value
+</FONT>			}
+			////fmt.Printf("Server %d Append Value applied Client:%d, Seq: %d. Key:%s, append:%s\n", kv.me, clientID, opSequence, op.Key, op.Value)
+			////fmt.Printf("Server %d Append Value applied Client:%d, Seq: %d.Key:%s, ValueAfterAppend:%s, append:%s\n", kv.me, clientID, opSequence, op.Key, kv.data[op.Key], op.Value)
+		}
+		kv.executedID[clientID] = opSequence
+	} else {
+		////fmt.Printf("Server %d Already seen Client : %d, Seq: %d.\n",kv.me,  clientID, opSequence)
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match34-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		if op.Type == "Get" {
+			v, ok := kv.data[op.Key]
+			if !ok {
+				res.Err = ErrNoKey
+			} else {
+				res.Value = v
+			}
+		}
+	}
+	// kv.mu.Unlock()
+	if _, ok := kv.notify[logIndex]; !ok {
+		////fmt.Printf("server %d, client:%d, seq:%d, index:%d No one notify and return\n", kv.me, clientID, opSequence, logIndex)
+		// kv.mu.Lock()
+		return
+	}
+	// kv.mu.Unlock()
+	for _,  c := range kv.notify[logIndex] {
+		// tmp := Op{res.Client, res.Sequence, res.Key, res.Value, res.Type, res.Err}
+		////fmt.Printf("-----------------------tmp made and put on channel in  server %d, client:%d, seq:%d\n", kv.me, clientID, opSequence)
+		kv.mu.Unlock()
+		c &lt;- res
+</FONT>		kv.mu.Lock()
+		////fmt.Printf("Channel taken on server %d, client:%d, seq:%d\n", kv.me, clientID, opSequence)
+	}
+	// kv.mu.Lock()
+	delete(kv.notify, logIndex)
+	// kv.mu.Unlock()
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

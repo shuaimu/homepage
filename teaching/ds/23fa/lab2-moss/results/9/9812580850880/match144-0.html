@@ -1,0 +1,216 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-cs16b004/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-cs16b004/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++;
+  return ret;
+}
+
+int KvServer::Put(const uint64_t& oid,
+                  const string& k,
+                  const string& v) {
+  /*
+  Your are recommended to use MultiStringMarshallable as the format
+  for the log entries. Here is an example how you can use it.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  */
+    shared_ptr&lt;RaftServer&gt;rf  = dynamic_pointer_cast&lt;RaftServer&gt;(sp_log_svr_);
+  uint64_t *index_p,*term_p;
+  uint64_t index=0,term=0;
+  index_p = &index;
+  term_p = &term;
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match144-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  shared_ptr&lt;Marshallable&gt;cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  auto e = rrr::Reactor::CreateSpEvent&lt;IntEvent&gt;();
+</FONT>  //e-&gt;Set(1);
+   pair&lt;string,shared_ptr&lt;IntEvent&gt;&gt;new_request(to_string(oid),e);
+   req_map.insert(new_request);
+
+
+  if(rf){
+    bool startOk = rf-&gt;Start(cmd,index_p,term_p);
+    if (startOk && !rf-&gt;IsDisconnected()){
+      Log_info("PUT CALLED at server %d",rf-&gt;site_id_);
+      //cout&lt;&lt;"Thread ID while calling start entry "&lt;&lt;this_thread::get_id();
+      //usleep(300000);
+      req_map[to_string(oid)]-&gt;Wait(20*1000*1000);
+      if(req_map[to_string(oid)]-&gt;status_ == Event::DONE){
+        return KV_SUCCESS;
+      }else{
+          //cout&lt;&lt;"returning timeout hereP"&lt;&lt;endl;
+        return KV_TIMEOUT;
+      }
+    }else{
+      return KV_NOTLEADER;
+    }
+  }
+    //cout&lt;&lt;"returning timeout hereP 2"&lt;&lt;endl;
+  return KV_TIMEOUT;
+
+  /* your code here */
+
+}
+
+int KvServer::Append(const uint64_t& oid,
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+    shared_ptr&lt;RaftServer&gt;rf  = dynamic_pointer_cast&lt;RaftServer&gt;(sp_log_svr_);
+    uint64_t *index_p,*term_p;
+    uint64_t index=0,term=0;
+    index_p = &index;
+    term_p = &term;
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("app");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+   auto e = rrr::Reactor::CreateSpEvent&lt;IntEvent&gt;();
+
+  shared_ptr&lt;Marshallable&gt;cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+   pair&lt;string,shared_ptr&lt;IntEvent&gt;&gt;new_request(to_string(oid),e);
+   req_map.insert(new_request);
+
+
+  if(rf){
+    bool startOk = rf-&gt;Start(cmd,index_p,term_p);
+    if (startOk && !rf-&gt;IsDisconnected()){
+      Log_info("APPEND CALLED at server %d",rf-&gt;site_id_);
+      req_map[to_string(oid)]-&gt;Wait(20*1000*1000);
+      if(req_map[to_string(oid)]-&gt;status_ == Event::DONE){
+        return KV_SUCCESS;
+      }else{
+        //cout&lt;&lt;"Returning TIMEOUT hereA"&lt;&lt;endl;
+        return KV_TIMEOUT;
+      }
+    }else{
+      return KV_NOTLEADER;
+    }
+  }
+    //cout&lt;&lt;"returning timeout hereA 2"&lt;&lt;endl;
+  return KV_TIMEOUT;
+}
+
+int KvServer::Get(const uint64_t& oid,
+                  const string& k,
+                  string* v) {
+  /* your code here */
+  shared_ptr&lt;RaftServer&gt;rf  = dynamic_pointer_cast&lt;RaftServer&gt;(sp_log_svr_);
+  uint64_t *index_p,*term_p;
+   uint64_t index=0,term=0;
+  index_p = &index;
+  term_p = &term;
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("get");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back("GET_VAL_OP");
+    auto e = rrr::Reactor::CreateSpEvent&lt;IntEvent&gt;();
+
+   shared_ptr&lt;Marshallable&gt;cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+   pair&lt;string,shared_ptr&lt;IntEvent&gt;&gt;new_request(to_string(oid),e);
+   req_map.insert(new_request);
+
+  if(rf){
+    bool startOk = rf-&gt;Start(cmd,index_p,term_p);
+    if (startOk && !rf-&gt;IsDisconnected()){
+      Log_info("GET CALLED at server %d",rf-&gt;site_id_);
+      req_map[to_string(oid)]-&gt;Wait(20*1000*1000);
+      if(req_map[to_string(oid)]-&gt;status_ == Event::DONE){
+        *v = val_map[k];
+        // cout&lt;&lt;val_map[k] == NULL;
+        return KV_SUCCESS;
+      }else{
+          //cout&lt;&lt;"returning timeout hereG"&lt;&lt;endl;
+        return KV_TIMEOUT;
+      }
+    }else{
+      return KV_NOTLEADER;
+    }
+  }
+    //cout&lt;&lt;"returning timeout hereG 2"&lt;&lt;endl;
+  return KV_TIMEOUT;
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  auto v = (MultiStringMarshallable*)(&m);
+  /* your code here */
+    shared_ptr&lt;RaftServer&gt;rf  = dynamic_pointer_cast&lt;RaftServer&gt;(sp_log_svr_);
+    string operation = v-&gt;data_[1];
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match144-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    string k  = v-&gt;data_[2];
+    string val = v-&gt;data_[3];
+    string oid = v-&gt;data_[0];
+    if(operation == "put"){
+      val_map[k]=val;
+</FONT>    }else if(operation == "app"){
+      if( val_map.find(k) != val_map.end()){
+        val_map[k]+=val;
+      }else{
+        val_map[k]=val;
+      }
+    }else{
+       val_map.find(k);
+    //   cout&lt;&lt;"Value at Key "&lt;&lt; k&lt;&lt; " is "&lt;&lt; val_map[k] &lt;&lt;endl;
+    }
+    if(rf-&gt;my_state == Leader){
+      //cout&lt;&lt;"Thread ID while applying  entry "&lt;&lt;this_thread::get_id()&lt;&lt;endl&lt;&lt;endl;
+
+        if(req_map.find(oid) != req_map.end()){
+          //Log_info(" operation %s, k %s,v %s",operation,k,val);
+          req_map[oid]-&gt;Set(1);
+          Log_info("Leader %d applied a command",rf-&gt;site_id_);
+          // cout&lt;&lt;"---------------------------------"&lt;&lt;endl;
+          // cout&lt;&lt;k&lt;&lt;" "&lt;&lt;val&lt;&lt;" "&lt;&lt;operation&lt;&lt;endl;
+          // cout&lt;&lt;"---------------------------------"&lt;&lt;endl;
+        }
+    }
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++;
+  return cli;
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,163 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-Sirneij/src/shardkv/client.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-Sirneij/src/shardkv/client.cc<p><PRE>
+
+
+#include "client.h"
+#include "server.h"
+
+namespace janus
+{
+  /**
+   * @brief Perform an operation on a key.
+   *
+   * @param key The key.
+   * @param func The function to perform on the key.
+   * @return int KV_SUCCESS if the operation is successful, KV_NOTLEADER if the server is not the leader, KV_TIMEOUT if the operation times out.
+   *
+   * @note The function will query the shardmaster for the latest configuration, and then perform the operation on the correct server. It replaces the `Op` function in the original kv client.
+   */
+  int ShardKvClient::OpWithKey(const string &key, function&lt;int(siteid_t, uint32_t *)&gt; func)
+  {
+    // Log_info("ShardKvClient::OpWithKey -&gt; key: %s", key.c_str());
+    if (!shard_master_client_)
+    {
+      // Log_info("ShardKvClient::OpWithKey -&gt; shard_master_client_ is null");
+      shard_master_client_ = make_shared&lt;ShardMasterClient&gt;();
+      // verify(commo_ != nullptr);
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match122-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_7.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      shard_master_client_-&gt;commo_ = commo_;
+    }
+
+    uint64_t t1 = Time::now();
+    while (true)
+    {
+      uint64_t t2 = Time::now();
+      if (t2 - t1 &gt; 10000000) // 10 seconds timeout
+      {
+        // Log_info("ShardKvClient::OpWithKey -&gt; {key: %s} timeout", key.c_str());
+        return KV_TIMEOUT;
+      }
+
+      // Query the shardmaster for the latest configuration
+      ShardConfig config;
+</FONT>      auto sm_ret = shard_master_client_-&gt;Query(-1, &config);
+      if (sm_ret != KV_SUCCESS)
+      {
+        usleep(100000); // 100 milliseconds
+        continue;       // Retry the operation after a delay
+      }
+
+      shardid_t shard_id = Key2Shard(key);
+      auto shard_group_it = config.shard_group_map_.find(shard_id);
+      if (shard_group_it == config.shard_group_map_.end())
+      {
+        usleep(100000); // 100 milliseconds
+        continue;       // Retry the operation after a delay
+      }
+
+      uint32_t group_id = shard_group_it-&gt;second;
+      // Log_info("ShardKvClient::OpWithKey -&gt; {key: %s, shard_id: %d, group_id: %d}", key.c_str(), shard_id, group_id);
+      auto group_servers_it = config.group_servers_map_.find(group_id);
+      if (group_servers_it == config.group_servers_map_.end() || group_servers_it-&gt;second.empty())
+      {
+        usleep(100000); // Wait before retrying
+        continue;
+      }
+
+      auto &servers = group_servers_it-&gt;second;
+
+      for (auto server_id : servers)
+      {
+        uint32_t ret = 0;
+        // Log_info("ShardKvClient::OpWithKey -&gt; {key: %s, shard_id: %d, server_id: %d}", key.c_str(), shard_id, server_id);
+        int r1 = func(server_id, &ret);
+        if (ret == KV_SUCCESS)
+        {
+          return KV_SUCCESS;
+        }
+        else if (r1 == ETIMEDOUT || ret == KV_TIMEOUT)
+        {
+          break; // Retry from shardmaster query
+        }
+        else if (ret == KV_NOTLEADER)
+        {
+          continue; // Try the next server in the group
+        }
+      }
+
+      usleep(100000); // Wait before retrying the whole operation
+    }
+  }
+
+  /**
+   * @brief Put a key-value pair into the map.
+   *
+   * @param k The key.
+   * @param v The value.
+   * @return int KV_SUCCESS if the operation is successful, KV_NOTLEADER if the server is not the leader, KV_TIMEOUT if the operation times out.
+   *
+   * @note The key-value pair will be added to the map.
+   */
+  int ShardKvClient::Put(const string &k, const string &v)
+  {
+    return OpWithKey(k, [&](siteid_t site_id, uint32_t *r) -&gt; int
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match122-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_8.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                     { return Proxy(site_id).Put(GetNextOpId(), k, v, r); });
+  }
+
+  /**
+   * @brief Append a value to a key.
+   *
+   * @param k The key.
+   * @param v The value.
+   * @return int KV_SUCCESS if the operation is successful, KV_NOTLEADER if the server is not the leader, KV_TIMEOUT if the operation times out.
+   *
+   * @note The value will be appended to the key.
+   */
+  int ShardKvClient::Append(const string &k, const string &v)
+  {
+    return OpWithKey(k, [&](siteid_t site_id, uint32_t *r) -&gt; int
+</FONT><A NAME="1"></A><FONT color = #00FF00><A HREF="match122-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_8.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                     { return Proxy(site_id).Append(GetNextOpId(), k, v, r); });
+  }
+
+  /**
+   * @brief Get the value of a key.
+   *
+   * @param k The key.
+   * @param v The value.
+   * @return int KV_SUCCESS if the operation is successful, KV_NOTLEADER if the server is not the leader, KV_TIMEOUT if the operation times out.
+   *
+   * @note The value will be returned in `v`.
+   */
+  int ShardKvClient::Get(const string &k, string *v)
+  {
+    return OpWithKey(k, [&](siteid_t site_id, uint32_t *r) -&gt; int
+</FONT>                     { return Proxy(site_id).Get(GetNextOpId(), k, r, v); });
+  }
+
+  /**
+   * @brief Get the proxy for a server.
+   *
+   * @param site_id The server ID.
+   * @return ShardKvProxy& The proxy for the server.
+   */
+  ShardKvProxy &ShardKvClient::Proxy(siteid_t site_id)
+  {
+    verify(commo_);
+    auto p = (ShardKvProxy *)commo_-&gt;rpc_proxies_.at(site_id);
+    return *p;
+  }
+
+} // namesapce janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

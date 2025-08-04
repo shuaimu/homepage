@@ -1,0 +1,191 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-Aditiii/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-akashpatil-219/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+#include "commo.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+
+void RaftServiceImpl::HandleRequestVote(const uint64_t& currentTerm,
+                                        const uint64_t& CandidateId,
+                                        const uint64_t& candidateLogLen,
+                                        const u_int64_t& candidateLogTerm,
+                                        uint64_t* peerTerm,
+                                        bool_t* vote_granted,
+                                        rrr::DeferredReply* defer) {
+  /* Your code here */
+  //if(!svr_-&gt;IsDisconnected()){
+    Log_info("inside HandleRequestVote of %d by %d",svr_-&gt;loc_id_, CandidateId);
+    // if(svr_-&gt;currentTerm &lt; currentTerm){
+    //   svr_-&gt;timer.start();
+    //   svr_-&gt;state = 0;
+    //   svr_-&gt;currentTerm = currentTerm;
+    //   svr_-&gt;votedFor = 1000;
+    // }
+    bool logOk = true;
+    bool termOk = true;
+    uint64_t myLogTerm = 0;
+    uint64_t myLogLen = svr_-&gt;logs.size();
+    if(myLogLen &gt; 0){
+      myLogTerm = svr_-&gt;logs[myLogLen - 1].first;
+    }
+    uint64_t checkCount = 0;
+    if(candidateLogTerm &gt; myLogTerm)
+      checkCount++;
+    if((candidateLogTerm == myLogTerm) && (candidateLogLen &gt;= myLogLen))
+      checkCount++;
+    if(checkCount &lt; 1)
+      logOk = false;
+    checkCount = 0;
+    if(currentTerm &gt; svr_-&gt;currentTerm)
+      checkCount++;
+    if((currentTerm == svr_-&gt;currentTerm ) && ((svr_-&gt;votedFor == 1000) || (svr_-&gt;votedFor == CandidateId)))
+      checkCount++;
+    if(checkCount &lt; 1)
+      termOk = false;
+
+    if(termOk && logOk){
+      svr_-&gt;state = 0;
+      svr_-&gt;votedFor = CandidateId;
+      svr_-&gt;currentTerm = currentTerm;
+      Log_info("Node %d granting vote to candidate %d for term %d",svr_-&gt;loc_id_, CandidateId, currentTerm);
+      *peerTerm = currentTerm;
+      *vote_granted = 1;
+    }
+    else{
+      Log_info("Node %d did not vote for candidate %d for term %d",svr_-&gt;loc_id_, CandidateId, currentTerm);
+      if(!logOk){
+        Log_info("Log conditions not satisfied");
+      }
+      if(!termOk){
+        Log_info("Term conditions not satisfied");
+      }
+      *vote_granted = 0;
+      *peerTerm = svr_-&gt;currentTerm;
+    }
+  //}
+  
+
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleAppendEntries(const uint64_t& currentTerm,
+                                          const uint64_t& leaderId,
+                                          const uint64_t& prevLogIndex,
+                                          const uint64_t& prevLogTerm,
+                                          const uint64_t& commitLen,
+                                          const vector&lt;uint64_t&gt;& logTerms,
+                                          const vector&lt;MarshallDeputy&gt;& logCommands,
+                                          uint64_t* peerTerm,
+                                          uint64_t* ackLen,
+                                          bool_t* followerAppendOK,
+                                          rrr::DeferredReply* defer) {
+  if(!svr_-&gt;IsDisconnected()){
+      //*ackLen = 0; // Remove this later
+      Log_info("Node%d with currentTerm %d, received heartbeat from %d for term %d", svr_-&gt;loc_id_,svr_-&gt;currentTerm,leaderId,currentTerm);
+
+    if(currentTerm &gt; svr_-&gt;currentTerm){
+      //Log_info("D1");
+      svr_-&gt;votedFor = 1000;
+      svr_-&gt;currentTerm = currentTerm;
+      svr_-&gt;currentLeader = leaderId;
+      svr_-&gt;state = 0;
+      svr_-&gt;timer.start();
+    }
+    if((currentTerm == svr_-&gt;currentTerm) && (svr_-&gt;state == 0)){
+      //Log_info("D2");
+      svr_-&gt;timer.start();
+      svr_-&gt;state = 0;
+      svr_-&gt;currentLeader = leaderId;
+      Log_info("Node %d is a follower now 1",svr_-&gt;loc_id_);
+    }
+    bool logOk = true;
+    if(svr_-&gt;logs.size() &lt; prevLogIndex)
+      logOk = false;
+    if(prevLogIndex &gt; 0){
+      if(prevLogTerm != svr_-&gt;logs[prevLogIndex-1].first){
+        logOk = false;
+      }
+    }
+    *peerTerm = svr_-&gt;currentTerm;
+    if((currentTerm == svr_-&gt;currentTerm) && logOk){
+      Log_info("Node %d is going to commit entries",svr_-&gt;loc_id_);
+      CommitEntries(prevLogIndex,prevLogTerm,commitLen,logTerms,logCommands);
+      *ackLen = prevLogIndex + logTerms.size();
+      *followerAppendOK = 1;
+    }
+    else{
+      *ackLen = 0;
+      *followerAppendOK = 0;
+    }
+  }
+  /* Your code here */
+  //std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(md_cmd).sp_data_;
+  //*followerAppendOK = false;
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match147-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::CommitEntries(const uint64_t& prevLogIndex,
+                                    const uint64_t& prevLogTerm,
+                                    const uint64_t& commitLen,
+                                    const vector&lt;uint64_t&gt;& logTerms,
+                                    const vector&lt;MarshallDeputy&gt;& logCommands){
+</FONT>  //
+  if((logTerms.size() &gt; 0) && (svr_-&gt;logs.size() &gt; prevLogTerm)){
+    if(svr_-&gt;logs[prevLogIndex].first != logTerms[0]){
+      // Time to clear some logs
+      svr_-&gt;logs.erase(svr_-&gt;logs.begin()+prevLogIndex,svr_-&gt;logs.end());
+    }
+  }
+
+  if((prevLogIndex + logTerms.size()) &gt; svr_-&gt;logs.size()){
+    // Actually push some logs to follower
+    uint64_t st = svr_-&gt;logs.size() - prevLogIndex;
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match147-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    for(int i=st; i&lt;logTerms.size(); i++){
+      svr_-&gt;logs.push_back({logTerms[i], const_cast&lt;MarshallDeputy&&gt;(logCommands[i]).sp_data_});
+    }
+  }
+
+  if(commitLen &gt; svr_-&gt;commitLen){
+    for(int i=svr_-&gt;commitLen; i&lt;commitLen; i++){
+</FONT>      svr_-&gt;app_next_(*svr_-&gt;logs[i].second);
+    }
+    svr_-&gt;commitLen = commitLen;
+  }
+
+}
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("receive an rpc: %s", req.c_str());
+  *res = "world";
+  defer-&gt;reply();
+}
+
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

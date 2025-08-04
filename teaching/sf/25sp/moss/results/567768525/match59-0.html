@@ -1,0 +1,262 @@
+<HTML>
+<HEAD>
+<TITLE>./spring19/sahsagarstonybrook/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./spring19/sahsagarstonybrook/src/kvraft/server.go<p><PRE>
+package raftkv
+
+import (
+	"labgob"
+	"labrpc"
+	"log"
+	"raft"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+const Debug = 0
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+const (
+	G_OP = 0
+	P_OP = 1
+	A_OP = 2
+)
+
+type Op struct {
+	Operation int
+	Key       string
+	Value     string
+	Clientid  int64
+	Seqnum    int
+}
+
+type KVServer struct {
+	mu             sync.Mutex
+	me             int
+	rf             *raft.Raft
+	applyCh        chan raft.ApplyMsg
+	persister      *raft.Persister
+	maxraftstate   int
+	kv_data        map[string]string
+	waitingChannel map[string]chan Op
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match59-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	clientIdSeqNum map[int64]string // all seq numbers executed are stored in this map
+}
+
+func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
+	//fmt.Printf("Server Get for cliendid %v seq num %v\n", args.ClientId, args.SeqNum)
+	kv.mu.Lock()
+
+	OP := Op{
+		Operation: G_OP,
+		Key:       args.Key,
+		Clientid:  args.ClientId,
+		Seqnum:    args.SeqNum,
+		Value:     "",
+</FONT>	}
+
+	//fmt.Printf("Operation DS: %v\n", op)
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match59-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_15.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	index, term, isLeader := kv.rf.Start(OP)
+
+	if isLeader == false {
+		reply.Leader = 2
+		kv.mu.Unlock()
+		return
+	}
+	/*
+		if kv.lastIndex &gt; index || kv.lastTerm  &gt; term {
+			reply.Leader = 2
+			kv.mu.Unlock()
+			return
+		}
+
+		kv.lastIndex = index
+		kv.lastTerm = term
+	*/
+	reply.Leader = 1
+
+	_, ok := kv.waitingChannel[strconv.Itoa(index)+strconv.Itoa(term)]
+	if !ok {
+		// Source Reference: RAFT Guide
+		// Discussed with Radhika Dhawan(Friend, not in Async class) that this channel needs to be buffered, hence non-blocking
+		kv.waitingChannel[strconv.Itoa(index)+strconv.Itoa(term)] = make(chan Op, 100)
+	}
+	kv.mu.Unlock()
+
+	select {
+	case op := &lt;-kv.waitingChannel[strconv.Itoa(index)+strconv.Itoa(term)]:
+		if op.Seqnum != OP.Seqnum || op.Clientid != OP.Clientid {
+			reply.Leader = 2
+		} else {
+</FONT>			reply.Value = op.Value
+		}
+		// if dies or stops being leader
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match59-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	case &lt;-time.After(500 * time.Millisecond):
+		reply.Leader = 2
+		return
+	}
+}
+
+func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	//fmt.Printf("Server Put/Append for client id %v seq num %v\n", args.ClientId, args.SeqNum)
+	kv.mu.Lock()
+
+	OP := Op{
+		Operation: args.Operation,
+		Key:       args.Key,
+		Clientid:  args.ClientId,
+</FONT>		Seqnum:    args.SeqNum,
+		Value:     args.Value,
+	}
+
+	//fmt.Printf("Sagar DS: %v\n", OP)
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match59-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_14.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	index, term, isLeader := kv.rf.Start(OP)
+
+	if isLeader == false {
+		reply.Leader = 2
+		kv.mu.Unlock()
+		return
+	}
+
+	/*if kv.lastIndex &gt;= index || kv.lastTerm  &gt; term {
+		reply.Leader = 2
+		kv.mu.Unlock()
+		return
+	}*//*
+
+	kv.lastIndex = index
+	kv.lastTerm = term
+*/
+	reply.Leader = 1
+
+	_, ok := kv.waitingChannel[strconv.Itoa(index)+strconv.Itoa(term)]
+	if !ok {
+		// Source Reference: RAFT Guide
+		// Discussed with Radhika Dhawan(Friend, not in Async class) that this channel needs to be buffered, hence non-blocking
+		kv.waitingChannel[strconv.Itoa(index)+strconv.Itoa(term)] = make(chan Op, 100)
+	}
+	//fmt.Print("Wait start\n")
+	kv.mu.Unlock()
+
+	select {
+	case op := &lt;-kv.waitingChannel[strconv.Itoa(index)+strconv.Itoa(term)]:
+		//fmt.Print("channel entry received in channel\n")
+		if op.Seqnum != OP.Seqnum || op.Clientid != OP.Clientid {
+			reply.Leader = 2
+</FONT>		}
+		// if dies or stops being leader
+	case &lt;-time.After(500 * time.Millisecond):
+		reply.Leader = 2
+		//fmt.Printf("Timeout")
+	}
+}
+
+func (kv *KVServer) Kill() {
+}
+
+func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
+	labgob.Register(Op{})
+
+	kv := new(KVServer)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+
+	kv.applyCh = make(chan raft.ApplyMsg)
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match59-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.persister = persister
+	kv.kv_data = make(map[string]string)
+	kv.waitingChannel = make(map[string]chan Op)
+	kv.clientIdSeqNum = make(map[int64]string)
+
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+</FONT>
+	go kv.apply()
+
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match59-1.html#7" TARGET="1"><IMG SRC="../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	return kv
+}
+
+// Continuous apply loop (Source reference: RAFT Guide).
+// keeps running endlessly to check if command has passed.
+func (kv *KVServer) apply() {
+	for {
+		applyMsg := &lt;-kv.applyCh
+		kv.mu.Lock()
+		//fmt.Printf("Locked here\n")
+		// apply index
+		op := applyMsg.Command.(Op)
+</FONT><A NAME="2"></A><FONT color = #0000FF><A HREF="match59-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_13.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+
+		//fmt.Printf("seq num in db: %v\n", kv.clientIdSeqNum[op.Clientid])
+		//fmt.Printf("seq num in operation %v\n", op.Seqnum)
+
+		if op.Operation == G_OP {
+			// PUT VALUE IN GET CHANNEL
+			//fmt.Printf("Get operation: Key - %v, Value - %v\n", op.Key, op.Value)
+			op.Value = kv.kv_data[op.Key]
+		}
+
+		// check in the string map if the seq. num has already been executed.
+		if !strings.Contains(kv.clientIdSeqNum[op.Clientid], "-"+strconv.Itoa(op.Seqnum)+"-") {
+			kv.clientIdSeqNum[op.Clientid] += "-" + strconv.Itoa(op.Seqnum) + "-"
+
+			/*
+
+		fmt.Printf("Operation DS: %v\n", op)
+		fmt.Printf("Key %v\n", op.Key)
+		fmt.Printf("Value %v\n", op.Value)
+		fmt.Printf("Operation %v\n", op.Operation)
+		fmt.Printf("Client ID %v\n", op.Clientid)
+		fmt.Printf("Seq Num %v\n", op.Seqnum)
+*/
+			if op.Operation == P_OP {
+				//fmt.Printf("Put operation: Key - %v, Value - %v\n", op.Key, op.Value)
+				kv.kv_data[op.Key] = op.Value
+			}
+
+			if op.Operation == A_OP {
+				//fmt.Printf("Append operation: Key - %v, Value - %v\n", op.Key, op.Value)
+				kv.kv_data[op.Key] = kv.kv_data[op.Key] + op.Value
+</FONT><A NAME="4"></A><FONT color = #FF00FF><A HREF="match59-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			}
+		}
+
+		_, ok := kv.waitingChannel[strconv.Itoa(applyMsg.CommandIndex)+strconv.Itoa(applyMsg.CommandTerm)]
+
+		if ok {
+			// inform anyone who's waiting on this index
+			kv.waitingChannel[strconv.Itoa(applyMsg.CommandIndex)+strconv.Itoa(applyMsg.CommandTerm)] &lt;- op
+		}
+
+		kv.mu.Unlock()
+</FONT>		//fmt.Printf("Unlocked here\n")
+	}
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

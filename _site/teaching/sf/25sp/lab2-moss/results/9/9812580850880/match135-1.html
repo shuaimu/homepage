@@ -1,0 +1,159 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-ksp20/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-smeshah/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match135-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  /* 
+  Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  */
+  /* your code here */
+  // attempt 2
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+</FONT>  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  uint64_t index = -1;
+  uint64_t term = -1;
+  RaftServer &rs= GetRaftServer();
+  shared_ptr&lt;Marshallable&gt; cmd(s);
+  bool timeout=false;
+  if (rs.currentState!="leader"){
+    return KV_NOTLEADER;
+  }
+  putCommit=false;
+  rs.Start(cmd,&index, &term);
+  Coroutine::Sleep(550000);
+
+
+  if(putCommit==false){
+    return KV_TIMEOUT;
+  }
+
+  return KV_SUCCESS;
+}
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("append");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  uint64_t index = -1;
+  uint64_t term = -1;
+  RaftServer &rs= GetRaftServer();
+  shared_ptr&lt;Marshallable&gt; cmd = s;
+  if (rs.currentState!="leader"){
+    return KV_NOTLEADER;
+  }
+  appendCommit=false;
+  rs.Start(cmd,&index, &term);
+  Coroutine::Sleep(550000);
+  if(appendCommit==false){
+   return KV_TIMEOUT;
+  }
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match135-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  return KV_SUCCESS;
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+  /* your code here */
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+</FONT>  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("get");
+  s-&gt;data_.push_back(k);
+  uint64_t index = -1;
+  uint64_t term = -1;
+  RaftServer &rs= GetRaftServer();
+  Log_info("Server ID %d Is leader: %s", rs.loc_id_, rs.currentState.c_str());
+  shared_ptr&lt;Marshallable&gt; cmd = s;
+  if (rs.currentState!="leader"){
+    return KV_NOTLEADER;
+  }
+  getCommit=false;
+  rs.Start(cmd,&index, &term);
+  Coroutine::Sleep(550000);
+ 
+  *v=kvmap[k];
+  if(getCommit==false){
+   return KV_TIMEOUT;
+  }
+  return KV_SUCCESS;
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+  auto v = (MultiStringMarshallable*)(&m);
+  /* your code here */
+  if(v-&gt;data_[1]=="put"){
+    putCommit=true;
+    kvmap[v-&gt;data_[2]]=v-&gt;data_[3];
+  }
+  if(v-&gt;data_[1]=="append"){
+    appendCommit=true;
+    kvmap[v-&gt;data_[2]]+=v-&gt;data_[3];
+  }
+  if(v-&gt;data_[1]=="get"){
+    getCommit=true;
+  }
+  Log_info("On next command called");
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

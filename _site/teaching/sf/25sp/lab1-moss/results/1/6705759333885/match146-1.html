@@ -1,0 +1,104 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-AlexandraJeong/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-akshat2602/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus
+{
+
+  RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+      : svr_((RaftServer *)sched)
+  {
+    struct timespec curr_time;
+    clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+    srand(curr_time.tv_nsec);
+  }
+
+  void RaftServiceImpl::HandleRequestVote(const uint64_t &c_term,
+                                          const uint64_t &c_id,
+                                          const int64_t &last_log_index,
+                                          const uint64_t &last_log_term,
+                                          uint64_t *ret1,
+                                          bool_t *vote_granted,
+                                          bool_t *rpc_sent,
+                                          rrr::DeferredReply *defer)
+  {
+    svr_-&gt;OnRequestVote(c_term,
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match146-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_17.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                        c_id,
+                        last_log_index,
+                        last_log_term,
+                        ret1,
+                        vote_granted,
+                        rpc_sent,
+                        defer);
+  }
+
+  void RaftServiceImpl::HandleAppendEntries(const uint64_t &l_term,
+                                            const uint64_t &l_id,
+                                            const int64_t &prev_l_index,
+                                            const uint64_t &prev_l_term,
+</FONT>                                            const int64_t &l_commit,
+                                            const vector&lt;LogEntry&gt; &cmd,
+                                            uint64_t *reply_term,
+                                            int64_t *conflict_index,
+                                            uint64_t *conflict_term,
+                                            bool_t *f_ok,
+                                            bool_t *rpc_sent,
+                                            rrr::DeferredReply *defer)
+  {
+    svr_-&gt;OnAppendEntries(l_term,
+                          l_id,
+                          prev_l_index,
+                          prev_l_term,
+                          l_commit,
+                          cmd,
+                          reply_term,
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match146-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_14.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                          conflict_index,
+                          conflict_term,
+                          f_ok,
+                          rpc_sent,
+                          defer);
+  }
+
+  void RaftServiceImpl::HandleHelloRpc(const string &req,
+                                       string *res,
+                                       rrr::DeferredReply *defer)
+  {
+    /* Your code here */
+    Log_info("receive an rpc: %s", req.c_str());
+</FONT>    *res = "world";
+    defer-&gt;reply();
+  }
+
+  // void RaftServiceImpl::HandleEmptyEntries(const uint64_t &l_term,
+  //                                          const uint64_t &l_id,
+  //                                          const int64_t &prev_l_index,
+  //                                          const uint64_t &prev_l_term,
+  //                                          uint64_t *ret1,
+  //                                          bool_t *f_ok,
+  //                                          rrr::DeferredReply *defer)
+  // {
+  //   svr_-&gt;OnEmptyAppendEntries(l_term,
+  //                              l_id,
+  //                              prev_l_index,
+  //                              prev_l_term,
+  //                              ret1,
+  //                              f_ok,
+  //                              defer);
+  // }
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

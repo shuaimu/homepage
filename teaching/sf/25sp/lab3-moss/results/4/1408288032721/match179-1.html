@@ -1,0 +1,132 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-ojasdeshpande10-1/src/shardkv/client.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-ahuja-gautam/src/shardkv/client.cc<p><PRE>
+
+
+#include "client.h"
+#include "server.h"
+
+namespace janus {
+
+
+int ShardKvClient::Op(function&lt;int(uint32_t*)&gt; func, const string key) {
+  shardid_t shard = Key2Shard(key);
+  int replicaGroup = latestConfig.shard_group_map_[shard];
+  auto servers = latestConfig.group_servers_map_[replicaGroup];
+  auto replicaGroupSize = servers.size();
+  int serversIndex = 0;
+  leader_idx_ = servers[serverIndex];
+
+  uint64_t t1 = Time::now();
+  while (true) {
+    uint64_t t2 = Time::now();
+    if (t2 - t1 &gt; 10000000) {
+      return KV_TIMEOUT;
+    }
+    uint32_t ret = 0;
+    int r1; 
+    r1 = func(&ret);
+    if (r1 == ETIMEDOUT || ret == KV_TIMEOUT) {
+      //leader_idx_ = (leader_idx_+1) % replicaGroupSize;
+      serverIndex = (serverIndex + 1) % replicaGroupSize;
+      leader_idx_ = servers[serverIndex];
+      return KV_TIMEOUT;
+    }
+    if (ret == KV_SUCCESS) {
+      return KV_SUCCESS;
+    }
+    if (ret == KV_NOTLEADER) {
+      //leader_idx_ = (leader_idx_+1) % replicaGroupSize;
+      serverIndex = (serverIndex + 1) % replicaGroupSize;
+      leader_idx_ = servers[serverIndex];
+    }
+  }
+
+}
+
+
+int ShardKvClient::OpForShardMaster(function&lt;int(uint32_t*)&gt; func) {
+  //Only one server is leader, so keep retrying for that server
+  uint64_t t1 = Time::now();
+  while (true) {
+    uint64_t t2 = Time::now();
+    if (t2 - t1 &gt; 10000000) {
+      return KV_TIMEOUT;
+    }
+    uint32_t ret = 0;
+    int r1; 
+    r1 = func(&ret);
+    if (r1 == ETIMEDOUT || ret == KV_TIMEOUT) {
+      return KV_TIMEOUT;
+    }
+    if (ret == KV_SUCCESS) {
+      return KV_SUCCESS;
+    }
+    if (ret == KV_NOTLEADER) {
+
+    }
+  }
+
+}
+
+int ShardKvClient::Put(const string& k, const string& v) {
+  ShardConfig* config = new ShardConfig();
+  getConfig(config);
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match179-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_8.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  Log_info("In KV Client PUT, leaderIdx=%d", leader_idx_);
+  return Op([&](uint32_t* r)-&gt;int{
+    return Proxy(leader_idx_).Put(GetNextOpId(), k, v, r);
+  }, k);
+}
+
+ShardKvProxy& ShardKvClient::Proxy(siteid_t site_id) {
+  verify(commo_);
+  auto p = (ShardKvProxy*)commo_-&gt;rpc_proxies_.at(site_id);
+</FONT>  return *p; 
+}
+
+  ShardMasterProxy& ShardKvClient::getShardMasterProxy(siteid_t site_id) {
+     verify(commo_);
+  auto p = (ShardMasterProxy*)commo_-&gt;rpc_par_proxies_[0].at(site_id).second;
+  return *p; 
+  }
+
+  void ShardKvClient::getConfig(ShardConfig* config) {
+    if(chrono::high_resolution_clock::now() &gt;= this-&gt;configTime) {
+      Log_info("Querying shard config from kv client");
+    auto ret =  OpForShardMaster([&](uint32_t* r)-&gt;int{
+    return getShardMasterProxy(0).Query(-1, r, config);
+  });
+  Log_info("Shard Config retrieved shardSize=%d", config-&gt;shard_group_map_.size());
+  this-&gt;latestConfig=*config;
+  this-&gt;configTime = chrono::high_resolution_clock::now() + chrono::milliseconds(75);
+    }
+  }
+
+int ShardKvClient::Append(const string& k, const string& v) {
+    ShardConfig* config = new ShardConfig();
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match179-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_7.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  getConfig(config);
+  return Op([&](uint32_t* r)-&gt;int{
+    return Proxy(leader_idx_).Append(GetNextOpId(), k, v, r);
+  }, k);
+}
+
+int ShardKvClient::Get(const string& k, string* v) {
+</FONT>    ShardConfig* config = new ShardConfig();
+  getConfig(config);
+  return Op([&](uint32_t* r)-&gt;int{
+    return Proxy(leader_idx_).Get(GetNextOpId(), k, r, v);
+  }, k);
+}
+
+} // namesapce janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

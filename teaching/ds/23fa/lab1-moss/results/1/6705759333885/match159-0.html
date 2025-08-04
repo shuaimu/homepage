@@ -1,0 +1,223 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-JWaibong/src/deptran/raft/commo.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-JWaibong/src/deptran/raft/commo.cc<p><PRE>
+
+#include "commo.h"
+#include "../rcc/graph.h"
+#include "../rcc/graph_marshaler.h"
+#include "../command.h"
+#include "../procedure.h"
+#include "../command_marshaler.h"
+#include "raft_rpc.h"
+#include "macros.h"
+
+namespace janus {
+
+RaftCommo::RaftCommo(PollMgr* poll) : Communicator(poll) {
+}
+
+
+SiteProxyPair RaftCommo::FindProxy(parid_t par_id, siteid_t site_id) {
+  auto proxies = rpc_par_proxies_[par_id];
+  for (auto& p : proxies) {
+      if (p.first == site_id) {
+        return p;
+      }
+  }
+  return pair&lt;uint16_t, ClassicProxy *&gt;(-1, nullptr);
+}
+
+
+vector&lt;shared_ptr&lt;BoxEvent&lt;pair&lt;bool_t, uint64_t&gt;&gt;&gt;&gt; RaftCommo::SendRequestVoteAll(parid_t par_id, 
+                                                          locid_t src, 
+                                                          uint64_t candidateTerm,
+                                                          uint64_t candidateId,
+                                                          uint64_t lastLogIndex, 
+                                                          uint64_t lastLogTerm) {                                                      
+  auto proxies = rpc_par_proxies_[par_id];
+  vector&lt;shared_ptr&lt;BoxEvent&lt;pair&lt;bool_t, uint64_t&gt;&gt;&gt;&gt; events;
+  for (auto& p : proxies) {
+      if (p.first == src) {
+        continue;
+      }
+      auto ev = Reactor::CreateSpEvent&lt;BoxEvent&lt;pair&lt;bool_t, uint64_t&gt;&gt;&gt;();
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match159-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      events.push_back(ev);
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [ev](Future* fu) {
+        uint64_t retTerm;
+        bool_t vote_granted;
+        fu-&gt;get_reply() &gt;&gt; retTerm;
+        fu-&gt;get_reply() &gt;&gt; vote_granted;
+        /* process the RPC response here */
+        
+        ev-&gt;Set(std::pair&lt;uint64_t,uint64_t&gt;(vote_granted, retTerm));
+</FONT>      };
+      Call_Async(proxy, RequestVote, candidateTerm, candidateId, lastLogIndex, lastLogTerm, fuattr);
+  }
+  return events;
+}
+
+shared_ptr&lt;BoxEvent&lt;vector&lt;uint64_t&gt;&gt;&gt; RaftCommo::SendAppendEntries(parid_t par_id,
+                                  locid_t src,
+                                  siteid_t site_id,
+                                  vector&lt;MarshallDeputy&gt; &cmds,
+                                  vector&lt;uint64_t&gt; &logEntryTerms,
+                                  uint64_t leaderTerm,
+                                  uint64_t prevLogIndex,
+                                  uint64_t prevLogTerm,
+                                  uint64_t leaderCommitIndex,
+                                  uint64_t fastBackupEnabled
+                                  ) {
+  /*
+   * More example code for sending a single RPC to server at site_id
+   * You may modify and use this function or just use it as a reference
+   */
+
+  auto p = FindProxy(par_id, site_id);
+  int64_t i = p.first;
+  RaftProxy *proxy = (RaftProxy *)p.second;
+  auto ev = Reactor::CreateSpEvent&lt;BoxEvent&lt;vector&lt;uint64_t&gt;&gt;&gt;();
+  if (proxy == nullptr) {
+    // Log_debug("Unable to find server %d for AppendEntries", site_id);
+    return ev;
+  }
+
+  FutureAttr fuattr;
+  fuattr.callback = [ev](Future* fu) {
+    uint64_t retTerm;
+    bool_t followerAppendOK;
+    uint64_t idx;
+    uint64_t conflictingTerm;
+    uint64_t setNext;
+        /* retrieve RPC return values in order */
+        //Log_info("Returned from RPC for append entry");
+    fu-&gt;get_reply() &gt;&gt; retTerm;
+    fu-&gt;get_reply() &gt;&gt; followerAppendOK;
+    fu-&gt;get_reply() &gt;&gt; idx;
+    fu-&gt;get_reply() &gt;&gt; conflictingTerm;
+    fu-&gt;get_reply() &gt;&gt; setNext;
+
+    vector&lt;uint64_t&gt; res({0, idx, conflictingTerm, retTerm, setNext});
+    if (followerAppendOK) {
+      res.at(0) = 1;
+    }
+ 
+    ev-&gt;Set(res);
+  };
+  /* wrap Marshallable in a MarshallDeputy to send over RPC */
+  // MarshallDeputy md(cmd);
+  Call_Async(proxy, AppendEntries, cmds, logEntryTerms, leaderTerm, src, prevLogIndex, prevLogTerm, leaderCommitIndex, fastBackupEnabled, fuattr);
+
+  return ev;
+}
+
+vector&lt;shared_ptr&lt;BoxEvent&lt;pair&lt;bool_t, uint64_t&gt;&gt;&gt;&gt; RaftCommo::SendHeartbeatAll(parid_t par_id, 
+                                                          locid_t src,
+                                                          uint64_t leaderTerm,
+                                                          uint64_t prevLogIndex,
+                                                          uint64_t prevLogTerm,
+                                                          uint64_t leaderCommitIndex 
+                                                          ) {
+  // fprintf(stderr, "Leader with id %d: Sending sending append entries to all\n", src);                                                          
+  auto proxies = rpc_par_proxies_[par_id];
+  vector&lt;shared_ptr&lt;BoxEvent&lt;pair&lt;bool_t, uint64_t&gt;&gt;&gt;&gt; events;
+
+  for (auto& p : proxies) {
+    if (src == p.first) {
+      continue;
+    }
+      auto ev = Reactor::CreateSpEvent&lt;BoxEvent&lt;pair&lt;bool_t, uint64_t&gt;&gt;&gt;();
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match159-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      events.push_back(ev);
+
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+
+      fuattr.callback = [ev](Future* fu) {
+        uint64_t retTerm;
+        bool_t followerAppendOK;
+</FONT>        fu-&gt;get_reply() &gt;&gt; retTerm;
+        fu-&gt;get_reply() &gt;&gt; followerAppendOK;
+
+        ev-&gt;Set(std::pair&lt;bool_t, uint64_t&gt;(followerAppendOK, retTerm));
+      };
+
+
+      Call_Async(proxy, EmptyAppendEntries, leaderTerm, src, prevLogIndex, prevLogTerm, leaderCommitIndex, fuattr);
+    }
+  return events;
+}
+
+
+
+shared_ptr&lt;IntEvent&gt; 
+RaftCommo::SendString(parid_t par_id, siteid_t site_id, const string& msg, string* res) {
+  auto proxies = rpc_par_proxies_[par_id];
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  for (auto& p : proxies) {
+    if (p.first == site_id) {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [res,ev](Future* fu) {
+        fu-&gt;get_reply() &gt;&gt; *res;
+        ev-&gt;Set(1);
+      };
+      /* wrap Marshallable in a MarshallDeputy to send over RPC */
+      Call_Async(proxy, HelloRpc, msg, fuattr);
+    }
+  }
+  return ev;
+}
+
+
+} // namespace janus
+
+// vector&lt;shared_ptr&lt;BoxEvent&lt;pair&lt;bool_t, uint64_t&gt;&gt;&gt;&gt; RaftCommo::SendAppendEntriesAll(parid_t par_id, 
+//                                                           locid_t src,
+//                                                           shared_ptr&lt;Marshallable&gt; &cmd,
+//                                                           uint64_t leaderTerm,
+//                                                           uint64_t prevLogIndex,
+//                                                           uint64_t prevLogTerm,
+//                                                           uint64_t leaderCommitIndex
+//                                                           ) {
+//   // fprintf(stderr, "Leader with id %d: Sending sending append entries to all\n", src);                                                          
+//   auto proxies = rpc_par_proxies_[par_id];
+//   vector&lt;shared_ptr&lt;BoxEvent&lt;pair&lt;bool_t, uint64_t&gt;&gt;&gt;&gt; events;
+//   MarshallDeputy md(cmd);
+
+//   for (auto& p : proxies) {
+//       auto ev = Reactor::CreateSpEvent&lt;BoxEvent&lt;pair&lt;bool_t, uint64_t&gt;&gt;&gt;();
+//       events.push_back(ev);
+//       RaftProxy *proxy = (RaftProxy*) p.second;
+//       FutureAttr fuattr;
+//       fuattr.callback = [ev](Future* fu) {
+//         /* this is a handler that will be invoked when the RPC returns */
+//         uint64_t retTerm;
+//         bool_t followerAppendOK;
+//         /* retrieve RPC return values in order */
+//         //Log_info("Returned from RPC for append entry");
+//         fu-&gt;get_reply() &gt;&gt; retTerm;
+//         fu-&gt;get_reply() &gt;&gt; followerAppendOK;
+//         /* process the RPC response here */
+//         ev-&gt;Set(std::pair&lt;bool_t, uint64_t&gt;(followerAppendOK, retTerm));
+//       };
+//       /* Always use Call_Async(proxy, RPC name, RPC args..., fuattr)
+//       * to asynchronously invoke RPCs */
+//       Log_info("Making RPC for append entry %d", p.first);
+
+//       Call_Async(proxy, AppendEntries, md, leaderTerm, src, prevLogIndex, prevLogTerm, leaderCommitIndex, fuattr);
+//     }
+//   return events;
+// }
+</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,359 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-gkulhare/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-gkulhare/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include &lt;boost/serialization/map.hpp&gt;
+#include &lt;boost/serialization/vector.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+namespace janus {
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match166-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  auto& server = GetRaftServer();
+</FONT>
+  std::stringstream shardLog;
+  boost::archive::text_oarchive arch(shardLog);
+  arch &lt;&lt; gid_server_map;
+
+  uint64_t currOpId = ++opId;
+
+  auto log = make_shared&lt;MultiStringMarshallable&gt;();
+  log-&gt;data_.push_back(to_string(currOpId));
+  log-&gt;data_.push_back("join");
+  log-&gt;data_.push_back(shardLog.str());
+
+  auto cmd = dynamic_pointer_cast&lt;Marshallable&gt;(log);
+
+  uint64_t term,index;
+  bool_t isLeader = server.Start(cmd, &index,&term);
+
+  if(!isLeader){
+    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+    return;
+  }
+
+  Coroutine::Sleep(500000);
+
+  if(ops.find(currOpId)!=ops.end()){
+    *ret = KV_SUCCESS;
+  }
+
+  else{
+    *ret = KV_TIMEOUT;
+  }
+  
+  defer-&gt;reply();
+}
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match166-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+   auto& server = GetRaftServer();
+</FONT>
+  std::stringstream shardLog;
+  boost::archive::text_oarchive arch(shardLog);
+  arch &lt;&lt; gids;
+
+  uint64_t currOpId = ++opId;
+
+  auto log = make_shared&lt;MultiStringMarshallable&gt;();
+  log-&gt;data_.push_back(to_string(currOpId));
+  log-&gt;data_.push_back("leave");
+  log-&gt;data_.push_back(shardLog.str());
+
+  auto cmd = dynamic_pointer_cast&lt;Marshallable&gt;(log);
+
+  uint64_t term,index;
+  bool_t isLeader = server.Start(cmd, &index,&term);
+
+  if(!isLeader){
+    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+    return;
+  }
+
+  Coroutine::Sleep(500000);
+
+  if(ops.find(currOpId)!=ops.end()){
+    *ret = KV_SUCCESS;
+  }
+
+  else{
+    *ret = KV_TIMEOUT;
+  }
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+   auto& server = GetRaftServer();
+
+  uint64_t currOpId = ++opId;
+
+  auto log = make_shared&lt;MultiStringMarshallable&gt;();
+  log-&gt;data_.push_back(to_string(currOpId));
+  log-&gt;data_.push_back("move");
+  log-&gt;data_.push_back(to_string(shard));
+  log-&gt;data_.push_back(to_string(gid));
+
+  auto cmd = dynamic_pointer_cast&lt;Marshallable&gt;(log);
+
+  uint64_t term,index;
+  bool_t isLeader = server.Start(cmd, &index,&term);
+
+  if(!isLeader){
+    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+    return;
+  }
+
+  Coroutine::Sleep(500000);
+
+  if(ops.find(currOpId)!=ops.end()){
+    *ret = KV_SUCCESS;
+  }
+
+  else{
+    *ret = KV_TIMEOUT;
+  }
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match166-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+  // your code here
+   auto& server = GetRaftServer();
+</FONT>
+  uint64_t currOpId = ++opId;
+
+  auto log = make_shared&lt;MultiStringMarshallable&gt;();
+  log-&gt;data_.push_back(to_string(currOpId));
+  log-&gt;data_.push_back("query");
+  log-&gt;data_.push_back(to_string(config_no));
+
+  auto cmd = dynamic_pointer_cast&lt;Marshallable&gt;(log);
+
+  uint64_t term,index;
+  bool_t isLeader = server.Start(cmd, &index,&term);
+
+  if(!isLeader){
+    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+    return;
+  }
+
+  Coroutine::Sleep(500000);
+
+  if(ops.find(currOpId)!=ops.end()){
+    *ret = KV_SUCCESS;
+    if(config_no==-1 || config_no&gt;configs_.size()){
+      *config= configs_[latestConfig];
+    }
+    else{
+      *config = configs_[config_no];
+    }
+  }
+
+  else{
+    *ret = KV_TIMEOUT;
+  }
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  // your code here
+  auto v = (MultiStringMarshallable*)(&m);
+
+  string op = v-&gt;data_[1];
+  if(op=="join"){
+    ops.insert(stoi(v-&gt;data_[0]));
+
+    auto log = v-&gt;data_[2];
+    stringstream stream(log);
+    map&lt;uint32_t, vector&lt;uint32_t&gt;&gt; gid_map;
+    boost::archive::text_iarchive arch(stream);
+    arch &gt;&gt; gid_map;
+
+    latestConfig++;
+    ShardConfig newConfig;
+    newConfig.number=latestConfig;
+
+
+    if(configs_.size()&gt;0){
+
+      newConfig.shard_group_map_=configs_[latestConfig-1].shard_group_map_;
+
+      vector&lt;uint32_t&gt; redistributedShards;
+      newConfig.group_servers_map_=configs_[latestConfig-1].group_servers_map_;
+
+      uint32_t final_group=0;
+      for(auto itr = gid_map.begin();itr!=gid_map.end();itr++){
+        newConfig.group_servers_map_[itr-&gt;first]=itr-&gt;second;
+        final_group=itr-&gt;first;
+      }
+  
+      int groupCount = newConfig.group_servers_map_.size();
+
+      int base = 10/groupCount;
+      int rem = 10%groupCount;
+
+      for(auto itr = groupShards.begin();itr!=groupShards.end();itr++){
+        auto shards = itr-&gt;second;
+        while(groupShards[itr-&gt;first].size()&gt;(base + (rem &gt;0?1:0))){
+          redistributedShards.push_back(groupShards[itr-&gt;first].back());
+          groupShards[itr-&gt;first].pop_back();
+          rem --;
+        }
+      }
+
+      while(redistributedShards.size()&gt;0){
+        for(auto kv: gid_map){
+          if(redistributedShards.size()&gt;0){
+            uint32_t shard = redistributedShards.back();
+            groupShards[kv.first].push_back(shard);
+            newConfig.shard_group_map_[shard]=kv.first;
+            redistributedShards.pop_back();
+          }
+        }
+      }
+
+
+
+      configs_[latestConfig]=newConfig;
+
+      //Log_info("Join complete here are the shard/value pairs:");
+      for(auto pair: configs_[latestConfig].shard_group_map_){
+        //Log_info("Shard %d = %d GID\n",pair.first,pair.second);
+      }
+    }
+
+    else{
+      for(auto itr = gid_map.begin();itr!=gid_map.end();itr++){
+        newConfig.group_servers_map_[itr-&gt;first]=itr-&gt;second;
+      }
+
+      int groupCount = newConfig.group_servers_map_.size();
+      //Log_info("I received %d groups",groupCount);
+
+      for(uint32_t i=1;i&lt;11;i++){
+        for(auto kv: newConfig.group_servers_map_){
+            groupShards[kv.first].push_back(i);
+            newConfig.shard_group_map_[i]=kv.first;
+        }
+      }
+
+      configs_[latestConfig]=newConfig;
+
+      //Log_info("Join complete here are the shard/value pairs:");
+      for(auto pair: configs_[latestConfig].shard_group_map_){
+        //Log_info("Shard %d = %d GID\n",pair.first,pair.second);
+      }
+    }
+  }
+  else if(op=="leave"){
+    ops.insert(stoi(v-&gt;data_[0]));
+
+    auto log = v-&gt;data_[2];
+    stringstream stream(log);
+    vector&lt;uint32_t&gt; gids;
+    boost::archive::text_iarchive arch(stream);
+    arch &gt;&gt; gids;
+
+    latestConfig++;
+    ShardConfig newConfig;
+    newConfig.number=latestConfig;
+
+    newConfig.shard_group_map_=configs_[latestConfig-1].shard_group_map_;
+    vector&lt;uint32_t&gt; redistributedShards;
+    newConfig.group_servers_map_=configs_[latestConfig-1].group_servers_map_;
+
+      for(auto gid: gids){
+        while(groupShards[gid].size()&gt;0){
+          redistributedShards.push_back(groupShards[gid].back());
+          groupShards[gid].pop_back();
+        }
+        groupShards.erase(gid);
+        newConfig.group_servers_map_.erase(gid);
+      }
+
+    while(redistributedShards.size()&gt;0){
+        for(auto kv: groupShards){
+          if(redistributedShards.size()&gt;0){
+            uint32_t shard = redistributedShards.back();
+            groupShards[kv.first].push_back(shard);
+            newConfig.shard_group_map_[shard]=kv.first;
+            redistributedShards.pop_back();
+          }
+        }
+      }
+
+      configs_[latestConfig]=newConfig;
+
+      //Log_info("Leave complete here are the shard/value pairs:");
+      for(auto pair: configs_[latestConfig].shard_group_map_){
+        //Log_info("Shard %d = %d GID\n",pair.first,pair.second);
+      }
+  }
+  else if(op=="move"){
+    ops.insert(stoi(v-&gt;data_[0]));
+
+    int32_t shard;
+    uint32_t gid;
+
+    shard = stoi(v-&gt;data_[2]);
+    gid = stoi(v-&gt;data_[3]);
+
+    latestConfig++;
+    ShardConfig newConfig;
+    newConfig.number=latestConfig;
+    newConfig.shard_group_map_=configs_[latestConfig-1].shard_group_map_;
+
+    uint32_t initGid = configs_[latestConfig-1].shard_group_map_[shard];
+
+    uint32_t newShard = groupShards[gid].back();
+
+    groupShards[gid].pop_back();
+    
+    auto it = std::find(groupShards[initGid].begin(),groupShards[initGid].end(),shard);
+
+    groupShards[initGid].erase(it);
+
+    groupShards[initGid].push_back(newShard);
+
+    newConfig.shard_group_map_[newShard]=initGid;
+
+    groupShards[gid].push_back(shard);
+
+    newConfig.shard_group_map_[shard]=gid;
+
+    configs_[latestConfig]=newConfig;
+
+  }
+  else if(op=="query"){
+    ops.insert(stoi(v-&gt;data_[0]));
+  }
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  return cli;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

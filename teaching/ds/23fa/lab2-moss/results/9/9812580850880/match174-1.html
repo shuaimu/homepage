@@ -1,0 +1,196 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-krishnahegde100/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-Rajas-Mateti/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  /* 
+  Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  */
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match174-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  auto cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  uint64_t index;
+  uint64_t term;
+  bool_t agreement = GetRaftServer().Start(cmd, &index, &term);
+</FONT>  auto event = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  if (agreement)
+  {
+    event-&gt;Wait(600000);
+    if(operationdB.find(to_string(oid)+"put") != operationdB.end() && 
+       operationdB[to_string(oid)+"put"] == true)
+      return KV_SUCCESS;
+    else{
+      Log_info("Put No leader : %d", sp_log_svr_-&gt;loc_id_);
+      return KV_NOTLEADER;
+    }
+  }
+  else if(!agreement)
+    return KV_NOTLEADER;
+  else
+    return KV_TIMEOUT;
+}
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match174-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  s-&gt;data_.push_back("append");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  auto cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  uint64_t index;
+  uint64_t term;
+  bool_t agreement = GetRaftServer().Start(cmd, &index, &term);
+</FONT>  auto event = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  if(agreement){
+    string s = to_string(oid) + "append";
+    Log_info("Operation Id = %s", s.c_str());
+    event-&gt;Wait(600000);
+    if(operationdB.find(to_string(oid)+"append") != operationdB.end() && 
+       operationdB[to_string(oid)+"append"] == true)
+      return KV_SUCCESS;
+    else{
+      Log_info("Append No leader : %d", sp_log_svr_-&gt;loc_id_);
+      return KV_NOTLEADER;
+    }
+  }
+  else if(!agreement)
+    return KV_NOTLEADER;
+  else
+    return KV_TIMEOUT;
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+  /* your code here */
+  Log_info("Get Command for %d", sp_log_svr_-&gt;site_id_);
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("get");
+  s-&gt;data_.push_back(k);
+  //s-&gt;data_.push_back(v);
+  auto cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  uint64_t index;
+  uint64_t term;
+  bool_t agreement = GetRaftServer().Start(cmd, &index, &term);
+  auto event = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  //Log_info("Agreement %d", agreement);
+  //Log_info("Ops Id in GET= %s", k.c_str()11);
+  event-&gt;Wait(600000);
+
+  if (agreement)
+  {
+    if(operationdB.find(to_string(oid)+"get") != operationdB.end() && 
+       operationdB[to_string(oid)+"get"] == true){
+        *v = dB[k];
+        return KV_SUCCESS;
+    }
+    else{
+      Log_info("Get No leader : %d", sp_log_svr_-&gt;loc_id_);
+      return KV_NOTLEADER;
+    }  
+  }
+  else if(!agreement){
+    if(operationdB.find(to_string(oid)+"get") != operationdB.end() && 
+       operationdB[to_string(oid)+"get"] == true){
+        *v = dB[k];
+        return KV_SUCCESS;
+    }
+    else
+      return KV_NOTLEADER;
+  }
+  else
+    return KV_TIMEOUT;
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  auto v = (MultiStringMarshallable*)(&m);
+  string opId = v-&gt;data_[0];
+  string ops = v-&gt;data_[1];
+  string key = v-&gt;data_[2];
+  if(ops == "put"){
+    Log_info("SVR : %d, Ops Id in on Next PUT= %s", sp_log_svr_-&gt;site_id_,key.c_str());
+    string value = v-&gt;data_[3];
+    dB[key] = value;
+    operationdB[opId + ops] = true;
+  }
+  else if(ops == "append"){
+    Log_info("SVR : %d, Ops Id in on Next APPEND= %s", sp_log_svr_-&gt;site_id_,key.c_str());
+    string value = v-&gt;data_[3];
+    dB[key] += value;
+    operationdB[opId + ops] = true;
+  }
+  else if(ops == "get"){
+    Log_info("SVR : %d, Ops Id in on Next GET= %s", sp_log_svr_-&gt;site_id_,key.c_str());
+    operationdB[opId + ops] = true;
+  }
+
+  // for(auto i:operationdB){
+  //   Log_info("Ops DB: %s", i.first.c_str());
+  // }
+
+  for(auto i: dB){
+    Log_info("key = %s, value = %s", i.first.c_str(), i.second.c_str());
+  }
+  Log_info("-------------------------------");
+  /* your code here */
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

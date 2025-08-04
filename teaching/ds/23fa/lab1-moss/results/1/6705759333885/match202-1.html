@@ -1,0 +1,159 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-ajayhegde96/src/deptran/raft/commo.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-sayedbilalbari/src/deptran/raft/commo.cc<p><PRE>
+
+#include "commo.h"
+#include "../rcc/graph.h"
+#include "../rcc/graph_marshaler.h"
+#include "../command.h"
+#include "../procedure.h"
+#include "../command_marshaler.h"
+#include "raft_rpc.h"
+#include &lt;mutex&gt;
+#include "macros.h"
+
+namespace janus {
+
+RaftCommo::RaftCommo(PollMgr* poll) : Communicator(poll) {
+}
+
+shared_ptr&lt;IntEvent&gt; 
+RaftCommo::SendRequestVote(
+                            parid_t par_id,
+                            siteid_t site_id,
+                            uint64_t term,
+                            siteid_t candidateId,
+                            uint64_t lastLogIndex,
+                            uint64_t lastLogTerm,
+                            uint64_t* return_term,
+                            bool_t* vote_granted) 
+{
+  /*
+   * Example code for sending a single RPC to server at site_id
+   * You may modify and use this function or just use it as a reference
+   */
+  Log_info("Server %lu -&gt; Commo- Inside request vote",candidateId);
+
+  auto proxies = rpc_par_proxies_[par_id];
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  
+  for (auto& p : proxies)
+  {
+    if(p.first == site_id)
+    {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      Log_info("Server %lu -&gt; Commo - Calling request vote to %lli",candidateId,p.first);
+      fuattr.callback = [=](Future* fu) 
+      {
+        std::recursive_mutex mutex_;
+        std::lock_guard&lt;std::recursive_mutex&gt; guard(mutex_);
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match202-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_7.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        fu-&gt;get_reply() &gt;&gt; *return_term;
+        fu-&gt;get_reply() &gt;&gt; *vote_granted;
+        if(ev-&gt;status_ != Event::TIMEOUT)
+          ev-&gt;Set(1);
+      };
+      Call_Async(
+                proxy, 
+                RequestVote, 
+                term, 
+                candidateId, 
+                lastLogIndex, 
+                lastLogTerm, 
+                fuattr
+</FONT>              );
+    }
+  }
+  return ev;
+}
+
+shared_ptr&lt;IntEvent&gt;
+RaftCommo::SendAppendEntriesCombined(
+                          const parid_t& par_id,
+                          const siteid_t& site_id,
+                          const siteid_t& candidateId,
+                          const uint64_t& prevLogIndex,
+                          const uint64_t& prevLogTerm,
+                          const uint64_t& logTerm,
+                          const uint64_t& currentTerm,
+                          const uint64_t& leaderCommitIndex,
+                          const uint64_t& isHeartBeat,
+                          shared_ptr&lt;Marshallable&gt; cmd,
+                          uint64_t* followerLogSize,
+                          uint64_t* returnTerm,
+                          bool_t* followerAppendOK)
+{
+  auto proxies = rpc_par_proxies_[par_id];
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  //Log_info("Server %lu -&gt; Inside commo for Sending Combined Append entry ",candidateId);
+  for (auto& p : proxies) {
+    if (p.first == site_id)
+    {
+      //Log_info("Server %lu -&gt; Found match, calling async",candidateId);
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [=](Future* fu) {
+
+        fu-&gt;get_reply() &gt;&gt; *followerLogSize;
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match202-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        fu-&gt;get_reply() &gt;&gt; *returnTerm;
+        fu-&gt;get_reply() &gt;&gt; *followerAppendOK;
+        if(ev-&gt;status_ != Event::TIMEOUT)
+          ev-&gt;Set(1);
+      };
+      /* wrap Marshallable in a MarshallDeputy to send over RPC */
+      Log_info("Server %lu -&gt; Trying to create marshall deputy",candidateId);
+</FONT>      std::recursive_mutex mutex_1;
+      std::lock_guard&lt;std::recursive_mutex&gt; lock_guard(mutex_1);
+      MarshallDeputy md(cmd);
+      Log_info("Server %lu -&gt; Creation succeeded",candidateId);
+      Call_Async( 
+                  proxy, 
+                  AppendEntriesCombined, 
+                  candidateId,
+                  prevLogIndex,
+                  prevLogTerm,
+                  logTerm,
+                  currentTerm,
+                  leaderCommitIndex,
+                  isHeartBeat,
+                  md,
+                  fuattr
+                );
+    }
+  }
+  return ev;
+}
+
+shared_ptr&lt;IntEvent&gt; 
+RaftCommo::SendString(parid_t par_id, siteid_t site_id, const string& msg, string* res) {
+  auto proxies = rpc_par_proxies_[par_id];
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  for (auto& p : proxies) {
+    if (p.first == site_id) {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [res,ev](Future* fu) {
+        fu-&gt;get_reply() &gt;&gt; *res;
+        ev-&gt;Set(1);
+      };
+      /* wrap Marshallable in a MarshallDeputy to send over RPC */
+      Call_Async(proxy, HelloRpc, msg, fuattr);
+    }
+  }
+  return ev;
+}
+
+
+} // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

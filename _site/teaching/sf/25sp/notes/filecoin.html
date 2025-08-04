@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>Blockchain based Distributed Storage Networks (Filecoin) | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="Blockchain based Distributed Storage Networks (Filecoin)" />
+<meta property="og:locale" content="en_US" />
+<link rel="canonical" href="http://0.0.0.0/teaching/sf/25sp/notes/filecoin.html" />
+<meta property="og:url" content="http://0.0.0.0/teaching/sf/25sp/notes/filecoin.html" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="Blockchain based Distributed Storage Networks (Filecoin)" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"Blockchain based Distributed Storage Networks (Filecoin)","url":"http://0.0.0.0/teaching/sf/25sp/notes/filecoin.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://0.0.0.0/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>Blockchain based Distributed Storage Networks (Filecoin)</h1>
+         </header> -->
+
+  <section>
+    <h1 id="blockchain-based-distributed-storage-networks-filecoin">Blockchain based Distributed Storage Networks (Filecoin)</h1>
+
+<h2 id="strawman-put-all-file-datas-into-the-blockchain">Strawman: put all file datas into the blockchain</h2>
+<ul>
+  <li>files are too large for everyone to validate</li>
+  <li>no incentives for nodes to store and share files
+    <ul>
+      <li>storage</li>
+      <li>transmission</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="off-chain-storage">Off-chain storage</h2>
+<ul>
+  <li>How to prove each storage server actually store the data?
+    <ul>
+      <li>the verifier cannot store the entire file</li>
+    </ul>
+  </li>
+  <li>possible attacks
+    <ul>
+      <li>not storing the file, generating proofs dynamically</li>
+      <li>sybil attack: pretend to store more copies than actually does</li>
+      <li>outsourcing to external storage</li>
+    </ul>
+  </li>
+  <li>zero knowledge proof
+    <ul>
+      <li>trusted party
+        <ul>
+          <li>pk - prove key</li>
+          <li>vk - verification key</li>
+        </ul>
+      </li>
+      <li>untrusted storage server
+        <ul>
+          <li>given a variable x, generate a proof π</li>
+        </ul>
+      </li>
+      <li>anyone with (pk, vk) can verify (x, π)
+        <ul>
+          <li>put the (pk, vk) onto the blockchain</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>avoid sybil attack
+    <ul>
+      <li>seal: multiple rounds of encryption (AES)</li>
+    </ul>
+  </li>
+  <li>avoid outsourcing attack
+    <ul>
+      <li>require the verification to finish within a timeout</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="filecoin">Filecoin</h2>
+<ul>
+  <li>blockchain to store metadata</li>
+  <li>blockchain can work as a trusted party (market)
+    <ul>
+      <li>bid: Alice -&gt; market</li>
+      <li>ask: Bob -&gt; market</li>
+      <li>deal: Bob -&gt; Alice -&gt; k (within a time bound)</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="put-procedure">Put procedure</h2>
+<ul>
+  <li>client: add bid order to L (ledger)</li>
+  <li>network: match order, find ask</li>
+  <li>client: sign deal, send deal (bid, ask), piece (with pk,vk,aes) to miner (storage server)</li>
+  <li>miner: receive deal, piece, store the piece, sign</li>
+</ul>
+
+<h2 id="get-procedure">Get procedure</h2>
+<ul>
+  <li>on-chain: too much overhead
+    <ul>
+      <li>what if the client lies?
+        <ul>
+          <li>piece by piece</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>off-chain: micropayment
+    <ul>
+      <li>signed by client</li>
+      <li>miner will send grouped micropayments to L after the data transfer is over</li>
+    </ul>
+  </li>
+</ul>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+</body>
+
+</html>

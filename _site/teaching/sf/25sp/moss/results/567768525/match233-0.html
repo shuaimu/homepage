@@ -1,0 +1,228 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/rajatrh/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/rajatrh/src/kvraft/server.go<p><PRE>
+package raftkv
+
+import (
+	"labgob"
+	"labrpc"
+	"log"
+	"raft"
+	"sync"
+	"time"
+)
+
+const Debug = 0
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+type Op struct {
+	Type     string
+	Key      string
+	Value    string
+	ClientID int64
+	SeqNo    int
+}
+
+type KVServer struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	maxraftstate int // snapshot if log grows this big
+
+	keyValueMap    map[string]string
+	indexOpchanMap map[int]chan Op
+	indexSeqnoMap  map[int64]int
+
+	killChan chan bool
+}
+
+func (kv *KVServer) sendEntry(entry Op) bool {
+	DPrintf("Sending applyCommand entry %v to RAFT.", entry)
+	index, _, isLeader := kv.rf.Start(entry)
+
+	if !isLeader {
+		DPrintf("Did not send the entry %v to Leader. Going to retry!", entry)
+		return false
+	}
+
+	ch := kv.checkIfResultExits(index)
+	select {
+	case op := &lt;-ch:
+		if op.ClientID == entry.ClientID && op.SeqNo == entry.SeqNo {
+			return true
+		}
+		return false
+		// Wait for 2 seconds for the response from Raft!
+	case &lt;-time.After(2 * time.Second):
+		return false
+	}
+	return false
+}
+
+func (kv *KVServer) checkIfResultExits(index int) chan Op {
+	kv.mu.Lock()
+	opChan, ok := kv.indexOpchanMap[index]
+
+	if !ok {
+		DPrintf("Making channel for the entry at index %d as it does not exist", index)
+		opChan = make(chan Op, 1)
+		kv.indexOpchanMap[index] = opChan
+	}
+	kv.mu.Unlock()
+	return opChan
+}
+
+func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
+	// Your code here.
+	var entry Op
+	entry.Type = "Get"
+	entry.Key = args.Key
+	entry.ClientID = args.ClientId
+	entry.SeqNo = args.SeqNo
+
+	DPrintf("In GET: %v", entry)
+
+	ok := kv.sendEntry(entry)
+	if !ok {
+		DPrintf("GET: Wrong Leader.")
+		reply.WrongLeader = true
+	} else {
+		DPrintf("GET: All good! Not Wrong Leader.")
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match233-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		reply.WrongLeader = false
+		reply.Err = OK
+
+		kv.mu.Lock()
+		reply.Value, ok = kv.keyValueMap[args.Key]
+		if !ok {
+			reply.Value = ""
+</FONT>		}
+		DPrintf("GET: Value after get operation: %s", reply.Value)
+		// Set the seqNo for get operation so as to invalidate reqs with older seqNos.
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match233-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		kv.indexSeqnoMap[args.ClientId] = args.SeqNo
+		kv.mu.Unlock()
+	}
+}
+
+func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+</FONT>	// Your code here.
+	var entry Op
+	entry.Type = args.Operation //Put or Append
+	entry.Key = args.Key
+	entry.Value = args.Value
+	entry.ClientID = args.ClientId
+	entry.SeqNo = args.SeqNo
+	DPrintf("In PUTAPPEND: %v", entry)
+	ok := kv.sendEntry(entry)
+	if !ok {
+		DPrintf("PUTAPPEND: Wrong Leader.")
+		reply.WrongLeader = true
+	} else {
+		DPrintf("PUTAPPEND: All good.")
+		reply.WrongLeader = false
+		reply.Err = OK
+	}
+}
+
+func (kv *KVServer) Kill() {
+	kv.rf.Kill()
+	// Your code here, if desired.
+	DPrintf("Kill called for KV server %d", kv.me)
+	close(kv.killChan)
+}
+
+func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
+	labgob.Register(Op{})
+
+	kv := new(KVServer)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+
+	// You may need initialization code here.
+
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+
+	DPrintf("Making a KV Server %d!", kv.me)
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match233-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_7.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.keyValueMap = make(map[string]string)
+	kv.indexOpchanMap = make(map[int]chan Op)
+	kv.indexSeqnoMap = make(map[int64]int)
+	kv.killChan = make(chan bool)
+
+	go kv.listenOnApplyChannel()
+	return kv
+}
+
+func (kv *KVServer) listenOnApplyChannel() {
+	for {
+		select {
+		case msg := &lt;-kv.applyCh:
+</FONT>			DPrintf("Message received %v from apply channel of %d!", msg, kv.me)
+
+			index := msg.CommandIndex
+			op := msg.Command.(Op)
+			kv.mu.Lock()
+			// Check for Stale responses from Raft
+			isStale := false
+			v, ok := kv.indexSeqnoMap[op.ClientID]
+			if ok {
+				isStale = (v &gt;= op.SeqNo) //Got newer/updated Sequence Number from Raft, Current -&gt; Stale
+			}
+			// 1
+			if !isStale {
+				DPrintf("Not a stale response")
+				switch op.Type {
+				//Put
+				case "Put":
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match233-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+					kv.keyValueMap[op.Key] = op.Value
+				//Append
+				case "Append":
+					kv.keyValueMap[op.Key] += op.Value
+				}
+				kv.indexSeqnoMap[op.ClientID] = op.SeqNo
+			}
+			ch, ok := kv.indexOpchanMap[index]
+			if ok {
+				select {
+				case &lt;-ch:
+</FONT><A NAME="4"></A><FONT color = #FF00FF><A HREF="match233-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				case &lt;-kv.killChan:
+					return
+				default:
+				}
+				ch &lt;- op
+			} else {
+				kv.indexOpchanMap[index] = make(chan Op, 1)
+</FONT>			}
+			kv.mu.Unlock()
+
+		case &lt;-kv.killChan:
+			return
+		}
+	}
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

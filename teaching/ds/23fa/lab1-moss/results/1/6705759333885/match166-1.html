@@ -1,0 +1,192 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-Sagor054/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-wehbedoug-1/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+void RaftServiceImpl::HandleRequestVote(const uint64_t& candidateTerm,
+                                        const uint64_t& candidateId,
+                                        const uint64_t& lastLogIndex,
+                                        const uint64_t& lastLogTerm,
+                                        uint64_t *voterTerm,
+                                        bool_t *voterHealthy,
+                                        bool_t *voteGranted,
+                                        rrr::DeferredReply* defer) {
+    /* Your code here */
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(svr_-&gt;mtx_);
+    Log_debug("SDW: I (%d) received RequestVote (%d, %d).", svr_-&gt;loc_id_, candidateTerm, candidateId);
+
+    // We are not in DEFAULTLOGIC; therefore, this is a healthy (online, responsive) server.
+    *voterHealthy = true;
+
+    uint64_t voterLastLogIndex = svr_-&gt;getLastLogIndex();
+    uint64_t voterLastLogTerm = svr_-&gt;getLastLogTerm();
+
+    // Start by assuming we can grant the vote, then revoke it if any of the
+    // election requirements are violated.
+    bool canGrantVote = true;
+
+    // From Figure 2:
+    // Reply false if [candidate's] term &lt; [this server's] currentTerm
+    if (candidateTerm &lt; svr_-&gt;currentTerm) {
+        canGrantVote = false;
+        Log_debug("SDW: HandleRequestVote: Candidate's (%d) term=%d &lt;= my (%d) term=%d", candidateId, candidateTerm, svr_-&gt;loc_id_, svr_-&gt;currentTerm);
+    }
+
+    // From Figure 2:
+    // If this server has already voted for some other candidate IN THIS ELECTION (term),
+    // then it cannot also vote for this candidate.
+    if ((candidateTerm == svr_-&gt;currentTerm) && (svr_-&gt;votedFor != DID_NOT_VOTE) && (svr_-&gt;votedFor != candidateId)) {
+        canGrantVote = false;
+        Log_debug("SDW: HandleRequestVote: I (%d) already voted for (%d)", svr_-&gt;loc_id_, svr_-&gt;votedFor);
+    }
+
+    // From Figure 2:
+    // ...candidate's log is at least as up-to-date as receiver's log...
+    if (
+        (lastLogTerm &lt; voterLastLogTerm) ||
+        (lastLogTerm == voterLastLogTerm && lastLogIndex &lt; voterLastLogIndex)
+    ) {
+        canGrantVote = false;
+        Log_debug("SDW: HandleRequestVote: Candidate's (%d) logTerm=%d and/or logIndex=%d &lt; my (%d) logTerm=%d and/or logIndex=%d", candidateId, lastLogTerm, lastLogIndex, svr_-&gt;loc_id_, voterLastLogTerm, voterLastLogIndex);
+    }
+
+    if (true == canGrantVote) {
+        *voteGranted = true;
+
+        // If the candidate's term is higher than my term, become a follower of
+        // the candidate for the candidate's term. This is a no-op when I am
+        // already a follower; it changes my state to follower from
+        // candidate OR from leader.
+        if (candidateTerm &gt; this-&gt;svr_-&gt;currentTerm) {
+            this-&gt;svr_-&gt;increaseTerm(candidateTerm);
+            this-&gt;svr_-&gt;setCurrentState(RaftServer::RaftServerState::FOLLOWER);
+        }
+
+        svr_-&gt;votedFor = candidateId;
+    }
+    else {
+        *voteGranted = false;
+    }
+
+    // Fill in the voterTerm return value.
+    *voterTerm = svr_-&gt;currentTerm;
+
+    Log_debug("SDW: HandleRequestVote: Did I (%d) vote for (%d)? &lt;- %s", svr_-&gt;loc_id_, candidateId, *voteGranted ? "yes" : "no");
+
+    defer-&gt;reply();
+}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match166-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_10.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void RaftServiceImpl::HandleAppendEntries(// args
+                                          const uint64_t& leaderTerm,
+                                          const uint64_t& leaderID,
+                                          const uint64_t& prevLogIndex,
+                                          const uint64_t& prevLogTerm,
+                                          const std::vector&lt;MarshallDeputy&gt;& entries_md,
+                                          const std::vector&lt;uint64_t&gt;& entryTerms,
+                                          const uint64_t& leaderCommitIndex,
+                                          // ret_vals
+                                          bool_t* followerHealthy,
+                                          bool_t* followerAppendOK,
+                                          uint64_t* followerTerm,
+                                          // defer
+                                          rrr::DeferredReply* defer) {
+</FONT>    /* Your code here */
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(svr_-&gt;mtx_);
+    std::vector&lt;shared_ptr&lt;Marshallable&gt; &gt; entries;
+    for (MarshallDeputy entry_md : entries_md) {
+        std::shared_ptr&lt;Marshallable&gt; entry_ptr = const_cast&lt;MarshallDeputy&&gt;(entry_md).sp_data_;
+        entries.push_back(entry_ptr);
+    }
+    if (entryTerms.size() != entries.size()) {
+        Log_fatal("service.cc: Failed assertion in HandleAppendEntries: The following is true, which is bad: %d != %d", entryTerms.size() != entries.size());
+    }
+
+    // By virtue of having received this AppendEntries, I know there is a
+    // leader, so I should not start an election. If the leader is illegitimate,
+    // it is up to the leader to step down based on my currentTerm, at which
+    // point my electionTimeout will tell me to start an election.
+    svr_-&gt;recentlyReceivedHeartbeat = true;
+
+    // The DEFAULTLOGIC was not triggered, so this server is online.
+    *followerHealthy = true;
+
+    // Start by assuming the append is successful, but switch to unsuccessful
+    // if any requirements are violated.
+    *followerAppendOK = true;
+
+    // Follower has higher term than leader ==&gt; leader should step down.
+    if (leaderTerm &lt; svr_-&gt;currentTerm) {
+        *followerAppendOK = false;
+    }
+
+    // If I am a leader or candidate, and I get an AppendEntries from a server
+    // claiming to be the leader of a higher term, I should accept them as
+    // the leader (i.e. I am now a follower) and update my term to match theirs.
+    if (leaderTerm &gt; svr_-&gt;currentTerm) {
+        svr_-&gt;setCurrentState(RaftServer::RaftServerState::FOLLOWER);
+        svr_-&gt;increaseTerm(leaderTerm);
+    }
+
+    // Follower does not agree with leader about the prior log entry ==&gt; leader
+    // will back up by one index and try again.
+    if (svr_-&gt;containsMatchingLog(prevLogIndex, prevLogTerm) == false) {
+        *followerAppendOK = false;
+    }
+
+    // If nothing has disqualified the AppendEntries request so far, then
+    // append the cmdPtr to the follower's log.
+    if (*followerAppendOK == true) {
+        Log_debug("SDW: HandleAppendEntries: Safe to append the %d entries to log[].", entries.size());
+        uint64_t newLogIndex = prevLogIndex + 1;
+        for (int i = 0; i &lt; entries.size(); i++) {
+            RaftServer::Log newLog = {entries[i], entryTerms[i]};
+            svr_-&gt;appendLog(newLog, newLogIndex);
+            newLogIndex += 1;
+        }
+    }
+    else {
+        Log_debug("SDW: HandleAppendEntries: Will not append to log[] for one reason or another.");
+    }
+
+    // Check if we should commit any entries.
+    if (leaderCommitIndex &gt; svr_-&gt;commitIndex) {
+        Log_debug("SDW: HandleAppendEntries: Leader says I (%d) should commit, as %d &gt; %d", svr_-&gt;loc_id_, leaderCommitIndex, svr_-&gt;commitIndex);
+        Log_debug("SDW: min(leaderCommitIndex=%d , lastLogIndex=%d): %d", leaderCommitIndex, svr_-&gt;getLastLogIndex(), std::min(leaderCommitIndex, svr_-&gt;getLastLogIndex()));
+        svr_-&gt;setCommitIndex(std::min(leaderCommitIndex, svr_-&gt;getLastLogIndex()));
+        //if (leaderCommitIndex != svr_-&gt;getLastLogIndex()) {
+        //    Log_fatal("FATAL: The following is true, which is bad: leaderCommitIndex = %d =/= %d = idxOfLastEntry", leaderCommitIndex, svr_-&gt;getLastLogIndex());
+        //    exit(1);
+        //}
+    }
+
+    svr_-&gt;commitEntries(); // TODO: Probably redundant, but also probably harmless.
+
+    Log_debug("\tTEST 11: FOLLOW: ID=%d, logLen=%d, lastApplied=%d, commitIndex=%d, term=%d, lastLogTerm=%d", svr_-&gt;loc_id_, svr_-&gt;log.size(), svr_-&gt;lastApplied, svr_-&gt;commitIndex, svr_-&gt;currentTerm, svr_-&gt;getLastLogTerm());
+
+    *followerTerm = svr_-&gt;currentTerm;
+    defer-&gt;reply();
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

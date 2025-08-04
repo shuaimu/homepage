@@ -1,0 +1,695 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-cs16b004/src/deptran/raft/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-jashwanthkumar89/src/deptran/raft/server.cc<p><PRE>
+#include "server.h"
+// #include "paxos_worker.h"
+#include "exec.h"
+#include "frame.h"
+#include "coordinator.h"
+#include "../classic/tpc_command.h"
+
+
+namespace janus {
+
+RaftServer::RaftServer(Frame * frame) {
+  frame_ = frame ;
+  /* Your code here for server initialization. Note that this function is 
+     called in a different OS thread. Be careful about thread safety if 
+     you want to initialize variables here. */
+}
+
+RaftServer::~RaftServer() {
+  /* Your code here for server teardown */
+  teardownevent_-&gt;Set(1);
+}
+
+void RaftServer::Setup() {
+  /* Your code here for server setup. Due to the asynchronous nature of the 
+     framework, this function could be called after a RPC handler is triggered. 
+     Your code should be aware of that. This function is always called in the 
+     same OS thread as the RPC handlers. */
+  // SyncRpcExample();
+  // SyncRequestVote(2, 150000);
+
+    term_ = 0;
+    votedFor_ = 0;
+    log_index_ = 0;
+    commit_index_ = 0;
+    last_applied_ = 0;
+    leader_ = 0;
+    ret1 = 0;
+    callAppendEntry = 0;
+    timeout_ = (((rand()%3 + 1)*10) + loc_id_ + 15)*10*1000;
+    appendentryval = 0;
+    event_ = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    teardownevent_ = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    timeoutevent_ = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    appendentryevent_ = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+
+  Coroutine::CreateRun([&]{
+    while(teardownevent_-&gt;get() != 1) {
+      ResetElectionTimer(0);
+
+      if(serverstate_ == LEADER) {
+        while(timeout_ &gt; 50000) {
+          if(timeout_ &lt;= 50000) {
+            Coroutine::Sleep(50000);
+            // timeout_ = 0;
+          } else {
+            Coroutine::Sleep(50000);
+            timeout_ -= 50000;
+          }
+
+          uint64_t mini = log_.size() + 1;
+          uint64_t maxi = 0;
+          for(uint64_t i=0;i&lt;5;i++) {
+            if(loc_id_ != i) {
+              mini = min(mini, match_index_[i]);
+              maxi = max(maxi, match_index_[i]);
+            }
+          }
+
+          for(uint64_t i=mini;i&lt;=maxi;i++) {
+            uint64_t countVal = 0;
+            for(uint64_t j=0;j&lt;5;j++) {
+              if(loc_id_ != j) {
+                if(match_index_[j] == i) {
+                  countVal++;
+                }
+              }
+            }
+            if(countVal + 1 &gt; 2) commit_index_ = max(i, commit_index_);
+          }
+          // std::cout &lt;&lt; timeout_ &lt;&lt; " : timeout_" &lt;&lt; endl;
+
+          if(callAppendEntry) {
+            callAppendEntry = false;
+            Coroutine::CreateRun([&]{
+              SendAppendEntriesAll(log_[last_applied_].cmd);
+            });
+          }
+
+          if(commit_index_ &gt; last_applied_) {
+            last_applied_++;
+            ApplyLog(log_[last_applied_-1].cmd);
+          }
+        }
+        continue;
+      }
+
+      
+
+      while(timeout_ &gt; 50000) {
+        if(timeout_ &lt;= 50000) {
+          Coroutine::Sleep(50000);
+          // timeout_ = 0;
+        } else {
+          Coroutine::Sleep(50000);
+          timeout_ -= 50000;
+        }
+
+        if(commit_index_ &gt; last_applied_) {
+          last_applied_++;
+          ApplyLog(log_[last_applied_-1].cmd);
+        }
+        // if(timeout_%500000 == 0) std::cout &lt;&lt; loc_id_ &lt;&lt; " : " &lt;&lt; timeout_ &lt;&lt; endl;
+      }
+
+
+
+      
+      serverstate_ = CANDIDATE;
+      bool_t res = StartElection();
+          // appendentryevent_-&gt;Set(0);
+      if(res) {
+        serverstate_ = LEADER;
+        next_index_.clear();
+        match_index_.clear();
+        for(int i=0;i&lt;5;i++) next_index_.push_back(log_.size() + 1);
+        for(int i=0;i&lt;5;i++) match_index_.push_back(0);
+        SendEmptyAppendEntriesAll();
+        res = false;
+      }
+
+    }
+  });
+
+}
+
+void RaftServer::SendEmptyAppendEntriesAll() {
+  // cout &lt;&lt; "Server " &lt;&lt; loc_id_ &lt;&lt; " is the leader" &lt;&lt; endl;
+
+  // std::cout &lt;&lt; "Sending Empty Append Entries from leader : " &lt;&lt; loc_id_ &lt;&lt; endl;
+  Coroutine::CreateRun([&]{
+    while(serverstate_ == LEADER) {
+    // cout &lt;&lt; "Server " &lt;&lt; loc_id_ &lt;&lt; " is the leader loop" &lt;&lt; endl;
+
+      // Log_info("Server Size: %d with loc_id_: %d", log_.size(), loc_id_);
+      // while(timeout_ &gt; 1000) {
+      //   if(timeout_ &lt;= 1000) Coroutine::Sleep(1000);
+      //   else {
+      //     Coroutine::Sleep(1000);
+      //     timeout_ -= 1000;
+      //   }
+      // }
+      Coroutine::Sleep(100*1000);
+
+      auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+      for(int i=0;i&lt;5;i++) {
+        if(loc_id_ != i){
+          // ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+          SyncEmptyAppendEntry(i);
+        }
+      }
+      // ev-&gt;Wait(50*1000);
+      // cout &lt;&lt; "SendEmptyAppendEntriesAll" &lt;&lt; endl;
+
+      // for(int i=0;i&lt;5;i++){
+      //   cout &lt;&lt; match_index_[i] &lt;&lt; " ";
+      // }
+      // cout &lt;&lt; endl;
+
+    }
+  });
+
+  // ev-&gt;Wait(timeout_);
+  // std::cout &lt;&lt; "Sent All Empty Append Entries from leader : " &lt;&lt; loc_id_ &lt;&lt; endl;
+}
+
+void RaftServer::PushLog(uint64_t term, shared_ptr&lt;Marshallable&gt; &cmd) {
+  RaftLogEntry* r = new RaftLogEntry(term, cmd);
+
+  log_.push_back(*r);
+  // for(int i=0;i&lt;log_.size();i++) cout &lt;&lt; log_[i].term &lt;&lt; " "; cout &lt;&lt; endl;
+
+  // app_next_(*cmd);
+  // ApplyLog(cmd);
+  // commit_index_++;
+  // std::cout &lt;&lt; "Server : " &lt;&lt; loc_id_ &lt;&lt; " added to log with commit_index_ : " &lt;&lt; commit_index_ &lt;&lt; endl;
+}
+
+bool_t RaftServer::StartElection() {
+  serverstate_ = CANDIDATE;
+  term_++;
+  ResetElectionTimer(0);
+  std::cout &lt;&lt; loc_id_ &lt;&lt; " conducts election for term : " &lt;&lt; term_ &lt;&lt; endl;
+  event_ = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  std::shared_ptr&lt;rrr::IntEvent&gt; ev;
+  for(int i=0;i&lt;5;i++) {
+    if(loc_id_ != i){
+      ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+      SyncRequestVote(i, 1*1000);
+    }
+  }
+  // ev = Reactor::CreateSpEvent&lt;IntEvent&gt;(0);
+  ev-&gt;Wait(50*1000);
+  // std::cout &lt;&lt; event_-&gt;get() &lt;&lt; " : Election Results" &lt;&lt; endl;
+  if(event_-&gt;get()+1 &gt; 2) {
+    std::cout &lt;&lt; loc_id_ &lt;&lt; " gets a majority with votes : " &lt;&lt; event_-&gt;get()+1 &lt;&lt; endl;
+    return true;
+  }
+  return false;
+}
+
+void RaftServer::ResetElectionTimer(uint64_t additional_time) {
+  timeout_ = (((rand()%3 + 1)*10) + loc_id_ + 5)*150*1000;
+  if(serverstate_ == LEADER ) timeout_ = 70*10*1000;
+
+  // std::cout &lt;&lt; timeout_ &lt;&lt; " : timeout_" &lt;&lt; endl;
+  // timeout_ = (((rand()%3 + 1)*10) + loc_id_ + 15)*10*1000;
+  // std::cout &lt;&lt; "Called ResetTimeout " &lt;&lt; timeoutevent_-&gt;status_ &lt;&lt; endl;
+  // timeoutevent_-&gt;finished = Event::READY;
+  // uint64_t timeout = ((rand() % 15)+15)*10*10000;
+  // // timeoutevent_-&gt;wait_us_ += timeout;
+  // timeoutevent_-&gt;Wait();
+}
+
+void RaftServer::ApplyLog(shared_ptr&lt;Marshallable&gt; &cmd) {
+  Coroutine::CreateRun([this, cmd](){
+    app_next_(*cmd);
+    // cout &lt;&lt; "Server : " &lt;&lt; loc_id_ &lt;&lt; " applied the command to the state machine." &lt;&lt; endl; 
+  });
+}
+
+bool RaftServer::Start(shared_ptr&lt;Marshallable&gt; &cmd,
+                       uint64_t *index,
+                       uint64_t *term) {
+  /* Your code here. This function can be called from another OS thread. */
+  if(serverstate_ != LEADER) return false;
+
+  // for(int i=0;i&lt;log_.size();i++) cout &lt;&lt; log_[i].term &lt;&lt; " "; cout &lt;&lt; endl;
+  log_.push_back(*(new RaftLogEntry(term_, cmd)));
+  // for(int i=0;i&lt;log_.size();i++) cout &lt;&lt; log_[i].term &lt;&lt; " "; cout &lt;&lt; endl;
+
+  // app_next_(*cmd);
+  // ApplyLog(cmd);
+  // SendAppendEntriesAll(cmd);
+  callAppendEntry = true;
+  *index = log_.size();
+  *term = term_;
+  // commit_index_++;
+
+  // std::cout &lt;&lt; "Leader : " &lt;&lt; loc_id_ &lt;&lt; " added to log with commit_index_ : " &lt;&lt; commit_index_  &lt;&lt; "and log size: " &lt;&lt; log_.size()&lt;&lt; endl;
+  return true;
+}
+
+void RaftServer::SendAppendEntriesAll(shared_ptr&lt;Marshallable&gt; &cmd) {
+  // std::cout &lt;&lt; "Sending Append Entries from leader : " &lt;&lt; loc_id_ &lt;&lt; endl;
+  Coroutine::CreateRun([&]{
+    appendentryevent_ = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    uint64_t majority = 1;
+    uint64_t array[5];
+    vector&lt;uint64_t&gt; missedapentries;
+    for(int i=0;i&lt;5;i++) {
+      array[i]=0;
+      if(loc_id_ != i){
+        ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+        SyncAppendEntry(i, timeout_, log_.size()==1?0:log_.size()-1, log_.size()&lt;2?0:log_[log_.size()-2].term, &array[i], log_.size()&gt;0?log_[log_.size()-1].term:0, cmd, &majority, missedapentries, true);
+      }
+    }
+    ev-&gt;Wait(50*1000);
+
+    // if(appendentryevent_-&gt;get()+1 &gt; 2) {
+    //   std::cout &lt;&lt; "Majority of the servers committed the log with commit_index_ : " &lt;&lt; commit_index_ &lt;&lt; "and majority : " &lt;&lt; appendentryevent_-&gt;get() + 1 &lt;&lt; endl;
+    //   commit_index_++;
+    //   // std::cout &lt;&lt; loc_id_ &lt;&lt; " gets a majority with votes : " &lt;&lt; event_-&gt;get()+1 &lt;&lt; endl;
+    // }
+  });
+
+}
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match247-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void RaftServer::GetState(bool *is_leader, uint64_t *term) {
+  /* Your code here. This function can be called from another OS thread. */
+  *is_leader = (serverstate_ == LEADER);
+  *term = term_;
+}
+
+void RaftServer::SyncAppendEntry(siteid_t site_id, uint64_t timeout, uint64_t prev_log_index,  uint64_t prev_log_term, uint64_t* appendryEntryReturn, uint64_t log_term, shared_ptr&lt;Marshallable&gt; cmd, uint64_t* majority, vector&lt;uint64_t&gt; missedapentries, bool_t refill) {
+</FONT>  // Coroutine::CreateRun([this, &cmd, &site_id, &timeout](){
+  Coroutine::CreateRun([&](){
+    string res;
+    siteid_t site = site_id;
+    uint64_t followerAppendOK = 0;
+    bool_t empty_var = false;
+    uint64_t ret1 = 0;
+    bool_t ref = refill;
+    uint64_t lterm = log_term;
+    uint64_t pli = prev_log_index;
+    uint64_t plt = prev_log_term;
+    auto ev = commo()-&gt;SendAppendEntries(0, /* partition id is always 0 for lab1 */
+                                    //  site, nullptr, term_, loc_id_, 0, 0, commit_index_, empty);
+                                    //  site, cmd, term_, loc_id_, log_.size()==1?0:log_.size()-1, log_.size()&lt;2?0:log_[log_.size()-2].term, commit_index_, &ret1, &followerAppendOK, empty_var, &appendentryevent_);
+                                     site, cmd, lterm, term_, loc_id_, pli, plt, commit_index_, &ret1, &followerAppendOK, empty_var, &appendentryevent_);
+    ev-&gt;Wait(50000); //timeout after 1000000us=1s
+    if (ev-&gt;status_ == Event::TIMEOUT) {
+      Log_info("timeout happens. Sent to %d", site);
+    } else {
+
+      if(followerAppendOK == 2) {
+        match_index_[site] = max(log_.size()==0?0:(pli+1), match_index_[site]);
+        // next_index_[site] = max(next_index_[site])
+        // cout &lt;&lt; "match_index_[site] : " &lt;&lt; match_index_[site] &lt;&lt; endl;
+        if(ret1 &gt; term_) {
+          term_ = ret1;
+          serverstate_ = FOLLOWER;
+        } 
+      }else if(followerAppendOK == 1) {
+        if(ret1 &gt; term_) {
+          term_ = ret1;
+          serverstate_ = FOLLOWER;
+        } 
+      }
+
+      // if(ret1 &gt; term_) {
+      //   term_ = ret1;
+      //   serverstate_ = FOLLOWER;
+      // }
+      // Log_info("SyncAppendEntry rpc response is: %d from leader: %d to server: %d", followerAppendOK, loc_id_, site); 
+      // *appendryEntryReturn = followerAppendOK;
+      if(followerAppendOK == 1 && ref == true) {
+        // RefillLogs(site);
+        auto event_temp = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+        uint64_t response;
+        while(( response != 2) && pli &gt; 1) {
+          ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+          appendentryevent_ = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+          response = 0;
+          pli--;
+          plt = log_.size()&lt;2?0:log_[pli-1].term;
+          cmd = log_[pli].cmd;
+          lterm = log_[pli].term;
+          vector&lt;uint64_t&gt; mp;
+          uint64_t maj;
+          auto ev = commo()-&gt;SendAppendEntries(0, /* partition id is always 0 for lab1 */
+                                    //  site, nullptr, term_, loc_id_, 0, 0, commit_index_, empty);
+                                    //  site, cmd, term_, loc_id_, log_.size()==1?0:log_.size()-1, log_.size()&lt;2?0:log_[log_.size()-2].term, commit_index_, &ret1, &followerAppendOK, empty_var, &appendentryevent_);
+                                     site, cmd, lterm, term_, loc_id_, pli, plt, commit_index_, &ret1, &response, empty_var, &appendentryevent_);
+          ev-&gt;Wait(50000); //timeout after 1000000us=1s
+          if (ev-&gt;status_ == Event::TIMEOUT) {
+            Log_info("timeout happens. Sent to %d", site);
+            break;
+          } else {
+
+            if(response == 2) {
+              match_index_[site] = max(log_.size()==0?0:(pli+1), match_index_[site]);
+              // cout &lt;&lt; "match_index_[site] : " &lt;&lt; match_index_[site] &lt;&lt; endl;
+              if(ret1 &gt; term_) {
+                term_ = ret1;
+                serverstate_ = FOLLOWER;
+              } 
+            }else if(response == 1) {
+              if(ret1 &gt; term_) {
+                term_ = ret1;
+                serverstate_ = FOLLOWER;
+              } 
+            }
+            // if(ret1 &gt; term_) {
+            //   term_ = ret1;
+            //   serverstate_ = FOLLOWER;
+            // }
+            // Log_info("SyncAppendEntry rpc in Retry response is: %d from leader: %d to server: %d", followerAppendOK, loc_id_, site); 
+            // Log_info(" prev_log_index : %d prev_log_term : %d", pli, plt);
+          }
+          // ev-&gt;Wait(1*1000);
+          // response = appendentryevent_-&gt;get();
+          // std::cout &lt;&lt; "response in loop : " &lt;&lt; response &lt;&lt; endl;
+        }
+
+        while(pli &lt; log_.size()) {
+          ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+          appendentryevent_ = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+          response = 0;
+
+          cmd = log_[pli].cmd;
+          lterm = log_[pli].term;
+          vector&lt;uint64_t&gt; mp;
+          uint64_t maj;
+          uint64_t ret1;
+          auto ev = commo()-&gt;SendAppendEntries(0, /* partition id is always 0 for lab1 */
+                                    //  site, nullptr, term_, loc_id_, 0, 0, commit_index_, empty);
+                                    //  site, cmd, term_, loc_id_, log_.size()==1?0:log_.size()-1, log_.size()&lt;2?0:log_[log_.size()-2].term, commit_index_, &ret1, &followerAppendOK, empty_var, &appendentryevent_);
+                                     site, cmd, lterm, term_, loc_id_, pli, plt, commit_index_, &ret1, &response, empty_var, &appendentryevent_);
+          ev-&gt;Wait(50000); //timeout after 1000000us=1s
+          if (ev-&gt;status_ == Event::TIMEOUT) {
+            Log_info("timeout happens. Sent to %d", site);
+            break;
+          } else {
+            if(response == 2) {
+              match_index_[site] = max(log_.size()==0?0:(pli+1), match_index_[site]);
+              // cout &lt;&lt; "match_index_[site] : " &lt;&lt; match_index_[site] &lt;&lt; endl;
+              if(ret1 &gt; term_) {
+                term_ = ret1;
+                serverstate_ = FOLLOWER;
+              } 
+            }else if(response == 1) {
+              if(ret1 &gt; term_) {
+                term_ = ret1;
+                serverstate_ = FOLLOWER;
+              } 
+            }
+
+            // if(ret1 &gt; term_) {
+            //   term_ = ret1;
+            //   serverstate_ = FOLLOWER;
+            // }
+            // Log_info("SyncAppendEntry rpc Fill in Retry response is: %d from leader: %d to server: %d", followerAppendOK, loc_id_, site); 
+            // Log_info(" prev_log_index : %d prev_log_term : %d", pli, plt);
+          }
+          // ev-&gt;Wait(1*1000);
+          // response = appendentryevent_-&gt;get();
+          pli++;
+          plt = log_.size()&lt;2?0:log_[pli-1].term;
+          // std::cout &lt;&lt; "response in loop : " &lt;&lt; response &lt;&lt; endl;
+        }
+
+      }
+      // std::cout &lt;&lt; ev-&gt;get() &lt;&lt; " : " &lt;&lt; loc_id_ &lt;&lt; "-----------" &lt;&lt; endl;
+      // if(ret1 &gt; term_) {
+      //   term_ = ret1;
+      //   serverstate_ = FOLLOWER;
+      // }
+      // event_-&gt;Set(event_-&gt;get() + ev-&gt;get());
+    }
+    // Log_info("Server Size: %d with loc_id_: %d", log_.size(), loc_id_);
+  });
+}
+
+void RaftServer::SyncEmptyAppendEntry(siteid_t site_id) {
+  /* This is an example of synchronous RPC using coroutine; feel free to 
+     modify this function to dispatch/receive your own messages. 
+     You can refer to the other function examples in commo.h/cc on how 
+     to send/recv a Marshallable object over RPC. */
+
+    //  std::cout &lt;&lt; "Sending Empty Append Entry from Leader to Follower : " &lt;&lt; loc_id_ &lt;&lt; " : " &lt;&lt; site_id &lt;&lt; " : " &lt;&lt; term_ &lt;&lt; " : " &lt;&lt; (log_.size()==0?0:log_[log_.size()-1].term) &lt;&lt; " : " &lt;&lt; commit_index_ &lt;&lt; endl;
+  
+  Coroutine::CreateRun([&](){
+    string res;
+    siteid_t site = site_id;
+    uint64_t followerAppendOK = 0;
+    uint64_t pli = log_.size()&lt;=1?0:log_.size()-1;
+    uint64_t plt = log_.size()&lt;2?0:log_[log_.size()-2].term;
+    uint64_t ret1 = 0;
+    auto ev = commo()-&gt;SendEmptyAppendEntries(0, /* partition id is always 0 for lab1 */
+                                    //  site, nullptr, term_, loc_id_, 0, 0, commit_index_, empty);
+                                     site, term_, loc_id_, pli, plt, commit_index_, &ret1, &followerAppendOK);
+    // std::cout &lt;&lt; "after::commo call completed from " &lt;&lt; loc_id_ &lt;&lt; " to " &lt;&lt; site_id &lt;&lt; " and empty : " &lt;&lt; true &lt;&lt; endl;
+    ev-&gt;Wait(50*1000); //timeout after 1000000us=1s
+    if (ev-&gt;status_ == Event::TIMEOUT) {
+      // Log_info("timeout happens for SyncAppendEntry from leader: %d", loc_id_);
+    } else {
+      
+    // std::cout &lt;&lt; "after::ev-&gt;Wait from " &lt;&lt; loc_id_ &lt;&lt; " to " &lt;&lt; site_id &lt;&lt; " and empty : " &lt;&lt; true &lt;&lt; endl;
+      if(followerAppendOK == 2) {
+        match_index_[site] = max(log_.size()==0?0:(pli+1), match_index_[site]);
+        // cout &lt;&lt; "match_index_[site] : " &lt;&lt; match_index_[site] &lt;&lt; endl;
+        if(ret1 &gt; term_) {
+          term_ = ret1;
+          serverstate_ = FOLLOWER;
+        } 
+      }else if(followerAppendOK == 1) {
+        if(ret1 &gt; term_) {
+          term_ = ret1;
+          serverstate_ = FOLLOWER;
+        } 
+      }
+
+
+        // if(ret1 &gt; term_) {
+        //   term_ = ret1;
+        //   serverstate_ = FOLLOWER;
+        // }
+      // Log_info("rpc response is: %d and id is %d from %d", ev-&gt;get(), loc_id_, site); 
+      // std::cout &lt;&lt; ev-&gt;get() &lt;&lt; " : " &lt;&lt; loc_id_ &lt;&lt; "-----------" &lt;&lt; endl;
+      // event_-&gt;Set(event_-&gt;get() + ev-&gt;get());
+      // if(ret1 &gt; term_) {
+      //   term_ = ret1;
+      //   serverstate_ = FOLLOWER;
+      // }
+
+
+      if(followerAppendOK == 1) {
+        // RefillLogs(site);
+        auto event_temp = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+        uint64_t response;
+        shared_ptr&lt;Marshallable&gt; cmd;
+        uint64_t lterm;
+        bool_t empty_var = false;
+        while(( response != 2) && pli &gt; 1) {
+          ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+          appendentryevent_ = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+          response = 0;
+          pli--;
+          plt = log_.size()&lt;2?0:log_[pli-1].term;
+          cmd = log_[pli].cmd;
+          lterm = log_[pli].term;
+          vector&lt;uint64_t&gt; mp;
+          uint64_t maj;
+          auto ev = commo()-&gt;SendAppendEntries(0, /* partition id is always 0 for lab1 */
+                                    //  site, nullptr, term_, loc_id_, 0, 0, commit_index_, empty);
+                                    //  site, cmd, term_, loc_id_, log_.size()==1?0:log_.size()-1, log_.size()&lt;2?0:log_[log_.size()-2].term, commit_index_, &ret1, &followerAppendOK, empty_var, &appendentryevent_);
+                                     site, cmd, lterm, term_, loc_id_, pli, plt, commit_index_, &ret1, &response, empty_var, &appendentryevent_);
+          ev-&gt;Wait(50000); //timeout after 1000000us=1s
+          if (ev-&gt;status_ == Event::TIMEOUT) {
+            Log_info("timeout happens. Sent to %d", site);
+            break;
+          } else {
+
+            if(response == 2) {
+              match_index_[site] = max(log_.size()==0?0:(pli+1), match_index_[site]);
+              // cout &lt;&lt; "match_index_[site] : " &lt;&lt; match_index_[site] &lt;&lt; endl;
+              if(ret1 &gt; term_) {
+                term_ = ret1;
+                serverstate_ = FOLLOWER;
+              } 
+            }else if(response == 1) {
+              if(ret1 &gt; term_) {
+                term_ = ret1;
+                serverstate_ = FOLLOWER;
+              } 
+            }          
+            // if(ret1 &gt; term_) {
+            //   term_ = ret1;
+            //   serverstate_ = FOLLOWER;
+            // }
+            // Log_info("SyncAppendEntry rpc in Retry response is: %d from leader: %d to server: %d", followerAppendOK, loc_id_, site); 
+            // Log_info(" prev_log_index : %d prev_log_term : %d", pli, plt);
+          }
+          // ev-&gt;Wait(1*1000);
+          // response = appendentryevent_-&gt;get();
+          // std::cout &lt;&lt; "response in loop : " &lt;&lt; response &lt;&lt; endl;
+        }
+
+        while(pli &lt; log_.size()) {
+          ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+          appendentryevent_ = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+          response = 0;
+
+          cmd = log_[pli].cmd;
+          lterm = log_[pli].term;
+          vector&lt;uint64_t&gt; mp;
+          uint64_t maj;
+          uint64_t ret1;
+          auto ev = commo()-&gt;SendAppendEntries(0, /* partition id is always 0 for lab1 */
+                                    //  site, nullptr, term_, loc_id_, 0, 0, commit_index_, empty);
+                                    //  site, cmd, term_, loc_id_, log_.size()==1?0:log_.size()-1, log_.size()&lt;2?0:log_[log_.size()-2].term, commit_index_, &ret1, &followerAppendOK, empty_var, &appendentryevent_);
+                                     site, cmd, lterm, term_, loc_id_, pli, plt, commit_index_, &ret1, &response, empty_var, &appendentryevent_);
+          ev-&gt;Wait(50000); //timeout after 1000000us=1s
+          if (ev-&gt;status_ == Event::TIMEOUT) {
+            Log_info("timeout happens. Sent to %d", site);
+            break;
+          } else {
+
+            if(response == 2) {
+              match_index_[site] = max(log_.size()==0?0:(pli+1), match_index_[site]);
+              // cout &lt;&lt; "match_index_[site] : " &lt;&lt; match_index_[site] &lt;&lt; endl;
+              if(ret1 &gt; term_) {
+                term_ = ret1;
+                serverstate_ = FOLLOWER;
+              } 
+            }else if(response == 1) {
+              if(ret1 &gt; term_) {
+                term_ = ret1;
+                serverstate_ = FOLLOWER;
+              } 
+            }
+
+            // if(ret1 &gt; term_) {
+            //   term_ = ret1;
+            //   serverstate_ = FOLLOWER;
+            // }
+            // Log_info("SyncAppendEntry rpc Fill in Retry response is: %d from leader: %d to server: %d", followerAppendOK, loc_id_, site); 
+            // Log_info(" prev_log_index : %d prev_log_term : %d", pli, plt);
+          }
+          // ev-&gt;Wait(1*1000);
+          // response = appendentryevent_-&gt;get();
+          pli++;
+          plt = log_.size()&lt;2?0:log_[pli-1].term;
+          // std::cout &lt;&lt; "response in loop : " &lt;&lt; response &lt;&lt; endl;
+        }
+
+      }
+    }
+
+    
+  });
+}
+
+void RaftServer::SyncRequestVote(siteid_t site_id, uint64_t timeout) {
+  /* This is an example of synchronous RPC using coroutine; feel free to 
+     modify this function to dispatch/receive your own messages. 
+     You can refer to the other function examples in commo.h/cc on how 
+     to send/recv a Marshallable object over RPC. */
+  
+  Coroutine::CreateRun([this, &site_id, &timeout](){
+    string res;
+    uint64_t ret1;
+
+    siteid_t site = site_id;
+    auto ev = commo()-&gt;SendRequestVote(0, /* partition id is always 0 for lab1 */
+                                     site, term_, loc_id_, log_.size()==0?0:log_.size(), log_.size()==0?0:log_[log_.size()-1].term, &ret1, &event_);
+    ev-&gt;Wait(50000); //timeout after 1000000us=1s
+    if (ev-&gt;status_ == Event::TIMEOUT) {
+      // Log_info("timeout happens. Sent to %d", site_id);
+    } else {
+
+      // cout &lt;&lt; ret1 &lt;&lt; endl;
+      // Log_info("rpc response is: %d and id is %d from %d", event_-&gt;get(), loc_id_, site); 
+      // std::cout &lt;&lt; ev-&gt;get() &lt;&lt; " : " &lt;&lt; loc_id_ &lt;&lt; "-----------" &lt;&lt; endl;
+      // if(ret1 &gt; term_) {
+      //   term_ = ret1;
+      //   serverstate_ = FOLLOWER;
+      // }
+      // event_-&gt;Set(event_-&gt;get() + ev-&gt;get());
+    }
+
+  });
+}
+
+
+void RaftServer::SyncRpcExample() {
+  /* This is an example of synchronous RPC using coroutine; feel free to 
+     modify this function to dispatch/receive your own messages. 
+     You can refer to the other function examples in commo.h/cc on how 
+     to send/recv a Marshallable object over RPC. */
+  Coroutine::CreateRun([this](){
+    string res;
+    auto event = commo()-&gt;SendString(0, /* partition id is always 0 for lab1 */
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match247-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                     0, "hello", &res);
+    event-&gt;Wait(1000000); //timeout after 1000000us=1s
+    if (event-&gt;status_ == Event::TIMEOUT) {
+      Log_info("timeout happens");
+    } else {
+      Log_info("rpc response is: %s and get : %d", res.c_str(), event-&gt;get()); 
+    }
+  });
+}
+
+/* Do not modify any code below here */
+
+void RaftServer::Disconnect(const bool disconnect) {
+</FONT>  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+  verify(disconnected_ != disconnect);
+  // global map of rpc_par_proxies_ values accessed by partition then by site
+  static map&lt;parid_t, map&lt;siteid_t, map&lt;siteid_t, vector&lt;SiteProxyPair&gt;&gt;&gt;&gt; _proxies{};
+  if (_proxies.find(partition_id_) == _proxies.end()) {
+    _proxies[partition_id_] = {};
+  }
+  RaftCommo *c = (RaftCommo*) commo();
+  if (disconnect) {
+    verify(_proxies[partition_id_][loc_id_].size() == 0);
+    verify(c-&gt;rpc_par_proxies_.size() &gt; 0);
+    auto sz = c-&gt;rpc_par_proxies_.size();
+    _proxies[partition_id_][loc_id_].insert(c-&gt;rpc_par_proxies_.begin(), c-&gt;rpc_par_proxies_.end());
+    c-&gt;rpc_par_proxies_ = {};
+    verify(_proxies[partition_id_][loc_id_].size() == sz);
+    verify(c-&gt;rpc_par_proxies_.size() == 0);
+  } else {
+    verify(_proxies[partition_id_][loc_id_].size() &gt; 0);
+    auto sz = _proxies[partition_id_][loc_id_].size();
+    c-&gt;rpc_par_proxies_ = {};
+    c-&gt;rpc_par_proxies_.insert(_proxies[partition_id_][loc_id_].begin(), _proxies[partition_id_][loc_id_].end());
+    _proxies[partition_id_][loc_id_] = {};
+    verify(_proxies[partition_id_][loc_id_].size() == 0);
+    verify(c-&gt;rpc_par_proxies_.size() == sz);
+  }
+  disconnected_ = disconnect;
+}
+
+bool RaftServer::IsDisconnected() {
+  return disconnected_;
+}
+
+} // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

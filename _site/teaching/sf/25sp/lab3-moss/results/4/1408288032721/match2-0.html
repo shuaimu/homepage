@@ -1,0 +1,426 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-ShreyasBlues/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-ShreyasBlues/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include &lt;boost/serialization/vector.hpp&gt;
+#include &lt;boost/serialization/map.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+namespace janus {
+
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  Log_info("Join Called...! "); 
+
+  *ret = KV_TIMEOUT;
+
+  switch (GetRaftServer().current_state_)
+  {
+    case 0:
+    case 1: Log_info("Shard Master returns KVNotLeader..!");
+            *ret = KV_NOTLEADER;
+            break;
+
+    case 2:
+    
+    Log_info("We in JOIN LEADER Shard Master ----&gt; &lt;---- Server : %d", GetRaftServer().site_id_);
+    op_id_ = op_id_ + 1;
+
+    // Serialize the map to a string
+    std::stringstream ss;
+    boost::archive::text_oarchive oa(ss);
+    oa &lt;&lt; gid_server_map;
+    std::string serialized_gid_server_map = ss.str();
+
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(op_id_));
+    s-&gt;data_.push_back("join");
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match2-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    s-&gt;data_.push_back(serialized_gid_server_map);
+
+    auto sp_m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+
+    auto op_data = std::make_shared&lt;ShardOpData&gt;(ShardOpData{KV_TIMEOUT});
+    op_success.insert(std::make_pair(to_string(op_id_), op_data));
+
+    uint64_t index, term;
+    index = GetRaftServer().logs_.size();
+    term = GetRaftServer().current_term_;  
+
+    Log_info("Submit to RAFT..%d %d State : %d Server : %d", index, term, GetRaftServer().current_state_, GetRaftServer().site_id_);
+</FONT><A NAME="4"></A><FONT color = #FF00FF><A HREF="match2-1.html#4" TARGET="1"><IMG SRC="../../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    bool isLeader = GetRaftServer().Start(sp_m, &index, &term);
+    Log_info("We complete Start %d", isLeader);
+
+    if(isLeader == false){
+      Log_info("We in Not leader for %d ", GetRaftServer().site_id_);
+</FONT>      *ret =  KV_NOTLEADER;
+      break;
+    }
+
+    op_data-&gt;cmit_evt.value_ = 0;
+    Log_info("JOIN Event Value Set to -&gt; %d", op_data-&gt;cmit_evt.value_);
+    op_data-&gt;cmit_evt.WaitUntilGreaterOrEqualThan(1, 500000);
+
+    Coroutine::Sleep(300000);
+
+    *ret = op_data-&gt;status;
+    Log_info("Status Return from Join : %d", op_data-&gt;status);
+  }
+
+/*   Log_info("Join Called...! ");
+  ShardConfig newShardConfig;
+  if(configs_.size()&gt;0){
+    Log_info("We in Size + 1");
+    newShardConfig.shard_group_map_ = configs_.rbegin()-&gt;second.shard_group_map_;
+    newShardConfig.group_servers_map_ = configs_.rbegin()-&gt;second.group_servers_map_;
+    newShardConfig.number = configs_.rbegin()-&gt;second.number + 1;
+
+    newShardConfig.group_servers_map_.insert(gid_server_map.begin(), gid_server_map.end());
+  } else{
+       Log_info("We in 1");
+    newShardConfig.number = 1;
+    newShardConfig.group_servers_map_.insert(gid_server_map.begin(), gid_server_map.end());
+  }
+  for(auto it : newShardConfig.group_servers_map_){
+    Log_info("Grp Id : %d", it.first);
+  }
+  ReBalanceShardes(&newShardConfig, 0);
+
+  for(auto it : newShardConfig.shard_group_map_){
+    Log_info("After RB Shard Id %d and Grp Id : %d", it.first, it.second);
+  }
+  configs_[newShardConfig.number] = newShardConfig;
+  *ret = KV_SUCCESS; */
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+
+  Log_info("Leave Called...! "); 
+  *ret = KV_TIMEOUT;
+
+  switch (GetRaftServer().current_state_)
+  {
+    case 0:
+    case 1: Log_info("Shard Master returns KVNotLeader..!");
+            *ret = KV_NOTLEADER;
+            break;
+
+    case 2:
+
+    Log_info("We in LEAVE LEADER Shard Master ----&gt; &lt;---- Server : %d", GetRaftServer().site_id_);
+    op_id_ = op_id_ + 1;
+
+    // Serialize the map to a string
+    std::stringstream ss;
+    boost::archive::text_oarchive oa(ss);
+    oa &lt;&lt; gids;
+
+    std::string serialized_gids = ss.str();
+
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(op_id_));
+    s-&gt;data_.push_back("leave");
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match2-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    s-&gt;data_.push_back(serialized_gids);
+
+    auto sp_m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+
+    auto op_data = std::make_shared&lt;ShardOpData&gt;(ShardOpData{KV_TIMEOUT});
+    op_success.insert(std::make_pair(to_string(op_id_), op_data));
+
+    uint64_t index, term;
+    index = GetRaftServer().logs_.size();
+    term = GetRaftServer().current_term_;  
+
+    Log_info("Submit Leave to RAFT..%d %d State : %d Server : %d", index, term, GetRaftServer().current_state_, GetRaftServer().site_id_);
+</FONT>    bool isLeader = GetRaftServer().Start(sp_m, &index, &term);
+    Log_info("Leave complete Start %d", isLeader);
+
+    if(isLeader == false){
+      Log_info("Leave in Not leader for %d ", GetRaftServer().site_id_);
+      *ret =  KV_NOTLEADER;
+      break;
+    }
+
+    op_data-&gt;cmit_evt.value_ = 0;
+    Log_info("LEAVE Event Value Set to -&gt; %d", op_data-&gt;cmit_evt.value_);
+    op_data-&gt;cmit_evt.WaitUntilGreaterOrEqualThan(1, 500000);
+
+    Coroutine::Sleep(300000);
+
+    Log_info("Wait in Leave");
+    *ret = op_data-&gt;status;
+    Log_info("Status Return from Leave : %d", op_data-&gt;status);
+  }
+
+/* 
+  Log_info("Leave Called...! ");
+  ShardConfig newShardConfig;
+  newShardConfig.shard_group_map_ = configs_.rbegin()-&gt;second.shard_group_map_;
+  newShardConfig.group_servers_map_ = configs_.rbegin()-&gt;second.group_servers_map_;
+  newShardConfig.number = configs_.rbegin()-&gt;second.number + 1;
+  
+  for(int i = 0; i&lt;gids.size(); i++){
+    newShardConfig.group_servers_map_.erase(gids.at(i));
+    
+    map&lt;uint32_t, uint32_t&gt; count{};
+    for (auto& pair : newShardConfig.shard_group_map_) {
+      auto group = pair.second;
+      count[group]++;
+      Log_info("GID : %d and Count : %d", group, count[group]);
+    }
+
+    uint32_t minGrpId = -1;
+    uint32_t minGrpCnt = std::numeric_limits&lt;uint32_t&gt;::max();;
+    for (auto& pair : count) {
+      if(minGrpCnt &gt; pair.second){
+        minGrpCnt = pair.second;
+        minGrpId = pair.first;
+      }
+    }
+
+    Log_info("MinGrpId : %d and MinGrpCt : %d", minGrpId, minGrpCnt);
+
+    for(int shard_num = 1; shard_num&lt;=SHARDS; shard_num++){
+      if(newShardConfig.shard_group_map_[shard_num] == gids.at(i)){
+        newShardConfig.shard_group_map_[shard_num] = minGrpId;
+      }
+    }
+
+    ReBalanceShardes(&newShardConfig, gids.at(i));
+  }
+  configs_[newShardConfig.number] = newShardConfig;
+  *ret = KV_SUCCESS; */
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  *ret = KV_SUCCESS;
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+  // your code here
+  Log_info("Query Called...! Server %d ", GetRaftServer().site_id_); 
+  if(config_no == -1){
+    *config = configs_.rbegin()-&gt;second;
+  } else {
+    *config = configs_.at(config_no); 
+  }
+  *ret = KV_SUCCESS;
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  // your code here
+  Coroutine::CreateRun([&m, this](){ 
+  auto v = (MultiStringMarshallable*)(&m);
+  /* your code here */
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match2-1.html#3" TARGET="1"><IMG SRC="../../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  Log_info("We in OnNextCommand ShardMaster ----&gt; &lt;---- Server : %d for OPID : %s and Type : %s",sp_log_svr_-&gt;site_id_, v-&gt;data_.at(0).c_str(), v-&gt;data_.at(1).c_str());
+
+  if(v-&gt;data_.at(1) == "join"){
+</FONT>    
+    std::map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt; gid_server_map;
+    std::stringstream iss(v-&gt;data_.at(2));
+    boost::archive::text_iarchive ia(iss);
+    ia &gt;&gt; gid_server_map;
+
+    ShardConfig newShardConfig;
+    if(configs_.size()&gt;0){
+      Log_info("We in Size + 1");
+      newShardConfig.shard_group_map_ = configs_.rbegin()-&gt;second.shard_group_map_;
+      newShardConfig.group_servers_map_ = configs_.rbegin()-&gt;second.group_servers_map_;
+      newShardConfig.number = atoi(v-&gt;data_.at(0).c_str());
+
+      newShardConfig.group_servers_map_.insert(gid_server_map.begin(), gid_server_map.end());
+    } else{
+      Log_info("We in 1");
+      newShardConfig.number = atoi(v-&gt;data_.at(0).c_str());;
+      newShardConfig.group_servers_map_.insert(gid_server_map.begin(), gid_server_map.end());
+    }
+
+    for(auto it : newShardConfig.group_servers_map_){
+      Log_info("Grp Id : %d", it.first);
+    }
+
+    ReBalanceShardes(&newShardConfig, 0);     
+
+    for(auto it : newShardConfig.shard_group_map_){
+      Log_info("After RB Shard Id %d and Grp Id : %d", it.first, it.second);
+    } 
+    configs_[newShardConfig.number] = newShardConfig;
+    
+  } else if(v-&gt;data_.at(1) == "leave") {
+
+    // Deserialize the string back to a vector
+    std::vector&lt;uint32_t&gt; deserialized_gids;
+    std::stringstream iss(v-&gt;data_.at(2));
+    boost::archive::text_iarchive ia(iss);
+    ia &gt;&gt; deserialized_gids;
+
+    ShardConfig newShardConfig;
+    newShardConfig.shard_group_map_ = configs_.rbegin()-&gt;second.shard_group_map_;
+    newShardConfig.group_servers_map_ = configs_.rbegin()-&gt;second.group_servers_map_;
+    newShardConfig.number = atoi(v-&gt;data_.at(0).c_str());;
+    
+    for(int i = 0; i&lt;deserialized_gids.size(); i++){
+      newShardConfig.group_servers_map_.erase(deserialized_gids.at(i));
+      
+      map&lt;uint32_t, uint32_t&gt; count{};
+      for (auto& pair : newShardConfig.shard_group_map_) {
+        auto group = pair.second;
+        count[group]++;
+        Log_info("GID : %d and Count : %d", group, count[group]);
+      }
+
+      uint32_t minGrpId = -1;
+      uint32_t minGrpCnt = std::numeric_limits&lt;uint32_t&gt;::max();;
+      for (auto& pair : count) {
+        if(minGrpCnt &gt; pair.second){
+          minGrpCnt = pair.second;
+          minGrpId = pair.first;
+        }
+      }
+
+      Log_info("MinGrpId : %d and MinGrpCt : %d", minGrpId, minGrpCnt);
+
+      for(int shard_num = 1; shard_num&lt;=SHARDS; shard_num++){
+        if(newShardConfig.shard_group_map_[shard_num] == deserialized_gids.at(i)){
+          newShardConfig.shard_group_map_[shard_num] = minGrpId;
+        }
+      }
+
+      ReBalanceShardes(&newShardConfig, deserialized_gids.at(i));
+    }
+    configs_[newShardConfig.number] = newShardConfig;
+
+  } 
+
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match2-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  if(GetRaftServer().current_state_ == 2 && op_success.find(v-&gt;data_.at(0)) != op_success.end()){
+    Log_info("OnNextCommand Event OPD: %s Value is : %d and status : %d", v-&gt;data_.at(0).c_str(), op_success.at(v-&gt;data_.at(0))-&gt;cmit_evt.value_, op_success.at(v-&gt;data_.at(0))-&gt;status);
+    op_success.at(v-&gt;data_.at(0))-&gt;status = KV_SUCCESS;
+    op_success.at(v-&gt;data_.at(0))-&gt;cmit_evt.Set(1);  
+    Log_info("OnNextCommand Set's Event OPD : %s Value to : %d and status : %d", v-&gt;data_.at(0).c_str(), op_success.at(v-&gt;data_.at(0))-&gt;cmit_evt.value_, op_success.at(v-&gt;data_.at(0))-&gt;status);
+</FONT>  } /* else{
+    op_id_ = (uint64_t)v-&gt;data_.at(0);
+  } */
+  });
+}
+
+void ShardMasterServiceImpl::ReBalanceShardes(ShardConfig* config, int32_t grp_num) {
+  // your code here
+
+  uint32_t no_of_grps = config-&gt;group_servers_map_.size();
+  uint32_t limit = SHARDS / no_of_grps;
+  uint32_t maxShardGrps = SHARDS % no_of_grps;
+  map&lt;uint32_t, uint32_t&gt; group_shard_count_;
+  map&lt;uint32_t, vector&lt;uint32_t&gt;&gt; group_shard_map_{};
+  vector&lt;uint32_t&gt; staged_shards;
+
+  if(config-&gt;group_servers_map_.size() == 1){
+    for(int shard_num = 1; shard_num&lt;=SHARDS; shard_num++){
+      config-&gt;shard_group_map_.at(shard_num) = config-&gt;group_servers_map_.begin()-&gt;first;
+    }
+  }
+  else{
+
+  Log_info("ReBalance --&gt; No of Grps : %d limit : %d ", no_of_grps, limit);
+
+  for(auto pair : config-&gt;group_servers_map_){
+    group_shard_map_[pair.first] = {};
+  }
+
+  for(int shard_num = 1; shard_num&lt;=SHARDS; shard_num++){
+    Log_info("Shard Num : %d Grp Id : %d", shard_num, config-&gt;shard_group_map_.at(shard_num));
+    auto it = group_shard_count_.find(config-&gt;shard_group_map_.at(shard_num));
+    if (it != group_shard_count_.end()) {
+      Log_info("Grp ID : %d Count : %d", config-&gt;shard_group_map_.at(shard_num), group_shard_count_.at(config-&gt;shard_group_map_.at(shard_num)));
+      group_shard_count_.at(config-&gt;shard_group_map_.at(shard_num)) = group_shard_count_.at(config-&gt;shard_group_map_.at(shard_num)) + 1;
+      group_shard_map_.at(config-&gt;shard_group_map_.at(shard_num)).push_back(shard_num);
+    } else {
+      Log_info("Me Adding For 1st..!");
+      group_shard_count_[config-&gt;shard_group_map_.at(shard_num)] = 1;
+      group_shard_map_[config-&gt;shard_group_map_.at(shard_num)] = {};
+      group_shard_map_.at(config-&gt;shard_group_map_.at(shard_num)).push_back(shard_num);
+      Log_info("Added to Grp %d SHard %d", config-&gt;shard_group_map_.at(shard_num), group_shard_map_.at(config-&gt;shard_group_map_.at(shard_num)).back());
+    }
+  }
+
+  auto comparator = [](const auto& lhs, const auto& rhs) {
+      return lhs.second.size() &gt; rhs.second.size();
+  };
+
+    // Sort the map based on the size of the vector values
+  std::vector&lt;std::pair&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;&gt; sortedMap(
+      group_shard_map_.begin(), group_shard_map_.end());
+  std::sort(sortedMap.begin(), sortedMap.end(), comparator);  
+
+  int index = 1;
+  for (auto& entry : sortedMap) {
+    Log_info("Sorted Grp : %d And Shards in : %d", entry.first, entry.second.size());
+    if(index &lt;= maxShardGrps){
+      while(entry.second.size()&gt;(limit+1)){
+        Log_info("Called");
+        staged_shards.push_back(entry.second.back());
+        entry.second.pop_back();
+      }
+    } else{
+      while(entry.second.size()&gt;(limit)){
+        staged_shards.push_back(entry.second.back());
+        entry.second.pop_back();
+      }
+    }
+    index++;
+  }
+
+  index = 1;
+  for(auto& itr : sortedMap){
+    Log_info("Sorted Grp : %d And Shards in : %d Staged : %d", itr.first, itr.second.size(), staged_shards.size());
+    if(index &lt;= maxShardGrps){
+      while(itr.second.size() &lt; (limit+1)){
+        config-&gt;shard_group_map_[staged_shards.back()] = itr.first;
+        itr.second.push_back(staged_shards.back());;
+        staged_shards.pop_back();
+      }
+    } else{
+      while(itr.second.size() &lt; limit){
+        config-&gt;shard_group_map_[staged_shards.back()] = itr.first;
+        itr.second.push_back(staged_shards.back());;
+        staged_shards.pop_back();
+      }
+    }
+    index++;
+  }
+  }
+
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  return cli;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

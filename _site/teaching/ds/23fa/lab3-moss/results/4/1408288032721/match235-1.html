@@ -1,0 +1,102 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-ksp20/src/shardkv/client.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-Pritish1/src/shardkv/client.cc<p><PRE>
+
+
+#include "client.h"
+#include "server.h"
+#include "../shardmaster/service.h"
+#include "../shardmaster/client.h"
+
+namespace janus {
+
+int ShardKvClient::Op(function&lt;int(uint32_t*)&gt; func) {
+  uint64_t t1 = Time::now();
+  while (true) {
+    uint64_t t2 = Time::now();
+    if (t2 - t1 &gt; 10000000) {
+      return KV_TIMEOUT;
+    }
+    uint32_t ret = 0;
+    int r1; 
+    r1 = func(&ret);
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match235-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_9.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    if (r1 == ETIMEDOUT || ret == KV_TIMEOUT) {
+      leader_idx_ = (leader_idx_+1);
+      return KV_TIMEOUT;
+    }
+    if (ret == KV_SUCCESS) {
+      return KV_SUCCESS;
+    }
+    if (ret == KV_NOTLEADER) {
+      leader_idx_ = (leader_idx_+1);
+    }
+  }
+
+}
+
+int ShardKvClient::Put(const string& k, const string& v) {
+  uint32_t shardId = Key2Shard(k);
+</FONT>  auto masterCli = make_shared&lt;ShardMasterClient&gt;();
+  masterCli-&gt;commo_ = commo_;
+  ShardConfig latestConfig;
+  masterCli-&gt;Query(-1, &latestConfig);
+  auto shardMap = latestConfig.shard_group_map_;
+  auto gid = shardMap[shardId];
+  auto gidServerMap = latestConfig.group_servers_map_;
+  leader_idx_ = gidServerMap[gid][0];
+  Log_info("CLIENT PUT OPERATION =&gt; GID %d shardId %d Key %s Value %s trying server %d as leader", gid, shardId, k.c_str(), v.c_str(), leader_idx_);
+  return Op([&](uint32_t* r)-&gt;int{
+    return Proxy(leader_idx_).Put(GetNextOpId(), k, v, r);
+  });
+}
+
+ShardKvProxy& ShardKvClient::Proxy(siteid_t site_id) {
+  verify(commo_);
+  auto p = (ShardKvProxy*)commo_-&gt;rpc_proxies_.at(site_id);
+  return *p; 
+}
+
+int ShardKvClient::Append(const string& k, const string& v) {
+  uint32_t shardId = Key2Shard(k);
+  auto masterCli = make_shared&lt;ShardMasterClient&gt;();
+  masterCli-&gt;commo_ = commo_;
+  ShardConfig latestConfig;
+  masterCli-&gt;Query(-1, &latestConfig);
+  auto shardMap = latestConfig.shard_group_map_;
+  auto gid = shardMap[shardId];
+  auto gidServerMap = latestConfig.group_servers_map_;
+  leader_idx_ = gidServerMap[gid][0];
+  Log_info("CLIENT APPEND OPERATION =&gt; GID %d shardId %d Key %s Value %s trying server %d as leader", gid, shardId, k.c_str(), v.c_str(), leader_idx_);
+  return Op([&](uint32_t* r)-&gt;int{
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match235-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    return Proxy(leader_idx_).Append(GetNextOpId(), k, v, r);
+  });
+}
+
+int ShardKvClient::Get(const string& k, string* v) {
+  uint32_t shardId = Key2Shard(k);
+</FONT>  auto masterCli = make_shared&lt;ShardMasterClient&gt;();
+  masterCli-&gt;commo_ = commo_;
+  ShardConfig latestConfig;
+  masterCli-&gt;Query(-1, &latestConfig);
+  auto shardMap = latestConfig.shard_group_map_;
+  auto gid = shardMap[shardId];
+  auto gidServerMap = latestConfig.group_servers_map_;
+  leader_idx_ = gidServerMap[gid][0];
+  Log_info("CLIENT GET OPERATION =&gt; GID %d shardId %d Key %s trying server %d as leader", gid, shardId, k.c_str(), leader_idx_);
+  return Op([&](uint32_t* r)-&gt;int{
+    return Proxy(leader_idx_).Get(GetNextOpId(), k, r, v);
+  });
+}
+
+} // namesapce janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

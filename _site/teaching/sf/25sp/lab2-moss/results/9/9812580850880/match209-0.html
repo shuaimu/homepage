@@ -1,0 +1,219 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-Gillgamesh/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-Gillgamesh/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+bool KvServer::IsLeader() {
+  bool isLeader;
+  uint64_t termAtReqCheck;
+  this-&gt;GetRaftServer().GetState(&isLeader, &termAtReqCheck);
+  return isLeader;
+}
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  /* 
+  Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  */
+  /* your code here */
+  Log_info("PUT called %d %s %s", oid, k.c_str(), v.c_str());
+
+  if (!this-&gt;IsLeader()) {
+    Log_info("Not leader!");
+    return KV_NOTLEADER;
+  }
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match209-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  auto t = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  uint64_t term;
+  uint64_t index;
+  // send put request
+  this-&gt;GetRaftServer().Start(
+</FONT>      t,
+      &index,
+      &term);
+
+  // await call to return or timeout
+  auto event = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  this-&gt;opCodeResolution[oid] = event;
+  event-&gt;Wait(RAFT_COMMIT_TIMEOUT);
+  if (event-&gt;status_ == Event::TIMEOUT)
+  {
+    Log_info("Put request timed out!");
+    return KV_TIMEOUT;
+  }
+  else
+  {
+    Log_info("Put request seemingly succeeded?");
+    return KV_SUCCESS;
+  }
+}
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+  Log_info("APPEND called %d %s %s", oid, k.c_str(), v.c_str());
+  if (!this-&gt;IsLeader()) {
+    Log_info("Not leader!");
+    return KV_NOTLEADER;
+  }
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match209-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  s-&gt;data_.push_back("append");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  auto t = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  uint64_t term;
+  uint64_t index;
+  // send append request
+  this-&gt;GetRaftServer().Start(
+</FONT>      t,
+      &index,
+      &term);
+
+  // await call to return or timeout
+  auto event = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  this-&gt;opCodeResolution[oid] = event;
+  event-&gt;Wait(RAFT_COMMIT_TIMEOUT);
+  if (event-&gt;status_ == Event::TIMEOUT)
+  {
+    Log_info("Append request timed out!");
+    return KV_TIMEOUT;
+  }
+  else
+  {
+    Log_info("Append request seemingly succeeded?");
+    return KV_SUCCESS;
+  }
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+  /* your code here */
+  Log_info("GET called %d %s", oid, k.c_str());
+  // MAKE SURE you enter gets into the log as well. this garauntees that you are part of the 
+  // majority
+  if (!this-&gt;IsLeader()) {
+    Log_info("Not leader!");
+    return KV_NOTLEADER;
+  }
+  // FIRST - perform an append rpc to raft. this will ensure you sync your local table.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("get");
+  auto t = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  // send get request
+  uint64_t term;
+  uint64_t index;
+  this-&gt;GetRaftServer().Start(
+      t,
+      &index,
+      &term);
+
+  // await call to return or timeout
+  auto event = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  this-&gt;opCodeResolution[oid] = event;
+  event-&gt;Wait(RAFT_COMMIT_TIMEOUT);
+  if (event-&gt;status_ == Event::TIMEOUT)
+  {
+    Log_info("Get request timed out!");
+    return KV_TIMEOUT;
+  }
+  else
+  {
+    Log_info("Get request seemingly succeeded?");
+    if (this-&gt;localMap.find(k) != this-&gt;localMap.end()) {
+      *v = this-&gt;localMap[k];
+    }
+    return KV_SUCCESS;
+  }
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  auto v = (MultiStringMarshallable*)(&m);
+  /* your code here */
+  uint64_t opCode = std::stoull(v-&gt;data_.at(0));
+  string opType = v-&gt;data_.at(1);
+  Log_info("Command received: %s (opcode=%d)", opType.c_str(), opCode);
+  if (opType.compare("get") == 0) {
+    // get operation - do nothing specific
+  }
+  else if (opType.compare("put") == 0) {
+    // update the actual map
+    string key = v-&gt;data_.at(2);
+    string value = v-&gt;data_.at(3);
+    this-&gt;localMap[key] = value;
+  }
+  else if (opType.compare("append") ==0 ) {
+    // update the actual map
+    string key = v-&gt;data_.at(2);
+    string value = v-&gt;data_.at(3);
+    if (this-&gt;localMap.find(key) == this-&gt;localMap.end()) {
+      this-&gt;localMap[key] = value;
+    }
+    else {
+      this-&gt;localMap[key] = this-&gt;localMap[key].append(value);
+    }
+  }
+  // in all cases - resolve the corresponding opCode.
+  if (this-&gt;opCodeResolution.find(opCode) != this-&gt;opCodeResolution.end()) {
+    auto event = this-&gt;opCodeResolution[opCode];
+    event-&gt;Set(1);
+    // TODO - delete opCodes at some time;
+  }
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

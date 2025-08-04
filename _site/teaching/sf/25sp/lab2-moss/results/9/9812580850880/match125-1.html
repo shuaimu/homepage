@@ -1,0 +1,291 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-ShubhamRJ/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-vbelagali/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+#define KV_TIMEOUT_TIME 5000000
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  /* 
+  Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  */
+  /* your code here */
+
+  // auto myCoro = Coroutine::CreateRun(
+  //    [&] () {
+    uint64_t myOid = oid;
+
+    RaftServer& raftServer = GetRaftServer();
+    bool is_leader;
+    uint64_t term;
+
+    Log_debug("[%d] Received PUT %d", raftServer.site_id_, myOid);
+
+    raftServer.GetState(&is_leader, &term);
+    if(!is_leader) {
+      Log_debug("[%d] Received PUT %d but I'm not a leader", raftServer.site_id_, myOid);
+      return KV_NOTLEADER;
+    }
+
+    int currOpIndex = opIndex_++;
+
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match125-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    s-&gt;data_.push_back(to_string(myOid));
+    s-&gt;data_.push_back(to_string(currOpIndex));
+    s-&gt;data_.push_back("put");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);
+</FONT>
+    Log_debug("[%d] send PUT to RAFT %d, %d", raftServer.site_id_, myOid, currOpIndex);
+
+    uint64_t index;
+    auto m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+    if (!raftServer.Start(m, &index, &term)) {
+      return KV_NOTLEADER;
+    }
+    // block here for onNextCommand
+    auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    {
+      lock_guard&lt;mutex&gt; lg(event_mutex_);
+      event_map_[to_string(currOpIndex)] = ev;
+    }
+
+    ev-&gt;Wait(KV_TIMEOUT_TIME);
+
+    {
+      lock_guard&lt;mutex&gt; lg(event_mutex_);
+      event_map_.erase(to_string(currOpIndex));
+    }
+
+    if (ev-&gt;status_ == Event::DONE) {
+      Log_debug("[%d] PUT successful %d", raftServer.site_id_, myOid);
+      return KV_SUCCESS;
+    }
+    Log_debug("[%d] PUT timeout %d", raftServer.site_id_, myOid);
+    return KV_TIMEOUT;
+  //  });
+}
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+  // auto myCoro = Coroutine::CreateRun(
+  //     [&] () {
+
+    uint64_t myOid = oid;
+
+    RaftServer& raftServer = GetRaftServer();
+    bool is_leader;
+    uint64_t term;
+
+    Log_debug("[%d] Received APPEND %d", raftServer.site_id_, myOid);
+
+    raftServer.GetState(&is_leader, &term);
+    if(!is_leader) {
+      return KV_NOTLEADER;
+    }
+
+    int currOpIndex = opIndex_++;
+
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match125-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    s-&gt;data_.push_back(to_string(myOid));
+    s-&gt;data_.push_back(to_string(currOpIndex));
+    s-&gt;data_.push_back("append");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);
+</FONT>
+    uint64_t index;
+    auto m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+    if (!raftServer.Start(m, &index, &term)) {
+      return KV_NOTLEADER;
+    }
+    // block here for onNextCommand
+    auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    {
+      lock_guard&lt;mutex&gt; lg(event_mutex_);
+      event_map_[to_string(currOpIndex)] = ev;
+    }
+
+    ev-&gt;Wait(KV_TIMEOUT_TIME);
+
+    {
+      lock_guard&lt;mutex&gt; lg(event_mutex_);
+      event_map_.erase(to_string(currOpIndex));
+    }
+
+    if (ev-&gt;status_ == Event::DONE) {
+      Log_debug("[%d] APPEND successful %d", raftServer.site_id_, myOid);
+      return KV_SUCCESS;
+    }
+    Log_debug("[%d] APPEND timeout %d", raftServer.site_id_, myOid);
+    return KV_TIMEOUT;
+  // });
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+  /* your code here */
+  // auto myCoro = Coroutine::CreateRun(
+  //     [&] () {
+
+    uint64_t myOid = oid;
+    string key = k;
+
+    RaftServer& raftServer = GetRaftServer();
+    bool is_leader;
+    uint64_t term;
+
+    Log_debug("[%d] Received GET %d", raftServer.site_id_, myOid);
+
+    raftServer.GetState(&is_leader, &term);
+    if(!is_leader) {
+      return KV_NOTLEADER;
+    }
+
+    int currOpIndex = opIndex_++;
+
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(myOid));
+    s-&gt;data_.push_back(to_string(currOpIndex));
+    s-&gt;data_.push_back("get");
+    s-&gt;data_.push_back(k);
+
+    uint64_t index;
+    auto m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+    if (!raftServer.Start(m, &index, &term)) {
+      return KV_NOTLEADER;
+    }
+    // block here for onNextCommand
+    auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    {
+      lock_guard&lt;mutex&gt; lg(event_mutex_);
+      event_map_[to_string(currOpIndex)] = ev;
+    }
+
+    ev-&gt;Wait(KV_TIMEOUT_TIME);
+
+    {
+      lock_guard&lt;mutex&gt; lg(event_mutex_);
+      event_map_.erase(to_string(currOpIndex));
+    }
+
+    if (ev-&gt;status_ == Event::DONE) {
+      lock_guard&lt;mutex&gt; lg(kv_mutex_);
+      if (kv_store_.find(key) != kv_store_.end()) {
+        string ret;
+        for (auto& st: kv_store_[key]) {
+          ret += st;
+        }
+        *v = ret;
+      }
+      Log_debug("[%d] GET successful %d", raftServer.site_id_, myOid);
+      return KV_SUCCESS;
+    }
+    Log_debug("[%d] GET timeout %d", raftServer.site_id_, myOid);
+    return KV_TIMEOUT;
+  // });
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  auto v = (MultiStringMarshallable*)(&m);
+  /* your code here */
+  assert(3 &lt;= v-&gt;data_.size());
+  string oidStr = v-&gt;data_.at(0);
+  string eventIndexStr = v-&gt;data_.at(1);
+  string key = v-&gt;data_.at(3);
+
+  {
+    lock_guard&lt;mutex&gt; lg(kv_mutex_);
+    if ("put" == v-&gt;data_.at(2)) {
+      string value = v-&gt;data_.at(4);
+      kv_store_[key] = vector&lt;string&gt;{value};
+    }
+    else if ("append" == v-&gt;data_.at(2)) {
+      string value = v-&gt;data_.at(4);
+      if (kv_store_.find(key) != kv_store_.end()) {
+        kv_store_[key].push_back(value);
+      }
+      else {
+        kv_store_[key] = vector&lt;string&gt;{value};
+      }
+    }
+    else {
+      // get - noop
+    }
+  }
+
+  RaftServer& raftServer = GetRaftServer();
+  bool is_leader;
+  uint64_t term;
+
+  raftServer.GetState(&is_leader, &term);
+  if(!is_leader) {
+    return;
+  }
+
+  Log_debug("OnNextCommand:: checking and setting event");
+
+  {
+    lock_guard&lt;mutex&gt; lg(event_mutex_);
+    auto itr = event_map_.find(eventIndexStr);
+    if (itr != event_map_.end()) {
+      if(!itr-&gt;second-&gt;IsTimeout()) {
+        itr-&gt;second-&gt;Set(1);
+      }
+    }
+  }
+  // if not in map then its already removed because of timeout
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

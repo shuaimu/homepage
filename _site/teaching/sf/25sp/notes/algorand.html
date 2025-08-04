@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>Algorand | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="Algorand" />
+<meta property="og:locale" content="en_US" />
+<link rel="canonical" href="http://0.0.0.0/teaching/sf/25sp/notes/algorand.html" />
+<meta property="og:url" content="http://0.0.0.0/teaching/sf/25sp/notes/algorand.html" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="Algorand" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"Algorand","url":"http://0.0.0.0/teaching/sf/25sp/notes/algorand.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="http://0.0.0.0/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>Algorand</h1>
+         </header> -->
+
+  <section>
+    <h1 id="algorand">Algorand</h1>
+
+<h2 id="use-byzantine-consensusagreements-in-block-chains">Use byzantine consensus/agreements in block chains</h2>
+<ul>
+  <li>Replace the Proof-of-works consensus protocols in Bitcoin</li>
+  <li>Pros
+    <ul>
+      <li>higher throughput</li>
+      <li>no forks</li>
+      <li>no mining</li>
+    </ul>
+  </li>
+  <li>Cons
+    <ul>
+      <li>liveness
+        <ul>
+          <li>malicious</li>
+          <li>concurrent proposals</li>
+        </ul>
+      </li>
+      <li>membership management
+        <ul>
+          <li>join/leave</li>
+          <li>Sybil attacks</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="choose-a-small-committee">Choose a small committee</h2>
+<ul>
+  <li>Option 1: controlled</li>
+  <li>Option 2: random
+    <ul>
+      <li>leader with the most balance?
+        <ul>
+          <li>centralized</li>
+        </ul>
+      </li>
+      <li>random one leader, safety?
+        <ul>
+          <li>how? use last block as seed to rand.</li>
+          <li>attack: liveness, fork</li>
+          <li>fairness?</li>
+        </ul>
+      </li>
+      <li>random one leader using their weight?
+        <ul>
+          <li>how? a binomial distribution</li>
+          <li>better, but lead to a dictator</li>
+        </ul>
+      </li>
+      <li>random a committee using their weight?</li>
+      <li>Does everyone scan all accounts?
+        <ul>
+          <li>how much time does it take? (against the goal of saving power)</li>
+          <li>can we ask proxies to do it? (but again, verifiy would take a lot of work)</li>
+          <li>can we ask each account to test for themselves?
+            <ul>
+              <li>how can we verify?</li>
+            </ul>
+          </li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="sortition-based-on-verifiable-random-function-vrf">Sortition based on Verifiable Random Function (VRF)</h2>
+<ul>
+  <li>Sortition:
+    <ul>
+      <li>proposer</li>
+      <li>committee</li>
+    </ul>
+  </li>
+  <li>given public/private key pair (pk, sk),  VRF(sk, content/seed) generates a hash (random to everyone, crypto safe) and a proof
+    <ul>
+      <li>use the hash to deterministically decide whether the user is a proposer or a committee member</li>
+      <li>seed is in the previous block</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="ba-agreements">BA agreements</h2>
+<ul>
+  <li>Vote and CountVote
+    <ul>
+      <li>over threshold in the first round: final consensus</li>
+      <li>else: tentative consensus
+        <ul>
+          <li>fork: could achieve tentative consensus on two blocks, why? (network asynchrony)</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>The system can fork (tentative consensus)
+    <ul>
+      <li>with a malicous committee member
+        <ul>
+          <li>but will converge in the next block (why?)</li>
+        </ul>
+      </li>
+      <li>with network asynchrony</li>
+    </ul>
+  </li>
+  <li>How can we avoid/address forks?
+    <ul>
+      <li>we cannot in a fully asynchronous setup</li>
+      <li>have a stronger assumption on the network, cannot be async forever</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="compare-to-stellar">Compare to Stellar</h2>
+<ul>
+  <li>a node in Stellar selects a number of servers it trusts as the consensus group, compared to VRF used in Algorand</li>
+  <li>BA in Stellar is ballot-based, a node first tries to find out what value is potentially chosen before</li>
+</ul>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+</body>
+
+</html>

@@ -1,0 +1,143 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-shrh18/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-yskot1999/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match0-0.html#3" TARGET="0"><IMG SRC="../../../bitmaps/tm_3_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+bool_t RaftServiceImpl::areLogsUpToDate(int64_t candidateLastLogIndex, uint64_t candidateLastLogTerm)
+</FONT>{   
+    return (candidateLastLogTerm &gt; svr_-&gt;getLastLogTerm())
+     || ((candidateLastLogTerm == svr_-&gt;getLastLogTerm()) && (candidateLastLogIndex &gt;=svr_-&gt;getLastLogIndex()));
+}
+
+void RaftServiceImpl::HandleRequestVote(const uint64_t& candidateTerm,
+                                        const uint64_t& candidateId,
+                                        const int64_t& candidateLastLogIndex,
+                                        const uint64_t& candidateLastLogTerm,
+                                        uint64_t *ret1,
+                                        bool_t *vote_granted,
+                                        rrr::DeferredReply* defer) {
+  /* Your code here */
+
+  if (candidateTerm &lt; svr_-&gt;currentTerm) {
+  *ret1 = svr_-&gt;currentTerm;
+  *vote_granted = false;
+  } 
+  else {
+
+    if (svr_-&gt;currentTerm &lt; candidateTerm) {
+      svr_-&gt;votedFor = -1;
+      svr_-&gt;server_state = "FOLLOWER";
+      svr_-&gt;currentTerm = candidateTerm;
+    }
+
+    *ret1 = svr_-&gt;currentTerm;
+    *vote_granted = false;
+    if ((svr_-&gt;votedFor == -1 || svr_-&gt;votedFor == candidateId) && (areLogsUpToDate(candidateLastLogIndex, candidateLastLogTerm) == 1)) {// && areLogsUpToDate(candidateLastLogIndex, candidateLastLogTerm)) {
+      svr_-&gt;votedFor = candidateId;
+      svr_-&gt;currentTerm = candidateTerm;
+      svr_-&gt;server_state = "FOLLOWER";
+      svr_-&gt;resetElectionTimeStamp = std::chrono::steady_clock::now();
+      *ret1 = candidateTerm;
+      *vote_granted = true;
+    }
+  }
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleHeartBeats(const uint64_t& leaderCommit,
+                                        const uint64_t& leaderTerm,
+                                        uint64_t *updatedTerm,
+                                        bool_t *heartBeatReceived,
+                                        rrr::DeferredReply* defer) {
+
+  *heartBeatReceived = false;
+  *updatedTerm = svr_-&gt;currentTerm;
+  if (leaderTerm &gt;= svr_-&gt;currentTerm) {
+    svr_-&gt;server_state = "FOLLOWER";
+    svr_-&gt;votedFor = -1;
+    svr_-&gt;currentTerm = leaderTerm;
+    svr_-&gt;resetElectionTimeStamp = std::chrono::steady_clock::now();
+    *updatedTerm = leaderTerm;
+    *heartBeatReceived = true;
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match0-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_10.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    if (leaderCommit &gt; svr_-&gt;commitedIndex) {
+      int val = svr_-&gt;commitedIndex;
+      svr_-&gt;commitedIndex = std::min(static_cast&lt;int64_t&gt;(leaderCommit), static_cast&lt;int64_t&gt;(svr_-&gt;logEntryMessages.size()));
+      for (int i = val ; i &lt; svr_-&gt;commitedIndex ; i++)
+        svr_-&gt;app_next_(*const_cast&lt;MarshallDeputy&&gt;(svr_-&gt;logEntryMessages[i]).sp_data_);
+    }
+  }
+  defer-&gt;reply();
+</FONT>}
+
+void RaftServiceImpl::HandleAppendEntries(const uint64_t& leaderTerm,
+                                          const uint64_t& leaderId,
+                                          const int64_t& prevLogIndex,
+                                          const uint64_t& prevLogTerm,
+                                          const vector&lt;MarshallDeputy&gt;& logEntryMessages,
+                                          const vector&lt;uint64_t&gt;& logEntryTerms,
+                                          uint64_t *updatedLeaderTerm,
+                                          bool_t *success,
+                                          rrr::DeferredReply* defer) {
+  /* Your code here */
+  *success = false;
+  *updatedLeaderTerm = svr_-&gt;currentTerm;
+  if(leaderTerm&lt;svr_-&gt;currentTerm){
+    *success=false;
+     *updatedLeaderTerm = svr_-&gt;currentTerm;
+  }
+  else if (leaderTerm &gt;= svr_-&gt;currentTerm) {
+    *updatedLeaderTerm = leaderTerm;
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match0-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_7.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    int lastButOneIndex = prevLogIndex &lt;= static_cast&lt;int64_t&gt;(svr_-&gt;logEntryTerms.size())-1 ? prevLogIndex + 1 : svr_-&gt;logEntryTerms.size();
+    int i = 0;
+    for (i = 0; i &lt; lastButOneIndex; i++) {
+      if (logEntryTerms[i] != svr_-&gt;logEntryTerms[i]) break;
+</FONT>    }
+    Log_info("Val of I is : %d", i);
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match0-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_11.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    int startIndexForDelete = i == 0 ? 0 : i - 1;
+    svr_-&gt;logEntryMessages.erase(svr_-&gt;logEntryMessages.begin() + startIndexForDelete, svr_-&gt;logEntryMessages.end());
+    svr_-&gt;logEntryTerms.erase(svr_-&gt;logEntryTerms.begin() + startIndexForDelete, svr_-&gt;logEntryTerms.end());
+    for (int k = startIndexForDelete ; k &lt; logEntryMessages.size() ; k++) {
+      svr_-&gt;logEntryMessages.push_back(logEntryMessages[k]);
+      svr_-&gt;logEntryTerms.push_back(logEntryTerms[k]);
+    }
+    *success = true;
+</FONT>  }
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  *res = "world";
+  defer-&gt;reply();
+}
+
+}</PRE>
+</PRE>
+</BODY>
+</HTML>

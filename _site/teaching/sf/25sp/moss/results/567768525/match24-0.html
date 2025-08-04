@@ -1,0 +1,603 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/KrishnaDonkada/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/KrishnaDonkada/src/kvraft/server.go<p><PRE>
+package raftkv
+
+import (
+	"bytes"
+	"labgob"
+	"labrpc"
+	"log"
+	"raft"
+	"sync"
+)
+
+const Debug = 0
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+
+type Op struct {
+	Op string
+	Key string
+	Value string
+	SequenceNum int
+	ClerkID int
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+}
+
+type Command struct {
+	Op string
+	Key string
+	Value string
+	SequenceNum int
+}
+
+type KVServer struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+<A NAME="20"></A><FONT color = #FF0000><A HREF="match24-1.html#20" TARGET="1"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	KVStore map[string]string // need to persist this
+	OpMap map[int]Op // This is used to verify the desired index has appeared for the given client , no need to persist this as client call will timeout and request will come again.. so
+	SeqMap map[int]int // Need to persist this so that I will remember the last processed command for that each client ..
+	//GetChan chan string
+	Killed        chan bool
+	IsKilled bool
+	GetMap map[int]string // Get map  not need to be persisted , as messages come on the channel , it will will get updated .
+</FONT>
+
+	maxraftstate int // snapshot if log grows this big
+	LastApplied int
+	LastAppliedTerm int
+	LastSnapShot int
+
+	// Your definitions here.
+}
+
+
+
+func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	// Your code here.
+	//fmt.Println("Inside the",kv.me,"for PutAppend operation op is",args.Op,"by clerkID",args.ClerkID,"seq:",args.SequenceNum,"for key",args.Key,"value:",args.Value)
+	_,isLeader := kv.rf.GetState()
+	if !isLeader {
+		reply.WrongLeader = true
+		//fmt.Println(kv.me,"for PutAppend operation","by clerkID",args.ClerkID,"seq:",args.SequenceNum,"for key",args.Key,"value:",args.Value,"returned because he is not leader")
+		return
+	}
+
+	// call the start and wait on the channel
+	var op Op
+	op.Op=args.Op
+	op.Key=args.Key
+	op.Value=args.Value
+	op.ClerkID=args.ClerkID
+	op.SequenceNum=args.SequenceNum
+	if isLeader{
+
+		index,_,isLeader := kv.rf.Start(op)
+		//fmt.Println("Leader",kv.me,"for PutAppend operation called raft start return values are",index,isLeader,"operation",op.Op,"key:",op.Key,"value:",op.Value,"clerk ID",op.ClerkID,"sequencenum",op.SequenceNum)
+		if !isLeader {
+<A NAME="17"></A><FONT color = #0000FF><A HREF="match24-1.html#17" TARGET="1"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			reply.WrongLeader = true
+			return
+		}
+		// here we can use command sequence number to break out from the loop to see if the command is already executed , then also we can exit the loop
+		for {
+			kv.mu.Lock()
+			opToCompare,isKeyExist := kv.OpMap[index]
+			kv.mu.Unlock()
+			if isKeyExist && op == opToCompare {
+</FONT>				//fmt.Println("in",kv.me,"Put append success for index",index,"operation details","key",op.Key,"value",op.Value,"sequence num",op.SequenceNum,"clerk id",op.ClerkID)
+				reply.WrongLeader = false
+				reply.Err = OK
+				return
+
+			}
+			if isKeyExist && op != opToCompare{
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match24-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				reply.WrongLeader = true
+				return
+			}
+			_,Leadership := kv.rf.GetState()
+			if !Leadership  {
+				reply.WrongLeader = true
+				return
+			}
+
+			kv.mu.Lock()
+			kvKilled := kv.IsKilled
+			kv.mu.Unlock()
+
+			if kvKilled {
+				reply.WrongLeader = true
+				return
+			}
+		}
+	}
+
+
+}
+
+func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
+	// Your code here.
+	//handle the Get append rapce
+
+		_,isLeader := kv.rf.GetState()
+</FONT>		if !isLeader {
+			reply.WrongLeader = true
+			return
+		}
+
+		// call the start and wait on the channel
+		var op Op
+<A NAME="18"></A><FONT color = #00FFFF><A HREF="match24-1.html#18" TARGET="1"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		op.Op="Get"
+		op.Key=args.Key
+		op.Value=""
+		op.ClerkID=args.ClerkID
+		op.SequenceNum=args.SequenceNum
+</FONT>		if isLeader {
+			//fmt.Println("I am the leader",kv.me)
+			index,_,isLeader := kv.rf.Start(op)
+			//fmt.Println("Leader",kv.me,"for Get operation called raft start return values are",index,isLeader,"operation",op.Op,"key:",op.Key,"value:",op.Value,"clerk ID",op.ClerkID,"sequencenum",op.SequenceNum)
+			if !isLeader {
+<A NAME="12"></A><FONT color = #0000FF><A HREF="match24-1.html#12" TARGET="1"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				reply.WrongLeader = true
+				return
+			}
+
+			for {
+
+				kv.mu.Lock()
+				opToCompare,isKeyExist := kv.OpMap[index]
+				s,GetValueExist := kv.GetMap[index]
+				kv.mu.Unlock()
+				if isKeyExist && op == opToCompare {
+</FONT>                    // s := &lt;- kv.GetChan
+
+                    if GetValueExist {
+						//fmt.Println("Get success for index",index,"operation details","key",op.Key,"value",s,"sequence num",op.SequenceNum,"clerk id",op.ClerkID)
+						reply.Value = s
+						reply.WrongLeader = false
+						reply.Err = OK
+						return
+					}
+
+
+				}
+
+				if isKeyExist && op != opToCompare{
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match24-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                      reply.WrongLeader = true
+                      return
+				}
+
+				_,Leadership := kv.rf.GetState()
+
+				if !Leadership  {
+					reply.WrongLeader = true
+					return
+				}
+
+				kv.mu.Lock()
+				kvKilled := kv.IsKilled
+				kv.mu.Unlock()
+
+				if kvKilled {
+					reply.WrongLeader = true
+					return
+				}
+
+
+
+			}
+		}
+
+
+
+}
+
+
+
+//
+// the tester calls Kill() when a KVServer instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *KVServer) Kill() {
+	//fmt.Println("Inside kill for KV",kv.me)
+	//kv.rf.Kill()
+	//fmt.Println("Reached next in kill")
+	kv.rf.Kill()
+</FONT>	kv.Killed&lt;-true
+	kv.mu.Lock()
+	kv.IsKilled = true
+	kv.mu.Unlock()
+
+	//fmt.Println("Reached here")
+	// Your code here, if desired.
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Raft to
+// form the fault-tolerant key/value service.
+// me is the index of the current server in servers[].
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+// the k/v server should snapshot when Raft's saved state exceeds maxraftstate bytes,
+// in order to allow Raft to garbage-collect its log. if maxraftstate is -1,
+// you don't need to snapshot.
+// StartKVServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
+	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+	kv := new(KVServer)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+
+	// You may need initialization code here.
+	kv.KVStore = make(map[string]string)
+
+	kv.applyCh = make(chan raft.ApplyMsg)
+	//kv.GetChan = make(chan string)
+<A NAME="13"></A><FONT color = #00FFFF><A HREF="match24-1.html#13" TARGET="1"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.OpMap = make(map[int]Op)
+	kv.SeqMap = make(map[int]int)
+	kv.GetMap = make(map[int]string)
+	kv.Killed = make(chan bool)
+	kv.IsKilled=false
+</FONT>	//persister.ReadSnapshot()
+<A NAME="14"></A><FONT color = #FF00FF><A HREF="match24-1.html#14" TARGET="1"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.KVReadsnapshot(persister)
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+	//fmt.Println("Kv server started:",kv.me)
+
+
+	// You may need initialization code here.
+
+
+
+  	go kv.ListenOnApplyCh()
+	if kv.maxraftstate != -1 {
+		go kv.CheckRaftSize()
+	}
+
+	return kv
+</FONT>}
+
+func (kv *KVServer) ApplyGet(applyMsg raft.ApplyMsg,op Op) {
+<A NAME="16"></A><FONT color = #00FF00><A HREF="match24-1.html#16" TARGET="1"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.mu.Lock()
+	value,isKeyExist := kv.KVStore[op.Key]
+	if !isKeyExist {
+		value=""
+	}
+	kv.GetMap[applyMsg.CommandIndex]=value
+</FONT>	kv.OpMap[applyMsg.CommandIndex]=op
+	kv.SeqMap[op.ClerkID]=op.SequenceNum
+	kv.LastApplied=applyMsg.CommandIndex
+	kv.LastAppliedTerm=applyMsg.CommandTerm
+	//fmt.Println(kv.me,"LastAppliedIndex",kv.LastApplied-1,"Last Applied term",kv.LastAppliedTerm)
+	kv.mu.Unlock()
+}
+
+<A NAME="19"></A><FONT color = #FF00FF><A HREF="match24-1.html#19" TARGET="1"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *KVServer) ApplyPut(applyMsg raft.ApplyMsg,op Op) {
+	kv.mu.Lock()
+	SequenceNum,isClientExist := kv.SeqMap[op.ClerkID]
+</FONT>	if isClientExist {
+		if   op.SequenceNum &gt; SequenceNum {
+<A NAME="21"></A><FONT color = #00FF00><A HREF="match24-1.html#21" TARGET="1"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			kv.KVStore[op.Key] = op.Value
+			kv.SeqMap[op.ClerkID]=op.SequenceNum
+
+		}
+	} else {
+		kv.KVStore[op.Key] = op.Value
+</FONT><A NAME="9"></A><FONT color = #FF00FF><A HREF="match24-1.html#9" TARGET="1"><IMG SRC="../../bitmaps/tm_4_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		kv.SeqMap[op.ClerkID]=op.SequenceNum
+	}
+	kv.OpMap[applyMsg.CommandIndex]=op
+	kv.LastApplied=applyMsg.CommandIndex
+	kv.LastAppliedTerm=applyMsg.CommandTerm
+	//fmt.Println(kv.me,"LastAppliedIndex",kv.LastApplied-1,"Last Applied term",kv.LastAppliedTerm)
+	kv.mu.Unlock()
+
+}
+
+func (kv *KVServer) ApplyAppend(applyMsg raft.ApplyMsg,op Op) {
+</FONT>	kv.mu.Lock()
+	SequenceNum,isClientExist := kv.SeqMap[op.ClerkID]
+	if isClientExist {
+		if   op.SequenceNum &gt; SequenceNum {
+			//fmt.Println("Inside lock ",SequenceNum,op.SequenceNum)
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match24-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			value,isKeyExist := kv.KVStore[op.Key]
+
+			if isKeyExist {
+				kv.KVStore[op.Key]=value+op.Value
+			} else {
+				kv.KVStore[op.Key]=op.Value
+			}
+			kv.SeqMap[op.ClerkID]=op.SequenceNum
+		}
+	} else {
+		value,isKeyExist := kv.KVStore[op.Key]
+</FONT><A NAME="10"></A><FONT color = #FF0000><A HREF="match24-1.html#10" TARGET="1"><IMG SRC="../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		if isKeyExist {
+			kv.KVStore[op.Key]=value+op.Value
+		} else {
+			kv.KVStore[op.Key]=op.Value
+		}
+		kv.SeqMap[op.ClerkID]=op.SequenceNum
+</FONT>
+	}
+	kv.OpMap[applyMsg.CommandIndex]=op
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match24-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.LastApplied=applyMsg.CommandIndex
+	kv.LastAppliedTerm=applyMsg.CommandTerm
+	//fmt.Println(kv.me,"LastAppliedIndex",kv.LastApplied-1,"Last Applied term",kv.LastAppliedTerm)
+	kv.mu.Unlock()
+}
+
+func (kv *KVServer) ApplySnapshot(applyMsg raft.ApplyMsg){
+
+	snapshot := applyMsg.Snapshot
+
+	//fmt.Println("Inside kv server ApplySnapshot",kv.me,"SnapshotLength",len(snapshot))
+	if snapshot == nil || len(snapshot) &lt; 1 { // bootstrap without any state?
+		//fmt.Println("Returning from readPersist because there is no data to read")
+		return
+	}
+
+	r := bytes.NewBuffer(snapshot)
+	d := labgob.NewDecoder(r)
+	var SnapshotLastLogIndex int
+	var SnapshotLastLogTerm int
+	var KVStore map[string]string
+	//KVStore = make(map[string]string)
+	var SeqMap  map[int]int
+</FONT>	//SeqMap = make(map[int]int)
+
+    //fmt.Println("Inside kv server ApplySnapshot",kv.me)
+	if d.Decode(&SnapshotLastLogIndex) != nil ||
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match24-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		d.Decode(&SnapshotLastLogTerm) != nil || d.Decode(&KVStore) != nil || d.Decode(&SeqMap) != nil  {
+		//fmt.Println("Error while reading the persisted data")
+		log.Fatal("Error while reading the persisted data inside read snapshot",SnapshotLastLogIndex,SnapshotLastLogTerm,kv.KVStore,kv.SeqMap)
+	} else {
+		kv.mu.Lock()
+
+		kv.KVStore = KVStore
+		kv.SeqMap = SeqMap
+		kv.LastApplied=SnapshotLastLogIndex
+		kv.LastAppliedTerm=SnapshotLastLogTerm
+</FONT>
+
+
+		//fmt.Println("Inside persister term:",currentTerm,votedFor)
+		//fmt.Println("updated current term and voted for:",rf.me,rf.CurrentTerm,rf.VotedFor)
+		kv.mu.Unlock()
+
+	}
+
+ /*
+	if d.Decode(&SnapshotLastLogIndex) != nil {
+		log.Fatal("Error while reading the persisted data inside read snapshot SnapshotLastLogIndex",SnapshotLastLogIndex)
+
+	} else if d.Decode(&SnapshotLastLogTerm) != nil {
+		log.Fatal("Error while reading the persisted data inside read snapshot SnapshotLastLogTerm",SnapshotLastLogTerm)
+	} else if d.Decode(&KVStore) != nil {
+		log.Fatal("Error while reading the persisted data inside read snapshot KVStore",KVStore)
+	} else if d.Decode(&SeqMap) != nil  {
+		log.Fatal("Error while reading the persisted data inside read snapshot SeqMap",SeqMap)
+	} else {
+		kv.mu.Lock()
+
+		kv.KVStore = KVStore
+		kv.SeqMap = SeqMap
+		kv.LastApplied = SnapshotLastLogIndex
+		kv.LastAppliedTerm = SnapshotLastLogTerm
+
+		//fmt.Println("Inside persister term:",currentTerm,votedFor)
+		//fmt.Println("updated current term and voted for:",rf.me,rf.CurrentTerm,rf.VotedFor)
+		kv.mu.Unlock()
+
+	} */
+
+	}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match24-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *KVServer) ListenOnApplyCh() {
+	for {
+		select {
+		case applyMsg := &lt;- kv.applyCh:
+			if applyMsg.CommandValid == false {
+
+			} else if !applyMsg.SnapshotIncluded {
+				op := (applyMsg.Command).(Op)
+				//fmt.Println("Message appeared on kv",kv.me, "applyMsg channel",applyMsg.CommandIndex,applyMsg.CommandValid,"op details operation",op.Op,"key",op.Key,"value",op.Value,"sequence num",op.SequenceNum,"clerk id",op.ClerkID)
+				if op.Op == "Get" {
+					kv.ApplyGet(applyMsg,op)
+
+					// do not launch a go routine as this will alter the order of applying
+				} else if op.Op == "Put" {
+					kv.ApplyPut(applyMsg,op)
+				} else if op.Op == "Append" {
+                   kv.ApplyAppend(applyMsg,op)
+
+				}
+
+			} else if applyMsg.SnapshotIncluded {
+</FONT>				kv.ApplySnapshot(applyMsg)
+			}
+		case &lt;-kv.Killed:
+			      return
+
+		}
+
+
+	}
+}
+
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match24-1.html#7" TARGET="1"><IMG SRC="../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *KVServer) SaveKVState()  {
+
+
+	//kv.rf.Snapshot(maxraftstate)
+   //fmt.Println("Reached before the lock in saveKVstate",kv.me)
+	kv.rf.Mu.Lock()
+    kv.mu.Lock()
+	//fmt.Println("Inside Save KV State")
+	LastSnapShot := kv.LastSnapShot
+	LastApplied := kv.LastApplied
+	LastAppliedTerm:=kv.LastAppliedTerm
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+
+	e.Encode(kv.LastApplied)
+</FONT><A NAME="3"></A><FONT color = #00FFFF><A HREF="match24-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	e.Encode(kv.LastAppliedTerm)
+	e.Encode(kv.KVStore)
+	e.Encode(kv.SeqMap)
+
+	//e.Encode(rf.Log)
+	Snapshot := w.Bytes()
+	//fmt.Println("Before calling SaveStateSnapshot and waiting",kv.me)
+	//kv.rf.SaveStateSnapshot(Snapshot,LastApplied-1,LastAppliedTerm)
+	//fmt.Println("returned from calling SaveStateSnapshot and releasing the kv lock from saveKVstate",kv.me)
+	//kv.mu.Unlock()
+	//fmt.Println("Before calling Save state snapshot")
+	//fmt.Println(kv.me,"calling raft","LastApplied",LastApplied-1,"Last Applied term",LastAppliedTerm,"SnapshotLength",len(Snapshot))
+    if(LastSnapShot != LastApplied-1 ) {
+		kv.rf.SaveStateSnapshot(Snapshot,LastApplied-1,LastAppliedTerm)
+	}
+
+	//kv.mu.Lock()
+	kv.LastSnapShot=LastApplied-1
+	kv.mu.Unlock()
+	kv.rf.Mu.Unlock()
+	//kv.rf.SaveStateSnapshot(Snapshot)
+	//return KVState, LastApplied-1
+
+
+}
+
+ func (kv *KVServer) CheckRaftSize() {
+</FONT><A NAME="15"></A><FONT color = #FF0000><A HREF="match24-1.html#15" TARGET="1"><IMG SRC="../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+
+	for {
+
+
+		result := kv.rf.CheckSateSize(kv.maxraftstate)
+		if result {
+			//fmt.Println("Reached maxraft state",kv.maxraftstate,"for kv",kv.me)
+			kv.SaveKVState()
+		   // fmt.Println("Done with taking snapshot for kv",kv.me)
+		}
+
+
+		kv.mu.Lock()
+		kvKilled := kv.IsKilled
+		kv.mu.Unlock()
+
+		if kvKilled {
+			return
+		}
+	}
+
+}
+
+
+/*func (kv *KVServer) CheckRaftSize() {
+
+
+		 go kv.rf.CheckSateSize(kv.maxraftstate)
+
+		 } */
+
+</FONT>func (kv *KVServer) KVReadsnapshot(persister *raft.Persister) {
+<A NAME="8"></A><FONT color = #00FFFF><A HREF="match24-1.html#8" TARGET="1"><IMG SRC="../../bitmaps/tm_3_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	snapshot := persister.ReadSnapshot()
+
+	if snapshot == nil || len(snapshot) &lt; 1 { // bootstrap without any state?
+		//fmt.Println("Returning from readPersist because there is no data to read")
+		return
+	}
+
+	r := bytes.NewBuffer(snapshot)
+	d := labgob.NewDecoder(r)
+	var SnapshotLastLogIndex int
+	var SnapshotLastLogTerm int
+	var KVStore map[string]string
+	var SeqMap  map[int]int
+</FONT>
+
+	if d.Decode(&SnapshotLastLogIndex) != nil ||
+<A NAME="11"></A><FONT color = #00FF00><A HREF="match24-1.html#11" TARGET="1"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		d.Decode(&SnapshotLastLogTerm) != nil || d.Decode(&KVStore) != nil || d.Decode(&SeqMap) != nil  {
+		//fmt.Println("Error while reading the persisted data")
+		log.Fatal("Error while reading the persisted data inside read snapshot")
+	} else {
+		kv.mu.Lock()
+
+		kv.KVStore = KVStore
+		kv.SeqMap = SeqMap
+		kv.LastApplied=SnapshotLastLogIndex
+		kv.LastAppliedTerm=SnapshotLastLogTerm
+</FONT>
+
+
+		//fmt.Println("Inside persister term:",currentTerm,votedFor)
+		//fmt.Println("updated current term and voted for:",rf.me,rf.CurrentTerm,rf.VotedFor)
+		kv.mu.Unlock()
+
+	}
+
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

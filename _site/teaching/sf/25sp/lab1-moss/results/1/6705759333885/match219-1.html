@@ -1,0 +1,306 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-ameya-zope/src/deptran/raft/commo.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-omkar-rajwade-sbu-1/src/deptran/raft/commo.cc<p><PRE>
+
+#include "commo.h"
+#include "../rcc/graph.h"
+#include "../rcc/graph_marshaler.h"
+#include "../command.h"
+#include "../procedure.h"
+#include "../command_marshaler.h"
+#include "raft_rpc.h"
+#include "macros.h"
+
+namespace janus {
+
+RaftCommo::RaftCommo(PollMgr* poll) : Communicator(poll) {
+}
+
+
+
+void 
+RaftCommo::SendEmptyAppendEntries(parid_t par_id,
+                      siteid_t site_id,
+                      uint64_t leaderCommitIndex,
+                      uint64_t term,
+                      uint64_t prevLogIndex,
+                      uint64_t prevLogTerm,
+                      uint64_t leaderId,
+                      shared_ptr&lt;IntEvent&gt; evToTrigger,
+                      uint64_t* termReturned,
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match219-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                      bool_t* successReturned,
+                      uint64_t* conflictTermReturned,
+                      uint64_t* conflictIdxReturned)
+{
+  auto proxies = rpc_par_proxies_[par_id];
+  for (auto& p : proxies) {
+    if (p.first == site_id) {
+</FONT>      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [termReturned, successReturned,conflictTermReturned, conflictIdxReturned, evToTrigger](Future* fu) {
+        /* this is a handler that will be invoked when the RPC returns */
+        /* retrieve RPC return values in order */
+        bool_t followerAppendOkReceived;
+        uint64_t lclTermReturned;
+        uint64_t lclConflictTermReturned;
+        uint64_t lclConflictIdxReturned;
+
+        fu-&gt;get_reply() &gt;&gt; lclTermReturned;
+        fu-&gt;get_reply() &gt;&gt; followerAppendOkReceived;
+        fu-&gt;get_reply() &gt;&gt; lclConflictTermReturned;
+        fu-&gt;get_reply() &gt;&gt; lclConflictIdxReturned;
+
+        *termReturned = lclTermReturned;
+        *successReturned = followerAppendOkReceived;
+        *conflictTermReturned = lclConflictIdxReturned;
+        *conflictIdxReturned = lclConflictIdxReturned;
+        if(evToTrigger-&gt;status_ != Event::TIMEOUT)
+        {
+          evToTrigger-&gt;Set(1);
+        }
+        
+
+        /* process the RPC response here */
+      };
+      /* Always use Call_Async(proxy, RPC name, RPC args..., fuattr)
+      * to asynchronously invoke RPCs */
+      Call_Async(proxy, EmptyAppendEntries, leaderCommitIndex, term, prevLogIndex,prevLogTerm, leaderId, fuattr);
+    }
+  }
+}
+
+
+
+void 
+RaftCommo::SendFullAppendEntries(parid_t par_id,
+                      siteid_t site_id,
+                      uint64_t leaderCommitIndex,
+                      uint64_t term,
+                      uint64_t prevLogIndex,
+                      uint64_t prevLogTerm,
+                      std::vector&lt;shared_ptr&lt;Marshallable&gt;&gt; cmds,
+                      std::vector&lt;uint64_t&gt; logEntryTerms,
+                      uint64_t leaderId,
+                      shared_ptr&lt;IntEvent&gt; evToTrigger,
+                      uint64_t* termReturned,
+                      bool_t* successReturned,
+                      uint64_t* conflictTermReturned,
+                      uint64_t* conflictIdxReturned)
+{
+  auto proxies = rpc_par_proxies_[par_id];
+  for (auto& p : proxies) {
+    if (p.first == site_id) {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [termReturned, successReturned, conflictTermReturned, conflictIdxReturned, evToTrigger](Future* fu) {
+        /* this is a handler that will be invoked when the RPC returns */
+        /* retrieve RPC return values in order */
+        bool_t followerAppendOkReceived;
+        uint64_t lclTermReturned;
+        uint64_t lclConflictTermReturned;
+        uint64_t lclConflictIdxReturned;
+        fu-&gt;get_reply() &gt;&gt; lclTermReturned;
+        fu-&gt;get_reply() &gt;&gt; followerAppendOkReceived;
+        fu-&gt;get_reply() &gt;&gt; lclConflictTermReturned;
+        fu-&gt;get_reply() &gt;&gt; lclConflictIdxReturned;
+        *termReturned = lclTermReturned;
+        *successReturned = followerAppendOkReceived;
+        *conflictTermReturned = lclConflictIdxReturned;
+        *conflictIdxReturned = lclConflictIdxReturned;
+        if(evToTrigger-&gt;status_ != Event::TIMEOUT)
+        {
+          evToTrigger-&gt;Set(1);
+        }        
+
+        /* process the RPC response here */
+      };
+      /* Always use Call_Async(proxy, RPC name, RPC args..., fuattr)
+      * to asynchronously invoke RPCs */
+     std::vector&lt;MarshallDeputy&gt; aMdVector;
+     for(uint64_t k=0;k&lt;cmds.size();k++)
+     {
+      aMdVector.push_back(MarshallDeputy(cmds.at(k)));
+     }
+
+     Call_Async(proxy, FullAppendEntries, leaderCommitIndex, term, prevLogIndex,prevLogTerm,aMdVector, logEntryTerms, leaderId, fuattr);
+    }
+  }
+}      
+
+
+shared_ptr&lt;QuorumEvent&gt;  
+RaftCommo::SendRequestVote(     parid_t par_id,
+                                siteid_t mySiteId,
+                                uint64_t term,
+                                uint64_t candidateId,
+                                uint64_t lastLogIndex,
+                                uint64_t lastLogTerm,
+                                shared_ptr&lt;uint64_t&gt;  currentTermReturned) {
+  /*
+   * Example code for sending a single RPC to server at site_id
+   * You may modify and use this function or just use it as a reference
+   */
+  auto proxies = rpc_par_proxies_[par_id];
+  auto qev = Reactor::CreateSpEvent&lt;QuorumEvent&gt;(4,2);
+  for (auto& p : proxies) {
+    if (p.first != mySiteId) {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [qev, currentTermReturned, mySiteId](Future* fu) {
+        /* this is a handler that will be invoked when the RPC returns */
+        /* retrieve RPC return values in order */
+        uint64_t termRecv;
+        uint64_t lclVoteGranted;
+        fu-&gt;get_reply() &gt;&gt; termRecv;
+                
+
+        if (currentTermReturned == NULL)
+        {
+              Log_info("Site %d :Null detected", mySiteId);
+        }
+
+        if (termRecv &gt; *currentTermReturned)
+        {
+          *currentTermReturned = termRecv;
+        }
+        
+        fu-&gt;get_reply() &gt;&gt; lclVoteGranted;
+
+
+        if(lclVoteGranted)
+        {
+          Log_info("Site %d :Voting yes", mySiteId);
+          qev-&gt;VoteYes();
+        }
+        else
+        {
+          Log_info("Site %d :Voting no", mySiteId);
+          qev-&gt;VoteNo();
+        }
+        /* process the RPC response here */
+      };
+      /* Always use Call_Async(proxy, RPC name, RPC args..., fuattr)
+      * to asynchronously invoke RPCs */
+      Call_Async(proxy, RequestVote, term, candidateId, lastLogIndex,lastLogTerm, fuattr);
+    }
+  }
+  return qev;
+}
+
+
+
+void  
+RaftCommo::SendRequestVote2(     parid_t par_id,
+                                siteid_t site_id,
+                                uint64_t term,
+                                uint64_t candidateId,
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match219-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                uint64_t lastLogIndex,
+                                uint64_t lastLogTerm,
+                                shared_ptr&lt;IntEvent&gt; evToTrigger,
+                                uint64_t*  currentTermReturned,
+                                bool_t* voteReturned) {
+  /*
+   * Example code for sending a single RPC to server at site_id
+   * You may modify and use this function or just use it as a reference
+   */
+  auto proxies = rpc_par_proxies_[par_id];
+  for (auto& p : proxies) {
+    if (p.first == site_id) {
+</FONT>      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [evToTrigger, currentTermReturned, voteReturned,candidateId](Future* fu) {
+        /* this is a handler that will be invoked when the RPC returns */
+        /* retrieve RPC return values in order */
+        uint64_t termRecv;
+        bool_t lclVoteGranted;
+        fu-&gt;get_reply() &gt;&gt; termRecv;        
+        *currentTermReturned = termRecv;        
+        fu-&gt;get_reply() &gt;&gt; lclVoteGranted;
+        *voteReturned = lclVoteGranted;
+        Log_info("Site %d : Triggering event",candidateId);
+        if(evToTrigger-&gt;status_ != Event::TIMEOUT)
+        {
+          evToTrigger-&gt;Set(1);
+        }        /* process the RPC response here */
+      };
+      /* Always use Call_Async(proxy, RPC name, RPC args..., fuattr)
+      * to asynchronously invoke RPCs */
+      Call_Async(proxy, RequestVote, term, candidateId, lastLogIndex,lastLogTerm, fuattr);
+    }
+  }
+}
+
+
+
+
+
+
+
+void 
+RaftCommo::SendAppendEntries(parid_t par_id,
+                                  siteid_t site_id,
+                                  uint64_t leaderCommitIndex,
+                                  shared_ptr&lt;Marshallable&gt; cmd,
+                                  bool_t* didVote,
+                                  shared_ptr&lt;QuorumEvent&gt; aerev) {
+  /*
+   * More example code for sending a single RPC to server at site_id
+   * You may modify and use this function or just use it as a reference
+   */
+  auto proxies = rpc_par_proxies_[par_id];
+  for (auto& p : proxies) {
+    if (p.first == site_id) {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [didVote,aerev](Future* fu) {
+        fu-&gt;get_reply() &gt;&gt; *didVote;
+        if(*didVote)
+        {
+          aerev-&gt;VoteYes();
+        }
+        else
+        {
+          aerev-&gt;VoteNo();
+        }
+      };
+      /* wrap Marshallable in a MarshallDeputy to send over RPC */
+      MarshallDeputy md(cmd);
+      Call_Async(proxy, AppendEntries, md, leaderCommitIndex, fuattr);
+
+    }
+  }
+}
+
+shared_ptr&lt;IntEvent&gt; 
+RaftCommo::SendString(parid_t par_id, siteid_t site_id, const string& msg, string* res) {
+  auto proxies = rpc_par_proxies_[par_id];
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  for (auto& p : proxies) {
+    if (p.first == site_id) {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [res,ev](Future* fu) {
+        fu-&gt;get_reply() &gt;&gt; *res;
+        ev-&gt;Set(1);
+      };
+      /* wrap Marshallable in a MarshallDeputy to send over RPC */
+      Call_Async(proxy, HelloRpc, msg, fuattr);
+    }
+  }
+  return ev;
+}
+
+
+} // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

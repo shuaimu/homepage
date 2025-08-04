@@ -1,0 +1,296 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-gaurav-aggarwall/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-gaurav-aggarwall/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+namespace janus
+{
+  string ShardMasterServiceImpl::GetNextOpId()
+  {
+    verify(sp_log_svr_);
+    int64_t ret = sp_log_svr_-&gt;site_id_;
+    ret = ret &lt;&lt; 32;
+    ret = ret + op_id_cnt_++;
+    return to_string(ret);
+  }
+
+  ShardConfig ShardMasterServiceImpl::GetLatestConfig()
+  {
+    ShardConfig config;
+    configs_[0] = config;
+
+    return configs_[latestConfigNumber];
+  }
+
+  void ShardMasterServiceImpl::AddNewConfig(map&lt;uint32_t, uint32_t&gt; &shardGroupMap, map&lt;uint32_t, vector&lt;uint32_t&gt;&gt; &groupServersMap)
+  {
+    latestConfigNumber++;
+
+    ShardConfig newConfig;
+    newConfig.number = latestConfigNumber;
+    newConfig.shard_group_map_ = shardGroupMap;
+    newConfig.group_servers_map_ = groupServersMap;
+
+    configs_[latestConfigNumber] = newConfig;
+  }
+
+  int ShardMasterServiceImpl::submitCommandToRaft(shared_ptr&lt;Marshallable&gt; &operation, const string &operationId)
+  {
+    RaftServer &raftServer = GetRaftServer();
+    uint64_t index, term;
+
+    bool result = raftServer.Start(operation, &index, &term);
+
+    if (!result)
+      return KV_NOTLEADER;
+
+    pendingOpIds.insert(operationId);
+
+    struct timeval startTime;
+    gettimeofday(&startTime, nullptr);
+
+    while (true)
+    {
+      struct timeval currentTime;
+      gettimeofday(&currentTime, nullptr);
+      int64_t timeElapsed = (currentTime.tv_sec - startTime.tv_sec) * SECONDS_TO_MICROSECONDS + currentTime.tv_usec - startTime.tv_usec;
+
+      if (timeElapsed &gt;= 10 * SECONDS_TO_MICROSECONDS)
+        return KV_TIMEOUT;
+
+      if (pendingOpIds.find(operationId) == pendingOpIds.end())
+        break;
+
+      Coroutine::Sleep(100 * MILLISECONDS_TO_MICROSECONDS);
+    }
+
+    return KV_SUCCESS;
+  }
+
+  void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt; &gid_server_map, uint32_t *ret, rrr::DeferredReply *defer)
+  {
+    string operationId = GetNextOpId();
+
+    MultiStringMarshallable sm;
+    sm.data_.push_back(operationId);
+    sm.data_.push_back(JOIN);
+    sm.data_.push_back(to_string(gid_server_map.size()));
+
+    for (auto server_map : gid_server_map)
+    {
+      sm.data_.push_back(to_string(server_map.first));
+      sm.data_.push_back(to_string(server_map.second.size()));
+
+      for (auto server : server_map.second)
+      {
+        sm.data_.push_back(to_string(server));
+      }
+    }
+
+    shared_ptr&lt;Marshallable&gt; operation = make_shared&lt;MultiStringMarshallable&gt;(sm);
+
+    *ret = submitCommandToRaft(operation, operationId);
+    defer-&gt;reply();
+  }
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match188-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt; &gids, uint32_t *ret, rrr::DeferredReply *defer)
+  {
+    string operationId = GetNextOpId();
+
+    MultiStringMarshallable sm;
+</FONT>    sm.data_.push_back(operationId);
+    sm.data_.push_back(LEAVE);
+    sm.data_.push_back(to_string(gids.size()));
+
+    for (auto gid : gids)
+    {
+      sm.data_.push_back(to_string(gid));
+    }
+
+    shared_ptr&lt;Marshallable&gt; operation = make_shared&lt;MultiStringMarshallable&gt;(sm);
+
+    *ret = submitCommandToRaft(operation, operationId);
+    defer-&gt;reply();
+  }
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match188-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  void ShardMasterServiceImpl::Move(const int32_t &shard, const uint32_t &gid, uint32_t *ret, rrr::DeferredReply *defer)
+  {
+    string operationId = GetNextOpId();
+
+    MultiStringMarshallable sm;
+</FONT>    sm.data_.push_back(operationId);
+    sm.data_.push_back(MOVE);
+    sm.data_.push_back(to_string(shard));
+    sm.data_.push_back(to_string(gid));
+
+    shared_ptr&lt;Marshallable&gt; operation = make_shared&lt;MultiStringMarshallable&gt;(sm);
+
+    *ret = submitCommandToRaft(operation, operationId);
+    defer-&gt;reply();
+  }
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match188-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  void ShardMasterServiceImpl::Query(const int32_t &config_no, uint32_t *ret, ShardConfig *config, rrr::DeferredReply *defer)
+  {
+    string operationId = GetNextOpId();
+
+    MultiStringMarshallable sm;
+    sm.data_.push_back(operationId);
+</FONT>    sm.data_.push_back(QUERY);
+    sm.data_.push_back(to_string(config_no));
+
+    shared_ptr&lt;Marshallable&gt; operation = make_shared&lt;MultiStringMarshallable&gt;(sm);
+
+    int response = submitCommandToRaft(operation, operationId);
+
+    if (response == KV_SUCCESS)
+    {
+      if (config_no == -1 || config_no &gt; latestConfigNumber)
+        *config = GetLatestConfig();
+      else
+        *config = configs_[config_no];
+    }
+
+    *ret = response;
+    defer-&gt;reply();
+  }
+
+  void ShardMasterServiceImpl::HandleJoin(Marshallable &m)
+  {
+    MultiStringMarshallable *v = (MultiStringMarshallable *)(&m);
+
+    int index = 0;
+
+    string operationId = v-&gt;data_[index++];
+    string operation = v-&gt;data_[index++];
+    uint64_t groupSize = stoull(v-&gt;data_[index++]);
+
+    map&lt;uint32_t, vector&lt;uint32_t&gt;&gt; groupServersMap;
+
+    for (int i = 0; i &lt; groupSize; i++)
+    {
+      uint64_t groupId = stoull(v-&gt;data_[index++]);
+      uint64_t serverSize = stoull(v-&gt;data_[index++]);
+
+      vector&lt;uint32_t&gt; servers;
+
+      for (int j = 0; j &lt; serverSize; j++)
+      {
+        servers.push_back(stoull(v-&gt;data_[index++]));
+      }
+
+      groupServersMap[groupId] = servers;
+    }
+
+    ShardConfig latestConfig = GetLatestConfig();
+    map&lt;uint32_t, uint32_t&gt; configShardGroupMap = latestConfig.shard_group_map_;
+    map&lt;uint32_t, vector&lt;uint32_t&gt;&gt; configGroupServerMap = latestConfig.group_servers_map_;
+
+    for (auto serverMap : groupServersMap)
+    {
+      vector&lt;uint32_t&gt; servers = configGroupServerMap[serverMap.first];
+
+      for (auto server : serverMap.second)
+      {
+        servers.push_back(server);
+      }
+
+      configGroupServerMap[serverMap.first] = servers;
+    }
+
+    AddNewConfig(configShardGroupMap, configGroupServerMap);
+  }
+
+  void ShardMasterServiceImpl::HandleLeave(Marshallable &m)
+  {
+    MultiStringMarshallable *v = (MultiStringMarshallable *)(&m);
+
+    int index = 0;
+
+    string operationId = v-&gt;data_[index++];
+    string operation = v-&gt;data_[index++];
+    uint64_t groupsSize = stoull(v-&gt;data_[index++]);
+
+    vector&lt;uint32_t&gt; groups;
+
+    for (int i = 0; i &lt; groupsSize; i++)
+    {
+      groups.push_back(stoull(v-&gt;data_[index++]));
+    }
+
+    ShardConfig latestConfig = GetLatestConfig();
+    map&lt;uint32_t, uint32_t&gt; configShardGroupMap = latestConfig.shard_group_map_;
+    map&lt;uint32_t, vector&lt;uint32_t&gt;&gt; configGroupServerMap = latestConfig.group_servers_map_;
+
+    for (auto group : groups)
+    {
+      configGroupServerMap.erase(group);
+    }
+
+    AddNewConfig(configShardGroupMap, configGroupServerMap);
+  }
+
+  void ShardMasterServiceImpl::HandleMove(Marshallable &m)
+  {
+    MultiStringMarshallable *v = (MultiStringMarshallable *)(&m);
+
+    int index = 0;
+
+    string operationId = v-&gt;data_[index++];
+    string operation = v-&gt;data_[index++];
+    uint64_t shard = stoull(v-&gt;data_[index++]);
+    uint64_t groupId = stoull(v-&gt;data_[index++]);
+
+    ShardConfig latestConfig = GetLatestConfig();
+    map&lt;uint32_t, uint32_t&gt; configShardGroupMap = latestConfig.shard_group_map_;
+    map&lt;uint32_t, vector&lt;uint32_t&gt;&gt; configGroupServerMap = latestConfig.group_servers_map_;
+
+    configShardGroupMap[shard] = groupId;
+
+    AddNewConfig(configShardGroupMap, configGroupServerMap);
+  }
+
+  void ShardMasterServiceImpl::OnNextCommand(Marshallable &m)
+  {
+    MultiStringMarshallable *v = (MultiStringMarshallable *)(&m);
+
+    string oid = v-&gt;data_[0];
+    string op = v-&gt;data_[1];
+
+    pendingOpIds.erase(oid);
+
+    if (op == JOIN)
+      HandleJoin(m);
+    else if (op == LEAVE)
+      HandleLeave(m);
+    else if (op == MOVE)
+      HandleMove(m);
+  }
+
+  // do not change anything below
+  shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient()
+  {
+    auto cli = make_shared&lt;ShardMasterClient&gt;();
+    cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+    uint32_t id = sp_log_svr_-&gt;site_id_;
+    return cli;
+  }
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

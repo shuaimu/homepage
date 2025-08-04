@@ -1,0 +1,157 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-HOD101s/src/deptran/raft/commo.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-HOD101s/src/deptran/raft/commo.cc<p><PRE>
+
+#include "commo.h"
+#include "../rcc/graph.h"
+#include "../rcc/graph_marshaler.h"
+#include "../command.h"
+#include "../procedure.h"
+#include "../command_marshaler.h"
+#include "raft_rpc.h"
+#include "macros.h"
+
+namespace janus {
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match118-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_7.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+RaftCommo::RaftCommo(PollMgr* poll) : Communicator(poll) {
+}
+
+shared_ptr&lt;IntEvent&gt;  RaftCommo::SendRequestVote(parid_t par_id,
+                                siteid_t site_id,
+                                const uint64_t& term,
+                                const uint64_t& candidateId,
+                                const uint64_t& lastLogIndex,
+                                const uint64_t& lastLogTerm,
+                                bool_t* has_voted) {
+</FONT>  /*
+   * Example code for sending a single RPC to server at site_id
+   * You may modify and use this function or just use it as a reference
+   */
+  auto proxies = rpc_par_proxies_[par_id];
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  for (auto& p : proxies) {
+    if (p.first == site_id) {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [has_voted, ev](Future* fu) {
+        /* this is a handler that will be invoked when the RPC returns */
+        uint64_t ret1;
+        /* retrieve RPC return values in order */
+        fu-&gt;get_reply() &gt;&gt; ret1;
+        fu-&gt;get_reply() &gt;&gt; *has_voted;
+        ev-&gt;Set(1);
+        /* process the RPC response here */
+      };
+      /* Always use Call_Async(proxy, RPC name, RPC args..., fuattr)
+      * to asynchronously invoke RPCs */
+      Call_Async(proxy, RequestVote, term, candidateId, lastLogIndex, lastLogTerm, fuattr);
+    }
+  }
+  return ev;
+}
+
+shared_ptr&lt;IntEvent&gt; RaftCommo::SendAppendEntries(parid_t par_id,
+                                  siteid_t site_id,
+                                  vector&lt;shared_ptr&lt;Marshallable&gt;&gt; cmds,
+                                  vector&lt;uint64_t&gt; cmd_terms,
+                                  vector&lt;uint64_t&gt; cmd_indexes,
+                                  const uint64_t& leaderTerm,
+                                  const uint64_t& leaderId,
+                                  const uint64_t& prevLogIndex,
+                                  const uint64_t& prevLogTerm,
+                                  const uint64_t& leaderCommitIndex,
+                                  uint64_t* followerTerm, 
+                                  bool_t* appendStatus) {
+  /*
+   * More example code for sending a single RPC to server at site_id
+   * You may modify and use this function or just use it as a reference
+   */
+  auto proxies = rpc_par_proxies_[par_id];
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  for (auto& p : proxies) {
+    if (p.first == site_id) {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match118-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      fuattr.callback = [ev, followerTerm, appendStatus](Future* fu) {
+        fu-&gt;get_reply() &gt;&gt; *followerTerm;
+        fu-&gt;get_reply() &gt;&gt; *appendStatus;
+        ev-&gt;Set(1);
+      };
+      /* wrap Marshallable in a MarshallDeputy to send over RPC */
+      ;
+      vector&lt;MarshallDeputy&gt; md_cmds;
+</FONT>      if (cmds.size() &gt; 0) {
+        for(shared_ptr&lt;Marshallable&gt; cmd : cmds){
+          MarshallDeputy md(cmd);
+          md_cmds.push_back(md);
+        }
+      }
+      Call_Async(proxy, AppendEntries, md_cmds, cmd_terms, cmd_indexes, leaderTerm, leaderId, prevLogIndex, prevLogTerm, leaderCommitIndex, fuattr);
+    }
+  }
+  return ev;
+}
+
+shared_ptr&lt;IntEvent&gt; RaftCommo::EmptyAppendEntries(parid_t par_id,
+                                  siteid_t site_id,
+                                  const uint64_t& leader_id,
+                                  const uint64_t& leader_term,
+                                  const uint64_t& prevLogIndex,
+                                  const uint64_t& prevLogTerm,
+                                  const uint64_t& leaderCommitIndex,
+                                  uint64_t* heartbeatTerm,
+                                  bool_t* heartbeatStatus) {
+  /*
+   * More example code for sending a single RPC to server at site_id
+   * You may modify and use this function or just use it as a reference
+   */
+  auto proxies = rpc_par_proxies_[par_id];
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  for (auto& p : proxies) {
+    if (p.first == site_id) {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [ev,heartbeatTerm,heartbeatStatus](Future* fu) {
+        fu-&gt;get_reply() &gt;&gt; *heartbeatTerm;
+        fu-&gt;get_reply() &gt;&gt; *heartbeatStatus;
+        ev-&gt;Set(1);
+      };
+      Call_Async(proxy, Heartbeat, leader_id, leader_term, prevLogIndex, prevLogTerm, leaderCommitIndex, fuattr);
+    }
+  }
+  return ev;
+}
+
+shared_ptr&lt;IntEvent&gt; 
+RaftCommo::SendString(parid_t par_id, siteid_t site_id, const string& msg, string* res) {
+  auto proxies = rpc_par_proxies_[par_id];
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  for (auto& p : proxies) {
+    if (p.first == site_id) {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [res,ev](Future* fu) {
+        fu-&gt;get_reply() &gt;&gt; *res;
+        ev-&gt;Set(1);
+      };
+      /* wrap Marshallable in a MarshallDeputy to send over RPC */
+      Call_Async(proxy, HelloRpc, msg, fuattr);
+    }
+  }
+  return ev;
+}
+
+
+} // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

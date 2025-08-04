@@ -1,0 +1,404 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-mihirkestur/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-BruceWang3077/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+namespace janus
+{
+  static int volatile x1 =
+      MarshallDeputy::RegInitializer(77,
+                                     []() -&gt; Marshallable *
+                                     {
+                                       return new ShardConfigMarshallable;
+                                     });
+  void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt; &gid_server_map, uint32_t *ret, rrr::DeferredReply *defer)
+  {
+    // your code here
+    Log_debug("server %d get join call", GetRaftServer().loc_id_);
+    if (configs_.size() == 0)
+    {
+      Log_debug("initialize configs_ for server %d", GetRaftServer().loc_id_);
+      ShardConfig s;
+      configs_[s.number] = s;
+    }
+    ShardConfig newSC;
+    int size = configs_.size();
+    ShardConfig oldSC;
+    if (configs_.find(size - 1) != configs_.end())
+    {
+
+      oldSC = configs_.find(size - 1)-&gt;second;
+      Log_debug("assign oldSC, sc number: %d", oldSC.number);
+    }
+    else
+    {
+      *ret = KV_TIMEOUT;
+      defer-&gt;reply();
+      return;
+    }
+    newSC.number = oldSC.number + 1;
+    Log_debug("assign newSC, sc number: %d", newSC.number);
+    // add new group
+    map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt; new_gid_server_map;
+    new_gid_server_map.insert(oldSC.group_servers_map_.begin(), oldSC.group_servers_map_.end());
+    new_gid_server_map.insert(gid_server_map.begin(), gid_server_map.end());
+    newSC.group_servers_map_ = new_gid_server_map;
+    // get all available groups
+    std::vector&lt;uint32_t&gt; available_server;
+    for (auto const &element : new_gid_server_map)
+    {
+      available_server.push_back(element.first);
+    }
+
+    if (oldSC.number == 0)
+    {
+      for (int i = 1; i &lt;= 10; i++)
+      {
+        if (newSC.shard_group_map_.find(i) != newSC.shard_group_map_.end())
+        {
+          newSC.shard_group_map_[i] = available_server.at((i - 1) % available_server.size());
+          Log_debug("shard: %d, group: %d", i, newSC.shard_group_map_[i]);
+        }
+      }
+    }
+    else
+    {
+      std::map&lt;uint32_t, vector&lt;uint32_t&gt;&gt; assignment;
+      for (int i = 1; i &lt;= 10; i++)
+      {
+        assignment[oldSC.shard_group_map_[i]].push_back(i);
+      }
+      int min = 10 / newSC.group_servers_map_.size();
+      for (uint32_t i : available_server)
+      {
+        int groupid = i;
+        Log_debug("groupid: %d", i);
+        if (assignment.find(i) == assignment.end() || assignment[i].size() &lt; min)
+        {
+          // newly added one
+          Log_debug("81");
+          int counter = 0;
+          int tmp_index = 0;
+          while (counter &lt; min)
+          {
+            int tmp_gid = available_server[tmp_index];
+            if (assignment[tmp_gid].size() &gt; min)
+            {
+              uint32_t tmp_shard = assignment[tmp_gid].back();
+              assignment[groupid].push_back(tmp_shard);
+              assignment[tmp_gid].pop_back();
+              counter++;
+            }
+            tmp_index = (tmp_index + 1) % available_server.size();
+          }
+        }
+        Log_debug("assignment for %d : %d", i, assignment[i].size());
+      }
+      for (auto i : assignment)
+      {
+        for (uint32_t tmp_shard : assignment[i.first])
+        {
+          newSC.shard_group_map_[tmp_shard] = i.first;
+          Log_debug("shard: %d, group:%d", tmp_shard, newSC.shard_group_map_[tmp_shard]);
+        }
+      }
+    }
+    auto s = make_shared&lt;ShardConfigMarshallable&gt;();
+    s-&gt;shardconfig = newSC;
+    uint64_t *index = new uint64_t;
+    uint64_t *term = new uint64_t;
+    std::shared_ptr&lt;Marshallable&gt; marshallablePtr = std::static_pointer_cast&lt;Marshallable&gt;(s);
+    //-------------------------------------
+    Log_debug("server %d call start() in join", GetRaftServer().loc_id_);
+    //-------------------------------------
+    if (!GetRaftServer().Start(marshallablePtr, index, term))
+    {
+      Log_debug("server %d is not leader, return", GetRaftServer().loc_id_);
+      *ret = KV_NOTLEADER;
+      defer-&gt;reply();
+      return;
+    };
+    Log_debug("result from start: index: %ld, term: %ld", *index, *term);
+    int count = 5;
+    while (count-- &gt; 0)
+    {
+      Coroutine::Sleep(500000);
+      Log_debug("join sleep");
+      if (GetRaftServer().commit_index &gt;= *index)
+      {
+        *ret = KV_SUCCESS;
+        defer-&gt;reply();
+        return;
+      }
+    }
+    *ret = KV_TIMEOUT;
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match116-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    defer-&gt;reply();
+  }
+  void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt; &gids, uint32_t *ret, rrr::DeferredReply *defer)
+  {
+    // your code here
+    if (configs_.size() == 0)
+</FONT>    {
+      ShardConfig s;
+      configs_[s.number] = s;
+    }
+    ShardConfig newSC;
+    int size = configs_.size();
+    ShardConfig oldSC;
+    if (configs_.find(size - 1) != configs_.end())
+    {
+
+      oldSC = configs_.find(size - 1)-&gt;second;
+      Log_debug("assign oldSC, sc number: %d", oldSC.number);
+    }
+    else
+    {
+      *ret = KV_TIMEOUT;
+      defer-&gt;reply();
+      return;
+    }
+    newSC.number = oldSC.number + 1;
+    Log_debug("assign newSC, sc number: %d", newSC.number);
+    // add new group
+    map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt; new_gid_server_map;
+    new_gid_server_map.insert(oldSC.group_servers_map_.begin(), oldSC.group_servers_map_.end());
+    // remove gids
+    for (uint32_t i : gids)
+    {
+      if (new_gid_server_map.find(i) != new_gid_server_map.end())
+      {
+        new_gid_server_map.erase(i);
+      }
+    }
+    newSC.group_servers_map_ = new_gid_server_map;
+    // get all available groups
+    std::vector&lt;uint32_t&gt; available_server;
+    for (auto const &element : new_gid_server_map)
+    {
+      available_server.push_back(element.first);
+    }
+    std::map&lt;uint32_t, vector&lt;uint32_t&gt;&gt; assignment;
+    for (int i = 1; i &lt;= 10; i++)
+    {
+      assignment[oldSC.shard_group_map_[i]].push_back(i);
+    }
+    for (uint32_t gid : gids)
+    {
+      int tmp_index = 0;
+      while (assignment[gid].size() &gt; 0)
+      {
+        int min = 10 / available_server.size();
+        int group = available_server.at(tmp_index);
+        if (assignment[tmp_index].size() &lt; min)
+        {
+          uint32_t tmp_shards = assignment[gid].back();
+          assignment[gid].pop_back();
+          assignment[group].push_back(tmp_shards);
+        }
+        tmp_index = (tmp_index + 1) % available_server.size();
+      }
+    }
+    for (auto i : assignment)
+    {
+      for (uint32_t tmp_shard : assignment[i.first])
+      {
+        newSC.shard_group_map_[tmp_shard] = i.first;
+        Log_debug("shard: %d, group:%d", tmp_shard, newSC.shard_group_map_[tmp_shard]);
+      }
+    }
+    // for (int i = 1; i &lt;= 10; i++)
+    // {
+    //   if (newSC.shard_group_map_.find(i) != newSC.shard_group_map_.end())
+    //   {
+    //     newSC.shard_group_map_[i] = available_server.at((i - 1) % available_server.size());
+    //     Log_debug("shard: %d, group: %d", i, newSC.shard_group_map_[i]);
+    //   }
+    // }
+
+    auto s = make_shared&lt;ShardConfigMarshallable&gt;();
+    s-&gt;shardconfig = newSC;
+    uint64_t *index = new uint64_t;
+    uint64_t *term = new uint64_t;
+    std::shared_ptr&lt;Marshallable&gt; marshallablePtr = std::static_pointer_cast&lt;Marshallable&gt;(s);
+    //-------------------------------------
+    Log_debug("server %d call start() in leave", GetRaftServer().loc_id_);
+    //-------------------------------------
+    if (!GetRaftServer().Start(marshallablePtr, index, term))
+    {
+      Log_debug("server %d is not leader, return", GetRaftServer().loc_id_);
+      *ret = KV_NOTLEADER;
+      defer-&gt;reply();
+      return;
+    };
+    Log_debug("result from start: index: %ld, term: %ld", *index, *term);
+    int count = 5;
+    while (count-- &gt; 0)
+    {
+      Coroutine::Sleep(500000);
+      Log_debug("leave sleep");
+      if (GetRaftServer().commit_index &gt;= *index)
+      {
+        *ret = KV_SUCCESS;
+        defer-&gt;reply();
+        return;
+      }
+    }
+    *ret = KV_TIMEOUT;
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match116-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    defer-&gt;reply();
+  }
+  void ShardMasterServiceImpl::Move(const int32_t &shard, const uint32_t &gid, uint32_t *ret, rrr::DeferredReply *defer)
+  {
+    // your code here
+    if (configs_.size() == 0)
+</FONT>    {
+      ShardConfig s;
+      configs_[s.number] = s;
+    }
+    ShardConfig newSC;
+    int size = configs_.size();
+    ShardConfig oldSC;
+    if (configs_.find(size - 1) != configs_.end())
+    {
+
+      oldSC = configs_.find(size - 1)-&gt;second;
+      Log_debug("assign oldSC, sc number: %d", oldSC.number);
+    }
+    else
+    {
+      *ret = KV_TIMEOUT;
+      defer-&gt;reply();
+      return;
+    }
+    newSC.number = oldSC.number + 1;
+    Log_debug("assign newSC, sc number: %d", newSC.number);
+    newSC.group_servers_map_.insert(oldSC.group_servers_map_.begin(), oldSC.group_servers_map_.end());
+    for (int i = 1; i &lt;= 10; i++)
+    {
+      newSC.shard_group_map_[i] = oldSC.shard_group_map_[i];
+    }
+    newSC.shard_group_map_[shard] = gid;
+    auto s = make_shared&lt;ShardConfigMarshallable&gt;();
+    s-&gt;shardconfig = newSC;
+    uint64_t *index = new uint64_t;
+    uint64_t *term = new uint64_t;
+    std::shared_ptr&lt;Marshallable&gt; marshallablePtr = std::static_pointer_cast&lt;Marshallable&gt;(s);
+    //-------------------------------------
+    Log_debug("server %d call start() in join", GetRaftServer().loc_id_);
+    //-------------------------------------
+    if (!GetRaftServer().Start(marshallablePtr, index, term))
+    {
+      Log_debug("server %d is not leader, return", GetRaftServer().loc_id_);
+      *ret = KV_NOTLEADER;
+      defer-&gt;reply();
+      return;
+    };
+    Log_debug("result from start: index: %ld, term: %ld", *index, *term);
+    int count = 5;
+    while (count-- &gt; 0)
+    {
+      Coroutine::Sleep(500000);
+      Log_debug("Move sleep");
+      if (GetRaftServer().commit_index &gt;= *index)
+      {
+        *ret = KV_SUCCESS;
+        defer-&gt;reply();
+        return;
+      }
+    }
+    *ret = KV_TIMEOUT;
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match116-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    defer-&gt;reply();
+  }
+  void ShardMasterServiceImpl::Query(const int32_t &config_no, uint32_t *ret, ShardConfig *config, rrr::DeferredReply *defer)
+  {
+    // your code here
+    if (configs_.size() == 0)
+</FONT>    {
+      ShardConfig s;
+      configs_[s.number] = s;
+    }
+    int size = configs_.size();
+    int config_index = config_no;
+    if (config_no == -1 || config_no &gt;= size)
+    {
+      config_index = size - 1;
+    }
+    auto s = make_shared&lt;ShardConfigMarshallable&gt;();
+    *config = configs_[config_index];
+    s-&gt;shardconfig = configs_[config_index];
+    uint64_t *index = new uint64_t;
+    uint64_t *term = new uint64_t;
+    std::shared_ptr&lt;Marshallable&gt; marshallablePtr = std::static_pointer_cast&lt;Marshallable&gt;(s);
+    //-------------------------------------
+    Log_debug("server %d call start() in query", GetRaftServer().loc_id_);
+    //-------------------------------------
+    if (!GetRaftServer().Start(marshallablePtr, index, term))
+    {
+      Log_debug("server %d is not leader, return", GetRaftServer().loc_id_);
+      *ret = KV_NOTLEADER;
+      defer-&gt;reply();
+      return;
+    };
+    Log_debug("result from start: index: %ld, term: %ld", *index, *term);
+    int count = 5;
+    while (count-- &gt; 0)
+    {
+      Coroutine::Sleep(500000);
+      Log_debug("query sleep");
+      if (GetRaftServer().commit_index &gt;= *index)
+      {
+        *ret = KV_SUCCESS;
+        defer-&gt;reply();
+        return;
+      }
+    }
+    *ret = KV_TIMEOUT;
+    defer-&gt;reply();
+  }
+
+  void ShardMasterServiceImpl::OnNextCommand(Marshallable &m)
+  {
+    // your code here
+    if (configs_.size() == 0)
+    {
+      Log_debug("initialize configs_ for server %d", GetRaftServer().loc_id_);
+      ShardConfig s;
+      configs_[s.number] = s;
+    }
+    auto v = (ShardConfigMarshallable *)(&m);
+    ShardConfig sc = v-&gt;shardconfig;
+    if (configs_.size() == sc.number)
+    {
+      configs_[sc.number] = sc;
+      Log_debug("add shardconfig %d, configs_ size: %d", sc.number, configs_.size());
+    }
+  }
+
+  // do not change anything below
+  shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient()
+  {
+    auto cli = make_shared&lt;ShardMasterClient&gt;();
+    cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+    uint32_t id = sp_log_svr_-&gt;site_id_;
+    return cli;
+  }
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

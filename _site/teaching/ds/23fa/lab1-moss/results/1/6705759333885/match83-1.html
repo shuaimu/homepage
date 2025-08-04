@@ -1,0 +1,188 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-RotonEvan/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-Satzyakiz/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+
+void RaftServiceImpl::HandleRequestVote(const uint64_t& candidateTerm,
+                                        const uint64_t& candidateId,
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match83-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                        const uint64_t& lastLogIndex,
+                                        const uint64_t& lastLogTerm,
+                                        uint64_t* currentTerm,
+                                        bool_t * vote_granted,
+                                        rrr::DeferredReply* defer) {
+  /* Your code here */
+  svr_-&gt;mtx_.lock();
+  uint64_t serverLastLogIndex = svr_-&gt;logs.size();
+</FONT>  uint64_t serverLastTerm = serverLastLogIndex &lt; 1 ? 0 : svr_-&gt;logs[serverLastLogIndex - 1].term;
+  *vote_granted = false;
+  if(svr_-&gt;currentTerm &lt; candidateTerm || svr_-&gt;votedFor == candidateId){
+    if( serverLastTerm &gt;= lastLogTerm && serverLastLogIndex &gt;= lastLogIndex)
+      {
+        svr_-&gt;votedFor = candidateId;
+        *vote_granted = true;
+        svr_-&gt;currentTerm = candidateTerm;
+        if (svr_-&gt;isLeader) {
+          svr_-&gt;isLeader = false;
+        }
+        svr_-&gt;timer.start();
+      }
+  }
+  *currentTerm = svr_-&gt;currentTerm;
+  svr_-&gt;mtx_.unlock();
+  defer-&gt;reply();
+  
+}
+
+void RaftServiceImpl::HandleAppendEntries(const uint64_t& leaderTerm,
+                                          const uint64_t& leaderId,
+                                          const uint64_t& prevLogIndex,
+                                          const uint64_t& prevLogTerm,
+                                          const uint64_t& leaderCommitIndex,
+                                          const vector&lt;uint64_t&gt;& leaderLogs,
+                                          const vector&lt;MarshallDeputy&gt;& leaderLogsCMD,
+                                          uint64_t* retTerm,
+                                          bool_t* success,
+                                          rrr::DeferredReply* defer) {
+  /* Your code here */
+  // std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(md_cmd).sp_data_;
+  Log_info("\nAppend Entry RPC\n");
+  svr_-&gt;mtx_.lock();
+  Log_info("This is the leader %d. Passing append entry to follower %d\nLeader Term: %d and follower term: %d\n", 
+          leaderId, svr_-&gt;site_id_, leaderTerm, svr_-&gt;currentTerm);
+  Log_info("Leader Commit Index: %d and server commit index: %d\n", leaderCommitIndex, svr_-&gt;commitIndex);
+  *success = false;
+  uint64_t followerTerm = svr_-&gt;currentTerm;
+  uint64_t followerLogSize = svr_-&gt;logs.size();
+  *retTerm = leaderTerm;
+  if(followerTerm &gt; leaderTerm){
+    *retTerm = followerTerm;
+    Log_info("\nAppend Entry RPC, not possible - if part 1\n");
+  } else if(prevLogIndex &gt; 0 && followerLogSize &lt; prevLogIndex){
+    svr_-&gt;isLeader = false;
+    svr_-&gt;currentTerm = leaderTerm;
+    *retTerm = svr_-&gt;currentTerm;
+    svr_-&gt;timer.start();
+    Log_info("\nAppend Entry RPC, not possible - if part 2 followerLogSize - %d prevLogIndex - %d \n", followerLogSize, prevLogIndex);
+  } else if(prevLogIndex &gt; 0 && followerLogSize &gt;= prevLogIndex 
+            && svr_-&gt;logs[prevLogIndex-1].term != prevLogTerm){
+    svr_-&gt;isLeader = false;
+    svr_-&gt;currentTerm = leaderTerm;
+    *retTerm = svr_-&gt;currentTerm;
+    svr_-&gt;timer.start();
+    Log_info("\nAppend Entry RPC, not possible - if part 3\n");
+    
+  } else {
+    svr_-&gt;isLeader = false;
+    svr_-&gt;currentTerm = leaderTerm;
+    *retTerm = leaderTerm;
+    *success = true;
+    Log_info("\nAppend Entry RPC - else part\n");
+    if(prevLogIndex &gt; 0 && followerLogSize &gt;= prevLogIndex ){
+      //delete all the entries from this point to the end
+      Log_info("\nErasing log vector, old size: %d ",followerLogSize);
+      
+      svr_-&gt;logs.erase(svr_-&gt;logs.begin() + prevLogIndex, svr_-&gt;logs.end());
+      Log_info("\nNew log vector size: %d\n", svr_-&gt;logs.size());
+      
+    }
+    //Append any new entries not already in the log
+    uint64_t index = 0;
+    while(index &lt; leaderLogsCMD.size()){
+      LogEntry ob;
+      shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(leaderLogsCMD[index]).sp_data_;
+      ob.term = leaderLogs[index];
+      ob.cmd = cmd;
+      svr_-&gt;logs.push_back(ob);
+      index++;
+      Log_info("\nPushing data into server(%d) log from candidate(%d) log\n", svr_-&gt;site_id_, leaderId);
+    }
+    
+    uint64_t newCommitIndex;
+    if(leaderCommitIndex &gt; svr_-&gt;commitIndex){
+      newCommitIndex = min(leaderCommitIndex, svr_-&gt;logs.size());
+      Log_info("Append Entry -&gt; newCommitIndex: %d and prevLogIndex: %d\n", newCommitIndex, prevLogIndex);
+      uint64_t no = 0;
+      for(int i=svr_-&gt;commitIndex + 1; i &lt;= newCommitIndex; i++){
+        LogEntry log = svr_-&gt;logs[i-1];
+        shared_ptr&lt;Marshallable&gt; cmd = log.cmd;
+        Log_info("\nGoing to call the app next function\n");
+        svr_-&gt;app_next_(*cmd);
+        Log_info("\nAppnext function sent\n");
+        no++;
+      }
+      svr_-&gt;commitIndex = newCommitIndex;
+      Log_info("\nSERVICE.CC - Committed to server %d, appended %d logs to the state machine\n", svr_-&gt;site_id_, no);
+    }
+    svr_-&gt;timer.start();
+  }
+  Log_info("\n\nSERVICE.CC - Append Entry call from leader (%d) to server (%d). Return term is %d and success value is %d\n\n", leaderId, svr_-&gt;site_id_, *retTerm, *success);
+  svr_-&gt;mtx_.unlock();
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleEmptyAppendEntries( const uint64_t& leaderTerm,
+                                                const uint64_t& leaderId,
+                                                const uint64_t& prevLogIndex,
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match83-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                                const uint64_t& prevLogTerm,
+                                                const uint64_t& leaderCommitIndex,
+                                                uint64_t* retTerm,
+                                                bool_t* success,
+                                                rrr::DeferredReply* defer) {
+  /* Your code here */
+  // std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(md_cmd).sp_data_;
+  // Log_info("Handle Empty Append Entry called in service.cc\n");
+  svr_-&gt;mtx_.lock();
+  Log_info("This is the leader %d. Passing heartbeat to follower %d\nLeader Term: %d and follower term: %d\n", 
+</FONT>          leaderId, svr_-&gt;site_id_, leaderTerm, svr_-&gt;currentTerm);
+  Log_info("Leader Commit Index: %d and server commit index: %d\n", leaderCommitIndex, svr_-&gt;commitIndex);
+  if(svr_-&gt;currentTerm &lt;= leaderTerm){
+    svr_-&gt;isLeader = false;
+    *retTerm = leaderTerm;
+    svr_-&gt;currentTerm = leaderTerm;
+    *success = true;
+    svr_-&gt;timer.start();
+  }else{
+    *retTerm = svr_-&gt;currentTerm;
+    *success = false;
+  }
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match83-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  svr_-&gt;mtx_.unlock();
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("receive an rpc: %s", req.c_str());
+</FONT>  *res = "world";
+  defer-&gt;reply();
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>
