@@ -1,0 +1,210 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-gkulhare/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-teja219/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+bool KvServer::checkOpIdInLoop(uint64_t oid){
+    RaftServer& svr = this-&gt;GetRaftServer();
+    std::chrono::microseconds ticker = std::chrono::milliseconds(10);
+    bool present = false;
+    std::chrono::system_clock::time_point startTime = std::chrono::system_clock::now();
+    std::chrono::milliseconds timeout = std::chrono::milliseconds(20000);//timer1
+
+    while(1){
+        auto sp_e = Reactor::CreateSpEvent&lt;TimeoutEvent&gt;(ticker.count());
+        sp_e-&gt;Wait();
+        svr.mtx_.lock();
+        std::chrono::system_clock::time_point currentTime = std::chrono::system_clock::now();
+        std::chrono::milliseconds timeElapsed = std::chrono::duration_cast&lt;std::chrono::milliseconds&gt;(
+                currentTime - startTime);
+        if(timeElapsed&gt;timeout){
+            svr.mtx_.unlock();
+            break;
+        }
+        if(currentOps.find(to_string(oid))!=currentOps.end()){
+            present = true;
+            svr.mtx_.unlock();
+            break;
+        }
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match178-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        svr.mtx_.unlock();
+    }
+    return present;
+}
+
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  /* 
+  Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it.
+  const auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  */
+  RaftServer& svr = this-&gt;GetRaftServer();
+</FONT>  svr.mtx_.lock();
+  if(svr.currentState == LEADER && !svr.isIsolated && svr.commo()-&gt;rpc_par_proxies_[svr.partition_id_].size() &gt;=2){
+      auto s = make_shared&lt;MultiStringMarshallable&gt;();
+
+      s-&gt;data_.push_back(to_string(oid));
+      s-&gt;data_.push_back("put");
+      s-&gt;data_.push_back(k);
+      s-&gt;data_.push_back(v);
+      auto ss = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+      uint64_t index=0,term=0;
+      svr.Start(ss,&index,&term);
+      svr.mtx_.unlock();
+      Log_info("Put %s into the database",to_string(oid));
+      bool present = this-&gt;checkOpIdInLoop(oid);
+      if(present){
+          return KV_SUCCESS;
+      }
+      else{
+          return KV_TIMEOUT;
+      }
+  }
+  else{
+      svr.mtx_.unlock();
+      return KV_NOTLEADER;
+  }
+}
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+    RaftServer& svr = this-&gt;GetRaftServer();
+    svr.mtx_.lock();
+    if(svr.currentState == LEADER && !svr.isIsolated  && svr.commo()-&gt;rpc_par_proxies_[svr.partition_id_].size() &gt;=2){
+        //Check if the entry is there in the log
+        string prevValue = "";
+        for(int i=(int)svr.log-&gt;size()-1;i &gt;= 0;i--){
+            auto& command = dynamic_cast&lt;MultiStringMarshallable&&gt;(*(svr.log-&gt;at(i).sp_data_));
+            if(command.data_.at(2) == k && command.data_.at(1)!="get"){
+                prevValue = command.data_.at(3);
+                break;
+            }
+        }
+        uint64_t index=0,term=0;
+
+        const auto s = make_shared&lt;MultiStringMarshallable&gt;();
+        string currentValue = prevValue + v;
+        s-&gt;data_.push_back(to_string(oid));
+        s-&gt;data_.push_back("append");
+        s-&gt;data_.push_back(k);
+        s-&gt;data_.push_back(currentValue);
+        auto ss = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+        svr.Start(ss,&index,&term);
+        //Wait for the event where onNextCommand finds your command within 1000ms
+        //else return TIMEOUT
+        svr.mtx_.unlock();
+        bool present = this-&gt;checkOpIdInLoop(oid);
+        
+        if(present){
+            return KV_SUCCESS;
+        }
+        else {
+            return KV_TIMEOUT;
+        }
+    }
+    else{
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match178-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        svr.mtx_.unlock();
+        return KV_NOTLEADER;
+    }
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+    RaftServer& svr = this-&gt;GetRaftServer();
+</FONT>    svr.mtx_.lock();
+    if(svr.currentState == LEADER && !svr.isIsolated && svr.commo()-&gt;rpc_par_proxies_[svr.partition_id_].size() &gt;=2){
+        const auto s = make_shared&lt;MultiStringMarshallable&gt;();
+        s-&gt;data_.push_back(to_string(oid));
+        s-&gt;data_.push_back("get");
+        s-&gt;data_.push_back(k);
+        uint64_t index=0,term=0;
+        auto ss = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+        svr.Start(ss,&index,&term);
+        svr.mtx_.unlock();
+
+        bool present = this-&gt;checkOpIdInLoop(oid);
+
+        if(present){
+            svr.mtx_.lock();
+            for(int i=(int)svr.log-&gt;size()-1;i &gt;= 0;i--){
+                auto& command = dynamic_cast&lt;MultiStringMarshallable&&gt;(*(svr.log-&gt;at(i).sp_data_));
+                if(command.data_.at(2) == k && command.data_.at(1)!="get"){
+                    *v = command.data_.at(3);
+                    break;
+                }
+            }
+            svr.mtx_.unlock();
+            return KV_SUCCESS;
+        }
+        else{
+            return KV_TIMEOUT;
+        }
+    }
+    else{
+        svr.mtx_.unlock();
+        return KV_NOTLEADER;
+    }
+    return KV_SUCCESS;
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+    RaftServer& svr = this-&gt;GetRaftServer();
+  svr.mtx_.lock();
+  auto v = (MultiStringMarshallable*)(&m);
+  string oid = v-&gt;data_.at(0);
+  Log_info("Completed processing of %s , adding it to the set",oid);
+  currentOps.insert(oid);
+  svr.mtx_.unlock();
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

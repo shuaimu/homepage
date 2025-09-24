@@ -1,0 +1,90 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-Surabhi-Gogte/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-imtoobose/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+
+void RaftServiceImpl::HandleRequestVote(const uint64_t& candidateId,
+                                        const uint64_t& candidateTerm,
+                                        const uint64_t& lastLogIndex,
+                                        const uint64_t& lastLogTerm,
+                                        uint64_t *ret1,
+                                        bool_t *vote_granted,
+                                        rrr::DeferredReply* defer) {
+  /* Your code here */
+  auto reply = make_shared&lt;ReplyRequestVote&gt;();
+  svr_-&gt;RequestVote(candidateId, candidateTerm, lastLogIndex, lastLogTerm, reply);
+  // Log_info("received server resp in handle %d %d", reply-&gt;Term, reply-&gt;Vote);
+  *ret1 = reply-&gt;Term;
+  *vote_granted = reply-&gt;Vote;
+  // Log_info("set the return rpc values successfully");
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleAppendEntries(const uint64_t &leaderId,
+                                          const uint64_t &leaderTerm,
+                                          const uint64_t &prevLogIndex,
+                                          const uint64_t &prevLogTerm,
+                                          const uint64_t &leaderCommit,
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match79-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_8.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                          const vector&lt;uint64_t&gt; &terms,
+                                          const vector&lt;MarshallDeputy&gt; &md_cmd,
+                                          uint64_t *recvTerm,
+                                          bool_t *followerAppendOK,
+                                          bool_t *success,
+                                          rrr::DeferredReply *defer)
+</FONT>{
+  /* Your code here */
+  std::vector&lt;LogEntry&gt; cmds;
+  for (int i = 0; i &lt; terms.size(); i ++) {
+    auto cmd = const_cast&lt;MarshallDeputy&&gt;(md_cmd.at(i)).sp_data_;
+    cmds.push_back(LogEntry{
+      Term: terms.at(i),
+      Cmd: cmd
+    });
+  }
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match79-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_17.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  svr_-&gt;AppendEntriesRPC(leaderTerm, leaderId, prevLogIndex, prevLogTerm, cmds, leaderCommit, recvTerm, followerAppendOK, success);
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("receive an rpc: %s", req.c_str());
+  *res = "world";
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t &term,
+                                               const uint64_t &leaderId,
+                                               const uint64_t &commitIndex,
+</FONT>                                               uint64_t *replyTerm,
+                                               rrr::DeferredReply *defer) {
+  svr_-&gt;RecvHeartBeat(leaderId, term, commitIndex, replyTerm);
+  defer-&gt;reply();
+}
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,334 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-omkar-rajwade-sbu-1/src/shardkv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-raycursive/src/shardkv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+#include "../shardmaster/shardmaster_rpc.h"
+
+#define INFO(S, ...) Log_info("skv[%d-%d::%d] " S, this-&gt;GetRaftServer().partition_id_, this-&gt;GetRaftServer().loc_id_, this-&gt;GetRaftServer().site_id_, ##__VA_ARGS__)
+#define DEBUG(S, ...) Log_debug("skv[%d-%d::%d] " S, this-&gt;GetRaftServer().partition_id_, this-&gt;GetRaftServer().loc_id_, this-&gt;GetRaftServer().site_id_, ##__VA_ARGS__)
+
+namespace janus {
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match175-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+int64_t ShardKvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+bool ShardKvServer::isLeader() {
+</FONT>  bool isleader;
+  uint64_t term;
+  this-&gt;GetRaftServer().GetState(&isleader, &term);
+  return isleader;
+}
+
+bool ShardKvServer::shouldServeKey(const string& key) {
+  auto& raft_ = this-&gt;GetRaftServer();
+  std::lock_guard&lt;std::recursive_mutex&gt; lk{mtx_};
+  if (!initialized_) {
+    INFO("initialize shardkv server");
+    cli_ = CreateClient(sp_log_svr_-&gt;commo_);
+    this-&gt;pull_config_loop_.setup([this]{
+        this-&gt;pullConfig();
+    });
+    this-&gt;pull_config_loop_.start();
+    initialized_ = true;
+    return false;
+  }
+  auto shard = cli_-&gt;Key2Shard(key);
+  if (serving_shards_.find(shard) == serving_shards_.end()) {
+    return false;
+  }
+  // wait for the shard to be ready
+  if (waiting_shards_.find(shard) != waiting_shards_.end()) {
+    while (!waiting_shards_[shard]-&gt;IsReady()) {
+      waiting_shards_[shard]-&gt;Wait(50000);
+    }
+    waiting_shards_.erase(shard);
+  }
+  return true;
+}
+
+void ShardKvServer::evictShards(const set&lt;uint32_t&gt;& evicted_shards) {
+  // for each evicted shard, find its corresponding group
+  std::lock_guard&lt;std::recursive_mutex&gt; lk_{mtx_};
+  map&lt;int32_t, shared_ptr&lt;MultiStringMarshallable&gt;&gt; evict_cmds{};
+  for (auto shard: evicted_shards) {
+    evict_cmds[shard] = make_shared&lt;MultiStringMarshallable&gt;();
+  }
+  for (auto& p: kv_store_) {
+    auto shard_of_key = cli_-&gt;Key2Shard(p.first);
+    if (evicted_shards.find(shard_of_key) != evicted_shards.end()) {
+      evict_cmds[shard_of_key]-&gt;data_.push_back(p.first);
+      evict_cmds[shard_of_key]-&gt;data_.push_back(p.second);
+    }
+  }
+  Coroutine::CreateRun([this, &evict_cmds]{
+    for (auto& p: evict_cmds) {
+      auto target_groups = recognized_config_.group_servers_map_[recognized_config_.shard_group_map_[p.first]];
+        this-&gt;sendEviction(p.first, target_groups, p.second);
+        for (int i=0; i&lt;p.second-&gt;data_.size(); i+=2) {
+          this-&gt;Remove(GetNextOpId(), p.second-&gt;data_[i]);
+        }
+    }
+  });
+}
+
+void ShardKvServer::sendEviction(uint32_t shard, const vector&lt;uint32_t&gt;& groups, shared_ptr&lt;Marshallable&gt; cmd) {
+  auto& raft_ = this-&gt;GetRaftServer();
+  uint32_t ret;
+  ShardConfig config;
+  auto idx = 0;
+  auto size = groups.size();
+  while (true) {
+    ShardKvProxy& proxy = cli_-&gt;Proxy(groups[idx]);
+    auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    FutureAttr fuattr;
+    fuattr.callback = [ev, &ret, &config](Future* fu) {
+      fu-&gt;get_reply() &gt;&gt; ret &gt;&gt; config;
+      ev-&gt;Set(1);
+    };
+    MarshallDeputy md{dynamic_pointer_cast&lt;Marshallable&gt;(cmd)};
+    auto f = proxy.async_Transfer(GetNextOpId(), shard, md, fuattr);
+    Future::safe_release(f);
+    ev-&gt;Wait(100000);
+    if (ev-&gt;IsReady()) {
+      if (ret == KV_TIMEOUT || ret == KV_NOTLEADER) {
+        idx = (idx+1) % size;
+      } else {
+        break;
+      }
+    }
+  }
+  verify(ret == KV_SUCCESS);
+}
+
+ShardConfig ShardKvServer::queryConfig() {
+  auto& raft_ = this-&gt;GetRaftServer();
+  uint32_t ret;
+  ShardConfig config;
+  while (true) {
+    ShardMasterProxy* proxy = (ShardMasterProxy*)raft_.commo_-&gt;rpc_proxies_.at(master_leader_idx_);
+    auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    FutureAttr fuattr;
+    fuattr.callback = [ev, &ret, &config](Future* fu) {
+      fu-&gt;get_reply() &gt;&gt; ret &gt;&gt; config;
+      ev-&gt;Set(1);
+    };
+    auto f = proxy-&gt;async_Query(-1, fuattr);
+    Future::safe_release(f);
+    ev-&gt;Wait(100000);
+    if (ev-&gt;IsReady()) {
+      if (ret == KV_TIMEOUT || ret == KV_NOTLEADER) {
+        master_leader_idx_ = (master_leader_idx_+1) % 5;
+      } else {
+        break;
+      }
+    }
+  }
+  verify(ret == KV_SUCCESS);
+  return config;
+}
+
+void ShardKvServer::pullConfig() {
+  if (!isLeader()) {
+    return;
+  }
+  ShardConfig config = queryConfig();
+  // get config
+  if (config.number &gt; this-&gt;recognized_config_.number) {
+    INFO("pulled new config %d", config.number);
+    std::lock_guard&lt;std::recursive_mutex&gt; lk{mtx_};
+    set&lt;uint32_t&gt; responsible_shards{};
+    set&lt;uint32_t&gt; evict_shards{};
+    for (auto p: config.shard_group_map_) {
+      if (p.second == sp_log_svr_-&gt;partition_id_) {
+        responsible_shards.insert(p.first);
+      }
+    }
+    for (auto shard: this-&gt;serving_shards_) {
+      if (responsible_shards.find(shard) == responsible_shards.end()) {
+        evict_shards.insert(shard);
+        this-&gt;serving_shards_.erase(shard);
+      }
+      INFO("evict shard %d", shard);
+    }
+    for (auto shard: responsible_shards) {
+      if (this-&gt;serving_shards_.find(shard) == this-&gt;serving_shards_.end()) {
+        // need to serve this shard
+        auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+        if (this-&gt;recognized_config_.shard_group_map_[shard] != 0){
+          this-&gt;waiting_shards_[shard] = ev;
+        }
+        this-&gt;serving_shards_.insert(shard);
+      }
+      INFO("serve shard %d", shard);
+    }
+    verify(serving_shards_.size() == responsible_shards.size());
+    // evict shards
+    this-&gt;recognized_config_ = std::move(config);
+    this-&gt;evictShards(evict_shards);
+  }
+}
+
+int ShardKvServer::sendCommand(shared_ptr&lt;MultiStringMarshallable&gt;&& cmd, std::function&lt;bool()&gt; cb) {
+  auto& raft_ = this-&gt;GetRaftServer();
+  string op_id = cmd-&gt;data_[0];
+  DEBUG("send %s", debugMultiStr(*cmd).c_str());
+  uint64_t index, term;
+  bool isleader;
+  auto cmd_m = dynamic_pointer_cast&lt;Marshallable&gt;(cmd);
+  // wait for the log to be committed
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  outstanding_requests_[op_id] = ev;
+  if (!raft_.Start(cmd_m, &index, &term)){
+    outstanding_requests_.erase(op_id);
+    return KV_NOTLEADER;
+  }
+
+  ev-&gt;Wait(1250000);
+  outstanding_requests_.erase(op_id);
+  raft_.GetState(&isleader, &term);
+  if (!isleader) {
+    outstanding_requests_.erase(op_id);
+    return KV_NOTLEADER;
+  }
+  if (ev-&gt;IsReady() && cb()) {
+    return KV_SUCCESS;
+  }
+  return KV_TIMEOUT;
+}
+
+int ShardKvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v,
+                  const int32_t& skip_check) {
+  if (!(isLeader() && (skip_check || shouldServeKey(k)))) {
+    return KV_NOTLEADER;
+  }
+  INFO("received put %s %s", k.c_str(), v.c_str());
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  place(s, to_string(oid), "put", k, v);
+  return sendCommand(std::move(s));
+    // lab_shard: fill in your code
+}
+
+int ShardKvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+    // lab_shard: fill in your code
+  if (!isLeader() || !shouldServeKey(k)) {
+    return KV_NOTLEADER;
+  }
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  place(s, to_string(oid), "append", k, v);
+  return sendCommand(std::move(s));
+}
+
+int ShardKvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+    // lab_shard: fill in your code
+  if (!isLeader() || !shouldServeKey(k)) {
+    return KV_NOTLEADER;
+  }
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  place(s, to_string(oid), "get", k);
+  return sendCommand(std::move(s), [&v, k, this] {
+    auto it = kv_store_.find(k);
+    if (it == kv_store_.end()) {
+      return false;
+    }
+    *v = it-&gt;second;
+    return true;
+  });
+}
+
+int ShardKvServer::Remove(const uint64_t& oid,
+                     const string& k) {
+  if (!isLeader()) {
+    return KV_NOTLEADER;
+  }
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  place(s, to_string(oid), "remove", k);
+  return sendCommand(std::move(s));
+}
+
+int ShardKvServer::Transfer(const uint64_t& op_id,
+             const int32_t& shard,
+             const MarshallDeputy& md
+){
+  if (!isLeader()) {
+    return KV_NOTLEADER;
+  }
+  // parse the given command
+  auto cmd = dynamic_pointer_cast&lt;MultiStringMarshallable&gt;(md.sp_data_);
+  // put each item into the server
+  for (int i=0; i&lt;cmd-&gt;data_.size();i+=2) {
+    while (Put(op_id, cmd-&gt;data_[i], cmd-&gt;data_[i+1], 1) != KV_SUCCESS) {
+      // retry
+    }
+  }
+  waiting_shards_[shard]-&gt;Set(1);
+  return KV_SUCCESS;
+}
+
+void ShardKvServer::OnNextCommand(Marshallable& m) {
+    // lab_shard: fill in your code
+  auto cmd = (MultiStringMarshallable*)(&m);
+  DEBUG("cb receive: %s", debugMultiStr(*cmd).c_str());
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match175-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  auto op_id = cmd-&gt;data_[0];
+  auto op = cmd-&gt;data_[1];
+  auto k = cmd-&gt;data_[2];
+  if (op == "remove") {
+</FONT>      if (kv_store_.find(k) != kv_store_.end()) {
+        kv_store_.erase(k);
+      }
+  } else if (op == "put") {
+      kv_store_[k] = cmd-&gt;data_[3];
+  } else if (op == "append") {
+      if (kv_store_.find(k) == kv_store_.end()) {
+        kv_store_[k] = cmd-&gt;data_[3];
+      } else {
+        kv_store_[k] += cmd-&gt;data_[3];
+      }
+  } else {
+    if (op != "get") {
+      verify(0);
+    }
+  }
+  if (outstanding_requests_.find(op_id) != outstanding_requests_.end()) {
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match175-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    outstanding_requests_[op_id]-&gt;Set(1);
+  }
+}
+
+shared_ptr&lt;ShardKvClient&gt; ShardKvServer::CreateClient(Communicator* comm) {
+  auto cli = make_shared&lt;ShardKvClient&gt;();
+  cli-&gt;commo_ = comm;
+</FONT>  verify(cli-&gt;commo_ != nullptr);
+  static uint32_t id = 0;
+  id++;
+  cli-&gt;cli_id_ = id; 
+  return cli;
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

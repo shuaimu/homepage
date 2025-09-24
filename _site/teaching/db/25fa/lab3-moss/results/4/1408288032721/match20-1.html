@@ -1,0 +1,190 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-Apeksha115908828/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-Apeksha115908828/src/shardkv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+int64_t ShardKvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int ShardKvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+    // lab_shard: fill in your code
+  // get configurations and check if the sid belongs this partition/groupid_t
+  std::unique_lock&lt;std::recursive_mutex&gt; lck(mtx_);
+  string op_id = to_string(oid);
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match20-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  auto it1 = outstanding_requests_.find(op_id);
+  if (it1 == outstanding_requests_.end()) {
+    outstanding_requests_.insert({op_id, Reactor::CreateSpEvent&lt;IntEvent&gt;()});
+  }
+
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(op_id);
+  s-&gt;data_.push_back("put");
+</FONT>  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  // TODO : should add current config number too
+  shared_ptr&lt;Marshallable&gt; s1 = s; 
+  RaftServer& raftSvr = this-&gt;GetRaftServer();
+  uint64_t term, index;
+  bool is_leader;
+
+  raftSvr.GetState(&is_leader, &term);
+  if (!is_leader) return KV_NOTLEADER;
+  raftSvr.Start(s1, &index, &term);
+
+  outstanding_requests_[op_id]-&gt;Wait(1000000); // 1 sec wait
+  auto cond1 = outstanding_requests_[op_id]-&gt;status_ != Event::TIMEOUT;
+  outstanding_requests_.erase(op_id);
+  if (cond1) {
+    return KV_SUCCESS;
+  }
+  return KV_TIMEOUT;
+}
+
+int ShardKvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+    // lab_shard: fill in your code
+  std::unique_lock&lt;std::recursive_mutex&gt; lck(mtx_);
+  string op_id = to_string(oid);
+
+  auto it1 = outstanding_requests_.find(op_id);
+  if (it1 == outstanding_requests_.end()) {
+    outstanding_requests_.insert({op_id, Reactor::CreateSpEvent&lt;IntEvent&gt;()});
+  }
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match20-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  Log_info("Append called with oid = %s, k = %s, v = %s", op_id.c_str(), k.c_str(), v.c_str());
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(op_id);
+  s-&gt;data_.push_back("append");
+  s-&gt;data_.push_back(k);
+</FONT>  s-&gt;data_.push_back(v);
+  shared_ptr&lt;Marshallable&gt; s1 = s; 
+  RaftServer& raftSvr = this-&gt;GetRaftServer();
+  uint64_t term, index;
+  bool is_leader;
+
+  raftSvr.GetState(&is_leader, &term);
+  if(!is_leader)  return KV_NOTLEADER;
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match20-0.html#4" TARGET="0"><IMG SRC="../../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  raftSvr.Start(s1, &index, &term);
+  outstanding_requests_[op_id]-&gt;Wait(1000000); // 1 sec wait
+  auto cond1 = outstanding_requests_[op_id]-&gt;status_ != Event::TIMEOUT;
+</FONT>  outstanding_requests_.erase(op_id);
+  // auto cond2 = std::find(executed_opids.begin(), executed_opids.end(), op_id) != executed_opids.end();
+  if (cond1) {
+    return KV_SUCCESS;
+  } 
+  return KV_TIMEOUT;
+}
+
+int ShardKvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+    // lab_shard: fill in your code
+  std::unique_lock&lt;std::recursive_mutex&gt; lck(mtx_);
+  string op_id = to_string(oid);
+
+  auto it1 = outstanding_requests_.find(op_id);
+  if (it1 == outstanding_requests_.end()) {
+    outstanding_requests_.insert({op_id, Reactor::CreateSpEvent&lt;IntEvent&gt;()});
+  }
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match20-0.html#3" TARGET="0"><IMG SRC="../../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  Log_info("Get called with oid = %s, k = %s", op_id.c_str(), k.c_str());
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(op_id);
+  s-&gt;data_.push_back("get");
+  s-&gt;data_.push_back(k);
+</FONT>  s-&gt;data_.push_back(*v);
+  shared_ptr&lt;Marshallable&gt; s1 = s; 
+  RaftServer& raftSvr = this-&gt;GetRaftServer();
+  uint64_t term, index;
+  bool is_leader;
+
+  raftSvr.GetState(&is_leader, &term);
+  if (!is_leader) return KV_NOTLEADER;
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match20-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  raftSvr.Start(s1, &index, &term);
+  outstanding_requests_[op_id]-&gt;Wait(1000000); // 1 sec wait
+  auto cond1 = outstanding_requests_[op_id]-&gt;status_ != Event::TIMEOUT;
+  if (cond1) {
+    *v = kv_store_.find(k)-&gt;second;  // get the value from the hashmap
+</FONT>    return KV_SUCCESS;
+  }
+  return KV_TIMEOUT;
+}
+
+void ShardKvServer::OnNextCommand(Marshallable& m) {
+    // lab_shard: fill in your code
+  auto v = (MultiStringMarshallable*)(&m);
+  string op = v-&gt;data_[0];
+  string op_type = v-&gt;data_[1];
+  string k = v-&gt;data_[2];
+  RaftServer& raftSvr = this-&gt;GetRaftServer();
+  if (op_type == "put") {
+    Log_info("Server with svr-id=%d Came to onNextCommand with marshallable opid=%s op_type=%s, key=%s, value=%s", raftSvr.loc_id_, op.c_str(), op_type.c_str(), v-&gt;data_[2].c_str(), v-&gt;data_[3].c_str());
+    string value = v-&gt;data_[3];
+    auto it = kv_store_.find(k);
+    if (it != kv_store_.end()) {
+      it-&gt;second = value;
+    } else {
+      kv_store_[k] = value;
+    }
+  } else if (op_type == "append") {
+    Log_info("Server with svr-id=%d Came to onNextCommand with marshallable opid=%s op_type=%s, key=%s, value=%s", raftSvr.loc_id_, op.c_str(), op_type.c_str(), v-&gt;data_[2].c_str(), v-&gt;data_[3].c_str());
+    string value = v-&gt;data_[3];
+    auto it = kv_store_.find(k);
+    if (it != kv_store_.end()) { 
+      it-&gt;second = it-&gt;second + value;
+    } else {
+      kv_store_[k] = value;
+    }
+  } else if (op_type == "get") {
+    Log_info("Server with svr-id=%d Came to onNextCommand with marshallable opid=%s op_type=%s, key=%s, value=%s", raftSvr.loc_id_, op.c_str(), op_type.c_str(), v-&gt;data_[2].c_str(), kv_store_.find(k)-&gt;second.c_str());
+    string value = kv_store_[k];
+    v-&gt;data_[3] = value;
+  }
+  // outstanding_requests_.push_back(op);
+  auto it1 = outstanding_requests_.find(op);
+  if (it1 != outstanding_requests_.end()) {
+    outstanding_requests_[op]-&gt;Set(1);
+  }
+}
+
+shared_ptr&lt;ShardKvClient&gt; ShardKvServer::CreateClient(Communicator* comm) {
+  auto cli = make_shared&lt;ShardKvClient&gt;();
+  cli-&gt;commo_ = comm;
+  verify(cli-&gt;commo_ != nullptr);
+  static uint32_t id = 0;
+  id++;
+  cli-&gt;cli_id_ = id; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

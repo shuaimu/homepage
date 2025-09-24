@@ -1,0 +1,206 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-dysfunctional-sc/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-ShaikNazeer123/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+bool KvServer::Start(shared_ptr&lt;MultiStringMarshallable&gt; cmd) {
+    RaftServer *raft = &GetRaftServer();
+    DEFER_LOCK(raft-&gt;mtx_);
+    uint64_t dummy1, dummy2;
+    return raft-&gt;Start((shared_ptr&lt;janus::Marshallable&gt; &)cmd, &dummy1, &dummy2);
+}
+
+#define RAFT_TIMEOUT (ELECTION_TIMEOUT + 200*1000 + 200*1000)
+int KvServer::Put(const uint64_t& op_id, 
+                  const string& k,
+                  const string& v) {
+  /* 
+  Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it. */
+
+    /* your code here */
+    Log_debug("put called");
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match23-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    string transaction_id = to_string(op_id);
+    s-&gt;data_.push_back(transaction_id);
+    s-&gt;data_.push_back("put");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);
+</FONT>
+    // create event and insert into event tracker
+    auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    if (transaction_event_tracker.find(transaction_id) !=
+            transaction_event_tracker.end()) {
+        Log_info("XXX Duplicate transaction id!!!!!! DEBUG THIS!!!!!");
+    } else {
+        transaction_event_tracker[transaction_id] = make_pair(ev, "");
+    }
+
+    if (Start(s) == false) {
+        // remove transaction id from tracker
+        // I am not the leader
+        return KV_NOTLEADER;
+    }
+    Log_info("Setting timer for put event");
+    // set event wait
+    transaction_event_tracker[transaction_id].first-&gt;Wait(RAFT_TIMEOUT); // 100 ms wait?
+
+    if (transaction_event_tracker[transaction_id].first-&gt;status_ == Event::TIMEOUT) {
+        return KV_TIMEOUT;
+    }
+
+  return KV_SUCCESS;
+}
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+    Log_debug("append called");
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match23-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    string transaction_id = to_string(oid);
+    s-&gt;data_.push_back(transaction_id);
+    s-&gt;data_.push_back("append");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);
+</FONT>
+    // create event and insert into event tracker
+    auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    if (transaction_event_tracker.find(transaction_id) !=
+            transaction_event_tracker.end()) {
+        Log_info("XXX Duplicate transaction id!!!!!! DEBUG THIS!!!!!");
+    } else {
+        transaction_event_tracker[transaction_id] = make_pair(ev, "");
+    }
+
+    if (Start(s) == false) {
+        // remove transaction id from tracker
+        // I am not the leader
+        return KV_NOTLEADER;
+    }
+
+    // set event wait
+    transaction_event_tracker[transaction_id].first-&gt;Wait(RAFT_TIMEOUT); // 100 ms wait?
+
+    if (transaction_event_tracker[transaction_id].first-&gt;status_ == Event::TIMEOUT) {
+        return KV_TIMEOUT;
+    }
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match23-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  return KV_SUCCESS;
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+  /* your code here */
+    Log_info("get called");
+
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    string transaction_id = to_string(oid);
+    s-&gt;data_.push_back(transaction_id);
+    s-&gt;data_.push_back("get");
+</FONT>    s-&gt;data_.push_back(k);
+
+    // create event and insert into event tracker
+    auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    if (transaction_event_tracker.find(transaction_id) !=
+            transaction_event_tracker.end()) {
+        Log_info("XXX Duplicate transaction id!!!!!! DEBUG THIS!!!!!");
+    } else {
+        transaction_event_tracker[transaction_id] = make_pair(ev, "");
+    }
+
+    if (Start(s) == false) {
+        // remove transaction id from tracker
+        // I am not the leader
+        return KV_NOTLEADER;
+    }
+
+    // set event wait
+    transaction_event_tracker[transaction_id].first-&gt;Wait(RAFT_TIMEOUT); // 100 ms wait?
+
+    if (transaction_event_tracker[transaction_id].first-&gt;status_ == Event::TIMEOUT) {
+        return KV_TIMEOUT;
+    }
+
+    *v = transaction_event_tracker[transaction_id].second;
+
+    return KV_SUCCESS;
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  auto v = (MultiStringMarshallable*)(&m);
+  /* your code here */
+    string transaction_id = v-&gt;data_[0];
+    string transaction_type = v-&gt;data_[1];
+
+    if (transaction_type == "get") {
+        string key = v-&gt;data_[2];
+        if (transaction_event_tracker.find(transaction_id) !=
+            transaction_event_tracker.end()) {
+            // get the value from kvStore and set it in the tracker
+            transaction_event_tracker[transaction_id].second = kvStore[key];
+        }
+    } else {
+        string key = v-&gt;data_[2];
+        string val = v-&gt;data_[3];
+        if (transaction_type == "append") {
+            kvStore[key] = kvStore[key] + val;
+        } else {
+            kvStore[key] = val;
+        }
+    }
+
+    if (transaction_event_tracker.find(transaction_id) !=
+            transaction_event_tracker.end()) {
+        transaction_event_tracker[transaction_id].first-&gt;Set(1);
+    }
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

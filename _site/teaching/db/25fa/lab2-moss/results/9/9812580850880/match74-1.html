@@ -1,0 +1,253 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-Apeksha115908828/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-digaru19/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus
+{
+
+    static int volatile x1 =
+        MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                       []() -&gt; Marshallable *
+                                       {
+                                           return new MultiStringMarshallable;
+                                       });
+
+    int64_t KvServer::GetNextOpId()
+    {
+        verify(sp_log_svr_);
+        int64_t ret = sp_log_svr_-&gt;site_id_;
+        ret = ret &lt;&lt; 32;
+        ret = ret + op_id_cnt_++;
+        return ret;
+    }
+
+    int KvServer::Put(const uint64_t &oid,
+                      const string &k,
+                      const string &v)
+    {
+        /*
+        Your are recommended to use MultiStringMarshallable as the format
+        for the log entries. Here is an example how you can use it.
+        auto s = make_shared&lt;MultiStringMarshallable&gt;();
+        s-&gt;data_.push_back(to_string(op_id));
+        s-&gt;data_.push_back("put");
+        s-&gt;data_.push_back(k);
+        s-&gt;data_.push_back(v);
+        */
+        /* your code here */
+
+        RaftServer &raftServer = GetRaftServer();
+        Log_info("Server %d: Received PUT command", raftServer.site_id_);
+
+        string oid_s = to_string(oid);
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match74-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        auto newCmd = make_shared&lt;MultiStringMarshallable&gt;();
+        newCmd-&gt;data_.push_back(oid_s);
+        newCmd-&gt;data_.push_back("put");
+        newCmd-&gt;data_.push_back(k);
+        newCmd-&gt;data_.push_back(v);
+</FONT>
+        uint64_t *term = new uint64_t;
+        uint64_t *index = new uint64_t;
+
+        auto cmdptr_m = dynamic_pointer_cast&lt;Marshallable&gt;(newCmd);
+
+        Log_info("Server %d: Sending PUT to raft server", raftServer.site_id_);
+        bool isLeader = raftServer.Start(cmdptr_m, index, term);
+
+        if (isLeader == false)
+        {
+            Log_info("Server %d: From raft server -&gt; not leader. Return.", raftServer.site_id_);
+            return KV_NOTLEADER;
+        }
+
+        // Log_info("Server %d: Sending PUT to raft server", raftServer.site_id_);
+
+        Log_info("Leader %d: Sent PUT command %s to Raft cluster", raftServer.site_id_, oid_s.c_str());
+
+        auto event = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+
+        eventStore[oid_s] = event;
+
+        event-&gt;Wait(1000 * 1000);
+
+        if (event-&gt;status_ == Event::TIMEOUT)
+        {
+            Log_error("Leader %d: Raft's Start call timed out for oid %s", raftServer.site_id_, oid_s.c_str());
+            return KV_TIMEOUT;
+        }
+        else
+        {
+            Log_info("Leader %d: Applied key-value op %s successfully", raftServer.site_id_, oid_s.c_str());
+            return KV_SUCCESS;
+        }
+    }
+
+    int KvServer::Append(const uint64_t &oid,
+                         const string &k,
+                         const string &v)
+    {
+        /* your code here */
+
+        RaftServer &raftServer = GetRaftServer();
+
+        string oid_s = to_string(oid);
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match74-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        auto newCmd = make_shared&lt;MultiStringMarshallable&gt;();
+        newCmd-&gt;data_.push_back(oid_s);
+        newCmd-&gt;data_.push_back("append");
+        newCmd-&gt;data_.push_back(k);
+        newCmd-&gt;data_.push_back(v);
+</FONT>
+        uint64_t *term = new uint64_t;
+        uint64_t *index = new uint64_t;
+
+        auto cmdptr_m = dynamic_pointer_cast&lt;Marshallable&gt;(newCmd);
+
+        bool isLeader = raftServer.Start(cmdptr_m, index, term);
+
+        if (isLeader == false)
+        {
+            return KV_NOTLEADER;
+        }
+
+        Log_info("Leader %d: Sent APPEND command %s to Raft cluster", raftServer.site_id_, oid_s.c_str());
+
+        auto event = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+
+        eventStore[oid_s] = event;
+
+        event-&gt;Wait(1000 * 1000);
+
+        if (event-&gt;status_ == Event::TIMEOUT)
+        {
+            Log_error("Leader %d: Raft's Start call timed out for oid %s", raftServer.site_id_, oid_s.c_str());
+            return KV_TIMEOUT;
+        }
+        else
+        {
+            Log_info("Leader %d: Applied key-value op %s successfully", raftServer.site_id_, oid_s.c_str());
+            return KV_SUCCESS;
+        }
+
+        return KV_SUCCESS;
+    }
+
+    int KvServer::Get(const uint64_t &oid,
+                      const string &k,
+                      string *v)
+    {
+
+        RaftServer &raftServer = GetRaftServer();
+
+        string oid_s = to_string(oid);
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match74-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        auto newCmd = make_shared&lt;MultiStringMarshallable&gt;();
+        newCmd-&gt;data_.push_back(oid_s);
+        newCmd-&gt;data_.push_back("get");
+        newCmd-&gt;data_.push_back(k);
+        newCmd-&gt;data_.push_back("");
+</FONT>
+        uint64_t *term = new uint64_t;
+        uint64_t *index = new uint64_t;
+
+        auto cmdptr_m = dynamic_pointer_cast&lt;Marshallable&gt;(newCmd);
+
+        bool isLeader = raftServer.Start(cmdptr_m, index, term);
+
+        if (isLeader == false)
+        {
+            return KV_NOTLEADER;
+        }
+
+        Log_info("Leader %d: Sent GET command %s to Raft cluster", raftServer.site_id_, oid_s.c_str());
+
+        auto event = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+
+        eventStore[oid_s] = event;
+
+        event-&gt;Wait(1000 * 1000);
+
+        if (event-&gt;status_ == Event::TIMEOUT)
+        {
+            Log_error("Leader %d: Raft's Start call timed out for oid %s", raftServer.site_id_, oid_s.c_str());
+            return KV_TIMEOUT;
+        }
+        else
+        {
+            Log_info("Leader %d: Applied key-value op %s successfully", raftServer.site_id_, oid_s.c_str());
+            *v = kvStore[k];
+            return KV_SUCCESS;
+        }
+
+        return KV_SUCCESS;
+    }
+
+    void KvServer::OnNextCommand(Marshallable &m)
+    {
+        auto v = (MultiStringMarshallable *)(&m);
+        RaftServer &raftServer = GetRaftServer();
+
+        string oid_s = v-&gt;data_[0];
+        string opType = v-&gt;data_[1];
+        string key = v-&gt;data_[2];
+        string value = v-&gt;data_[3];
+
+        Log_info("Server %d: Applied %s command in raft: %s", raftServer.site_id_, opType.c_str(), oid_s.c_str());
+
+        if (opType == "put")
+        {
+            kvStore[key] = value;
+        }
+        else if (opType == "append")
+        {
+            auto initialEntry = kvStore.find(key);
+            if (initialEntry == kvStore.end())
+            {
+                kvStore[key] = value;
+            }
+            else
+            {
+                kvStore[key] = initialEntry-&gt;second + value;
+            }
+        }
+
+        auto ev = eventStore.find(oid_s);
+        if (ev != eventStore.end())
+        {
+            Log_info("Leader %d: Setting event for %s", raftServer.site_id_, oid_s.c_str());
+            ev-&gt;second-&gt;Set(1);
+        }
+    }
+
+    shared_ptr&lt;KvClient&gt; KvServer::CreateClient()
+    {
+        /* don't change this function */
+        auto cli = make_shared&lt;KvClient&gt;();
+        verify(commo_ != nullptr);
+        cli-&gt;commo_ = commo_;
+        uint32_t id = sp_log_svr_-&gt;site_id_;
+        id = id &lt;&lt; 16;
+        cli-&gt;cli_id_ = id + cli_cnt_++;
+        return cli;
+    }
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

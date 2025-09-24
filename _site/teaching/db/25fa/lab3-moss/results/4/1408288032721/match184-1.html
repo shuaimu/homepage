@@ -1,0 +1,392 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-gkulhare/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-jnukin/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+namespace janus {
+
+string ShardMasterServiceImpl::SerializeConfig(ShardConfig newConfig) {
+  stringstream configStringStream;
+  boost::archive::text_oarchive configArchive(configStringStream);
+  configArchive & newConfig.number;
+  string configString = configStringStream.str();
+  return configString;
+}
+
+int ShardMasterServiceImpl::DeserializeConfig(string configString) {
+  int deserializedConfig;
+  stringstream configStringStream(configString);
+  boost::archive::text_iarchive configArchive(configStringStream);
+  configArchive & deserializedConfig;
+  return deserializedConfig;
+}
+
+int ShardMasterServiceImpl::ShardMasterOperation(shared_ptr&lt;MultiStringMarshallable&gt; s){
+  Log_info("ShardMasterOperation");
+  uint64_t deserializedConfig = this-&gt;DeserializeConfig(s-&gt;data_[0]);
+  Timer waitTimer;
+  waitTimer.start();
+  while(waitTimer.elapsed()*1e6 &lt; this-&gt;agreementTimeOut && this-&gt;committedConfigMap.count(deserializedConfig)==0){
+    // Log_info("Time Elapsed: %f", waitTimer.elapsed());
+    Coroutine::Sleep(this-&gt;agreementTimeOut/10);
+  }
+  return (this-&gt;committedConfigMap.count(deserializedConfig) &&  this-&gt;committedConfigMap[deserializedConfig]? KV_SUCCESS: KV_TIMEOUT);
+}
+
+
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  Log_info("Join - ShardMaster");
+  ShardConfig rebalancedConfig = GetConfigAfterJoinRebalance(gid_server_map);
+
+  pendingConfigMap[rebalancedConfig.number] = rebalancedConfig;
+  string configString = SerializeConfig(rebalancedConfig);
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(configString);
+  shared_ptr&lt;Marshallable&gt; cmd = s;
+
+  RaftServer& raftServer = this-&gt;GetRaftServer();
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match184-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  uint64_t index, term;
+  bool result = raftServer.Start(cmd, &index, &term);
+  if(!result){
+    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+    return;
+</FONT>  }
+  *ret = ShardMasterOperation(s);
+  Log_info("Join End %d - ShardMaster", rebalancedConfig.number);
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  Log_info("Leave - ShardMaster");
+  ShardConfig rebalancedConfig = GetConfigAfterLeaveRebalance(gids);
+
+  pendingConfigMap[rebalancedConfig.number] = rebalancedConfig;
+  string configString = SerializeConfig(rebalancedConfig);
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(configString);
+  shared_ptr&lt;Marshallable&gt; cmd = s;
+
+  RaftServer& raftServer = this-&gt;GetRaftServer();
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match184-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  uint64_t index, term;
+  bool result = raftServer.Start(cmd, &index, &term);
+  if(!result){
+    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+    return;
+</FONT>  }
+  *ret = ShardMasterOperation(s);  
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  Log_info("Move - ShardMaster");
+  ShardConfig rebalancedConfig = GetConfigAfterMove(shard, gid);
+
+  pendingConfigMap[rebalancedConfig.number] = rebalancedConfig;
+  string configString = SerializeConfig(rebalancedConfig);
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(configString);
+  shared_ptr&lt;Marshallable&gt; cmd = s;
+
+  RaftServer& raftServer = this-&gt;GetRaftServer();
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match184-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  uint64_t index, term;
+  bool result = raftServer.Start(cmd, &index, &term);
+  if(!result){
+    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+    return;
+</FONT>  }
+  *ret = ShardMasterOperation(s);  
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+  // your code here
+  Log_info("Query - ShardMaster");
+  RaftServer& raftServer = this-&gt;GetRaftServer();
+  *ret = KV_TIMEOUT;
+  bool isLeader = false;
+  {
+    lock_guard&lt;recursive_mutex&gt; lock(raftServer.mtx_);
+    isLeader = raftServer.currState==ServerState::LEADER;
+  }
+  // Log_info("Query 2- ShardMaster");
+  if(!isLeader) {
+    // Log_info("Query Case Not Leader - ShardMaster");
+    //Not Leader
+    *ret = KV_NOTLEADER;
+  }
+  else if(config_no == -1){
+    // latest config
+    if(configs_.size()&gt;0){
+      // Log_info("Query Case Config %d - ShardMaster", configs_.rbegin()-&gt;second.number);
+      *config = configs_.rbegin()-&gt;second;
+      *ret = KV_SUCCESS;
+    }
+  }
+  else if(configs_.size()&gt;0 && configs_.count(config_no)==0){
+    // config not found
+    if(configs_.rbegin()-&gt;first &lt; config_no){
+      // return latest available config
+      // Log_info("Query Case Config 2 - ShardMaster");
+      *config =  configs_.rbegin()-&gt;second;
+      *ret = KV_SUCCESS;
+    }
+  }
+  else{
+    // config found
+    if(configs_.size()&gt;0){
+      // Log_info("Query Case Last - ShardMaster");
+      *config = configs_[config_no];
+      *ret = KV_SUCCESS;
+    }
+  }
+  Log_info("Query End %d - ShardMaster", *ret);
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  // your code here
+  Log_info("OnNextCommand - ShardMaster");
+  auto s = (MultiStringMarshallable*)(&m);
+  auto deserializedConfig = DeserializeConfig(s-&gt;data_[0]);
+
+  ShardConfig newConfig = pendingConfigMap[deserializedConfig];
+  // Log_info("OnNextCommand config_no: %d, newconfig.number: %d", deserializedConfig, newConfig.number);
+  this-&gt;configs_[newConfig.number] = newConfig;
+  this-&gt;committedConfigMap[deserializedConfig] = true;
+  Log_info("OnNextCommand End - ShardMaster");
+}
+
+ShardConfig ShardMasterServiceImpl::GetConfigAfterJoinRebalance(const std::map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map) {
+  Log_info("JoinRebalance - ShardMaster");
+  ShardConfig newConfig = ShardConfig();
+  newConfig.number = 1;
+  if(configs_.size()==0){
+    // Log_info("JoinRebalance Intial Config- ShardMaster");
+    uint64_t totalShards = 10;
+    uint64_t totalGroups = gid_server_map.size();
+    uint64_t shardsPerGroup = totalShards/totalGroups;
+    uint64_t remShards = totalShards%totalGroups;
+    vector&lt;uint32_t&gt; allGids;
+    map&lt;uint32_t, uint32_t&gt; shardToGroupMap;
+    map&lt;uint32_t, vector&lt;uint32_t&gt;&gt; newGroupServerMap;
+    for(auto &kv: gid_server_map) allGids.push_back(kv.first);
+    for(int i=0;i&lt;totalGroups;i++){
+      for(int j=i*totalGroups+1;j&lt;=i*totalGroups+shardsPerGroup;j++){
+        shardToGroupMap[j] = allGids[i];
+      }
+    }
+    for(int i=0,ctr=0,assigned=totalGroups*shardsPerGroup;i&lt;remShards;i++, ctr++) {
+      shardToGroupMap[assigned + i + 1] = allGids[ctr];
+    }
+    for(auto gid: allGids){
+      if(newGroupServerMap.count(gid)==0){
+        newGroupServerMap[gid] = gid_server_map.at(gid);
+      }
+    }
+    newConfig.group_servers_map_ = newGroupServerMap;
+    newConfig.shard_group_map_ = shardToGroupMap;
+    // this-&gt;configs_[newConfig.number] = newConfig;
+  }
+  else{
+    // Log_info("JoinRebalance Update Config- ShardMaster");
+    auto currConfig = configs_.rbegin()-&gt;second;
+    //TODO
+    uint64_t shardCount = currConfig.shard_group_map_.size();
+    uint64_t currTotalGroups = currConfig.group_servers_map_.size();
+    uint64_t newTotalGroups = currTotalGroups;
+    uint64_t currShardsPerGroup = shardCount/currTotalGroups;
+    uint64_t currRemShards = shardCount%currTotalGroups;
+    uint64_t currMaxShardsPerGroup = currRemShards? currShardsPerGroup+1: currShardsPerGroup;
+    uint64_t newShardsPerGroup = shardCount/newTotalGroups;
+    uint64_t newRemShards = shardCount%newTotalGroups;
+    uint64_t newMaxShardsPerGroup = newRemShards? newShardsPerGroup+1: newShardsPerGroup;
+    map&lt;uint32_t, uint32_t&gt; newShardToGidMap;
+    map&lt;uint32_t, vector&lt;uint32_t&gt;&gt; newGidToShardMap;
+    map&lt;uint32_t, vector&lt;uint32_t&gt;&gt; newGroupServerMap = currConfig.group_servers_map_;
+    vector&lt;uint32_t&gt; extraShardIds;
+
+    for(auto &kv: gid_server_map){
+      if(newGroupServerMap.count(kv.first)==0){
+        newTotalGroups++;
+        newGroupServerMap.insert(kv);
+      }
+    }
+
+    for(auto &kv: currConfig.shard_group_map_){
+      newGidToShardMap[kv.second].push_back(kv.first);
+    }
+    for(auto &kv: newGidToShardMap){
+      auto shardsInGroup = kv.second;
+      uint64_t extraShardsInGroup =0;
+      if(shardsInGroup.size()&gt;newShardsPerGroup){
+        if((shardsInGroup.size() == currMaxShardsPerGroup || shardsInGroup.size() == newMaxShardsPerGroup) && newRemShards&gt;0){
+          extraShardsInGroup = shardsInGroup.size() - newMaxShardsPerGroup;
+          newRemShards--;
+        }
+        else{
+          extraShardsInGroup = shardsInGroup.size() - newShardsPerGroup;
+        }
+        for(int i=0;i&lt;newRemShards;i++){
+        // while(newRemShards--&gt;0){
+          extraShardIds.push_back(shardsInGroup.back());
+          shardsInGroup.pop_back();
+        }
+      }
+      newGidToShardMap[kv.first] = shardsInGroup;
+    }
+    for(auto &kv: newGidToShardMap){
+      auto shardsInGroup = kv.second;
+      if(shardsInGroup.size()==0){
+        uint64_t allotShards = newShardsPerGroup;
+        while(extraShardIds.size() && allotShards--){
+          shardsInGroup.push_back(extraShardIds.back());
+          extraShardIds.pop_back();
+        }
+      }
+      newGidToShardMap[kv.first] = shardsInGroup;
+    }
+    for(auto &kv: newGidToShardMap){
+      for(auto shardId: kv.second){
+        newShardToGidMap[shardId] = kv.first; 
+      }
+    }
+    newConfig.number = currConfig.number + 1;
+    newConfig.group_servers_map_ = newGroupServerMap;
+    newConfig.shard_group_map_  = newShardToGidMap;
+    this-&gt;configs_[newConfig.number] = newConfig;
+  }
+  Log_info("JoinRebalance End Config_No: %d - ShardMaster", newConfig.number);
+  return newConfig;
+}
+ShardConfig ShardMasterServiceImpl::GetConfigAfterLeaveRebalance(const std::vector&lt;uint32_t&gt;& gids) {
+  //TODO
+  Log_info("LeaveRebalance - ShardMaster");
+  auto currConfig = configs_.rbegin()-&gt;second;
+  uint64_t shardCount = currConfig.shard_group_map_.size();
+
+  uint64_t currTotalGroups = currConfig.group_servers_map_.size();
+  uint64_t currShardsPerGroup = shardCount/currTotalGroups;
+  uint64_t currRemShards = shardCount%currTotalGroups;
+  uint64_t currMaxShardsPerGroup = currRemShards? currShardsPerGroup+1: currShardsPerGroup;
+
+  map&lt;uint32_t, uint32_t&gt; newShardToGidMap = currConfig.shard_group_map_;
+  map&lt;uint32_t, vector&lt;uint32_t&gt;&gt; newGidToShardMap;
+  map&lt;uint32_t, vector&lt;uint32_t&gt;&gt; newGroupServerMap = currConfig.group_servers_map_;
+  vector&lt;uint32_t&gt; extraShardIds;  
+  // Log_info("LeaveRebalance Curr Declarations done- ShardMaster");
+  for(auto &kv: newShardToGidMap){
+    newGidToShardMap[kv.second].push_back(kv.first);
+  }
+  for(auto &gid: gids){
+    if(newGroupServerMap.count(gid)){
+      for(auto shardId: newGidToShardMap[gid]){
+        // Log_info("LeaveRebalance Free Shard: %d Group: %d - ShardMaster", shardId, gid);
+        extraShardIds.push_back(shardId);
+      }
+      // extraShardIds.insert(extraShardIds.end(),  newGidToShardMap[gid].begin(), newGidToShardMap[gid].end());
+      newGidToShardMap.erase(gid);
+      newGroupServerMap.erase(gid);
+    }
+  }
+  // Log_info("LeaveRebalance For Loops done- ShardMaster");
+  uint64_t newTotalGroups = newGroupServerMap.size();
+  uint64_t newShardsPerGroup = shardCount/newTotalGroups;
+  uint64_t newRemShards = shardCount%newTotalGroups;
+  uint64_t newMaxShardsPerGroup = newRemShards? newShardsPerGroup+1: newShardsPerGroup;
+  // Log_info("LeaveRebalance New Declarations done- ShardMaster");
+  // Log_info("New data - newTotalGroups %d, newShardsPerGroup %d, newRemShards %d, newMaxShardsPerGroup %d", newGidToShardMap.size(), newShardsPerGroup, newRemShards, newMaxShardsPerGroup);
+  
+  for(auto &kv: newGroupServerMap){
+    // Log_info("LeaveRebalance Assign loop gid: %d currShardsinGroupSize: %d- ShardMaster", kv.first, kv.second.size());
+    auto shardsInGroup = newGidToShardMap[kv.first];
+    if(shardsInGroup.size() == currMaxShardsPerGroup && newRemShards&gt;0){
+      // Log_info("LeaveRebalance Assign loop 1 gid: %d currSize: %d- ShardMaster", kv.first, kv.second.size());
+      newRemShards--;
+      while(extraShardIds.size() && shardsInGroup.size() &lt; newMaxShardsPerGroup){
+        // Log_info("LeaveRebalance Assign Shard: %d- ShardMaster", extraShardIds.back());
+        shardsInGroup.push_back(extraShardIds.back());
+        extraShardIds.pop_back();
+      }
+    }
+    else{
+        // Log_info("LeaveRebalance Assign loop 2 gid: %d currSize: %d- ShardMaster", kv.first, kv.second.size());
+        while(extraShardIds.size() && shardsInGroup.size() &lt; newShardsPerGroup){
+          // Log_info("LeaveRebalance Assign Shard: %d- ShardMaster", extraShardIds.back());
+          shardsInGroup.push_back(extraShardIds.back());
+          extraShardIds.pop_back();
+        }
+    }
+    newGidToShardMap[kv.first] = shardsInGroup;
+  }
+  for(auto &kv: newGidToShardMap){
+    for(auto shardId: kv.second){
+      newShardToGidMap[shardId] = kv.first; 
+    }
+  }
+
+  ShardConfig newConfig = ShardConfig();
+  newConfig.number = configs_.rbegin()-&gt;first + 1;
+  newConfig.group_servers_map_ = newGroupServerMap;
+  newConfig.shard_group_map_ = newShardToGidMap;
+  Log_info("LeaveRebalance End- ShardMaster");
+  return newConfig;
+}
+
+ShardConfig ShardMasterServiceImpl::GetConfigAfterMove(const int32_t& shard, const uint32_t& gid) {
+  Log_info("GetConfigAfterMove - ShardMaster");
+  ShardConfig newConfig = ShardConfig();
+  newConfig.number = configs_.rbegin()-&gt;first;
+  newConfig.group_servers_map_ =  configs_.rbegin()-&gt;second.group_servers_map_;
+  newConfig.shard_group_map_ = configs_.rbegin()-&gt;second.shard_group_map_;
+  newConfig.shard_group_map_[shard] = gid;
+  Log_info("GetConfigAfterMove End - ShardMaster");
+  return newConfig;
+}
+
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::GetClient(Communicator* commo) {
+  /******NIK*******/
+  Log_info("GetClient - ShardMaster");
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = commo;
+  uint32_t siteId = 0;
+  ShardConfig temp = ShardConfig();
+  while (cli-&gt;Query(-1, &temp) != KV_SUCCESS && siteId &lt; 20) {
+    siteId++;
+  }
+  Log_info("GetClient End- ShardMaster");
+  return cli;
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  return cli;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

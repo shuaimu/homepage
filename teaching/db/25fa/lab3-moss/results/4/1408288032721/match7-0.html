@@ -1,0 +1,191 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-aadarsh0301/src/shardkv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-aadarsh0301/src/shardkv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+int64_t ShardKvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match7-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_11.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+int ShardKvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+    // lab_shard: fill in your code
+
+      RaftServer& site = GetRaftServer();
+   if(site.isLeader){
+  //  Log_info("in put key %s value %s",k.c_str(),v.c_str());
+      auto s = make_shared&lt;MultiStringMarshallable&gt;();
+      s-&gt;data_.push_back(to_string(oid));
+      s-&gt;data_.push_back("put");
+      s-&gt;data_.push_back(k);
+      s-&gt;data_.push_back(v);
+        
+      uint64_t index;
+      uint64_t term;
+      auto cmdPointer = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+    //  Log_info("Sleeping main Thread Put");
+       auto ev = temp(cmdPointer,index,term,site);
+</FONT>       ev-&gt;Wait(500000);
+     //  Log_info("Waking main Thread Put");
+
+
+       if (kv_store_.find(k) != kv_store_.end() && kv_store_[k] == v) {
+         //  Log_info("Returning from PUT success");
+              kv_store_[k]=v;
+               return KV_SUCCESS;
+       }else{
+          //  Log_info("Returning from PUT timeout");
+           return KV_SUCCESS;
+       }
+   }
+ //  Log_info("Returning from PUT not leader");
+    kv_store_[k]=v;
+    return KV_SUCCESS;
+}
+
+shared_ptr&lt;IntEvent&gt; ShardKvServer::temp(shared_ptr&lt;Marshallable&gt; cmdPointer, uint64_t index,uint64_t term, RaftServer& site ){ 
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  site.Start(cmdPointer, &index, &term);
+  return ev;
+}
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match7-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_11.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+int ShardKvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+    // lab_shard: fill in your code
+    RaftServer& site = GetRaftServer();
+   if(site.isLeader){
+   // Log_info("in append %s value %s",k.c_str(),v.c_str());
+         auto s = make_shared&lt;MultiStringMarshallable&gt;();
+      s-&gt;data_.push_back(to_string(oid));
+      s-&gt;data_.push_back("append");
+      s-&gt;data_.push_back(k);
+      s-&gt;data_.push_back(v);
+         
+      uint64_t index;
+      uint64_t term;
+      auto cmdPointer = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+     //  Log_info("Sleeping main Thread Append");
+       auto ev = temp(cmdPointer,index,term,site);
+</FONT>       ev-&gt;Wait(500000);
+       //Log_info("Waking main Thread Append");
+
+
+       if (kv_store_.find(k) != kv_store_.end() &&
+           kv_store_[k].compare(kv_store_[k].length() - v.length(), kv_store_[k].length(), v) == 0) {
+          //  Log_info("Append returning success");
+               return KV_SUCCESS;
+           }else{
+          //  Log_info("Append returning timeout");
+           return KV_TIMEOUT;
+       }
+
+   }
+
+    if(kv_store_.find(k)!=kv_store_.end()){
+        kv_store_[k]=kv_store_[k].append(v);
+    }else{
+      kv_store_.insert({k,v});
+    }
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match7-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_7.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    return KV_SUCCESS;
+}
+
+int ShardKvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+    // lab_shard: fill in your code
+    RaftServer& site = GetRaftServer();
+   if(site.isLeader){
+       isMajority = false;
+     //  Log_info("in get key %s",k.c_str());
+       auto s = make_shared&lt;MultiStringMarshallable&gt;();
+       s-&gt;data_.push_back(to_string(oid));
+       s-&gt;data_.push_back("get");
+</FONT>       s-&gt;data_.push_back(k);
+
+      uint64_t index;
+      uint64_t term;
+      auto cmdPointer = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+       // Log_info("Sleeping main Thread GET");
+       auto ev = temp(cmdPointer,index,term,site);
+       ev-&gt;Wait(500000);
+       // Log_info("Waking main Thread GET");
+
+       if(isMajority && kv_store_.find(k)!=kv_store_.end()){
+           *v=kv_store_[k];
+         //  Log_info("Get returning success");
+           return KV_SUCCESS;              
+       } else {
+         //  Log_info("Get returning timeout");
+           return KV_SUCCESS;
+       }
+   }
+   *v=kv_store_[k];
+ //  Log_info("Get returning not Leader");
+   return KV_SUCCESS;
+}
+
+void ShardKvServer::OnNextCommand(Marshallable& m) {
+    // lab_shard: fill in your code
+    RaftServer& site = GetRaftServer();
+      site.mtx_.lock();
+       Log_info("In onNext for site %d ",site.site_id_);
+       if(m.kind_==MarshallDeputy::CMD_MULTI_STRING){
+       auto v = dynamic_cast&lt;MultiStringMarshallable*&gt;(&m);
+       if (v-&gt;data_.empty()) {
+         //  Log_error("Received an empty command.");
+           return;
+       }
+       const string& command = v-&gt;data_[1];
+       if (command == "put") {
+           kv_store_[v-&gt;data_[2]] = v-&gt;data_[3];
+       } else if (command == "append") {
+         if(kv_store_.find(v-&gt;data_[2])!=kv_store_.end()){
+           //  kv_store_[v-&gt;data_[2]] = kv_store_[v-&gt;data_[2]].append(v-&gt;data_[3]);
+           }
+           else{  
+            kv_store_[v-&gt;data_[2]] = v-&gt;data_[3];
+           }
+           
+       }else if (command == "get") {
+          // Log_info("In OnNext GET for site %d for key %s", site.site_id_,v-&gt;data_[2].c_str());
+           isMajority = true;
+       }     
+       }
+       site.mtx_.unlock();
+}
+
+shared_ptr&lt;ShardKvClient&gt; ShardKvServer::CreateClient(Communicator* comm) {
+  auto cli = make_shared&lt;ShardKvClient&gt;();
+  cli-&gt;commo_ = comm;
+  verify(cli-&gt;commo_ != nullptr);
+  static uint32_t id = 0;
+  id++;
+  cli-&gt;cli_id_ = id; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

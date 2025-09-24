@@ -1,0 +1,481 @@
+<HTML>
+<HEAD>
+<TITLE>./spring19/rahulmadiwale/src/shardmaster/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./spring19/shireennagdive/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+//4A Passes
+import (
+	"raft"
+	"reflect"
+	"sort"
+	"time"
+)
+import "labrpc"
+import "sync"
+import "labgob"
+
+type ShardMaster struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	// Your data here.
+	configNumber              int
+	configs                   []Config // indexed by config num
+	indexToCommand            map[int]chan Op
+	latestSerialNumForClients map[int64]int64
+}
+
+type kv struct {
+	Key   int
+	Value int
+}
+
+const WAIT_INTERVAL = 1 * time.Second
+
+type OpWithReply struct {
+	OpType  string
+	Command interface{}
+	Reply   interface{}
+}
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match221-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+type Op struct {
+	// Your data here.
+	OpType  string
+	Command interface{}
+}
+
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+	// Your code here.
+	Op1 := Op{OpType: "Join", Command: *args}
+</FONT>	index, _, isLeader := sm.rf.Start(Op1)
+	if !isLeader {
+		reply.WrongLeader = true
+		return
+	}
+
+	sm.mu.Lock()
+	_, ok := sm.indexToCommand[index]
+	if !ok {
+		sm.indexToCommand[index] = make(chan Op, 1)
+
+	}
+	chanMsg := sm.indexToCommand[index]
+	sm.mu.Unlock()
+
+	select {
+	case msg := &lt;-chanMsg:
+		//log.Println("msg :",msg)
+		//log.Println("Op1 :",Op1)
+		found, ok := msg.Command.(JoinArgs)
+		if !ok {
+			reply.WrongLeader = true
+		} else {
+			if reflect.DeepEqual(found.Servers, args.Servers) && found.RequestId == args.RequestId && found.ClientId == args.ClientId {
+				reply.WrongLeader = false
+			} else {
+				reply.WrongLeader = true
+			}
+		}
+	case &lt;-time.After(WAIT_INTERVAL):
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match221-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		reply.WrongLeader = true
+	}
+}
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+	// Your code here.
+	Op1 := Op{OpType: "Leave", Command: *args}
+</FONT>	index, _, isLeader := sm.rf.Start(Op1)
+	if !isLeader {
+		reply.WrongLeader = true
+		return
+	}
+	sm.mu.Lock()
+
+	if _, ok := sm.indexToCommand[index]; !ok {
+		sm.indexToCommand[index] = make(chan Op, 1)
+	}
+
+	chanMsg := sm.indexToCommand[index]
+	sm.mu.Unlock()
+
+	select {
+	case msg := &lt;-chanMsg:
+		found, ok := msg.Command.(LeaveArgs)
+		if !ok {
+			reply.WrongLeader = true
+		} else {
+			if reflect.DeepEqual(found.GIDs, args.GIDs) && found.RequestId == args.RequestId && found.ClientId == args.ClientId {
+				reply.WrongLeader = false
+			} else {
+				reply.WrongLeader = true
+			}
+		}
+	case &lt;-time.After(WAIT_INTERVAL):
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match221-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		reply.WrongLeader = true
+	}
+}
+
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+	Op1 := Op{OpType: "Move", Command: *args}
+</FONT>	index, _, isLeader := sm.rf.Start(Op1)
+	if !isLeader {
+		reply.WrongLeader = true
+		return
+	}
+
+	sm.mu.Lock()
+	if _, ok := sm.indexToCommand[index]; !ok {
+		sm.indexToCommand[index] = make(chan Op, 1)
+
+	}
+	chanMsg := sm.indexToCommand[index]
+	sm.mu.Unlock()
+
+	select {
+	case msg := &lt;-chanMsg:
+		if msg == Op1 {
+			reply.WrongLeader = false
+		} else {
+			reply.WrongLeader = true
+		}
+	case &lt;-time.After(WAIT_INTERVAL):
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match221-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		reply.WrongLeader = true
+	}
+}
+
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+	//New Code
+	Op1 := Op{OpType: "Query", Command: *args}
+</FONT>	index, _, isLeader := sm.rf.Start(Op1)
+	if !isLeader {
+		reply.WrongLeader = true
+		return
+	}
+
+	sm.mu.Lock()
+	if _, ok := sm.indexToCommand[index]; !ok {
+		sm.indexToCommand[index] = make(chan Op, 1)
+
+	}
+	chanMsg := sm.indexToCommand[index]
+	sm.mu.Unlock()
+
+	select {
+	case msg := &lt;-chanMsg:
+		if msg == Op1 {
+			reply.WrongLeader = false
+			if args.Num == -1 || args.Num &gt;= sm.configNumber {
+				reply.Config = sm.configs[sm.configNumber]
+			} else {
+				reply.Config = sm.configs[args.Num]
+			}
+		} else {
+			reply.WrongLeader = true
+		}
+	case &lt;-time.After(WAIT_INTERVAL):
+		reply.WrongLeader = true
+	}
+}
+
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+// turn off debug output from this instance.
+//
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+	// Your code here, if desired.
+}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+	return sm.rf
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	sm := new(ShardMaster)
+	sm.me = me
+
+	sm.configs = make([]Config, 1)
+	sm.configs[0].Groups = map[int][]string{}
+
+	labgob.Register(Op{})
+	labgob.Register(JoinArgs{})
+	labgob.Register(LeaveArgs{})
+	labgob.Register(MoveArgs{})
+	labgob.Register(QueryArgs{})
+	labgob.Register(JoinReply{})
+	labgob.Register(LeaveReply{})
+	labgob.Register(MoveReply{})
+	labgob.Register(QueryReply{})
+
+	sm.applyCh = make(chan raft.ApplyMsg)
+
+	sm.configNumber = 0
+	sm.latestSerialNumForClients = make(map[int64]int64)
+	sm.indexToCommand = make(map[int]chan Op, 1)
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+	// Your code here.
+
+	go sm.startServer()
+	return sm
+}
+
+func (sm *ShardMaster) startServer() {
+	for {
+		msg := &lt;-sm.applyCh
+		//	log.Println("msg recieved on channel is :", msg)
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match221-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		request := msg.Command.(Op)
+
+		if request.OpType == "Join" {
+			sm.executeJoin(request.Command.(JoinArgs))
+		} else if request.OpType == "Leave" {
+			sm.executeLeave(request.Command.(LeaveArgs))
+		} else if request.OpType == "Move" {
+			sm.executeMove(request.Command.(MoveArgs))
+</FONT>		}
+		sm.mu.Lock()
+		_, ok := sm.indexToCommand[msg.CommandIndex]
+		if !ok {
+			sm.indexToCommand[msg.CommandIndex] = make(chan Op, 1)
+		}
+		//	log.Println("request is  : ",request)
+		sm.indexToCommand[msg.CommandIndex] &lt;- request
+		//log.Println("assigned to index :", sm.indexToCommand[msg.CommandIndex])
+		sm.mu.Unlock()
+	}
+}
+
+func reDistributeShards(config *Config) {
+	//log.Println("in redistribute")
+	shardsHavingGroup := make(map[int][]int)
+	shardsHavingNoGroup := make([]int, 0)
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match221-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	for gid := range config.Groups {
+		shardsHavingGroup[gid] = make([]int, 0)
+	}
+
+	for shard, gid := range config.Shards {
+		if gid == 0 {
+			shardsHavingNoGroup = append(shardsHavingNoGroup, shard)
+		} else {
+			shardsHavingGroup[gid] = append(shardsHavingGroup[gid], shard)
+		}
+	}
+	isOneGroupPresentLessThanMinShards := true
+</FONT>	if len(config.Groups) != 0 {
+
+		minShards := NShards / len(config.Groups)
+		index := 0
+		var gidToLen1 []kv
+		for {
+			isOneGroupPresentLessThanMinShards = true
+			for areShardsUnAssigned(shardsHavingNoGroup) && isOneGroupPresentLessThanMinShards {
+				isOneGroupPresentLessThanMinShards = false
+
+				//log.Println(index,"index")
+				val := shardsHavingNoGroup[index]
+				if val != -1 {
+					for gid, shards := range shardsHavingGroup {
+						if len(shards) &lt; minShards && val != -1 {
+							isOneGroupPresentLessThanMinShards = true
+							shardsHavingGroup[gid] = append(shardsHavingGroup[gid], val)
+							shardsHavingNoGroup[index] = -1
+							index++
+							if index &lt; len(shardsHavingNoGroup) {
+								val = shardsHavingNoGroup[index]
+							} else {
+								break
+							}
+						}
+					}
+				} else {
+					break
+				}
+			}
+
+			for gid := range shardsHavingGroup {
+				if areShardsUnAssigned(shardsHavingNoGroup) && index &lt; len(shardsHavingNoGroup) {
+					val := shardsHavingNoGroup[index]
+					shardsHavingGroup[gid] = append(shardsHavingGroup[gid], val)
+					shardsHavingNoGroup[index] = -1
+					index++
+				}
+			}
+			var gidToLen []kv
+			for k, v := range shardsHavingGroup {
+				gidToLen = append(gidToLen, kv{k, len(v)})
+			}
+			sort.Slice(gidToLen, func(i, j int) bool {
+				return gidToLen[i].Value &gt; gidToLen[j].Value
+			})
+
+			if !areShardsUnAssigned(shardsHavingNoGroup) && isOneGroupPresentLessThanMinShards && index == len(shardsHavingNoGroup) {
+
+				j := len(gidToLen) - 1
+				i := 0
+				flag := true
+				for i != j && flag {
+					if gidToLen[i].Value &gt; minShards && gidToLen[j].Value &lt; minShards {
+						shardsHavingGroup[gidToLen[j].Key] = append(shardsHavingGroup[gidToLen[j].Key], shardsHavingGroup[gidToLen[i].Key][0])
+						shardsHavingGroup[gidToLen[i].Key] = shardsHavingGroup[gidToLen[i].Key][1:]
+						gidToLen[i].Value = len(shardsHavingGroup[gidToLen[i].Key])
+						gidToLen[j].Value = len(shardsHavingGroup[gidToLen[j].Key])
+
+						if gidToLen[i].Value == minShards {
+							i++
+						}
+						if gidToLen[j].Value == minShards {
+							j--
+						}
+					} else {
+						flag = false
+					}
+				}
+			}
+			if !isUnBalanced(gidToLen, minShards) {
+				gidToLen1 = gidToLen
+				break
+			}
+			//log.Println("in here only")
+		}
+		for _, val := range gidToLen1 {
+			for i := 0; i &lt; val.Value; i++ {
+				config.Shards[shardsHavingGroup[val.Key][i]] = val.Key
+			}
+		}
+
+	}
+}
+
+func areShardsUnAssigned(shardsHavingNoGroup []int) bool {
+	for _, value := range shardsHavingNoGroup {
+		if value != -1 {
+			return true
+		}
+	}
+	return false
+}
+
+func isUnBalanced(ss []kv, min int) bool {
+	sum := 0
+	if ss[len(ss)-1].Value &lt; min {
+		return true
+	}
+	for _, val := range ss {
+		sum += val.Value
+	}
+	return !(NShards == sum)
+}
+
+func (sm *ShardMaster) executeMove(moveArgs MoveArgs) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	sm.createNewConfig()
+	sm.configs[sm.configNumber].Shards[moveArgs.Shard] = moveArgs.GID
+}
+
+func (sm *ShardMaster) executeLeave(leaveArgs LeaveArgs) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	//log.Println("in leave iwth GID ", leaveArgs.GIDs)
+	sm.createNewConfig()
+
+	for GID := range leaveArgs.GIDs {
+		//log.Println("GID is - ",leaveArgs.GIDs[GID])
+		for shard, gid := range sm.configs[sm.configNumber].Shards {
+			if leaveArgs.GIDs[GID] == gid || gid == 0 {
+				sm.configs[sm.configNumber].Shards[shard] = 0
+			}
+		}
+		delete(sm.configs[sm.configNumber].Groups, leaveArgs.GIDs[GID])
+		//log.Println("deleted - ",leaveArgs.GIDs[GID])
+		//log.Println("latestConfig - ", sm.configs[sm.configNumber].Groups)
+	}
+
+	reDistributeShards(&(sm.configs[sm.configNumber]))
+}
+
+func (sm *ShardMaster) executeJoin(joinArgs JoinArgs) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	sm.createNewConfig()
+
+	latestConfig := sm.configs[sm.configNumber]
+
+	for k, v := range joinArgs.Servers {
+		latestConfig.Groups[k] = v
+	}
+	reDistributeShards(&latestConfig)
+
+	sm.configs[sm.configNumber] = latestConfig
+}
+
+func (sm *ShardMaster) isLatestRequest(clientId int64, requestSerialNum int64) bool {
+	sm.mu.Lock()
+
+	value, ok := sm.latestSerialNumForClients[clientId]
+	if !ok {
+		sm.latestSerialNumForClients[clientId] = requestSerialNum
+		sm.mu.Unlock()
+
+		return true
+	}
+	if value &gt;= requestSerialNum {
+		sm.mu.Unlock()
+
+		return false
+	} else {
+		sm.latestSerialNumForClients[clientId] = requestSerialNum
+		sm.mu.Unlock()
+
+		return true
+	}
+}
+
+func (sm *ShardMaster) createNewConfig() {
+	var config Config
+
+	config.Num = sm.configNumber + 1
+	config.Groups = make(map[int][]string)
+	config.Shards = sm.configs[sm.configNumber].Shards
+
+	for k, v := range sm.configs[sm.configNumber].Groups {
+		config.Groups[k] = v
+	}
+	sm.configNumber++
+	sm.configs = append(sm.configs, config)
+
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

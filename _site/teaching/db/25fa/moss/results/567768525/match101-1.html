@@ -1,0 +1,497 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/Anudeep-Mad/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/Anudeep-Mad/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+
+import (
+
+	"raft"
+	"time"
+	"sort"
+)
+import "labrpc"
+import "sync"
+import "labgob"
+
+
+type ShardMaster struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	// Your data here.
+	executed map[int64]int
+	client_req map[int64]chan Op
+	store map[string]string
+
+	configs []Config // indexed by config num
+}
+
+
+type Op struct {
+	// Your data here.
+	Seq int
+	ClerkId int64
+	Servers map[int][]string
+	Num int
+	Shard int
+	Gids []int
+	Gid int
+	Method string
+
+}
+
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match101-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+	// Your code here.
+	sm.mu.Lock()
+	//fmt.Println("Recieved join request ....",args)
+	var op Op
+	op.Seq=args.ClerkSeq
+	op.ClerkId = args.ClerkId
+	op.Servers=args.Servers
+	op.Method="Join"
+	_,is := sm.rf.GetState()
+</FONT><A NAME="1"></A><FONT color = #00FF00><A HREF="match101-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	reply.WrongLeader=!is
+	if !is{
+		sm.mu.Unlock()
+		return
+	}
+
+	//fmt.Println(sm.me," Sent Start req")
+	_,flag:= sm.client_req[args.ClerkId]
+	if !flag{
+		sm.client_req[args.ClerkId]= make(chan Op,500)
+	}
+	sm.rf.Start(op)
+	client_channel:= sm.client_req[args.ClerkId]
+	sm.mu.Unlock()
+</FONT>
+	select {
+	case data1 := &lt;-client_channel:
+		if op.Seq == data1.Seq {
+			//fmt.Println(data1.Method," received values ",data1," with sequence ",data1.Seq)
+			reply.Err = OK
+			return
+		}
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match101-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	case &lt;-time.After(2 * time.Second):
+		reply.Err = "TimeOut"
+	}
+
+}
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+	sm.mu.Lock()
+	// Your code here.
+	//fmt.Println("Leave request received ",args)
+	var op Op
+	op.Seq=args.ClerkSeq
+	op.ClerkId = args.ClerkId
+	op.Gids=args.GIDs
+</FONT>	op.Method="Leave"
+	_,is := sm.rf.GetState()
+	reply.WrongLeader=!is
+	if !is{
+		sm.mu.Unlock()
+		return
+	}
+
+
+	_,flag:= sm.client_req[args.ClerkId]
+	if !flag{
+		sm.client_req[args.ClerkId]= make(chan Op,500)
+	}
+	sm.rf.Start(op)
+	client_channel:= sm.client_req[args.ClerkId]
+	sm.mu.Unlock()
+
+	select {
+	case data1 := &lt;-client_channel:
+		if op.Seq == data1.Seq {
+			//fmt.Println(data1.Method," received values ",data1," with sequence ",data1.Seq)
+			reply.Err = OK
+			return
+		}
+	case &lt;-time.After(2 * time.Second):
+		reply.Err = "TimeOut"
+	}
+
+}
+
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+	sm.mu.Lock()
+	// Your code here.
+	var op Op
+	op.Seq=args.ClerkSeq
+	op.ClerkId = args.ClerkId
+	op.Shard=args.Shard
+	op.Gid =args.GID
+	op.Method="Move"
+	_,is := sm.rf.GetState()
+	reply.WrongLeader=!is
+	if !is{
+		sm.mu.Unlock()
+		return
+	}
+
+
+	_,flag:= sm.client_req[args.ClerkId]
+	if !flag{
+		sm.client_req[args.ClerkId]= make(chan Op,500)
+	}
+	sm.rf.Start(op)
+	client_channel:= sm.client_req[args.ClerkId]
+	sm.mu.Unlock()
+
+	select {
+	case data1 := &lt;-client_channel:
+		if op.Seq == data1.Seq {
+			//fmt.Println(data1.Method," received values ",data1," with sequence ",data1.Seq)
+			reply.Err = OK
+			return
+		}
+	case &lt;-time.After(2 * time.Second):
+		reply.Err = "TimeOut"
+	}
+
+}
+
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+	//fmt.Println("Query recieved with args ",args)
+	sm.mu.Lock()
+	var op Op
+	op.Seq=args.ClerkSeq
+	op.ClerkId = args.ClerkId
+	op.Num=args.Num
+	op.Method="Query"
+	_,is := sm.rf.GetState()
+	reply.WrongLeader=!is
+	if !is{
+		sm.mu.Unlock()
+		return
+	}
+
+
+	_,flag:= sm.client_req[args.ClerkId]
+	if !flag{
+		sm.client_req[args.ClerkId]= make(chan Op,500)
+	}
+	sm.rf.Start(op)
+	client_channel:= sm.client_req[args.ClerkId]
+	sm.mu.Unlock()
+
+	select {
+	case data1 := &lt;-client_channel:
+		//fmt.Println(data1, " is the data received ",data1.Num," Seq: ",data1.Seq)
+		//fmt.Println(op.Seq)
+		if op.Seq == data1.Seq {
+			if data1.Num==-1{
+				//fmt.Println("Sending the latest config ",sm.configs)
+				sm.mu.Lock()
+				data11:= sm.configs[len(sm.configs)-1]
+				sm.mu.Unlock()
+				reply.Config=data11
+
+			}
+			if data1.Num&gt;0 && data1.Num&lt;len(sm.configs) {
+				reply.Config=sm.configs[data1.Num]
+			}
+
+			//fmt.Println(data1.Method," received values ",data1," with sequence ",data1.Seq)
+			reply.Err = OK
+			return
+		}
+	case &lt;-time.After(2 * time.Second):
+		reply.Err = "TimeOut"
+	}
+
+
+}
+
+func contains(arr []int, j int) bool {
+	for i:= range arr {
+		if j == arr[i] {
+			return true
+		}
+	}
+	return false
+}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match101-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (sm *ShardMaster) ReadStart(){
+	for {
+		data := &lt;-sm.applyCh
+		var tt int
+
+		sm.mu.Lock()
+		if data.Command != 0 {
+			tt = sm.executed[data.Command.(Op).ClerkId]
+			//fmt.Println(sm.me," Data recieved ",data," data num:",data.Command.(Op).Num)
+		}
+
+		sm.mu.Unlock()
+		if data.Command != 0 && data.Command.(Op).Seq &gt; tt {
+			sm.mu.Lock()
+			sm.executed[data.Command.(Op).ClerkId] = data.Command.(Op).Seq
+			sm.mu.Unlock()
+			if data.Command.(Op).Method == "Query" {
+</FONT>				//fmt.Println(data.Command.(Op))
+				sm.mu.Lock()
+				temp:= data.Command.(Op)
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match101-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				_, fl := sm.client_req[data.Command.(Op).ClerkId]
+				chann:= sm.client_req[data.Command.(Op).ClerkId]
+				sm.mu.Unlock()
+				if fl {
+					go func() {
+						chann &lt;- temp
+					}()
+				}
+
+			} else if data.Command.(Op).Method=="Join"{
+</FONT>				//fmt.Println(sm.configs)
+				sm.mu.Lock()
+
+				data_join:= data.Command.(Op)
+				var cfg Config
+				cfg.Groups=make(map[int][] string)
+				if len(sm.configs) &gt;0{
+					config_ex:= sm.configs[len(sm.configs)-1]
+					//fmt.Println("Config ex",config_ex)
+					for k,v := range config_ex.Groups{
+						cfg.Groups[k]=v
+					}
+					//fmt.Println("DATA JOIN SERVERS ",data_join.Servers)
+					for k,v := range data_join.Servers{
+						cfg.Groups[k]=v
+					}
+					//fmt.Println("CONFIG SM IS .........",sm.configs)
+				}else{
+
+					cfg.Groups=data_join.Servers
+				}
+				var arr []int
+				f:= 0
+				for k,_:= range cfg.Groups{
+					arr=append(arr,k)
+					f++
+				}
+				sort.Ints(arr)
+				//fmt.Println(arr," is the size array")
+				cfg.Num=len(sm.configs)
+
+				count:=0
+				iter:=0
+				for iter&lt;10 && count&lt;len(arr){
+					c:=iter
+					for  c&lt; iter+(10/len(cfg.Groups)){
+						//fmt.Println("count is ",count," for this iter ",iter)
+						cfg.Shards[c]=arr[count]
+						c++
+
+					}
+
+					iter+=(10/len(cfg.Groups))
+					//fmt.Println("ITER is ",iter)
+
+					count++
+
+				}
+				cc:=0
+				for iter&lt;10{
+					cfg.Shards[iter]=arr[cc]
+					cc++
+					iter++
+				}
+				sm.configs=append(sm.configs, cfg)
+				//fmt.Println(" SM. CONFIGS ",sm.configs)
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match101-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				_, fl := sm.client_req[data.Command.(Op).ClerkId]
+				chann:= sm.client_req[data.Command.(Op).ClerkId]
+				sm.mu.Unlock()
+				if fl {
+					go func() {
+						//fmt.Print("Go sending back JOIN.............")
+						chann &lt;- data_join
+</FONT>					}()
+				}
+			}else if data.Command.(Op).Method=="Leave"{
+				sm.mu.Lock()
+				data_leave:= data.Command.(Op)
+				var cfg Config
+				gids:= data_leave.Gids
+				cfg.Groups=make(map[int][] string)
+				//fmt.Println("In the leave block")
+				if len(sm.configs) &gt;0{
+
+					config_ex:= sm.configs[len(sm.configs)-1]
+
+					//for ran:= range gids{
+					for k,v := range config_ex.Groups{
+
+						if !contains(gids,k){
+							//fmt.Println("k: ",k ," and gids ran: ",gids," ",ran)
+							cfg.Groups[k]=v
+						}
+					}
+
+					//fmt.Println("GID after leave..........................",cfg," gid ",gids)
+					var arr []int
+					f:= 0
+					for k,_:= range cfg.Groups{
+						arr=append(arr,k)
+						f++
+					}
+					sort.Ints(arr)
+					//fmt.Println(arr," is the size array")
+
+					//fmt.Println("LEAVE'S cfg.Num groups:     ",cfg.Groups)
+					cfg.Num=len(sm.configs)
+					if len(cfg.Groups)&gt;0{
+						count:=0
+						iter:=0
+						for iter&lt;10 && count&lt;len(cfg.Groups) {
+							c:=iter
+
+							for  c&lt; iter+(10/len(cfg.Groups)){
+								//fmt.Println("count is ",count," for this iter ",iter)
+								cfg.Shards[c]=arr[count]
+								c++
+
+							}
+							iter+=(10/len(cfg.Groups))
+							//fmt.Println("ITER is ",iter)
+
+							count++
+						}
+						cc:=0
+						for iter&lt;10{
+							cfg.Shards[iter]=arr[cc]
+							cc++
+							iter++
+						}
+
+					}
+
+					//fmt.Println(" LEAVE ",data_leave,"        						SM. CONFIGS ",sm.configs)
+
+
+
+
+				}
+				cfg.Num=len(sm.configs)
+				sm.configs=append(sm.configs,cfg)
+				_, fl := sm.client_req[data.Command.(Op).ClerkId]
+				chann:= sm.client_req[data.Command.(Op).ClerkId]
+				sm.mu.Unlock()
+				if fl {
+					go func() {
+						//fmt.Print("Go sending back JOIN.............")
+						chann &lt;- data_leave
+					}()
+				}
+			}else if data.Command.(Op).Method=="Move"{
+				sm.mu.Lock()
+				data_move:= data.Command.(Op)
+				var cfg Config
+				shard_id:=data_move.Shard
+				target_g_id:= data_move.Gid
+				cfg.Groups=make(map[int][] string)
+				//fmt.Println("In the leave block")
+				if len(sm.configs) &gt;0{
+
+					config_ex:= sm.configs[len(sm.configs)-1]
+					cfg=config_ex
+					for ran:= range config_ex.Shards{
+						if ran==shard_id{
+							cfg.Shards[ran]=target_g_id
+						}
+					}
+
+					cfg.Num=len(sm.configs)
+					sm.configs=append(sm.configs,cfg)
+					//fmt.Println(" SM. CONFIGS ",sm.configs)
+
+
+
+				}
+				_, fl := sm.client_req[data.Command.(Op).ClerkId]
+				chann:= sm.client_req[data.Command.(Op).ClerkId]
+				sm.mu.Unlock()
+				if fl {
+					go func() {
+						//fmt.Print("Go sending back JOIN.............")
+						chann &lt;- data_move
+					}()
+				}
+			}
+
+		}
+	}
+}
+
+
+
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+	// Your code here, if desired.
+}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+	return sm.rf
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	sm := new(ShardMaster)
+	sm.me = me
+
+	sm.configs = make([]Config, 1)
+	sm.configs[0].Groups = map[int][]string{}
+
+	labgob.Register(Op{})
+	sm.applyCh = make(chan raft.ApplyMsg)
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+
+	// Your code here.
+
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match101-0.html#6" TARGET="0"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	sm.store = make(map[string]string)
+	sm.executed = make(map[int64]int)
+	sm.client_req = make(map[int64]chan Op)
+</FONT>	go sm.ReadStart()
+
+	return sm
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

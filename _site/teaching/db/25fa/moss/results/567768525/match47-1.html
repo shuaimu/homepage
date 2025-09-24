@@ -1,0 +1,430 @@
+<HTML>
+<HEAD>
+<TITLE>./github/KDF5000/MIT-6.824-2016/src/shardkv/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github/KDF5000/MIT-6.824-2016/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+
+import "raft"
+import "labrpc"
+import "sync"
+import "encoding/gob"
+import "container/list"
+import "time"
+import "sort"
+// import "fmt"
+
+
+type ShardMaster struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	// Your data here.
+
+	configs []Config // indexed by config num
+	executedID map[int64]int
+	notify     map[int][]chan OpReply
+	Recv       chan raft.ApplyMsg
+	Msgs       *list.List
+	QuitCH     chan bool
+	lastIncludedIndex int
+}
+
+
+type Op struct {
+	// Your data here.
+	Client     int64
+	Sequence   int
+	Type       string
+	Servers    map[int][]string
+	GIDs       []int
+	Shard      int
+	GID        int
+	Num        int
+}
+
+type OpReply struct {
+	Client      int64
+	Sequence    int
+	WrongLeader bool
+	Err         Err
+	Config      Config
+}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match47-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_11.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (sm * ShardMaster) clientRequest(op Op, reply *OpReply) {
+	sm.mu.Lock()
+	if _, ok := sm.executedID[op.Client]; !ok {
+		sm.executedID[op.Client] = -1
+	}
+	index, term, isLeader := sm.rf.Start(op)
+	if !isLeader {
+		sm.mu.Unlock()
+		reply.WrongLeader = true
+		return
+	}
+	if _, ok := sm.notify[index]; !ok {
+		sm.notify[index] = make([]chan OpReply, 0)
+	}
+	notifyMe := make(chan OpReply)
+	sm.notify[index] = append(sm.notify[index], notifyMe)
+	sm.mu.Unlock()
+	
+	var executedOp OpReply
+	var notified = false
+	for {
+		select {
+		case executedOp = &lt;- notifyMe:
+			notified = true
+			break
+		case &lt;- time.After(10*time.Millisecond):
+			sm.mu.Lock()
+			if currentTerm, _ := sm.rf.GetState(); term != currentTerm {
+				if sm.lastIncludedIndex &lt; index {
+					reply.WrongLeader = true
+					delete(sm.notify, index)
+					sm.mu.Unlock()
+					return
+				}
+			}
+			sm.mu.Unlock()
+		case &lt;- sm.QuitCH:
+			reply.Err = "ServerFail"
+			return
+		}
+		if notified {
+</FONT>			break
+		}
+	}
+
+	reply.WrongLeader = false
+<A NAME="8"></A><FONT color = #00FFFF><A HREF="match47-0.html#8" TARGET="0"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	if executedOp.Client != op.Client || executedOp.Sequence != op.Sequence {
+		reply.Err = "FailCommit"
+		reply.WrongLeader = true
+	} else {
+		reply.Err = OK
+</FONT>		reply.Config = executedOp.Config
+		reply.Client = executedOp.Client
+		reply.Sequence = executedOp.Sequence
+	}
+}
+
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+	// Your code here.
+	servers := make(map[int][]string)
+	for key := range args.Servers {
+		servers[key] = args.Servers[key]
+	}
+	op := Op{Client:args.Client, Sequence:args.Sequence, Type: "Join", Servers:servers}
+	opreply := &OpReply{}
+	sm.clientRequest(op, opreply)
+	reply.WrongLeader = opreply.WrongLeader
+	reply.Err = opreply.Err
+	return
+}
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match47-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+	// Your code here.
+	op := Op{Client:args.Client, Sequence:args.Sequence, Type: "Leave", GIDs: args.GIDs}
+	opreply := &OpReply{}
+	sm.clientRequest(op, opreply)
+	reply.WrongLeader = opreply.WrongLeader
+	reply.Err = opreply.Err
+</FONT>	return
+}
+
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+	// Your code here.
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match47-0.html#7" TARGET="0"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	op := Op{Client:args.Client, Sequence:args.Sequence, Type: "Move", Shard:args.Shard, GID:args.GID}
+	opreply := &OpReply{}
+	sm.clientRequest(op, opreply)
+	reply.WrongLeader = opreply.WrongLeader
+	reply.Err = opreply.Err
+</FONT>	return
+}
+
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+	// Your code here.
+	op := Op{Client:args.Client, Sequence:args.Sequence, Type: "Query", Num:args.Num}
+	opreply := &OpReply{}
+	sm.clientRequest(op, opreply)
+	reply.WrongLeader = opreply.WrongLeader
+	reply.Err = opreply.Err
+	reply.Config = opreply.Config
+	return
+}
+
+func (sm *ShardMaster) getLastConfig() *Config {
+	lastConfig := sm.configs[len(sm.configs)-1]
+	newConfig := &Config{Num:lastConfig.Num}
+	newConfig.Shards = [NShards]int{}
+	newConfig.Groups = make(map[int][]string)
+	for i := range lastConfig.Shards {
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match47-0.html#6" TARGET="0"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		newConfig.Shards[i] = lastConfig.Shards[i]
+	}
+	for key := range lastConfig.Groups {
+		newConfig.Groups[key] = lastConfig.Groups[key]
+	}
+	return newConfig
+	
+}
+
+func (sm *ShardMaster) getShardsCount(cf Config) map[int]int {
+</FONT>	count := make(map[int]int)
+	for _, gid := range cf.Shards {
+		if _, ok := count[gid]; !ok {
+			count[gid] = 1
+		} else {
+			count[gid] = count[gid] + 1
+		}
+	}
+	return count
+}
+
+func (sm *ShardMaster) applyJoin(op Op) {
+	
+	newConfig := sm.getLastConfig()
+	
+	shardsCount := sm.getShardsCount(*newConfig)
+	for key := range op.Servers {
+		newConfig.Groups[key] = op.Servers[key]
+		shardsCount[key] = 0
+	}
+	
+	if len(sm.configs) == 1 {
+		for gid := range op.Servers {
+			shardsCount[gid] = NShards
+			for s := range newConfig.Shards {
+				newConfig.Shards[s] = gid
+			}
+			break
+		}
+	}
+	
+	mean := NShards / len(newConfig.Groups)
+	
+	groupsID := []int{}
+	for i := range newConfig.Groups {
+		groupsID = append(groupsID, i)
+	}
+	sort.Ints(groupsID)
+	
+	for i := 0; i &lt; 2; i++ {
+		for shard, gid := range newConfig.Shards {
+			if shardsCount[gid] &gt; mean+1-i {
+				for _, newGid := range groupsID {
+					if shardsCount[newGid] &lt; mean+1-i {
+						newConfig.Shards[shard] = newGid
+						shardsCount[newGid]++
+						shardsCount[gid]--
+						break
+					}
+				}
+			}
+		}
+	}
+	newConfig.Num++
+	sm.configs = append(sm.configs, *newConfig)
+}
+
+func (sm *ShardMaster) applyLeave(op Op) {
+	newConfig := sm.getLastConfig()
+	shardsCount := sm.getShardsCount(*newConfig)
+	for _, v := range op.GIDs {
+		delete(newConfig.Groups, v)
+	}
+	mean := NShards / len(newConfig.Groups)
+
+	groupsID := []int{}
+	for i := range newConfig.Groups {
+		groupsID = append(groupsID, i)
+	}
+	sort.Ints(groupsID)
+	
+	for i := 0; i &lt; 2; i++ {
+		for shard, gid := range newConfig.Shards {
+			if _, ok := newConfig.Groups[gid]; !ok {
+				for _, newGid := range groupsID {
+					if shardsCount[newGid] &lt; mean+i {
+						newConfig.Shards[shard] = newGid
+						shardsCount[newGid]++
+						shardsCount[gid]--
+						break
+					}
+				}
+			}
+		}
+	}
+	newConfig.Num++
+	sm.configs = append(sm.configs, *newConfig)
+}
+
+func (sm *ShardMaster) applyMove(op Op) {
+	newConfig := sm.getLastConfig()
+	newConfig.Shards[op.Shard] = op.GID
+	newConfig.Num++
+	sm.configs = append(sm.configs, *newConfig)
+}
+
+func (sm *ShardMaster) applyQuery(op Op, res *OpReply) {
+	if op.Num == -1 || op.Num &gt;= len(sm.configs) {
+		res.Config = sm.configs[len(sm.configs)-1]
+	} else {
+		res.Config = sm.configs[op.Num]
+	}
+}
+
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+	// Your code here, if desired.
+	close(sm.QuitCH)
+}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+	return sm.rf
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	sm := new(ShardMaster)
+	sm.me = me
+
+	sm.configs = make([]Config, 1)
+	sm.configs[0].Groups = map[int][]string{}
+
+	gob.Register(Op{})
+	sm.applyCh = make(chan raft.ApplyMsg)
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+
+	// Your code here.
+	sm.executedID = make(map[int64]int)
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match47-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	sm.notify = make(map[int][]chan OpReply)
+	sm.QuitCH = make(chan bool)
+	sm.Msgs = list.New()
+	sm.Recv = make(chan raft.ApplyMsg)
+	sm.lastIncludedIndex = 0
+	
+	go func() {
+</FONT>
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match47-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		for {
+			var (
+				recvChan chan raft.ApplyMsg
+				recvVal  raft.ApplyMsg
+			)
+			if sm.Msgs.Len() &gt; 0 {
+				recvChan = sm.Recv
+				recvVal = sm.Msgs.Front().Value.(raft.ApplyMsg)
+			}
+			select {
+			case msg := &lt;- sm.applyCh:
+				sm.Msgs.PushBack(msg)
+			case recvChan &lt;- recvVal:
+				sm.Msgs.Remove(sm.Msgs.Front())
+			case &lt;- sm.QuitCH:
+				return
+			}
+		}
+	} ()
+
+	go func() {
+		for {
+			select {
+			case msg := &lt;- sm.Recv:
+				sm.mu.Lock()
+				sm.applyCommand(msg)
+				sm.mu.Unlock()
+			case &lt;- sm.QuitCH:
+				return
+</FONT>			}
+		}
+	} ()
+	
+	return sm
+}
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match47-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (sm *ShardMaster) applyCommand(msg raft.ApplyMsg) {
+	sm.lastIncludedIndex = msg.Index
+	op := msg.Command.(Op)
+	logIndex := msg.Index
+	clientID := op.Client
+	opSequence := op.Sequence
+	res := &OpReply{Client: clientID, Sequence: opSequence}
+
+	if _, ok := sm.executedID[clientID]; !ok {
+		sm.executedID[clientID] = -1
+	}
+    
+	if opSequence &gt; sm.executedID[clientID] {
+</FONT>		switch op.Type {
+		case "Join":
+			sm.applyJoin(op)
+		case "Leave":
+			sm.applyLeave(op)
+		case "Move":
+			sm.applyMove(op)
+		case "Query":
+			sm.applyQuery(op, res)
+		}
+		sm.executedID[clientID] = opSequence
+	} else {
+		if op.Type == "Query" {
+			if op.Num == -1 || op.Num &gt;= len(sm.configs) {
+				res.Config = sm.configs[len(sm.configs)-1]
+			} else {
+				res.Config = sm.configs[op.Num]
+			}
+		}
+	}
+
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match47-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	if _, ok := sm.notify[logIndex]; !ok {
+		return
+	}
+
+	for _,  c := range sm.notify[logIndex] {
+		sm.mu.Unlock()
+		c &lt;- *res
+		sm.mu.Lock()
+	}
+
+	delete(sm.notify, logIndex)
+</FONT>
+}
+
+</PRE>
+</PRE>
+</BODY>
+</HTML>

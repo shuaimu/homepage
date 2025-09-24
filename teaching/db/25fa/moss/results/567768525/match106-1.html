@@ -1,0 +1,188 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/jvorob/src/kvraft/client.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/jvorob/src/shardmaster/client.go<p><PRE>
+package shardmaster
+
+//
+// Shardmaster clerk.
+//
+
+import "labrpc"
+import "time"
+import "crypto/rand"
+import "math/big"
+import mathrand "math/rand"
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match106-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+type Clerk struct {
+	servers []*labrpc.ClientEnd
+
+	// ===
+    C_id ClientId
+    R_id RequestId
+
+    leaderGuess int //who do I think is currently the leader
+}
+
+func nrand() int64 {
+	max := big.NewInt(int64(1) &lt;&lt; 62)
+	bigx, _ := rand.Int(rand.Reader, max)
+</FONT>	x := bigx.Int64()
+	return x
+}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match106-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_26.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
+	ck := new(Clerk)
+	ck.servers = servers
+	// ===
+
+    ck.C_id = (ClientId)(nrand() % 100000) // TODO: TEMP: for legibility
+    ck.R_id = 0
+	return ck
+}
+
+func (ck *Clerk) Query(num int) Config {
+	args := &QueryArgs{}
+	args.Num = num
+
+    args.Req = RequestInfo{ ck.C_id, ck.R_id }
+
+    var reply *QueryReply
+    for {
+        reply = new(QueryReply);
+
+        rpc_ok := ck.servers[ck.leaderGuess].Call("ShardMaster.Query", args, reply);
+
+        if !rpc_ok {
+            ck.leaderGuess = mathrand.Intn(len(ck.servers))
+            DPrintf("Clk: rpc failed for %v\n", args.Req);
+            time.Sleep(100 * time.Millisecond)
+        } else if reply.Err != "" {
+            DPrintf("Clk: got back err %v, retrying %v\n", reply.Err, args.Req)
+            time.Sleep(100 * time.Millisecond)
+
+        } else if reply.WrongLeader {
+            ck.leaderGuess = mathrand.Intn(len(ck.servers))
+            time.Sleep(100 * time.Millisecond)
+        } else {
+            break
+        }
+    }
+
+    ck.R_id++;
+    DPrintf("Clk: Query %v returned: %+v\n", args.Req, reply);
+
+    return reply.Config
+}
+
+func (ck *Clerk) Join(servers map[int][]string) {
+</FONT><A NAME="1"></A><FONT color = #00FF00><A HREF="match106-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_13.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	args := &JoinArgs{}
+	args.Servers = servers
+
+    args.Req = RequestInfo{ ck.C_id, ck.R_id }
+
+    var reply *JoinReply
+    for {
+        reply = new(JoinReply);
+
+        rpc_ok := ck.servers[ck.leaderGuess].Call("ShardMaster.Join", args, reply);
+
+        if !rpc_ok {
+            ck.leaderGuess = mathrand.Intn(len(ck.servers))
+            DPrintf("Clk: rpc failed for %v\n", args.Req);
+            time.Sleep(100 * time.Millisecond)
+        } else if reply.Err != "" {
+            DPrintf("Clk: got back err %v, retrying %v\n", reply.Err, args.Req)
+            time.Sleep(100 * time.Millisecond)
+
+        } else if reply.WrongLeader {
+</FONT><A NAME="2"></A><FONT color = #0000FF><A HREF="match106-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+            ck.leaderGuess = mathrand.Intn(len(ck.servers))
+            time.Sleep(100 * time.Millisecond)
+        } else {
+            break
+        }
+    }
+
+    ck.R_id++;
+    DPrintf("Clk: Join %v returned: %+v\n", args.Req, reply);
+}
+
+func (ck *Clerk) Leave(gids []int) {
+</FONT>	args := &LeaveArgs{}
+	args.GIDs = gids
+
+    args.Req = RequestInfo{ ck.C_id, ck.R_id }
+
+    var reply *LeaveReply
+    for {
+        reply = new(LeaveReply);
+
+        rpc_ok := ck.servers[ck.leaderGuess].Call("ShardMaster.Leave", args, reply);
+
+        if !rpc_ok {
+            ck.leaderGuess = mathrand.Intn(len(ck.servers))
+            DPrintf("Clk: rpc failed for %v\n", args.Req);
+            time.Sleep(100 * time.Millisecond)
+        } else if reply.Err != "" {
+            DPrintf("Clk: got back err %v, retrying %v\n", reply.Err, args.Req)
+            time.Sleep(100 * time.Millisecond)
+
+        } else if reply.WrongLeader {
+            ck.leaderGuess = mathrand.Intn(len(ck.servers))
+            time.Sleep(100 * time.Millisecond)
+        } else {
+            break
+        }
+    }
+
+    ck.R_id++;
+    DPrintf("Clk: Leave %v returned: %+v\n", args.Req, reply);
+}
+
+func (ck *Clerk) Move(shard int, gid int) {
+	args := &MoveArgs{}
+	args.Shard = shard
+	args.GID = gid
+
+    args.Req = RequestInfo{ ck.C_id, ck.R_id }
+
+    var reply *MoveReply
+    for {
+        reply = new(MoveReply);
+
+        rpc_ok := ck.servers[ck.leaderGuess].Call("ShardMaster.Move", args, reply);
+
+        if !rpc_ok {
+            ck.leaderGuess = mathrand.Intn(len(ck.servers))
+            DPrintf("Clk: rpc failed for %v\n", args.Req);
+            time.Sleep(100 * time.Millisecond)
+        } else if reply.Err != "" {
+            DPrintf("Clk: got back err %v, retrying %v\n", reply.Err, args.Req)
+            time.Sleep(100 * time.Millisecond)
+
+        } else if reply.WrongLeader {
+            ck.leaderGuess = mathrand.Intn(len(ck.servers))
+            time.Sleep(100 * time.Millisecond)
+        } else {
+            break
+        }
+    }
+
+    ck.R_id++;
+    DPrintf("Clk: Move %v returned: %+v\n", args.Req, reply);
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

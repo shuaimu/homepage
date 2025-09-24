@@ -1,0 +1,242 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-DeepshikaR/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-DeepshikaR/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus
+{
+
+  static int volatile x1 =
+      MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     []() -&gt; Marshallable *
+                                     {
+                                       return new MultiStringMarshallable;
+                                     });
+
+  int64_t KvServer::GetNextOpId()
+  {
+    verify(sp_log_svr_);
+    int64_t ret = sp_log_svr_-&gt;site_id_;
+    ret = ret &lt;&lt; 32;
+    ret = ret + op_id_cnt_++;
+    return ret;
+  }
+
+  int KvServer::Put(const uint64_t &op_id,
+                    const string &k,
+                    const string &v)
+  {
+    RaftServer &RS = GetRaftServer();
+
+    if (RS.leaderStatus != 0)
+      return KV_NOTLEADER;
+
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(op_id));
+    s-&gt;data_.push_back("put");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);
+
+    uint64_t i, t;
+    std::shared_ptr&lt;Marshallable&gt; cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+    Log_info("Put command started");
+
+    RS.Start(cmd, &i, &t);
+    auto event = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+
+    eventList temp = {event, to_string(op_id), false};
+    Events.push_back(temp);
+    eventIndex[to_string(op_id)] = Events.size() - 1;
+    Log_info("event size:%d", Events.size());
+
+    event-&gt;Wait(1000000);
+
+    if (event-&gt;status_ == Event::TIMEOUT)
+    {
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match211-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      return KV_TIMEOUT;
+    }
+    else
+    {
+      return KV_SUCCESS;
+    }
+  }
+
+  int KvServer::Append(const uint64_t &op_id,
+                       const string &k,
+                       const string &v)
+  {
+    RaftServer &RS = GetRaftServer();
+</FONT>
+    if (RS.leaderStatus != 0)
+      return KV_NOTLEADER;
+
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(op_id));
+    s-&gt;data_.push_back("append");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);
+
+    uint64_t i, t;
+    std::shared_ptr&lt;Marshallable&gt; cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+    Log_info("Append command started");
+
+    RS.Start(cmd, &i, &t);
+    auto event = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+
+    eventList temp = {event, to_string(op_id), false};
+    Events.push_back(temp);
+    eventIndex[to_string(op_id)] = Events.size() - 1;
+    Log_info("event size:%d", Events.size());
+
+    event-&gt;Wait(1000000);
+
+    if (event-&gt;status_ == Event::TIMEOUT)
+    {
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match211-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      return KV_TIMEOUT;
+    }
+    else
+    {
+      return KV_SUCCESS;
+    }
+  }
+
+  int KvServer::Get(const uint64_t &op_id,
+                    const string &k,
+                    string *v)
+  {
+
+    RaftServer &RS = GetRaftServer();
+</FONT>
+    if (RS.leaderStatus != 0)
+      return KV_NOTLEADER;
+
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(op_id));
+    s-&gt;data_.push_back("get");
+    s-&gt;data_.push_back(k);
+
+    getOps.push_back(to_string(op_id));
+    getDescion[to_string(op_id)] = true;
+
+    uint64_t i, t;
+    std::shared_ptr&lt;Marshallable&gt; cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+    Log_info("Get command started");
+
+    RS.Start(cmd, &i, &t);
+    auto event = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+
+    eventList temp = {event, to_string(op_id), false};
+    Events.push_back(temp);
+    eventIndex[to_string(op_id)] = Events.size() - 1;
+    Log_info("event size:%d", Events.size());
+
+    event-&gt;Wait(1000000);
+
+    if (event-&gt;status_ == Event::TIMEOUT)
+    {
+      return KV_TIMEOUT;
+    }
+    else
+    {
+      Log_info("get returned");
+      Log_info("key: %s value: %s", k.c_str(), kvDB[k].c_str());
+      *v = kvDB[k];
+      if (getDescion[to_string(op_id)] == false)
+        return KV_NOTLEADER;
+      else
+        return KV_SUCCESS;
+    }
+  }
+
+  void KvServer::putOperation(vector&lt;string&gt; data)
+  {
+    Log_info("put to DB");
+    string key = data[2];
+    string value = data[3];
+    kvDB[key] = value;
+    Log_info("key: %s value: %s", key.c_str(), value.c_str());
+  }
+
+  void KvServer::appendOperation(vector&lt;string&gt; data)
+  {
+    Log_info("append to DB");
+    string key = data[2];
+    string value = data[3];
+    if (kvDB.find(key) != kvDB.end())
+    {
+      Log_info("key: %s value: %s", key.c_str(), kvDB[key].c_str());
+      Log_info("Append: %s", value.c_str());
+      kvDB[key] = kvDB[key].append(value);
+      Log_info("key: %s value: %s", key.c_str(), kvDB[key].c_str());
+    }
+    else
+    {
+      kvDB[key] = value;
+      Log_info("key: %s value: %s", key.c_str(), kvDB[key].c_str());
+    }
+  }
+
+  void KvServer::OnNextCommand(Marshallable &m)
+  {
+    Log_info("On Next Cmd");
+    auto v = (MultiStringMarshallable *)(&m);
+    string op = v-&gt;data_[1];
+    RaftServer &RS = GetRaftServer();
+    string opID = v-&gt;data_[0];
+
+    if (RS.leaderStatus != 0 && op == "get")
+    {
+      if (getOps.size() &gt; 0 && std::count(getOps.begin(), getOps.end(), opID) != 0)
+      {
+        Log_info("get requested");
+        getDescion[opID] = false;
+        int index = eventIndex[opID];
+        Events[index].event-&gt;Set(1);
+        Events[index].visited = true;
+      }
+    }
+
+    if (RS.leaderStatus == 0)
+    {
+      int index = eventIndex[opID];
+      Log_info("index: %d", index);
+      if (Events[index].visited == false)
+      {
+        Events[index].event-&gt;Set(1);
+        Events[index].visited = true;
+      }
+    }
+
+    if (op == "put")
+      putOperation(v-&gt;data_);
+    else if (op == "append")
+      appendOperation(v-&gt;data_);
+  }
+
+  shared_ptr&lt;KvClient&gt; KvServer::CreateClient()
+  {
+    /* don't change this function */
+    auto cli = make_shared&lt;KvClient&gt;();
+    verify(commo_ != nullptr);
+    cli-&gt;commo_ = commo_;
+    uint32_t id = sp_log_svr_-&gt;site_id_;
+    id = id &lt;&lt; 16;
+    cli-&gt;cli_id_ = id + cli_cnt_++;
+    return cli;
+  }
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,236 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-traj1998/src/shardkv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-AlexandraJeong/src/shardkv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+#include &lt;boost/serialization/serialization.hpp&gt;
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include &lt;boost/serialization/vector.hpp&gt; // Include this if you use standard containers
+#include &lt;sstream&gt;
+
+namespace janus {
+
+int64_t ShardKvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+void ShardKvServer::RunBackground(){
+  // if is leader, then send rpc to get new config
+  Print("running background in %ld", GetRaftServer().id_);
+  Coroutine::CreateRun([this](){
+    while(true){
+      Coroutine::Sleep(CONFIG_SAMPLE_TIME);
+      if(GetRaftServer().is_leader_){
+        shared_ptr&lt;uint32_t&gt; current_config_number = make_shared&lt;uint32_t&gt;();
+        shared_ptr&lt;string&gt; current_config = make_shared&lt;string&gt;();
+        *current_config_number = UINT32_MAX;
+        GetRaftServer().commo()-&gt;SendGetConfig(GetRaftServer().partition_id_, current_config_number, current_config);
+        for(int i = 0; i &lt; 20; i++){
+          Coroutine::Sleep(CONFIG_SAMPLE_TIME/20);
+          if((*current_config_number != UINT32_MAX && *current_config_number &gt; last_known_config_num_) && (last_known_config_num_ != 0 || *current_config_number == 2)){
+            try{
+              Print("NEED TO UPDATE CONFIG IN %ld from %d to %d", GetRaftServer().id_, last_known_config_num_, *current_config_number);
+
+              ShardConfig config;
+              std::stringstream stream(current_config-&gt;c_str()); // Use the string with serialized data
+              boost::archive::text_iarchive ia(stream);
+              ia &gt;&gt; config;
+
+              current_config_ = config;
+              last_known_config_num_ = *current_config_number;
+            } catch (const boost::archive::archive_exception& e) {
+              Print("caught boost error");
+            }
+          }
+        }
+      }
+    }
+  });
+}
+
+int ShardKvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v,
+                  const shardid_t& shard) {
+    // lab_shard: fill in your code
+  if(!GetRaftServer().is_leader_){
+    return KV_NOTLEADER;
+  }
+  auto owned_shards = current_config_.GetShards(GetRaftServer().partition_id_);
+  if(std::find(owned_shards.begin(), owned_shards.end(), shard) == owned_shards.end()){
+    return KV_NOTLEADER;
+  }
+  Print("putting in server with id = %ld", GetRaftServer().id_);
+  // formatting command as Marshallable
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  shared_ptr&lt;Marshallable&gt; cmd = s;
+
+  // sending command to raft server
+  uint64_t index = -1, term = -1;
+  GetRaftServer().Start(cmd, &index, &term);
+
+  //Print("INDEX = %ld TERM = %ld", index, term);
+
+  //listener to see if command is committed to log
+  for(int i = 0; i &lt; 20; i++){
+    Coroutine::Sleep(SHARD_KV_TIMEOUT/20);
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    //Print("COMMIT INDEX = %ld LOG SIZE = %ld", GetRaftServer().commit_index_, GetRaftServer().log_.size());
+    if (GetRaftServer().commit_index_ &gt;= index && GetRaftServer().log_[index].first == term) {
+      Print("put confirmed");
+      return KV_SUCCESS;
+    }
+  }
+  return KV_TIMEOUT;
+}
+
+int ShardKvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v,
+                     const shardid_t& shard) {
+    // lab_shard: fill in your code
+  if(!GetRaftServer().is_leader_){
+    return KV_NOTLEADER;
+  }
+  auto owned_shards = current_config_.GetShards(GetRaftServer().partition_id_);
+  if(std::find(owned_shards.begin(), owned_shards.end(), shard) == owned_shards.end()){
+    return KV_NOTLEADER;
+  }
+  Print("apppending in server with id = %ld", GetRaftServer().id_);
+  // formatting command as Marshallable
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back("append");
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  shared_ptr&lt;Marshallable&gt; cmd = s;
+
+
+  // sending command to raft server
+  uint64_t index = -1, term = -1;
+  GetRaftServer().Start(cmd, &index, &term);
+
+  //Print("INDEX = %ld TERM = %ld", index, term);
+
+  //listener to see if command is committed to log
+  for(int i = 0; i &lt; 20; i++){
+    Coroutine::Sleep(SHARD_KV_TIMEOUT/20);
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    //Print("COMMIT INDEX = %ld LOG SIZE = %ld", GetRaftServer().commit_index_, GetRaftServer().log_.size());
+    if (GetRaftServer().commit_index_ &gt;= index && GetRaftServer().log_[index].first == term) {
+      Print("append confirmed");
+      return KV_SUCCESS;
+    }
+  }
+  return KV_TIMEOUT;
+}
+
+int ShardKvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  const shardid_t& shard,
+                  string* v) {
+    // lab_shard: fill in your code
+  if(!GetRaftServer().is_leader_){
+    return KV_NOTLEADER;
+  }
+
+  auto owned_shards = current_config_.GetShards(GetRaftServer().partition_id_);
+  if(std::find(owned_shards.begin(), owned_shards.end(), shard) == owned_shards.end()){
+    return KV_NOTLEADER;
+  }
+
+  Print("getting in server with id = %ld", GetRaftServer().id_);
+
+  // formatting command as Marshallable
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match231-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("get");
+  s-&gt;data_.push_back(k);
+  shared_ptr&lt;Marshallable&gt; cmd = s;
+
+  // sending command to raft server
+  uint64_t index = -1, term = -1;
+</FONT>  GetRaftServer().Start(cmd, &index, &term);
+
+  //Print("INDEX = %ld TERM = %ld", index, term);
+  
+  for(int i = 0; i &lt; 20; i++){
+    Coroutine::Sleep(KV_TIMEOUT_DURATION/20);
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    //Print("COMMIT INDEX = %ld LOG SIZE = %ld", GetRaftServer().commit_index_, GetRaftServer().log_.size());
+    if (GetRaftServer().commit_index_ &gt;= index && GetRaftServer().log_[index].first == term) {
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match231-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      if(GetRaftServer().is_leader_){
+        *v = kv_store_[k];
+      }
+      return KV_SUCCESS;
+    }
+  }
+
+  return KV_TIMEOUT;
+}
+
+void ShardKvServer::OnNextCommand(Marshallable& m) {
+  // lab_shard: fill in your code
+  auto v = (MultiStringMarshallable*)(&m);
+  string type = v-&gt;data_[0].c_str();
+</FONT>  if(type == "start"){
+    RunBackground();
+    return;
+  }
+  //shard_mtx_.lock();
+  auto oid = v-&gt;data_[1].c_str();//std::stoull(v-&gt;data_[1].c_str());
+  auto key = v-&gt;data_[2].c_str();
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+  if(type == "put"){
+    auto value = v-&gt;data_[3].c_str();
+    kv_store_[key] = value;
+    Print("kv_store_[%s] = %s", key, kv_store_[key].c_str());
+    Print("finished on next command putting oid = %s in server %ld", oid, GetRaftServer().id_);
+  }else if(type == "append"){
+    auto value = v-&gt;data_[3].c_str();
+    if (kv_store_.find(key) != kv_store_.end()) {
+      kv_store_[key] += value;
+    }else{
+      kv_store_[key] = value;
+    }
+    Print("kv_store_[%s] = %s", key, kv_store_[key].c_str());
+    Print("finished on next command appending oid = %s in server %ld", oid, GetRaftServer().id_);
+  }
+  //shard_mtx_.unlock();
+}
+
+shared_ptr&lt;ShardKvClient&gt; ShardKvServer::CreateClient(Communicator* comm) {
+  Print("MAKING KV CLIENT");
+  auto cli = make_shared&lt;ShardKvClient&gt;();
+  cli-&gt;commo_ = comm;
+  verify(cli-&gt;commo_ != nullptr);
+  static uint32_t id = 0;
+  id++;
+  cli-&gt;cli_id_ = id; 
+  //Print("kv client leader index = %d", cli-&gt;leader_idx_);
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

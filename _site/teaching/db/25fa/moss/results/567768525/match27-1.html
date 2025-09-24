@@ -1,0 +1,1482 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/jvorob/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/jvorob/src/shardkv/server.go<p><PRE>
+package shardkv
+
+
+
+import (
+    "shardmaster"
+    "labrpc"
+    "raft"
+    "sync"
+    "labgob"
+    "time"
+    "fmt"
+    "bytes"
+    "log"
+)
+
+
+const Debug = 0
+
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match27-0.html#6" TARGET="0"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+// Used for general prints
+func (skv *ShardKV) Printf(format string, a ...interface{}) (n int, err error) {
+    if Debug &lt;= 0 {
+        return
+    }
+
+
+    //prints whether it thinks it's the leader (not super accurate)
+    ldrStr := "  "
+</FONT>    if skv.isLeader {
+        ldrStr = "L?"
+    }
+
+    // go format uses reshuffling of: Jan 2 15:04:05 2006 MST
+    // (note this is                    1 2  3  4  5    6  -7)
+    timeStr := time.Now().Format("05.000")[3:]; //drop the seconds
+    header := fmt.Sprintf("%v G%v KV%v %v===", timeStr, skv.gid, skv.me, ldrStr);
+
+    log.Printf(header +  format,  a...);
+    return;
+}
+
+// Used for leader prints: (will only log if it thinks it's the leader
+// Useful for ignoring duplicate applies to followers state machines
+func (skv *ShardKV) LdrPrint(format string, a ...interface{}) (n int, err error) {
+    _,skv.isLeader = skv.rf.GetState()
+    if skv.isLeader {
+        skv.Printf(format, a...)
+    }
+    return;
+}
+
+
+
+func (op Op) String() string{
+    str := ""
+
+    dataStr := ""
+    switch op.Op {
+    case "NewConfig":
+        configData := op.OpData.(NewConfigData)
+        dataStr = configData.String()
+    default:
+        dataStr = fmt.Sprintf("%v", op.OpData)
+    }
+
+    reqStr := fmt.Sprintf("R%v_%v", op.Req.C_id, op.Req.R_id)
+
+    str += fmt.Sprintf("&lt;%v %v, %v} %v&gt;",
+        reqStr, op.Op, dataStr, op.Err)
+    return str
+}
+
+
+
+func (ri RequestInfo) String() string{
+    return fmt.Sprintf("R%v_%v", ri.C_id, ri.R_id)
+}
+
+//func (conf *shardmaster.Config) String() string{
+func (cd NewConfigData) String() string {
+
+    return ConfigToString(cd.Config)
+}
+
+// can't make this a method since it would need to go into shardmaster package
+func ConfigToString(conf shardmaster.Config) string {
+    str := ""
+
+    var groups []int
+    for grp, _ := range conf.Groups {
+        groups = append(groups, grp)
+    }
+
+    str += fmt.Sprintf("{Conf:%v, %v, grps:%v}", conf.Num, conf.Shards, groups)
+    return str
+}
+
+// ==========================================================
+//
+//                      STRUCTURES 
+//
+// ==========================================================
+
+
+type ShardKV struct {
+	mu           sync.Mutex
+	me           int
+	rf           *raft.Raft
+	applyCh      chan raft.ApplyMsg
+	make_end     func(string) *labrpc.ClientEnd
+	gid          int
+	masters      []*labrpc.ClientEnd
+	maxraftstate int // snapshot if log grows this big
+
+
+    dead         bool // used to kill background threads
+
+	// =====
+    // key is log index, value is list of all requests pending for that index
+    pending []*PendingReq
+
+    // ====  State Machine:
+    STM      KVStateMachine
+
+
+    isLeader bool // best guess as to whether it's the leader, used for logging
+}
+
+
+// Represents client request as it is serialized through raft
+// 
+// before Raft, this represents an incoming request
+// when it returns from raft as an applyMsg, it is a committed op
+<A NAME="10"></A><FONT color = #FF0000><A HREF="match27-0.html#10" TARGET="0"><IMG SRC="../../bitmaps/tm_0_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+type Op struct {
+    Op string
+    OpData interface{} //this is selected by op. Make sure to register all implementations with labgob
+
+	// === General raft-app
+    Req RequestInfo //identifies this request by client and sequence no
+
+    // ==
+    // NOTE: Some errors arise at commit/caching layer:
+    //    e.g. ErrRetry, ErrStale
+    // Others arise in state machine
+    //    e.g. ErrNoKey, ErrWrongGroup, Ok
+    Err Err // THIS FIELD ONLY HOLDS STATE-MACHINE ERRORS (not ones arising at the caching layer)
+}
+
+
+
+type PendingReq struct {
+	// === General raft-app
+    op *Op
+    index int //the index and term this would go into at time of rf.Start()
+    term int
+
+    // when this request either succeeds or fails, send a pointer to it in doneCh
+    doneCh chan *PendingReq
+
+    // ==== Filled in on request completion (success or error)
+	WrongLeader bool
+	Err         Err
+    //applier will also fill in the op.OpData with return values, if any
+}
+
+
+
+// === This is the state machine, modified only by committed log entries on applyCh
+type KVStateMachine struct {
+</FONT>
+    // === Configuration info
+    CurrConfig shardmaster.Config
+
+    //TODO: next-config, etc
+
+    //If we're currently working on a migration, NextConfig.Num &gt; CurrConfig.Num
+    NextConfig shardmaster.Config
+
+    // If we're mid-migration: these hold which shards still need to be moved
+    ShardsToSend map[int]int // shard -&gt; grp (which grp needs it)
+    ShardsToRcv  map[int]interface{} // shard -&gt; nil (just a set)
+
+    // === KV Stuff (behind caching/idempotence layer)
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match27-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    KeyVals map[string]string
+
+    // caches the last commited request per each client
+    // We only need to cache one: client won't send next request until last one returns
+    // If we get a request with a lower sequence number from the same client, it must be stale
+    // Ops should only enter this 
+    LastFinishedRequests map[ClientId] *Op
+
+    // == Etc
+    // The index/term of the last applyed entry to this state machine
+    LastIndex int  // starts at 0, first log index at 1
+    LastTerm int   // starts at 0, first valid term at 1
+}
+
+
+
+// == Snapshot serialization
+func EncodeSM(stm *KVStateMachine) []byte{
+    w := new(bytes.Buffer)
+    e := labgob.NewEncoder(w)
+
+    e.Encode(stm)
+    return w.Bytes()
+}
+
+func DecodeSM(data []byte) *KVStateMachine {
+    r := bytes.NewBuffer(data)
+    d := labgob.NewDecoder(r)
+
+    var stm KVStateMachine
+
+    if d.Decode(&stm) != nil {
+        panic("Error in DecodeSM");
+    } else {
+        return &stm
+    }
+}
+
+
+// ==== Interfaces to wrap RPCS into OPs
+
+
+// =========== fields that go in an op, used for RPC polymorphism
+
+// handles get, put, and append
+type KVData struct {
+</FONT>    Key string
+    Value string
+}
+
+// Handles new_config operations
+type NewConfigData struct {
+    Config shardmaster.Config
+}
+
+
+type NewShardData struct {
+    ConfigNum   int
+    ShardNum    int
+    KeyVals     map[string]string //the data of the shard
+    SentBy      []string //names of servers of replica group that sent this
+}
+type ShardAckData struct {
+    ConfigNum   int
+    ShardNum    int
+ }
+
+// This will paper over filling in the reply object at the end of the thing
+// (NOTE: only needed for ops that go through pend+cache path (not config ops)
+type ReplyInterface interface {
+    populate(wrongLeader bool, err Err, filledOpData interface{})
+}
+
+
+
+// ==========================================================
+//
+//                       State Machine:
+//
+// ==========================================================
+// !!! ALL OF THIS MUST BE CALLED WITHIN MUTEX
+
+// TODO: lots of stuff
+
+//// We got an op that's not cached, is new, etc etc:
+//// actually apply it to state machine
+//// fill in reply in opdata if any
+//func (stm *KVStateMachine) runStateMachineInner(op *Op) {
+//    // MUST BE CALLED FROM WITHIN MUTEX
+//
+//    switch op.Op {
+//    case "Join":
+//        var servers map[int] ([]string) = op.OpData.(JoinData).Servers
+//        stm.doJoin(servers)
+//
+//    case "Leave":
+//        var gids []int = op.OpData.(LeaveData).GIDs
+//        stm.doLeave(gids)
+//
+//    case "Move":
+//        shard := op.OpData.(MoveData).Shard
+//        gid   := op.OpData.(MoveData).GID
+//        stm.doMove(shard, gid)
+//        _, _ = shard, gid
+//    case "Query":
+//        num := op.OpData.(QueryData).Num
+//        reply_Config := stm.doQuery(num)
+//
+//        // Need to do this song and dance to assign to cast interface
+//        var data QueryData
+//        data = op.OpData.(QueryData)
+//        data.reply_Config = reply_Config
+//        op.OpData = data
+//    default:
+//        panic(fmt.Sprintf("ERROR: Unrecognized op type %v", op.Op))
+//    }
+//
+//}
+
+
+
+// INTERNAL: called for Get,Put,Append which go through the request cache
+// Skips if already cached or stale
+// Otherwise, applies and saves result in cache
+func (skv *ShardKV) applyOpWithCacheCheck(op *Op) {
+    // MUST BE CALLED BY STATE MACHINE
+
+    // Check if we've already applied this request to state machine 
+    cacheResult, err := skv.STM.checkCachedRequest(op.Req);
+
+    // If cache hit, or stale request, noop (we've already applied it)
+    if cacheResult != nil || err != "" {
+        //skv.Printf("Skipping apply op: already cached", op.Op);
+        return;
+    }
+
+    kvData := op.OpData.(KVData)
+    key, value := kvData.Key, kvData.Value
+
+
+    //  check if we currently own its shard
+    shard := key2shard(key)
+    if !skv.haveShardAvailable(shard) {
+        skv.LdrPrint("This group doesn't own key %v, shard %v; ErrWrongGroup", key, shard)
+        op.Err = ErrWrongGroup
+
+    } else {
+        kv := skv.STM.KeyVals
+        // We own the shard, let's do the op
+        switch op.Op {
+        case "Put":
+            kv[key] = value
+            op.Err = OK
+            //op.Value = "Put: " + sm.KeyVals[op.Key]
+        case "Append":
+            kv[key] = kv[key] + value
+            //op.Value = "Append: " + sm.KeyVals[op.Key]
+            op.Err = OK
+        case "Get":
+            var exists bool
+            kvData.Value, exists = kv[key]
+            op.OpData = kvData // do this song and dance to update the op, stupid polymorphism
+            if exists {
+                op.Err = OK
+            }else {
+                op.Err = ErrNoKey
+            }
+        default:
+            panic(fmt.Sprintf("ERROR: Unrecognized op type %v", op.Op))
+        }
+    }
+
+    // Update request cache (not quite cache but you know what I mean)
+    skv.STM.LastFinishedRequests[op.Req.C_id] = op;
+}
+
+
+
+// Entrypoint for newly-committed ops
+// Checks op against cache, distributes to appropriate state machine impl methods
+// Updates cached requests
+// TODO: add err-message return path, change to be called on the shardkv (so we can filter out spurious logging)
+func (skv *ShardKV) applyOpToStateMachine(msg *raft.ApplyMsg) {
+    // MUST BE CALLED FROM WITHIN MUTEX
+    if !msg.CommandValid {
+        panic("ERROR: applyOpToStateMachine should only be called with valid log msgs");
+    }
+
+    var op Op = (msg.Command.(Op)) // no pointers
+    index := msg.CommandIndex
+    term := msg.CommandTerm
+
+    // Update index and term (even if we don't put it into effect)
+    skv.STM.LastIndex = index
+    skv.STM.LastTerm = term
+
+
+    skv.LdrPrint("STM applying op i%v: %+v", index, op) //not implemented
+
+
+    // Delegate to specific op handlers
+    switch op.Op {
+    case "Get","Put","Append":
+        skv.applyOpWithCacheCheck(&op)
+    case "NewConfig":
+        skv.tryInstallNewConfig(&op);
+    case "NewShard":
+        skv.gotNewShard(&op);
+    case "ShardAck":
+        skv.gotShardAck(&op);
+    }
+
+}
+
+// ==========================================================
+//
+//                  Configuration handlers
+//
+// ==========================================================
+
+
+// ============== Committed ops stuff
+
+
+func (skv *ShardKV) tryInstallNewConfig(op *Op) {
+    // MUST BE CALLED BY STATE MACHINE
+    NewConf := op.OpData.(NewConfigData).Config
+
+
+    // Check that we're not already in a migration
+    if skv.STM.CurrConfig.Num != skv.STM.NextConfig.Num {
+        skv.LdrPrint("Skipping (we're already migrating)")
+        return
+    }
+
+
+    // Test that it's 1 newer than current
+    // Note: it should never be more than 1 newer, since BGThread should check for that, but might be older
+    if NewConf.Num != skv.STM.CurrConfig.Num + 1 {
+        skv.LdrPrint("InstallConfig Stale: curr%v, new%v", skv.STM.CurrConfig.Num, NewConf.Num)
+        return
+
+    }
+
+    // === Valid: install it as our next config
+    skv.LdrPrint("Installing config: %v", op.OpData.(NewConfigData))
+    skv.STM.NextConfig = NewConf
+
+
+    // Fill out WIP list (shards to send and rcv)
+    Curr := skv.STM.CurrConfig
+    Next := skv.STM.NextConfig
+
+    for i := 0; i &lt; shardmaster.NShards; i++ {
+        currGrp := Curr.Shards[i]
+        nextGrp := Next.Shards[i]
+        self := skv.gid
+
+        switch {
+        case currGrp == 0:
+            // Unowned shards don't need work, whoever gets them does so automatically
+        case nextGrp == 0:
+            // Orphaned shards don't need work, their keys die with us
+
+        case currGrp == self && nextGrp != self:
+            //Shard that we are losing
+            skv.STM.ShardsToSend[i] = nextGrp
+
+        case currGrp != self && nextGrp == self:
+            //Shard that we are gaining
+            skv.STM.ShardsToRcv[i] = nil; //(set insert)
+        }
+    }
+
+
+    // Call checkMigrationFinished (in case it's a noop for us)
+    skv.checkMigrationFinished()
+
+}
+
+
+
+func (skv *ShardKV) showMigrationState() {
+    msg := ""
+    msg += fmt.Sprintf("Migrating: %v -&gt; %v", skv.STM.CurrConfig.Num, skv.STM.NextConfig.Num)
+    msg += fmt.Sprintf("; %v-&gt;", skv.STM.CurrConfig.Shards)
+    msg += fmt.Sprintf("%v",     skv.STM.NextConfig.Shards)
+    msg += fmt.Sprintf(" send%v  rcv %v", skv.STM.ShardsToSend, skv.STM.ShardsToRcv)
+
+    skv.LdrPrint(msg)
+}
+
+
+// If the current migration is done, updates the state machine
+// Finalizes, deletes stale keys, etc etc
+func (skv *ShardKV) checkMigrationFinished() {
+    // MUST BE CALLED BY STATE MACHINE
+
+    // This should only be called from statemachine contexts, so be strict with preconditions
+    if !skv.currentlyMigrating() {
+        panic("No migration in progress in checkMigrationFinished")
+    }
+
+    skv.showMigrationState();
+
+    // Check if there's any more things to send
+    if len(skv.STM.ShardsToSend) &gt; 0 || len(skv.STM.ShardsToRcv) &gt; 0 {
+        return
+
+    } else { //Migration finished: update config
+        skv.LdrPrint("Migration Done: finalizing");
+        skv.STM.CurrConfig = skv.STM.NextConfig;
+
+
+        // delete keys from shards we no longer own
+        for k, _ := range(skv.STM.KeyVals) {
+            shard := key2shard(k)
+
+
+            // Check if we own it:
+            //we just finished this migration: so we only need to check currconfig
+            if skv.STM.CurrConfig.Shards[shard] != skv.gid {
+                delete(skv.STM.KeyVals, k)
+            }
+        }
+    }
+
+
+}
+
+
+
+
+func (skv *ShardKV) gotNewShard(op *Op) {
+    // MUST BE CALLED BY STATE MACHINE
+    data := op.OpData.(NewShardData)
+
+    skv.LdrPrint("Received shard %+v", data);
+
+
+    // === Acknowledge its receipt
+    // NOTE: only acknowledge if it's for a current or outdated migration
+    // If it's for a newer config, we'll need it later (so don't tell sender to stop sending)
+    if data.ConfigNum &gt; skv.STM.NextConfig.Num {
+        skv.LdrPrint("Shard %v is for newer config %v, skipping", data.ShardNum, data.ConfigNum);
+        return
+    } else {
+        // NOTE: group will get each ack n^2 times, since each of our servers acks each of theirs.
+        skv.sendShardAck(data)
+    }
+
+    // make sure we're still working on the migration that it's for
+   sameMigration :=  skv.currentlyMigrating() && data.ConfigNum == skv.STM.NextConfig.Num
+   // make sure we haven't already loaded in this shard
+    _, shardNeeded := skv.STM.ShardsToRcv[data.ShardNum]
+
+    switch {
+    case !sameMigration:
+        skv.LdrPrint("Shard from old migration -&gt;%v, skipping", data.ConfigNum);
+    case !shardNeeded:
+        skv.LdrPrint("Shard %v already received, skipping", data.ShardNum);
+
+    default:
+        //Load in the shard
+        skv.LdrPrint("Loading shard %v", data.ShardNum);
+        for k, v := range(data.KeyVals) {
+            skv.STM.KeyVals[k] = v
+        }
+        skv.LdrPrint("KeyVals is now: %v", skv.STM.KeyVals)
+
+        //Remove from needed shards
+        delete(skv.STM.ShardsToRcv, data.ShardNum)
+
+        // If we're done, go to finalize the migration
+        skv.checkMigrationFinished()
+    }
+
+    return
+}
+
+
+func (skv *ShardKV) gotShardAck(op *Op) {
+    // MUST BE CALLED BY STATE MACHINE
+    data := op.OpData.(ShardAckData)
+
+    skv.LdrPrint("Received shard ack %+v", data);
+
+
+    // Check if it's current
+   sameMigration :=  skv.currentlyMigrating() && data.ConfigNum == skv.STM.NextConfig.Num
+
+   // check if we've already acked this (to cut down on logging)
+    _, ackNeeded := skv.STM.ShardsToSend[data.ShardNum]
+
+    if !sameMigration {
+        skv.LdrPrint("Shard from old migration -&gt;%v, skipping", data.ConfigNum);
+    } else if !ackNeeded {
+        //just noop to cut down on logging
+    } else {
+        // current migration, delete the WIP entry
+        // may redelete but that doesnt matter
+        delete(skv.STM.ShardsToSend, data.ShardNum)
+
+
+        // If we're done, go to finalize the migration
+        skv.checkMigrationFinished()
+    }
+}
+
+
+
+// ============== Helpers
+
+
+func (skv *ShardKV) currentlyMigrating() bool{
+    // MUST BE CALLED WITHIN MUTEX
+    return skv.STM.NextConfig.Num != skv.STM.CurrConfig.Num;
+}
+
+
+
+// Tries to send requested shard to requested group
+func (skv *ShardKV) sendOneShard(shard int, group int) {
+    // MUST BE CALLED WITHIN MUTEX
+
+    // Make sure we own it
+    if skv.STM.CurrConfig.Shards[shard] != skv.gid {
+        panic("ERR: trying to send shard we don't own")
+    }
+
+    // Make sure group needs it
+    if skv.STM.NextConfig.Shards[shard] != group {
+        panic("ERR: trying to send shard to wrong group")
+    }
+
+    skv.Printf("Sending shard %v to %v", shard, group)
+
+    // put together the data for it
+    args := SendShardArgs{
+        ConfigNum: skv.STM.NextConfig.Num,
+        ShardNum: shard,
+        KeyVals: make(map[string]string),
+        SentBy: skv.STM.CurrConfig.Groups[skv.gid], //Send our list of server names for call-backing
+    }
+
+    //Copy in all entries which belong to that shard
+    for k, v := range(skv.STM.KeyVals) {
+        if key2shard(k) == shard {
+            args.KeyVals[k] = v
+        }
+    }
+
+
+    // Get that groups servers
+    servers, ok := skv.STM.NextConfig.Groups[group] //use nextconfig, since group might be new
+    if !ok {
+        panic("Trying to send shard to nonexistant group")
+    }
+
+    // Send each one an RPC (in background)
+    for _, serv_name := range(servers) {
+        var reply SendShardReply
+        endPoint := skv.make_end(serv_name)
+        go endPoint.Call("ShardKV.SendShard", &args, &reply)
+    }
+}
+
+
+// Send acknowledgement that we received a shard
+func (skv *ShardKV) sendShardAck(data NewShardData) {
+    // MUST BE CALLED WITHIN MUTEX
+
+    config, shard, servers := data.ConfigNum, data.ShardNum, data.SentBy;
+    skv.Printf("Sending ShardAck %v to Group: %v", shard, servers)
+    args := ShardAckArgs{
+        ConfigNum: config,
+        ShardNum: shard,
+    }
+
+    // That group's servers are in sentby field, since we don't have a reliable way to get their addresses
+    // Send each one an RPC (in background)
+    for _, serv_name := range(servers) {
+        var reply SendShardReply
+        endPoint := skv.make_end(serv_name)
+        go endPoint.Call("ShardKV.ShardAck", &args, &reply)
+    }
+}
+
+
+// ======
+
+// If no migration: do we have this shard
+// If mid-migration, will we have this shard, and have received it yet
+func (skv *ShardKV) haveShardAvailable(shard int) bool{
+    Curr := skv.STM.CurrConfig
+    Next := skv.STM.NextConfig
+
+    if !skv.currentlyMigrating() {
+        // No migration: just check that we own it
+        return Curr.Shards[shard] == skv.gid
+    }
+
+    // == Else: we're mid-migration
+
+    // cases:
+    // - we always have it ( before &&  after) -&gt; TRUE
+    // - we never have it  (!before && !after) -&gt; FALSE
+    // - we're losing it   ( before && !after) -&gt; FALSE  // we immediately send it away
+    // - we're getting it  (!before &&  after) -&gt; ONLY IF WE'VE RECEIVED IT ALREADY
+
+
+    // if it's unaffected by the migration, we're good
+    if Curr.Shards[shard] == skv.gid &&  Next.Shards[shard] == skv.gid {
+        // we have it before && we have it after
+        return true
+    }
+
+
+    // If we're receiving it after this migration:
+    if Curr.Shards[shard] != skv.gid && Next.Shards[shard] == skv.gid {
+
+        //Check if we've got it already
+        _, present := skv.STM.ShardsToRcv[shard]
+        if !present {
+            //We're not waiting for it, which means we've already received it
+            return true
+        }
+    }
+
+    return false
+}
+
+
+// ============== Background thread stuff:
+
+// Runs periodically to work on config stuff
+// NOTE: only leader's background thread should run
+func (skv *ShardKV) BackgroundThread() {
+
+    masterClerk := shardmaster.MakeClerk(skv.masters)
+
+    for {
+        skv.mu.Lock()
+
+        if skv.dead { return }
+
+        _, skv.isLeader = skv.rf.GetState()
+
+        switch {
+        case !skv.isLeader:
+            break //keep sleeping
+
+        // Migration in progress
+        case skv.STM.NextConfig.Num == skv.STM.CurrConfig.Num + 1:
+            skv.WorkOnMigration()
+
+        // No migration
+        case skv.STM.NextConfig.Num == skv.STM.CurrConfig.Num:
+            skv.QueryConfig(masterClerk)
+
+        default:
+            // we're only here if config numbers are fucked
+            panic("ERROR: something wrong in BackgroundThread")
+
+        }
+
+
+        //Then sleep
+        skv.mu.Unlock()
+        time.Sleep(80 * time.Millisecond)
+    }
+}
+
+
+// Queries shardmaster for new configuration
+// should be called from bg thread
+func (skv *ShardKV) QueryConfig(master *shardmaster.Clerk) {
+    // MUST BE CALLED FROM WITHIN MUTEX
+    // should only be called if we're not currently working on a migration
+    // Should only be called by leader
+
+    // May block for a long time but that's fine, since it's on the BG and unlocks
+
+    skv.mu.Unlock()
+    NewConf := master.Query(-1);
+    skv.mu.Lock()
+    CurrConf := skv.STM.CurrConfig
+
+    if CurrConf.Num == NewConf.Num {
+        return;
+    }
+
+
+    // note: we may have skipped a version: make sure we have curr + 1
+    if NewConf.Num != CurrConf.Num + 1 {
+        skv.mu.Unlock()
+        NewConf = master.Query(CurrConf.Num + 1);
+        skv.mu.Lock()
+    }
+
+    // Double check: things may have changed while we were sleeping
+    if NewConf.Num != CurrConf.Num + 1 {
+        skv.Printf("BG Thread: ERR: something changed while we were sleeping")
+        return;
+    }
+
+
+
+    //TODO: check if we're in a migration? Naw committing will check that properly
+
+    // Now we have the next configuration, submit it
+    op := &Op{
+        Op: "NewConfig",
+        Req: RequestInfo{-1, -1},
+        OpData: NewConfigData {
+            Config: NewConf,
+        },
+    }
+
+    skv.Printf("BG Thread found new config: starting op for it: %v", op)
+    skv.rf.Start(*op) // we don't care about index/term/isleader, this will get retried if it fails
+}
+
+
+// should be called from BG thread
+// should only be called by leader && if we're currently migrating
+func (skv *ShardKV) WorkOnMigration() {
+    // MUST BE CALLED FROM WITHIN MUTEX
+
+    skv.showMigrationState()
+
+
+    for shard, group := range(skv.STM.ShardsToSend) {
+        skv.sendOneShard(shard, group);
+    }
+}
+
+// ==========================================================
+//
+//                       HELPER VERBS
+//
+// ==========================================================
+// should be called from within mutex?
+
+
+
+// given a request, checks against cached requests
+// (ONLY USED FOR GET PUT APPEND)
+// results: nothing|stale|cache hit
+// if cache hit, returns op,""
+// if cache miss, returns nil, ""
+// if stale, returns nil, ErrStale
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match27-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (stm *KVStateMachine) checkCachedRequest(req RequestInfo) (*Op, Err) {
+    //MUST BE CALLED WITHIN MUTEX
+
+    cachedOp := stm.LastFinishedRequests[req.C_id];
+
+    // cache miss, return nil
+    if cachedOp == nil { return nil, "" }
+
+    // Assert clientid matches
+    if cachedOp.Req.C_id != req.C_id {
+        panic(fmt.Sprintf("Error: cachedOp for different C_id: cach:%v, new req:%v", cachedOp, req));
+    }
+
+
+    // valid cache hit
+    if req.R_id == cachedOp.Req.R_id {
+        return cachedOp, ""
+
+    // cache holds outdated entry, is a miss
+    } else if req.R_id &gt; cachedOp.Req.R_id {
+        return nil, ""
+
+    // cache entry newer than request, so request is stale and should fail
+    } else {
+        //staleStr := Err(fmt.Sprintf("Error: Incoming request stale, req %v already committed", cachedOp))
+        return nil, ErrStale
+</FONT><A NAME="1"></A><FONT color = #00FF00><A HREF="match27-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    }
+
+}
+
+
+// If raft's state size is bigger than maxRaftState, send Raft a new snapshot
+func (skv *ShardKV) checkIfRaftNeedsSnapshot() {
+    // MUST BE CALLED FROM WITHIN MUTEX
+
+    // -1 means snapshotting disabled
+    if skv.maxraftstate &lt; 0 {
+        return;
+    }
+
+    lim := skv.maxraftstate
+    size := skv.rf.GetStateSize();
+
+
+    if float64(size) &gt; float64(lim) * 0.9 {
+        skv.Printf("Raft state getting big: size %v/ lim %v", size, lim);
+
+        // Save a copy of state machine, install to Raft
+        var SMCopy KVStateMachine = skv.STM
+
+        snap := raft.Snapshot {
+            LastIndex: SMCopy.LastIndex,
+            LastTerm: SMCopy.LastTerm,
+            Data: EncodeSM(&SMCopy),
+        }
+        skv.rf.NotifyNewSnapshot(&snap);
+    }
+
+}
+
+
+// ==========================================================
+//
+//              FUNCTIONS TO HANDLE APPLYCH MSGS
+//
+// ==========================================================
+
+// Waits on applyCh: when message available, delegates to handleApply
+func (skv *ShardKV) ApplierThread() {
+    var msg raft.ApplyMsg
+    for {
+        msg = &lt;-skv.applyCh; //
+
+        skv.mu.Lock();
+</FONT><A NAME="8"></A><FONT color = #00FFFF><A HREF="match27-0.html#8" TARGET="0"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        if skv.dead { return }
+
+        skv.handleApply(&msg);
+        skv.mu.Unlock();
+    }
+}
+
+
+// Raft just sent a committed command
+// Apply it to statemachine, update request cache
+// notify any pending requests that are now completed or dead
+func (skv *ShardKV) handleApply(msg *raft.ApplyMsg) {
+    // MUST BE CALLED FROM WITHIN MUTEX
+
+    // Non-log-affecting commands handled separately
+    if !msg.CommandValid {
+        skv.handleNonLogApply(msg)
+        return
+    }
+
+    op := msg.Command.(Op) // all applied commands are Op, no pointers
+    index := msg.CommandIndex
+</FONT>
+    //skv.Printf("Op applied: i%v t%v: %v", index, msg.CommandTerm, op)
+
+    // Apply the operation to the state machine, and cache the result
+    // (idempotent)
+<A NAME="9"></A><FONT color = #FF00FF><A HREF="match27-0.html#9" TARGET="0"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    skv.applyOpToStateMachine(msg);
+
+
+    // == Notify pending requests
+    if len(skv.pending) &gt; 0 {
+        // ==========================
+        // NOTE: cache-layer errors occur here:
+        // (things like ErrRetry and ErrStale)
+
+        skv.Printf("NOTIFYING: %v pending requests, just committed %v, i%v", len(skv.pending), op.Req, index);
+
+        for i, v := range(skv.pending){
+            // We'll be deleting some throughout this loop, and I'm just nil-ing them out for now
+            if v == nil { continue; }
+
+            // Fill in some blank values just to be safe (I don't think I initted these at creation)
+            v.WrongLeader = false  // We'll only tell them to retry leader from the main handler
+</FONT><A NAME="14"></A><FONT color = #FF00FF><A HREF="match27-0.html#14" TARGET="0"><IMG SRC="../../bitmaps/tm_4_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+
+            doneFlag := false
+
+
+
+            // Test pending req against cache: (it may have been complete (e.g., just now))
+            cachedOp, err := skv.STM.checkCachedRequest(v.op.Req);
+
+            // cache hit, return it (probably it's the just-applied op)
+            if cachedOp != nil {
+                //skv.Printf("Finalizing request: %v (found %v cached)", v.op.Req, cachedOp.Req);
+                v.op = cachedOp // cachedOp will have values filled in
+</FONT>                doneFlag = true
+                v.Err = cachedOp.Err // copy the op status that stateMachine set
+
+            // if the request is outdated (in cache), error (something newer already in cache)
+            } else if err == ErrStale {
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match27-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                skv.Printf("Pending Request %v Stale (cache), failing", cachedOp.Req);
+                v.Err = ErrStale
+                doneFlag = true
+
+            // === Test if request is outdated and needs to be destroyed
+
+            // if the request is outdated by index, different error
+            // (NOTE: check this last so if index == and we're here, then cache check failed
+            //  so entry at index != this one)
+            } else if skv.STM.LastIndex &gt;= v.index {
+                skv.Printf("Pending Request %v at i%v, FAIL, another op committed at i%v",
+                                v.op.Req, v.index, skv.STM.LastIndex)
+                v.Err = ErrRetry
+                doneFlag = true
+
+            // Check if outdated by term (our partition may have ran ahead, so index wont save us, look at term)
+            } else if skv.STM.LastTerm &gt; v.term {
+                skv.Printf("Pending Request %v at i%v t%v, FAIL, another op committed at newer term t%v",
+                                v.op.Req, v.index, v.term, skv.STM.LastTerm)
+                v.Err = ErrRetry
+                doneFlag = true
+            }
+
+            if doneFlag {
+                // Complete the pending request, delete from pend list
+                v.doneCh &lt;- v;
+                skv.pending[i] = nil
+            }
+
+        }
+
+        //delete all nil entries from the slice
+        //god this is so ugly but whatever
+        newSlice := make([](*PendingReq), 0, len(skv.pending))
+        for _, v := range(skv.pending) {
+            if v != nil {
+                newSlice = append(newSlice, v)
+            }
+        }
+        skv.pending = newSlice
+    }
+
+    // ==== Done notifying pending requests
+    skv.checkIfRaftNeedsSnapshot() // will send snapshot if size too big
+}
+
+
+
+// Called for applyMsgs that aren't normal committed log entries
+// These are things like snapshot requests and step-down notifications
+func (skv *ShardKV) handleNonLogApply(msg *raft.ApplyMsg) {
+</FONT>    // MUST BE CALLED FROM WITHIN MUTEX
+
+    //skv.Printf("Got non-log applyMsg: %+v\n", msg)
+
+    switch msg.MsgType {
+    case raft.StepDownMsg:
+        skv.Printf("Raft leader stepped down: clearing %v pending messages", len(skv.pending))
+
+        // Kill all pending requests: we failed to leader
+        for _, v := range(skv.pending){
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match27-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+            v.Err = "Error: We stepped down as leader"
+            v.WrongLeader = true
+
+            v.doneCh &lt;- v;
+        }
+
+        // wipe the list
+        skv.pending = make([](*PendingReq), 0)
+
+
+    // === We are being told to reinitialize our state
+    case raft.LoadSnapshotMsg:
+        skv.Printf("Loading Snapshot")
+        snap := msg.Command.(raft.Snapshot)
+
+        // Snapshots can be sent at any time by InstallRPC or load from persist
+        newSM := DecodeSM(snap.Data);
+        skv.Printf("Decoded STM from snapshot: %+v", newSM)
+        // quick sanity check
+        if newSM.LastIndex != snap.LastIndex || newSM.LastTerm != snap.LastTerm {
+            panic("Error: snapshot and snapshot-date index/term mismatch")
+        }
+
+        // install the snapshot I guess (discards our own stuff)
+        skv.STM = *newSM;
+
+        // Kill all pending requests, installsnapshot means we're not leader
+        for _, v := range(skv.pending){
+            v.Err = "Error: We stepped down as leader"
+            v.WrongLeader = true
+</FONT><A NAME="7"></A><FONT color = #0000FF><A HREF="match27-0.html#7" TARGET="0"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+
+            v.doneCh &lt;- v;
+        }
+        // wipe the list
+        skv.pending = make([](*PendingReq), 0)
+
+
+    default:
+        panic(fmt.Sprintf("Error: unrecognized MsgType %v in handleNonLogApply", msg.MsgType))
+    }
+}
+
+
+
+// ==========================================================
+//
+//             INCOMING CLIENT-REQUEST HANDLERS
+//
+// ==========================================================
+
+
+// =============== Unified request handler
+
+// handles either kind of request, the ReplyObj interface handles both getreply and putappend reply
+// NOTE: doesn't handle config RPCs, those are handled separately (since they don't need the pending/cached mechanism)
+// NOTE: MUST NOT CHECK IF SHARD IS OURS: if it's to the wrong group, that needs to be committed & cached
+func (skv *ShardKV) handleRequest(op *Op, reply ReplyInterface) {
+    // op is the flattened form of the incoming request
+    skv.mu.Lock();
+    // CANT DEFER UNLOCK: SOME PATHS DONT NEED IT
+    // BE CAREFUL TO UNLOCK AT ALL RETURNS
+
+
+
+    // Recheck if raft is leader (ONLY USED FOR LOGGING)
+    _, skv.isLeader = skv.rf.GetState() // not strictly necessary and also not very accurate (if there's churn)
+</FONT>
+
+
+    //skv.Printf("got op: op'%v' req'%v', data:%+v", op.Op, op.Req, op.OpData);
+    skv.Printf("got op: %v", op);
+
+
+    // ==== First we check if we can reply immediately:
+    // - either we have a valid cached request, 
+    // - or we have cached a newer request from the same client, so this req is outdated
+<A NAME="15"></A><FONT color = #FF0000><A HREF="match27-0.html#15" TARGET="0"><IMG SRC="../../bitmaps/tm_0_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    cachedOp, err := skv.STM.checkCachedRequest(op.Req);
+
+    // cache hit, we can just return that
+    if cachedOp != nil {
+        skv.Printf("response cached, returning cachedOp %v", cachedOp);
+        reply.populate(false, cachedOp.Err, cachedOp.OpData); // not wrongleader, no err
+</FONT>        skv.mu.Unlock();
+        return;
+    }
+
+    // if the request is outdated, error (something newer already in cache)
+    if err == ErrStale {
+        // we don't know if it's the wrong leader, so just put false for now
+        skv.Printf("incoming request stale, newer request exists");
+        reply.populate(false, ErrStale, op.OpData) //(no reply, send back their own opdata)
+<A NAME="16"></A><FONT color = #00FF00><A HREF="match27-0.html#16" TARGET="0"><IMG SRC="../../bitmaps/tm_1_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        skv.mu.Unlock();
+        return;
+    }
+
+
+    // ===== Request not cached, need to submit to start
+    // NOTE: can't send pointers through raft
+    index, term, is_leader := skv.rf.Start(*op);
+
+    // if not the leader, return err
+    if !is_leader {
+        reply.populate(true, OK, op.OpData) //WrongLeader is true
+</FONT><A NAME="5"></A><FONT color = #FF0000><A HREF="match27-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        skv.mu.Unlock();
+        return;
+    }
+
+    // ===== Setup a pendingReq object, wait on it to finish
+    pend := &PendingReq{
+        op: op,
+        index: index,
+        term: term,
+        doneCh: make(chan *PendingReq, 1),
+        //remaining fields will be filled by applier
+    }
+
+
+    //insert request into skv data structure
+    skv.pending = append(skv.pending, pend)
+
+    // Sleep until request completed or failed
+    skv.mu.Unlock()
+    &lt;-pend.doneCh
+
+    // ==== Our request is ready (or errored)
+    // return results (don't need skv lock for this, we're the only ones using pend)
+
+    // applier will have filled in the values, just copy them to return obj
+    reply.populate(pend.WrongLeader, pend.Err, pend.op.OpData);
+</FONT>
+    skv.mu.Lock() //Printf accesses stuff, might cause races
+    skv.Printf("sending reply to %v: %+v", op.Req, reply);
+    skv.mu.Unlock()
+    return;
+}
+
+
+
+
+// ==========================================================
+//
+//            Application-Specific RPC Wrappers
+//
+// ==========================================================
+
+// == Wrap incoming RPCs into consistent format
+
+func (skv *ShardKV) GetPutAppend(args *GetPutAppendArgs, reply *GetPutAppendReply) {
+    op := &Op{
+        Op: args.Op,
+        Req: args.Req,
+        OpData: KVData {
+            Key: args.Key,
+            Value: args.Value,
+        },
+    }
+
+<A NAME="12"></A><FONT color = #0000FF><A HREF="match27-0.html#12" TARGET="0"><IMG SRC="../../bitmaps/tm_2_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    skv.handleRequest(op, reply);
+}
+
+// kvserver: handle incoming PutAppend request
+func (skv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+    op := &Op{
+        Op: args.Op,
+        Req: args.Req,
+</FONT>        OpData: KVData {
+            Key: args.Key,
+            Value: args.Value,
+        },
+    }
+
+    skv.handleRequest(op, reply);
+}
+
+func (skv *ShardKV) Get(args *GetArgs, reply *GetReply) {
+    op := &Op{
+        Op: "Get",
+        Req: args.Req,
+        OpData: KVData {
+            Key: args.Key,
+            Value: "", //this will be filled once applied
+        },
+    }
+
+    skv.handleRequest(op, reply);
+}
+
+
+
+// TODO: SendShard RPC, ShardAck RPC
+
+
+
+
+// ========== Return handlers: 
+// need to implement .populate() on each reply tape 
+// to satisfy ReplyInterface
+// === NOTE: only needed on requests that use the pend+cache path (not config RPCs)
+
+
+// Takes a completed op, populates the passed-in reply object
+// according to whether or not it's a GetReply or PutAppendReply
+func (reply *GetReply) populate(wrongLeader bool, err Err, filledOpData interface{}) {
+   reply.WrongLeader = wrongLeader;
+   reply.Err = err;
+   reply.Value = filledOpData.(KVData).Value
+}
+<A NAME="11"></A><FONT color = #00FF00><A HREF="match27-0.html#11" TARGET="0"><IMG SRC="../../bitmaps/tm_1_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (reply *PutAppendReply) populate(wrongLeader bool, err Err, filledOpData interface{}) {
+   reply.WrongLeader = wrongLeader;
+   reply.Err = err;
+   // no value
+}
+
+
+// ===== Handles all 3 KV actions
+func (reply *GetPutAppendReply) populate(wrongLeader bool, err Err, filledOpData interface{}) {
+   reply.WrongLeader = wrongLeader;
+   reply.Err = err;
+</FONT>   reply.Value = filledOpData.(KVData).Value
+}
+
+
+
+
+
+// ============== CONFIGURATION RPCS
+
+// Handle someone sending us shard data that we need
+// NOTE: MUST RETURN IMMEDIATELY
+func (skv *ShardKV) SendShard(args *SendShardArgs, relpy *SendShardReply) {
+    skv.mu.Lock()
+    defer skv.mu.Unlock()
+
+    op := &Op {
+        Op: "NewShard",
+        Req: RequestInfo{-1, -1},
+        OpData: NewShardData{
+            ConfigNum: args.ConfigNum,
+            ShardNum: args.ShardNum,
+            KeyVals: args.KeyVals,
+            SentBy: args.SentBy,
+        },
+    }
+
+    // Try starting an op for it (doesn't matter if we're not leader, 
+    // sender will send to all nodes simultaneously
+    skv.rf.Start(*op);
+
+    //i,t, is_leader := skv.rf.Start(*op);
+    // if is_leader {
+    //     skv.Printf("received shard %v", args.ShardNum)
+    //     skv.Printf("received shard i%v, t%v", i,t)
+    // }
+}
+
+
+// Handle group is acknowledging receipt of a shard we sent them
+// NOTE: MUST RETURN IMMEDIATELY
+func (skv *ShardKV) ShardAck(args *ShardAckArgs, relpy *ShardAckReply) {
+    skv.mu.Lock()
+    defer skv.mu.Unlock()
+
+    op := &Op {
+        Op: "ShardAck",
+        Req: RequestInfo{-1, -1},
+        OpData: ShardAckData{
+            ConfigNum: args.ConfigNum,
+            ShardNum: args.ShardNum,
+        },
+    }
+
+
+    // NOTE: we're going to get a crapton of acks
+    // If we're already past them, there's no need to even try to commit them
+    // NOTE: if our currconfig == arg config, we've finished the migration this ack is for, so skip
+    if skv.STM.CurrConfig.Num &gt;= args.ConfigNum {
+        return
+    }
+
+    // Try starting an op for it (doesn't matter if we're not leader, 
+    // sender will send to all nodes simultaneously
+    skv.rf.Start(*op);
+}
+
+// ==========================================================
+//
+//                          INIT
+//
+// ==========================================================
+
+func NewBlankStateMachine() KVStateMachine {
+    STM := KVStateMachine{
+        LastTerm: 0,
+        LastIndex: 0,
+
+        // == KV stuff
+        KeyVals: make(map[string]string),
+        LastFinishedRequests:  make(map[ClientId]*Op),
+
+        // == Config stuff
+        CurrConfig: shardmaster.BlankConfig(),
+        NextConfig: shardmaster.BlankConfig(),
+
+        ShardsToSend:  make(map[int]int), //shard -&gt; recipient group
+        ShardsToRcv:   make(map[int]interface{}),  // shard set
+    }
+
+    return STM
+}
+
+
+
+
+
+//
+// servers[] contains the ports of the servers in this group.
+//
+// me is the index of the current server in servers[].
+//
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+//
+// the k/v server should snapshot when Raft's saved state exceeds
+// maxraftstate bytes, in order to allow Raft to garbage-collect its
+// log. if maxraftstate is -1, you don't need to snapshot.
+//
+// gid is this group's GID, for interacting with the shardmaster.
+//
+// pass masters[] to shardmaster.MakeClerk() so you can send
+// RPCs to the shardmaster.
+//
+// make_end(servername) turns a server name from a
+// Config.Groups[gid][i] into a labrpc.ClientEnd on which you can
+// send RPCs. You'll need this to send RPCs to other groups.
+//
+// look at client.go for examples of how to use masters[]
+// and make_end() to send RPCs to the group owning a specific shard.
+// // StartServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int, gid int, masters []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *ShardKV {
+	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+	labgob.Register(KVData{})
+	labgob.Register(NewConfigData{})
+	labgob.Register(NewShardData{})
+	labgob.Register(ShardAckData{})
+    //TODO: register data for newshard and shardack
+
+	kv := new(ShardKV)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+	kv.make_end = make_end
+	kv.gid = gid
+	kv.masters = masters
+
+    kv.dead = false
+
+	// Your initialization code here.
+
+	// Use something like this to talk to the shardmaster:
+	// kv.mck = shardmaster.MakeClerk(kv.masters)
+
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+
+    kv.STM = NewBlankStateMachine()
+    go kv.ApplierThread();
+    go kv.BackgroundThread(); //for longRunning tasks like config changes
+    //TODO: background thread?
+
+	return kv
+
+}
+
+
+
+
+func (skv *ShardKV) Kill() {
+    skv.mu.Lock()
+    defer skv.mu.Unlock()
+
+    skv.Printf("help I'm being killed" )
+    skv.Printf("got kill lock" )
+	skv.rf.Kill()
+    skv.dead = true
+
+
+    // clean up pending requests with errors
+<A NAME="13"></A><FONT color = #00FFFF><A HREF="match27-0.html#13" TARGET="0"><IMG SRC="../../bitmaps/tm_3_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    for _, v := range(skv.pending) {
+        v.Err = "ERROR: raft killed"
+        v.doneCh &lt;- v
+    }
+
+    skv.pending = skv.pending[:0]
+</FONT>    //TODO: notify applierthread to slurp up remainder
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

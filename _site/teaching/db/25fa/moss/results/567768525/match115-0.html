@@ -1,0 +1,546 @@
+<HTML>
+<HEAD>
+<TITLE>./spring19/xigaoli/src/shardmaster/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./spring19/xigaoli/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+import (
+	"fmt"
+	"labgob"
+	"labrpc"
+	"raft"
+	"sync"
+)
+
+const Debug = 0
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		fmt.Printf(format, a...)
+	}
+	return
+}
+
+type ShardMaster struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	// Your data here.
+
+	configs []Config // indexed by config num
+	//ClientID -&gt; SerialID
+	groupshard map[int64][]int
+	cfgNum     int
+	ack        map[int64]int
+	//isAssigned bool
+	messages map[int]chan Result
+}
+
+type Result struct {
+	opType string
+	args   interface{}
+	reply  interface{}
+}
+
+type Op struct {
+	// Your data here.
+	OpType string
+	//Args   interface{}
+	ClientID  int64
+	RequestID int
+	Servers   map[int][]string //for joinargs
+	GIDs      []int            //for leave
+	Shard     int              //for move
+	GID       int              //for move
+	Num       int              //for query
+}
+
+func (sm *ShardMaster) debug(format string, a ...interface{}) (n int, err error) {
+	if Debug &lt;= 0 {
+		return
+	}
+	a = append(a, 0)
+	copy(a[1:], a[0:])
+	a[0] = sm.me
+	n, err = DPrintf("SKVRaft %v "+format, a...)
+	DPrintf("debug done\n")
+	return
+}
+
+// Join .
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+	// Your code here.
+
+	srvs := map[int][]string{}
+	for k, v := range args.Servers {
+		srvs[k] = v
+
+	}
+	DPrintf("args.servers=%v, srvs=%v\n", args.Servers, srvs)
+	//make a copy of map
+	index, _, isLeader := sm.rf.Start(Op{OpType: Join, ClientID: args.ClientID, RequestID: args.RequestID, Servers: srvs})
+	if !isLeader {
+		reply.WrongLeader = true
+		return
+	}
+
+	sm.mu.Lock()
+	if _, ok := sm.messages[index]; !ok {
+		sm.messages[index] = make(chan Result, 10)
+
+	}
+	chanMsg := sm.messages[index]
+
+	sm.mu.Unlock()
+	// callback on sendresult
+	select {
+	case msg := &lt;-chanMsg:
+		DPrintf("[join] callback get\n")
+		if recArgs, ok := msg.args.(JoinArgs); !ok {
+			reply.WrongLeader = true
+		} else {
+			if args.ClientID != recArgs.ClientID || args.RequestID != recArgs.RequestID {
+				reply.WrongLeader = true
+			} else {
+				reply.Err = msg.reply.(JoinReply).Err
+				reply.WrongLeader = false
+				//DPrintf("[%d] Apply Join: [%d]", sm.me, args.RequestId)
+			}
+		}
+		//case &lt;-time.After(time.Second * 1):
+		//	reply.WrongLeader = true
+	}
+
+}
+
+// Leave .
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+	// Your code here.
+	index, _, isLeader := sm.rf.Start(Op{OpType: Leave, ClientID: args.ClientID, RequestID: args.RequestID, GIDs: args.GIDs})
+	if !isLeader {
+		reply.WrongLeader = true
+		return
+	}
+
+	sm.mu.Lock()
+	if _, ok := sm.messages[index]; !ok {
+		sm.messages[index] = make(chan Result, 10)
+
+	}
+	rslt := sm.messages[index]
+	sm.mu.Unlock()
+	// callback on sendresult
+	select {
+	case msg := &lt;-rslt:
+		DPrintf("[leave] callback get\n")
+		if recArgs, ok := msg.args.(LeaveArgs); !ok {
+			reply.WrongLeader = true
+		} else {
+			if args.ClientID != recArgs.ClientID || args.RequestID != recArgs.RequestID {
+				reply.WrongLeader = true
+			} else {
+				reply.Err = msg.reply.(LeaveReply).Err
+				reply.WrongLeader = false
+				//DPrintf("[%d] Apply Leave: [%d]", sm.me, args.RequestId)
+			}
+		}
+	}
+}
+
+// Move .
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+	// Your code here.
+
+	index, _, isLeader := sm.rf.Start(Op{OpType: Move, ClientID: args.ClientID, RequestID: args.RequestID, Shard: args.Shard, GID: args.GID})
+	if !isLeader {
+		reply.WrongLeader = true
+		return
+	}
+
+	sm.mu.Lock()
+	if _, ok := sm.messages[index]; !ok {
+		sm.messages[index] = make(chan Result, 10)
+
+	}
+	chanMsg := sm.messages[index]
+	sm.mu.Unlock()
+
+	select {
+	case msg := &lt;-chanMsg:
+		if recArgs, ok := msg.args.(MoveArgs); !ok {
+			reply.WrongLeader = true
+		} else {
+			if args.ClientID != recArgs.ClientID || args.RequestID != recArgs.RequestID {
+				reply.WrongLeader = true
+			} else {
+				reply.Err = msg.reply.(MoveReply).Err
+				reply.WrongLeader = false
+				//DPrintf("[%d] Apply Move: [%d]", sm.me, args.RequestId)
+			}
+		}
+	}
+
+}
+
+// Query .
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+	// Your code here.
+	DPrintf("[Query]sm[%v] get query(%v)\n", sm.me, args.Num)
+	index, _, isLeader := sm.rf.Start(Op{OpType: Query, ClientID: args.ClientID, RequestID: args.RequestID, Num: args.Num})
+	if !isLeader {
+		DPrintf("[Query]sm[%v] get query(%v) but is not leader\n", sm.me, args.Num)
+		reply.WrongLeader = true
+		return
+	} else {
+		DPrintf("[Query]sm[%v] get query(%v), ==LEADER\n", sm.me, args.Num)
+	}
+	sm.mu.Lock()
+	if _, ok := sm.messages[index]; !ok {
+		sm.messages[index] = make(chan Result, 10)
+
+	}
+	chanMsg := sm.messages[index]
+	sm.mu.Unlock()
+	select {
+	case msg := &lt;-chanMsg:
+		if recArgs, ok := msg.args.(QueryArgs); !ok {
+			reply.WrongLeader = true
+		} else {
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match115-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			if args.ClientID != recArgs.ClientID || args.RequestID != recArgs.RequestID {
+				reply.WrongLeader = true
+			} else {
+				reply.Config = msg.reply.(QueryReply).Config
+				reply.Err = msg.reply.(QueryReply).Err
+				reply.WrongLeader = false
+</FONT>				//DPrintf("[%d] Apply Query: [%d]", sm.me, args.RequestId)
+			}
+		}
+		//case &lt;-time.After(time.Second * 3):
+		//	reply.WrongLeader = true
+	}
+
+}
+
+// Kill . the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+	// Your code here, if desired.
+}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+	return sm.rf
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	sm := new(ShardMaster)
+	sm.me = me
+
+	sm.configs = make([]Config, 1)
+	sm.configs[0].Groups = map[int][]string{}
+
+	labgob.Register(Op{})
+	sm.applyCh = make(chan raft.ApplyMsg)
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match115-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	sm.cfgNum = 0
+	sm.ack = make(map[int64]int)
+	sm.messages = make(map[int]chan Result, 10)
+</FONT>
+	go sm.RecvFromRaft()
+
+	// Your code here.
+
+	return sm
+}
+
+//RecvFromRaft .
+func (sm *ShardMaster) RecvFromRaft() {
+
+	var result Result
+	var ClientID int64
+	var RequestID int
+	for {
+		msg := &lt;-sm.applyCh
+		request := msg.Command.(Op)
+
+		ClientID = request.ClientID
+		RequestID = request.RequestID
+		switch request.OpType {
+		case Join:
+			args := JoinArgs{ClientID: request.ClientID, RequestID: request.RequestID, Servers: request.Servers}
+			result.args = args
+		case Leave:
+			args := LeaveArgs{ClientID: request.ClientID, RequestID: request.RequestID, GIDs: request.GIDs}
+			result.args = args
+		case Move:
+			args := MoveArgs{ClientID: request.ClientID, RequestID: request.RequestID, Shard: request.Shard, GID: request.GID}
+			result.args = args
+		case Query:
+			args := QueryArgs{ClientID: request.ClientID, RequestID: request.RequestID, Num: request.Num}
+			result.args = args
+		}
+
+		result.opType = request.OpType
+		isAlreadyApplied := sm.IsAlreadyApplied(ClientID, RequestID)
+		if !isAlreadyApplied || result.opType == Query {
+			result.reply = sm.Apply(result.args)
+		}
+		sm.SendResult(msg.CommandIndex, result)
+		//sm.CheckValid()
+	}
+}
+
+// IsAlreadyApplied .
+func (sm *ShardMaster) IsAlreadyApplied(clientID int64, requestID int) bool {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	value, ok := sm.ack[clientID]
+	if ok {
+		if value &gt;= requestID {
+			return true
+		}
+	}
+	sm.ack[clientID] = requestID
+	return false
+}
+
+//SendResult .
+func (sm *ShardMaster) SendResult(index int, result Result) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	ch, ok := sm.messages[index]
+	if !ok {
+		ch = make(chan Result, 10)
+		sm.messages[index] = ch
+	}
+	DPrintf("Result send:%v\n", result)
+	ch &lt;- result
+}
+
+// Apply .
+func (sm *ShardMaster) Apply(args interface{}) interface{} {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	//var reply interface{}
+	switch args.(type) {
+	case JoinArgs:
+		reply := JoinReply{}
+		sm.ApplyJoin(args.(JoinArgs))
+		DPrintf("sm %v applying join(%v) -&gt; config(%v)\n", sm.me, args.(JoinArgs), sm.configs[sm.cfgNum])
+		//DPrintf("", sm.me, "apply Join", request.Args.(JoinArgs), "-&gt;", sm.configs[sm.cfgNum])
+		reply.Err = OK
+		return reply
+	case LeaveArgs:
+		reply := LeaveReply{}
+		sm.ApplyLeave(args.(LeaveArgs))
+		DPrintf("sm %v applying join(%v) -&gt; config(%v)\n", sm.me, args.(LeaveArgs), sm.configs[sm.cfgNum])
+		reply.Err = OK
+		return reply
+	case MoveArgs:
+		reply := MoveReply{}
+		sm.ApplyMove(args.(MoveArgs))
+		reply.Err = OK
+		DPrintf("sm %v applying query(%v) -&gt; config(%v)\n", sm.me, args.(MoveArgs), sm.configs[sm.cfgNum])
+		return reply
+	case QueryArgs:
+		reply := QueryReply{}
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match115-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		argsQ := args.(QueryArgs)
+		//-1 means latest config
+		if argsQ.Num == -1 || argsQ.Num &gt; sm.cfgNum {
+			reply.Config = sm.configs[sm.cfgNum]
+		} else {
+			reply.Config = sm.configs[argsQ.Num]
+		}
+		reply.Err = OK
+		DPrintf("sm %v applying query(%v) -&gt; config(%v)\n", sm.me, argsQ, sm.configs[sm.cfgNum])
+</FONT>		return reply
+
+	default:
+		return nil
+	}
+}
+
+// ApplyJoin .
+func (sm *ShardMaster) ApplyJoin(args JoinArgs) {
+	cfg := sm.NextConfig()
+	for k, v := range args.Servers {
+		DPrintf("JOIN:k=%v, v=%v\n", k, v)
+		cfg.Groups[k] = v
+		sm.debug("gid %v join the group\n", k)
+		sm.rebalanceJoin(cfg, k)
+	}
+}
+
+// ApplyLeave .
+func (sm *ShardMaster) ApplyLeave(args LeaveArgs) {
+	cfg := sm.NextConfig()
+	for _, g := range args.GIDs {
+		delete(cfg.Groups, g)
+		sm.debug("delete gid %v\n", g)
+		sm.rebalanceLeave(cfg, g)
+	}
+
+}
+
+// ApplyMove .
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match115-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (sm *ShardMaster) ApplyMove(args MoveArgs) {
+	cfg := sm.NextConfig()
+	cfg.Shards[args.Shard] = args.GID
+}
+
+// NextConfig .
+func (sm *ShardMaster) NextConfig() *Config {
+	var c Config
+	c.Num = sm.cfgNum + 1
+	c.Shards = sm.configs[sm.cfgNum].Shards
+	c.Groups = map[int][]string{}
+	for k, v := range sm.configs[sm.cfgNum].Groups {
+		c.Groups[k] = v
+	}
+	sm.configs = append(sm.configs, c)
+</FONT>	sm.cfgNum++
+	//return reference
+	return &sm.configs[sm.cfgNum]
+}
+
+// CountShards .
+func (sm *ShardMaster) CountShards(cfg *Config) map[int][]int {
+	// for each gid, shardscount[gid] is responsible for [shard1, shard2, ...]
+	// shardscount[gid]=[shard1, shard2, ...]
+	shardsCount := map[int][]int{}
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match115-1.html#7" TARGET="1"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	for k, _ := range cfg.Groups {
+		shardsCount[k] = []int{}
+	}
+	for k, v := range cfg.Shards {
+		DPrintf("k=%v, shardscount=%v\n", k, shardsCount)
+</FONT>		shardsCount[v] = append(shardsCount[v], k)
+	}
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match115-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	return shardsCount
+}
+
+// getmaxgid
+func (sm *ShardMaster) getmaxgid(shardsCount map[int][]int) int {
+	//get the group responsible for largest shards
+	//shardsCount[gid1]=[1,2]
+	//shardsCount[gid2]=[3,4,5]
+	//shardsCount[gid3]=[6]
+	//return value = gid2
+	max := -1
+	var gid int
+	for k, v := range shardsCount {
+		if max &lt; len(v) {
+			max = len(v)
+			gid = k
+</FONT>		}
+	}
+	return gid
+}
+
+//getmingid
+func (sm *ShardMaster) getmingid(shardsCount map[int][]int) int {
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match115-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	min := -1
+	var gid int
+	for k, v := range shardsCount {
+		if min == -1 || min &gt; len(v) {
+			min = len(v)
+			gid = k
+		}
+	}
+	return gid
+</FONT>}
+
+// rebalance .
+func (sm *ShardMaster) rebalanceLeave(cfg *Config, gid int) {
+	shards := sm.CountShards(cfg) // gid -&gt; number of shards
+
+	leavegidshards := shards[gid]
+	delete(shards, gid)
+	for _, v := range leavegidshards {
+		minGid := sm.getmingid(shards)
+		cfg.Shards[v] = minGid
+		shards[minGid] = append(shards[minGid], v)
+		DPrintf("Rebalanced-leave: cfg.shards=%v\n", cfg.Shards)
+	}
+}
+
+// rebalance .
+func (sm *ShardMaster) rebalanceJoin(cfg *Config, gid int) {
+	shards := sm.CountShards(cfg) // gid -&gt; number of shards
+
+	meanNum := NShards / len(cfg.Groups)
+	/*
+		we have 10 shards and 2 groups.
+		group 1 is responsible for shard 0,1,2,3,4,5,6,7
+		group 2 is responsible for shard 8,9 (new shard, gid==2)
+		meanNum =5
+		we execute 5 rebalance rounds
+
+		for first round,
+		we get the maxgid (=1), he is responsible for too many shards
+		then we set cfg.shards[shardsCount[maxgid][0]] = (gid==2), which means
+				we set group 2 is responsible for shard 0
+				Now group 1 is responsible for 1,2,3,4,5,6,7
+				group 2 is responsible for 0,8,9
+		for second round,
+		maxgid==1, after rebalance,
+			group 1 is responsible for 2,3,4,5,6,7
+			group2 is responsible for 0,1,8,9
+		for third round
+		maxgid==1,after rebalance,
+			group 1 is responsible for 3,4,5,6,7
+			group 2 is responsible for 0,1,2,8,9
+		for 4th round,
+		maxgid==1,after rebalance,
+		group 1 is responsible for 4,5,6,7
+		group 2 is responsible for 0,1,2,3,8,9
+		for 5th round,
+		maxgid==2,after rebalance,
+		group 1 is responsible for 0,4,5,6,7
+		group 2 is responsible for 1,2,3,8,9
+
+		now done
+	*/
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match115-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	for i := 0; i &lt; meanNum; i++ {
+		maxGid := sm.getmaxgid(shards)
+
+		cfg.Shards[shards[maxGid][0]] = gid
+		shards[maxGid] = shards[maxGid][1:]
+</FONT>		DPrintf("Rebalanced-join: cfg.shards=%v\n", cfg.Shards)
+	}
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

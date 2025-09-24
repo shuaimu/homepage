@@ -1,0 +1,595 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/RSinghSBU2019/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/RSinghSBU2019/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+import (
+	"container/heap"
+	"labgob"
+	"labrpc"
+	"log"
+	"math"
+	"raft"
+	"sync"
+	"time"
+)
+
+const Debug = 0
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+type ShardMaster struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+	// Your data here.
+	killed bool
+
+	configs []Config // indexed by config num
+
+	clientRequests     map[int64]map[int64]Op
+	clientChannelNotif map[int64]chan bool
+}
+
+type Operation int
+
+const (
+	JoinOp  Operation = 0
+<A NAME="9"></A><FONT color = #FF00FF><A HREF="match69-0.html#9" TARGET="0"><IMG SRC="../../bitmaps/tm_4_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	LeaveOp Operation = 1
+	MoveOp  Operation = 2
+	QueryOp Operation = 3
+)
+
+type Op struct {
+	// Your data here.
+	ClientID       int64
+	InstanceID     int64
+	ShardOperation Operation
+	JoinPar        JoinArgs
+	LeavePar       LeaveArgs
+	MovePar        MoveArgs
+</FONT>	QueryPar       QueryArgs
+}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match69-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (sm *ShardMaster) requestServed(ClientId int64, InstanceID int64) (bool, Op) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	ret_val := false
+	ret_command := Op{}
+	if _, ok := sm.clientRequests[ClientId]; ok {
+		if command, ok := sm.clientRequests[ClientId][InstanceID]; ok {
+			ret_val = true
+			ret_command = command
+		}
+	}
+	return ret_val, ret_command
+}
+
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+	// Your code here.
+	sm.mu.Lock()
+	processId := sm.me
+	sm.mu.Unlock()
+
+	_, isLeader := sm.rf.GetState()
+
+	if !isLeader {
+		reply.WrongLeader = True
+		return
+	}
+
+	if ok, command := sm.requestServed(args.ClientID, args.InstanceID); ok {
+		if command.ShardOperation == JoinOp {
+</FONT>			reply.Err = OK
+			reply.WrongLeader = False
+			return
+		}
+	}
+
+	DPrintf("Shard %d: Join Request : %v", processId, args)
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match69-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	command := Op{ClientID: args.ClientID, InstanceID: args.InstanceID, ShardOperation: JoinOp, JoinPar: args.Copy()}
+	sm.rf.Start(command)
+	DPrintf("Shard %d: Join Request Command Sent %v", processId, command)
+	sm.mu.Lock()
+	notifyChan := make(chan bool)
+	sm.clientChannelNotif[args.InstanceID] = notifyChan
+	sm.mu.Unlock()
+	reply.WrongLeader = False
+	flag := false
+</FONT>	count := 0
+	for {
+		select {
+		case returnValue := &lt;-notifyChan:
+			DPrintf("Shard %d: Join - Value Returned %t", processId, returnValue)
+			if returnValue {
+				DPrintf("Shard %d: Join completed : %v", processId, args.Servers)
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match69-0.html#7" TARGET="0"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				reply.Err = OK
+			} else {
+				reply.Err = ServerErr
+			}
+			sm.mu.Lock()
+			delete(sm.clientChannelNotif, args.InstanceID)
+			sm.mu.Unlock()
+			flag = true
+</FONT><A NAME="4"></A><FONT color = #FF00FF><A HREF="match69-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		case &lt;-time.After(100 * time.Millisecond):
+			count++
+		}
+		if flag {
+			DPrintf("Shard %d: Breaking from Waiting loop", processId)
+			break
+		}
+		if count &gt;= 10 {
+			DPrintf("Shard %d: Time out reached", processId)
+			reply.Err = TimeOut
+			break
+		}
+	}
+	DPrintf("Shard %d: Join process complete %d", processId, args.ClientID)
+}
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+</FONT>	// Your code here.
+	sm.mu.Lock()
+	processId := sm.me
+	sm.mu.Unlock()
+
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match69-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	_, isLeader := sm.rf.GetState()
+
+	if !isLeader {
+		reply.WrongLeader = True
+		return
+	}
+
+	if ok, command := sm.requestServed(args.ClientID, args.InstanceID); ok {
+		if command.ShardOperation == LeaveOp {
+</FONT>			reply.Err = OK
+			reply.WrongLeader = False
+			return
+		}
+	}
+
+	DPrintf("Shard %d: Leave Request : %v", processId, args)
+
+	command := Op{ClientID: args.ClientID, InstanceID: args.InstanceID, ShardOperation: LeaveOp, LeavePar: args.Copy()}
+	sm.rf.Start(command)
+	DPrintf("Shard %d: Leave Request Command Sent %v", processId, command)
+	sm.mu.Lock()
+	notifyChan := make(chan bool)
+	sm.clientChannelNotif[args.InstanceID] = notifyChan
+	sm.mu.Unlock()
+	reply.WrongLeader = False
+	flag := false
+	count := 0
+	for {
+		select {
+		case returnValue := &lt;-notifyChan:
+			DPrintf("Shard %d: Leave - Value Returned %t", processId, returnValue)
+			if returnValue {
+				DPrintf("Shard %d: Leave completed : %v", processId, args.GIDs)
+				reply.Err = OK
+			} else {
+				reply.Err = ServerErr
+			}
+			sm.mu.Lock()
+			delete(sm.clientChannelNotif, args.InstanceID)
+			sm.mu.Unlock()
+			flag = true
+		case &lt;-time.After(100 * time.Millisecond):
+			count++
+		}
+		if flag {
+			DPrintf("Shard %d: Breaking from Waiting loop", processId)
+			break
+		}
+		if count &gt;= 10 {
+			DPrintf("Shard %d: Time out reached", processId)
+			reply.Err = TimeOut
+			break
+		}
+	}
+	DPrintf("Shard %d: Leave process complete %d", processId, args.ClientID)
+}
+
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+	// Your code here.
+	sm.mu.Lock()
+	processId := sm.me
+	sm.mu.Unlock()
+
+	_, isLeader := sm.rf.GetState()
+
+	if !isLeader {
+		reply.WrongLeader = True
+		return
+	}
+
+	if ok, command := sm.requestServed(args.ClientID, args.InstanceID); ok {
+		if command.ShardOperation == MoveOp {
+			reply.Err = OK
+			reply.WrongLeader = False
+			return
+		}
+	}
+
+	DPrintf("Shard %d: Move Request : %v", processId, args)
+
+	command := Op{ClientID: args.ClientID, InstanceID: args.InstanceID, ShardOperation: MoveOp, MovePar: args.Copy()}
+	sm.rf.Start(command)
+	DPrintf("Shard %d: Move Request Command Sent %v", processId, command)
+	sm.mu.Lock()
+	notifyChan := make(chan bool)
+	sm.clientChannelNotif[args.InstanceID] = notifyChan
+	sm.mu.Unlock()
+	reply.WrongLeader = False
+	flag := false
+	count := 0
+	for {
+		select {
+		case returnValue := &lt;-notifyChan:
+			DPrintf("Shard %d: Move - Value Returned %t", processId, returnValue)
+			if returnValue {
+				DPrintf("Shard %d: Move completed : %d  -  %d", processId, args.GID, args.Shard)
+				reply.Err = OK
+			} else {
+				reply.Err = ServerErr
+			}
+			sm.mu.Lock()
+			delete(sm.clientChannelNotif, args.InstanceID)
+			sm.mu.Unlock()
+			flag = true
+		case &lt;-time.After(100 * time.Millisecond):
+			count++
+		}
+		if flag {
+			DPrintf("Shard %d: Breaking from Waiting loop", processId)
+			break
+		}
+		if count &gt;= 10 {
+			DPrintf("Shard %d: Time out reached", processId)
+			reply.Err = TimeOut
+			break
+		}
+	}
+	DPrintf("Shard %d: Move process complete %d", processId, args.ClientID)
+}
+
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+	// Your code here.
+	sm.mu.Lock()
+	processId := sm.me
+	sm.mu.Unlock()
+
+	_, isLeader := sm.rf.GetState()
+
+	if !isLeader {
+		reply.WrongLeader = True
+		return
+	}
+
+	if ok, command := sm.requestServed(args.ClientID, args.InstanceID); ok {
+		if command.ShardOperation == MoveOp {
+			reply.Err = OK
+			reply.WrongLeader = False
+			return
+		}
+	}
+
+	DPrintf("Shard %d: Query Request : %v", processId, args)
+
+	command := Op{ClientID: args.ClientID, InstanceID: args.InstanceID, ShardOperation: QueryOp, QueryPar: args.Copy()}
+	sm.rf.Start(command)
+	DPrintf("Shard %d: Query Request Command Sent %v", processId, command)
+	sm.mu.Lock()
+	notifyChan := make(chan bool)
+	sm.clientChannelNotif[args.InstanceID] = notifyChan
+	sm.mu.Unlock()
+	reply.WrongLeader = False
+	flag := false
+	count := 0
+	for {
+		select {
+		case returnValue := &lt;-notifyChan:
+			DPrintf("Shard %d: Query - Value Returned %t", processId, returnValue)
+			if returnValue {
+				DPrintf("Shard %d: Query completed : %d", processId, args.Num)
+				reply.Err = OK
+				sm.mu.Lock()
+				length := len(sm.configs)
+				DPrintf("Shard %d: Config State : %v", processId, sm.configs)
+				sm.mu.Unlock()
+				if args.Num &lt; 0 || args.Num &gt; length-1 {
+					sm.mu.Lock()
+					reply.Config = sm.configs[length-1]
+					sm.mu.Unlock()
+				} else {
+					sm.mu.Lock()
+					reply.Config = sm.configs[args.Num]
+					sm.mu.Unlock()
+				}
+			} else {
+				reply.Err = ServerErr
+			}
+			sm.mu.Lock()
+			delete(sm.clientChannelNotif, args.InstanceID)
+			sm.mu.Unlock()
+			flag = true
+		case &lt;-time.After(100 * time.Millisecond):
+			count++
+		}
+		if flag {
+			DPrintf("Shard %d: Breaking from Waiting loop", processId)
+			break
+		}
+		if count &gt;= 10 {
+			DPrintf("Shard %d: Time out reached", processId)
+			reply.Err = TimeOut
+			break
+		}
+	}
+	DPrintf("Shard %d: Query process complete %d", processId, args.ClientID)
+}
+
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+	sm.mu.Lock()
+	sm.killed = true
+	sm.mu.Unlock()
+	// Your code here, if desired.
+}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+	return sm.rf
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	sm := new(ShardMaster)
+	sm.mu.Lock()
+	sm.me = me
+
+	sm.configs = make([]Config, 1)
+	sm.configs[0].Groups = map[int][]string{}
+
+	labgob.Register(Op{})
+	sm.applyCh = make(chan raft.ApplyMsg)
+	sm.killed = false
+	sm.clientChannelNotif = make(map[int64]chan bool)
+	sm.clientRequests = make(map[int64]map[int64]Op)
+	sm.mu.Unlock()
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+	go sm.checkApplyChannel(sm.me, sm.applyCh)
+	// Your code here.
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match69-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	DPrintf("Shard %d: Initalized", me)
+	return sm
+}
+
+func (sm *ShardMaster) checkApplyChannel(processId int, applyCh chan raft.ApplyMsg) {
+	for {
+		select {
+		case reply := &lt;-applyCh:
+			DPrintf("Shard %d: %t and Index: %d", processId, reply.CommandValid, reply.CommandIndex)
+			if reply.CommandValid {
+				command, ok := reply.Command.(Op)
+</FONT><A NAME="6"></A><FONT color = #00FF00><A HREF="match69-0.html#6" TARGET="0"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				DPrintf("Shard %d : Conversion possilbe : %t", processId, ok)
+				if ok {
+					sm.handleApplyChannelResponse(command)
+				}
+			}
+		}
+		sm.mu.Lock()
+		if sm.killed {
+			sm.mu.Unlock()
+			break
+		}
+		sm.mu.Unlock()
+	}
+}
+
+func (sm *ShardMaster) copyOfConfig(config Config) Config {
+</FONT>	copy_config := Config{}
+	copy_config.Num = config.Num + 1
+	copy_config.Shards = config.Shards
+	copy_config.Groups = make(map[int][]string)
+	for key, value := range config.Groups {
+		copy_config.Groups[key] = value
+	}
+	return copy_config
+}
+
+func (sm *ShardMaster) handleApplyChannelResponse(command Op) {
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match69-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	DPrintf("Shard %d: Checking Apply Channel Commit Response", sm.me)
+	sm.mu.Lock()
+	processId := sm.me
+	if _, ok := sm.clientRequests[command.ClientID]; !ok {
+		sm.clientRequests[command.ClientID] = make(map[int64]Op)
+	}
+	if _, ok := sm.clientRequests[command.ClientID][command.InstanceID]; ok {
+		DPrintf("Shard %d: Request already served", processId)
+</FONT>		sm.mu.Unlock()
+		return
+	}
+	sm.mu.Unlock()
+	DPrintf("Shard %d: Parameters - Operation %d", processId, command.ShardOperation)
+	status := false
+	if command.ShardOperation == JoinOp {
+		DPrintf("Shard %d: Join Response Received", processId)
+		joinArg := command.JoinPar
+		sm.mu.Lock()
+		new_config := sm.copyOfConfig(sm.configs[len(sm.configs)-1])
+		sm.mu.Unlock()
+		for gid, servers := range joinArg.Servers {
+			new_config.Groups[gid] = servers
+			sm.changeConfig(&new_config)
+		}
+		sm.mu.Lock()
+		sm.configs = append(sm.configs, new_config)
+		sm.mu.Unlock()
+		DPrintf("Shard %d: New Configuration - %v", processId, new_config)
+		status = true
+	} else if command.ShardOperation == LeaveOp {
+		DPrintf("Shard %d: Leave Response Received", processId)
+		leaveArg := command.LeavePar
+		sm.mu.Lock()
+		new_config := sm.copyOfConfig(sm.configs[len(sm.configs)-1])
+		sm.mu.Unlock()
+		for _, gid := range leaveArg.GIDs {
+			delete(new_config.Groups, gid)
+			sm.changeConfig(&new_config)
+		}
+		sm.mu.Lock()
+		sm.configs = append(sm.configs, new_config)
+		sm.mu.Unlock()
+		DPrintf("Shard %d: New Configuration - %v", processId, new_config)
+		status = true
+	} else if command.ShardOperation == MoveOp {
+		DPrintf("Shard %d: Move Response Received", processId)
+		moveArg := command.MovePar
+		sm.mu.Lock()
+		new_config := sm.copyOfConfig(sm.configs[len(sm.configs)-1])
+		new_config.Shards[moveArg.Shard] = moveArg.GID
+		sm.configs = append(sm.configs, new_config)
+		sm.mu.Unlock()
+		DPrintf("Shard %d: New Configuration - %v", processId, new_config)
+		status = true
+	} else {
+		DPrintf("Shard %d: Query Response Received", processId)
+		status = true
+	}
+	DPrintf("Shard %d: Storing the Command in Memory", processId)
+	sm.mu.Lock()
+<A NAME="8"></A><FONT color = #00FFFF><A HREF="match69-0.html#8" TARGET="0"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	sm.clientRequests[command.ClientID][command.InstanceID] = command
+	DPrintf("Shard %d: Checking if Client lodged a request", processId)
+	select {
+	case sm.clientChannelNotif[command.InstanceID] &lt;- status:
+		DPrintf("Shard %d: Sent the respones back to caller", processId)
+	default:
+		DPrintf("Shard %d: No respose lodged", processId)
+</FONT>	}
+	sm.mu.Unlock()
+	DPrintf("Shard %d: Completed with/without sending response", processId)
+}
+
+func (sm *ShardMaster) changeConfig(config *Config) {
+	group_len := len(config.Groups)
+	if group_len &gt; NShards {
+		return
+	}
+	min_count := int(math.Floor(float64(NShards) / float64(group_len)))
+	max_count := int(math.Ceil(float64(NShards) / float64(group_len)))
+	groups_shard_list := make(map[int][]int)
+
+	free_shards := make([]int, 0)
+
+	for i := 0; i &lt; NShards; i++ {
+		if _, ok := config.Groups[config.Shards[i]]; ok {
+			if _, ok := groups_shard_list[config.Shards[i]]; ok {
+				groups_shard_list[config.Shards[i]] = append(groups_shard_list[config.Shards[i]], i)
+			} else {
+				list := make([]int, 0)
+				list = append(list, i)
+				groups_shard_list[config.Shards[i]] = list
+			}
+		} else {
+			free_shards = append(free_shards, i)
+		}
+	}
+
+	max_heap := make(IntHeap, len(groups_shard_list))
+	ctr := 0
+	for gid, shards := range groups_shard_list {
+		max_heap[ctr] = Node{Id: gid, Shards: shards, Count: len(shards)}
+		ctr++
+	}
+
+	heap.Init(&max_heap)
+	index := 0
+
+	for max_heap.Len() &gt; 0 {
+		node := heap.Pop(&max_heap).(Node)
+		count := 0
+		if index &lt; NShards%group_len {
+			count = max_count
+		} else {
+			count = min_count
+		}
+		if node.Count &gt; count {
+			node.Count = node.Count - count
+			to_remove := node.Count
+			for to_remove &gt; 0 {
+				shard := node.Shards[0]
+				node.Shards = node.Shards[1:]
+				free_shards = append(free_shards, shard)
+				to_remove--
+			}
+		}
+		index++
+	}
+
+	DPrintf("Free Shards : %v", free_shards)
+	for gid, _ := range config.Groups {
+		count := 0
+		if index &lt; NShards%group_len {
+			count = max_count
+		} else {
+			count = min_count
+		}
+		if _, ok := groups_shard_list[gid]; ok {
+			count = count - len(groups_shard_list[gid])
+		}
+		to_add := 0
+		for to_add &lt; count {
+			shard := free_shards[0]
+			free_shards = free_shards[1:]
+			config.Shards[shard] = gid
+			to_add++
+		}
+		index++
+	}
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

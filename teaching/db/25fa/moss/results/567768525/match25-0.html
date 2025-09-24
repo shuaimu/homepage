@@ -1,0 +1,520 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/baggio000/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/baggio000/src/kvraft/server.go<p><PRE>
+package raftkv
+
+import (
+	"labgob"
+	"labrpc"
+	"log"
+	"raft"
+	"sync"
+	"time"
+	"bytes"
+    "sync/atomic"
+)
+
+const (
+    MAXMSG = 2000
+    MAXTIMES = float64(1.3)
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match25-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    INVLD = -1
+    TIMEOUT = 5000 // ms
+    WAITTIME = 50 // ms
+    WAITRD = 10 // wait round at most 
+    NILARGS = "nil" // empty command
+)
+
+const Debug = 0
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+/* TODO 
+type Op struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+}*/
+
+type Val struct {
+    Idx int64
+    Val string
+}
+
+type Req struct {
+</FONT>    ReqSeq int64
+    Idx int64
+}
+
+type RetChan struct {
+    Term int
+    Value string
+    Err Err
+}
+
+type KVServer struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	maxraftstate int // snapshot if log grows this big
+
+	// Your definitions here.
+    Snapidx int64
+    lastcmtidx  int64
+    Kvstore map[string]Val
+    retChans map[int64]chan RetChan
+    Reqs map[int64]Req
+	blockin int64
+
+    persister *raft.Persister
+
+}
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match25-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func setval(addr *int64, val int64) {
+    atomic.StoreInt64(addr, val)
+}
+
+func loadval(addr *int64) int64 {
+    return atomic.LoadInt64(addr)
+}
+
+func (kv *KVServer) waitcommit(idx int64, term int) (string,Err) {
+    kv.mu.Lock()
+    retchan := make(chan RetChan,1)
+    var ret RetChan
+    kv.retChans[idx] = retchan
+    kv.mu.Unlock()
+    DPrintf("srv %d is going to wait idx %d term %d", kv.me, idx, term)
+    select {
+    case &lt;- time.After(time.Duration(TIMEOUT* time.Millisecond)) :
+        DPrintf("srv %d wait commit timeout idx %d", kv.me, idx)
+        kv.mu.Lock()
+        delete(kv.retChans, idx)
+        kv.mu.Unlock()
+</FONT><A NAME="8"></A><FONT color = #00FFFF><A HREF="match25-1.html#8" TARGET="1"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        return "", ErrTimeout
+    case ret = &lt;-retchan :
+        DPrintf("srv %d reply idx %d in wait commit", kv.me, idx)
+        break
+    }
+    // reply but term changed, means the data committed is not the command this client put
+    if ret.Term != term {
+        DPrintf("srv %d term %d diff from old term %d", kv.me, ret.Term, term)
+</FONT>        return "", ErrWrongSrv
+    }
+    kv.mu.Lock()
+    kv.trysnap()
+    kv.mu.Unlock()
+    return ret.Value, ret.Err
+}
+
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match25-1.html#7" TARGET="1"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
+	// Your code here.
+    for loadval(&kv.blockin) == 1 {
+        time.Sleep(WAITTIME)
+    }
+
+    cnt := kv.rf.GetSucCnt()
+    if cnt == -1 {
+        reply.Err = ErrWrongSrv
+</FONT>        return
+    }
+    kv.mu.Lock()
+    val, ok := kv.Kvstore[args.Key]
+    if ok {
+        DPrintf("srv %d Get %s reply.value %s idx %d lstidx %d", kv.me, args.Key, val.Val, val.Idx, kv.lastcmtidx)
+        reply.Err = OK
+        reply.Value = val.Val
+    } else {
+        DPrintf("srv %d Get %s no key", kv.me, args.Key)
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match25-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        reply.Err = ErrNoKey
+    }
+    kv.mu.Unlock()
+    waitrd := WAITRD
+    for {
+        newcnt := kv.rf.GetSucCnt()
+        if newcnt == -1 {
+            DPrintf("srv %d wrong srv Get %s newcnt %d oldcnt %d", kv.me, args.Key, newcnt, cnt)
+            reply.Err = ErrWrongSrv
+</FONT>            return
+        }
+        if cnt != newcnt {
+            DPrintf("srv %d reply Get %s newcnt %d oldcnt %d, reply Err %s val %s", kv.me, args.Key, newcnt, cnt, reply.Err, reply.Value)
+            return
+        }
+        waitrd--
+        if waitrd &lt; 0 {
+            reply.Err = ErrTimeout
+            return
+        }
+        time.Sleep(time.Millisecond * time.Duration(WAITTIME&gt;&gt;1))
+    }
+}
+
+func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	// Your code here.
+    quickret := false
+    cliid := args.CliId
+    reqseq := args.ReqSeq
+    reply.Err = ErrWrongSrv
+
+<A NAME="13"></A><FONT color = #00FFFF><A HREF="match25-1.html#13" TARGET="1"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    for loadval(&kv.blockin) == 1 {
+        time.Sleep(WAITTIME)
+    }
+    kv.mu.Lock()
+    localreqseq,ok := kv.Reqs[cliid]
+</FONT>    // TODO rechk
+    DPrintf("srv %d, clid id %d,op %s, key: %s, val: %s, localreqseq %s, ok", kv.me, cliid,args.Op, args.Key, args.Value, localreqseq, ok)
+    if ok {
+        if reqseq &lt; localreqseq.ReqSeq {
+            // work already done
+            quickret = true
+            DPrintf("srv %d, clid id %d,op %s, key: %s, val: %s, reqseq %d", kv.me, cliid,args.Op, args.Key, args.Value, reqseq)
+        } else if reqseq == localreqseq.ReqSeq {
+            reqidx := localreqseq.Idx
+            //if reqidx != INVLD && reqidx &lt;= kv.lastcmtidx {
+            if reqidx != INVLD {
+                // work already done
+                quickret = true
+                DPrintf("srv %d, clid id %d,op %s, key: %s, val: %s, reqseq %d, reqidx %d", kv.me, cliid,args.Op, args.Key, args.Value, reqseq, reqidx)
+            }
+            DPrintf("srv %d, clid id %d,op %s, key: %s, val: %s, reqseq %d, reqidx %d", kv.me, cliid,args.Op, args.Key, args.Value, reqseq, reqidx)
+        } else {
+        }
+    }
+
+    kv.mu.Unlock()
+    if quickret {
+<A NAME="12"></A><FONT color = #0000FF><A HREF="match25-1.html#12" TARGET="1"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        reply.Err = OK
+        return
+    }
+
+    idx, term, ret := kv.rf.Start(*args)
+    if !ret {
+        reply.Err = ErrWrongSrv
+</FONT>        DPrintf("srv %d, not a leader", kv.me)
+        return
+    }
+
+    kv.mu.Lock()
+    localreqseq.ReqSeq = reqseq
+    localreqseq.Idx = INVLD
+    kv.Reqs[cliid] = localreqseq
+    kv.mu.Unlock()
+    DPrintf("srv %d, clid id %d,op %s, key: %s, val: %s going to wait idx %d", kv.me, cliid,args.Op, args.Key, args.Value, idx)
+
+    _, ret1 := kv.waitcommit((int64)(idx), term)
+    reply.Err = ret1
+    if ret1 == OK {
+        kv.mu.Lock()
+        localreqseq.Idx = (int64)(idx)
+        kv.Reqs[cliid] = localreqseq
+        DPrintf("srv %d, clid id %d,op %s, key: %s, val: %s, set reqseq %d, reqidx %d", kv.me, cliid,args.Op, args.Key, args.Value, localreqseq.ReqSeq, idx)
+        kv.mu.Unlock()
+    }
+    DPrintf("srv %d, clid id %d,op %s, key: %s, val: %s idx: %d reply: %s", kv.me, cliid,args.Op, args.Key, args.Value, idx, ret1)
+}
+
+//
+// the tester calls Kill() when a KVServer instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *KVServer) Kill() {
+	kv.rf.Kill()
+	// Your code here, if desired.
+}
+
+func (kv *KVServer) trysnap() {
+    if kv.maxraftstate != -1 {
+        if kv.persister.RaftStateSize() &gt;= int(float64(kv.maxraftstate) * MAXTIMES) {
+            DPrintf("srv %d is going to do mksnap lastcmtidx %d snapidx %d", kv.me, kv.lastcmtidx, kv.Snapidx)
+            kv.mksnap()
+        }
+    }
+}
+
+func (kv *KVServer) mksnap() {
+    kv.Snapidx = kv.lastcmtidx
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(kv.Kvstore)
+	e.Encode(kv.Reqs)
+	e.Encode(kv.Snapidx)
+	data := w.Bytes()
+    kv.rf.PersistSnap(kv.lastcmtidx, data)
+}
+
+func (kv *KVServer) recvsnap() {
+    data := kv.persister.ReadSnapshot()
+    if data == nil || len(data) &lt; 1 {
+        return
+    }
+    r := bytes.NewBuffer(data)
+    d := labgob.NewDecoder(r)
+    d.Decode(&kv.Kvstore)
+    d.Decode(&kv.Reqs)
+    d.Decode(&kv.Snapidx)
+    DPrintf("srv %d, finish recvsnap snap idx %d", kv.me, kv.Snapidx)
+}
+
+func (kv *KVServer) recovery() {
+    kv.mu.Lock()
+    defer kv.mu.Unlock()
+    kv.recvsnap()
+    DPrintf("srv %d, doing redo", kv.me)
+    kv.rf.Redo()
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match25-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_12.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    DPrintf("srv %d, finish redo", kv.me)
+}
+
+func (kv *KVServer) run() {
+    var startidx int64 = -1
+    var first bool = true
+    // block the data in, unless leader has been elected
+    setval(&(kv.blockin), 1)
+    kv.recovery()
+    for m := range kv.applyCh {
+
+        DPrintf("srv %d, cmdvalid %s, command %s", kv.me, m.CommandValid, m.Command)
+
+        if m.CommandValid == false {
+            // TODO other type of applyCh
+            if v, ok := (m.Command).(string); ok {
+                // other type
+                if v == "NL" {
+                    DPrintf("srv %d, becoming a leader", kv.me)
+                    setval(&(kv.blockin), 1)
+                    kv.mu.Lock()
+                    kv.retChans = make(map[int64]chan RetChan )
+                    kv.Reqs = make(map[int64]Req)  // make a new reqs map 
+                    kv.mu.Unlock()
+                    idx,_,ret := kv.rf.Start(NILARGS)
+                    startidx = int64(idx)
+                    if !ret {
+                        DPrintf("srv %d, start failed ", kv.me)
+                        setval(&(kv.blockin), 0)
+                    } else {
+                        DPrintf("srv %d, waiting for lastcmtidx %d, idx %d", kv.me, loadval(&(kv.lastcmtidx)), startidx)
+                        go func(sidx int64) {
+                            for {
+                                if loadval(&(kv.lastcmtidx)) &lt; sidx {
+                                    time.Sleep(WAITTIME)
+                                    continue
+                                }
+                                setval(&(kv.blockin), 0)
+                                break
+                            }
+                        }(startidx)
+                    }
+                    first = false
+                } else if v == "SD" { // step down
+                    DPrintf("srv %d, step down from a leader", kv.me)
+                    kv.mu.Lock()
+                    var ret RetChan
+                    ret.Err = ErrWrongSrv
+                    for idx,retchan := range kv.retChans {
+                        DPrintf("srv %d, step down from a leader, set idx %d chan failed, ret %s", kv.me, idx, ret)
+                        retchan &lt;- ret
+                    }
+                    kv.retChans = make(map[int64]chan RetChan )
+                    kv.mu.Unlock()
+                } else if v == "IS" { // install snapshot 
+</FONT>                    DPrintf("srv %d, install snapshot cur snap idx %d ", kv.me, kv.Snapidx)
+                    kv.recovery()
+                    DPrintf("srv %d, finish install snapshot idx %d", kv.me, kv.Snapidx)
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match25-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                } else {
+                    DPrintf("srv %d, unknown msg cmd %s", kv.me, m.Command)
+                }
+            } else {
+                DPrintf("srv %d, unknown msg cmd %s", kv.me, m.Command)
+            }
+        } else {
+            var ret RetChan
+            var cmdidx int64
+            cmdidx = (int64)(m.CommandIndex)
+            ret.Term = m.CommandTerm
+            ret.Err = OK
+            kv.mu.Lock()
+            retchan,needreply := kv.retChans[cmdidx]
+            if v, ok := (m.Command).(GetArgs); ok {
+                // TODO optimize
+                val, ok := kv.Kvstore[v.Key]
+</FONT>                if ok {
+                    ret.Value = val.Val
+                } else {
+                    ret.Err = ErrNoKey
+                }
+<A NAME="9"></A><FONT color = #FF00FF><A HREF="match25-1.html#9" TARGET="1"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                DPrintf("srv %d, in get, idx %d, key %s, val %s, ret %s", kv.me, cmdidx, v.Key, val.Val, ret.Err)
+            } else if v, ok := (m.Command).(PutAppendArgs); ok {
+                cliid := v.CliId
+                reqseq := v.ReqSeq
+</FONT><A NAME="14"></A><FONT color = #FF00FF><A HREF="match25-1.html#14" TARGET="1"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                quickret := false
+                // TODO rechk
+                req, ok := kv.Reqs[cliid]
+                if ok {
+                    DPrintf("srv %d, in put, idx %d, key %s, set reqmap cliid %d reqseq %d new reqseq %d", kv.me, cmdidx, v.Key, cliid, reqseq, req.ReqSeq)
+</FONT><A NAME="5"></A><FONT color = #FF0000><A HREF="match25-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                    if req.ReqSeq &lt; reqseq {
+                        req.ReqSeq = reqseq
+                        req.Idx = cmdidx
+                        kv.Reqs[cliid] = req
+                    } else if req.ReqSeq == reqseq {
+                        if req.Idx != INVLD {
+                            DPrintf("srv %d, in put, idx %d, key %s, set quick return cliid %d reqseq %d, reqidx", kv.me, cmdidx, v.Key, cliid, reqseq, req.Idx)
+</FONT><A NAME="11"></A><FONT color = #00FF00><A HREF="match25-1.html#11" TARGET="1"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                            quickret = true
+                        } else {
+                            req.Idx = cmdidx
+                            kv.Reqs[cliid] = req
+                        }
+                    } else {
+                        DPrintf("srv %d, in put, idx %d, key %s, set quick return cliid %d reqseq %d, new reqseq %d", kv.me, cmdidx, v.Key, cliid, reqseq, req.ReqSeq)
+</FONT>                        quickret = true
+                    }
+                } else {
+                    DPrintf("srv %d, in put, idx %d, key %s, set reqmap cliid %d reqseq %d", kv.me, cmdidx, v.Key, cliid, reqseq)
+                    var newreq Req
+                    newreq.Idx = cmdidx
+                    newreq.ReqSeq = reqseq
+                    kv.Reqs[cliid] = newreq
+                }
+                if !quickret {
+                    val, ok := kv.Kvstore[v.Key]
+                    if ok {
+                        DPrintf("srv %d, in put, idx %d, key %s, cur val %s", kv.me, cmdidx, v.Key, val.Val)
+                        idx := val.Idx
+                        if idx &lt; cmdidx {
+                            val.Idx = cmdidx
+                            // check if executed
+                            if v.Op == "Append" {
+                                val.Val += v.Value
+                            } else if v.Op == "Put" {
+                                val.Val = v.Value
+                            } else {
+                                // do nothing
+                            }
+                        }
+                        DPrintf("srv %d, in put, idx %d, key %s, new val %s", kv.me, cmdidx, v.Key, val.Val)
+                    } else {
+                        val.Idx = cmdidx
+                        val.Val += v.Value
+                        DPrintf("srv %d, in put, idx %d, key %s, new val %s", kv.me, cmdidx, v.Key, val.Val)
+                    }
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match25-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                    kv.Kvstore[v.Key] = val
+                }
+            } else if v, ok := (m.Command).(string); ok {
+                // wrong type
+                if v == NILARGS {
+                    DPrintf("srv %d commit nil msg, idx %d", kv.me, cmdidx)
+                } else {
+                    DPrintf("srv %d, in commit wrong string type, idx %d, cmd %s", kv.me, cmdidx, m.Command)
+                    ret.Err = ErrWrongSrv
+                }
+            } else {
+                DPrintf("srv %d, in commit wrong type, idx %d, cmd %s", kv.me, cmdidx, m.Command)
+                ret.Err = ErrWrongSrv
+            }
+            if loadval(&(kv.lastcmtidx)) &lt; cmdidx {
+                setval(&(kv.lastcmtidx), cmdidx)
+            }
+            if needreply {
+                DPrintf("srv %d, put reply chan, idx %d", kv.me, cmdidx)
+                retchan &lt;- ret
+                delete(kv.retChans, cmdidx)
+            }
+            kv.mu.Unlock()
+        }
+
+        if first && startidx == -1 {
+            // not a leader, release block in
+            setval(&(kv.blockin), 0)
+            first = false
+        }
+    }
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Raft to
+// form the fault-tolerant key/value service.
+// me is the index of the current server in servers[].
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+// the k/v server should snapshot when Raft's saved state exceeds maxraftstate bytes,
+// in order to allow Raft to garbage-collect its log. if maxraftstate is -1,
+// you don't need to snapshot.
+// StartKVServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
+</FONT>    // call labgob.Register on structures you want
+    // Go's RPC library to marshall/unmarshall.
+    //labgob.Register(Op{})
+    labgob.Register(GetArgs{})
+    labgob.Register(PutAppendArgs{})
+
+    kv := new(KVServer)
+    kv.me = me
+    kv.maxraftstate = maxraftstate
+
+    // You may need initialization code here.
+
+    kv.applyCh = make(chan raft.ApplyMsg, MAXMSG)
+    kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+
+    // You may need initialization code here.
+    kv.persister = persister
+    kv.Kvstore = make(map[string]Val)
+<A NAME="10"></A><FONT color = #FF0000><A HREF="match25-1.html#10" TARGET="1"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    kv.retChans = make(map[int64]chan RetChan )
+    kv.Reqs = make(map[int64]Req)
+    kv.lastcmtidx = 0
+    kv.Snapidx = 0
+    kv.blockin = 0
+</FONT>
+    go kv.run()
+
+    return kv
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

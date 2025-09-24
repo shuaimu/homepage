@@ -1,0 +1,203 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-E-train-Liu/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-E-train-Liu/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MARSHALLABLE_TYPE_CMD_SHARD_CONFIG,
+                                   [] () -&gt; Marshallable* {
+                                     return new ShardConfigMarshallable();
+                                   });
+
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  ShardConfig new_config = NewConfigFromLast();
+  Log_debug("shardmaster: join, config %d", new_config.number);
+  for (const auto& gid_svr_pair : gid_server_map)
+    new_config.group_servers_map_.insert(gid_svr_pair);
+  Balance(new_config);
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match195-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  SubmitCommand(std::move(new_config), ret);
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+</FONT>  // your code here
+  ShardConfig new_config = NewConfigFromLast();
+  Log_debug("shardmaster: leave, config %d", new_config.number);
+  for (uint32_t gid : gids)
+    new_config.group_servers_map_.erase(gid);
+  Balance(new_config);
+  SubmitCommand(std::move(new_config), ret);
+  defer-&gt;reply();
+}
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match195-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  ShardConfig new_config = NewConfigFromLast();
+  Log_debug("shardmaster: move shard %d to group %u, config %d", shard, gid, new_config.number);
+</FONT>  new_config.shard_group_map_[shard] = gid;
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match195-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  SubmitCommand(std::move(new_config), ret);
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+</FONT>  // your code here
+  // ShardConfig noop_config = NewConfigFromLast();
+  // Log_debug("shardmaster: query config %d, config %d", config_no, noop_config.number);
+  // SubmitCommand(std::move(noop_config), ret);
+  // if (*ret == KV_SUCCESS) {'
+  Log_debug("shardmaster: query config %d", config_no);
+  *ret = KV_SUCCESS;
+  auto& max_config_pair = *(configs_.rbegin());
+  *config = config_no &lt; 0 || config_no &gt; max_config_pair.first ?
+    max_config_pair.second : configs_[config_no];
+  // }
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::SubmitCommand(ShardConfig&& config, uint32_t* ret) {
+  int32_t config_no = config.number;
+  shared_ptr&lt;ShardConfigMarshallable&gt; scm = make_shared&lt;ShardConfigMarshallable&gt;();
+  scm-&gt;data_ = std::move(config);
+  shared_ptr&lt;IntEvent&gt; event = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  pending_events_.insert({config_no, event});
+  shared_ptr&lt;Marshallable&gt; m = scm;
+  uint64_t index, term;
+  if (!GetRaftServer().Start(m, &index, &term)) {
+    pending_events_.erase(config_no);
+    *ret = KV_NOTLEADER;
+    Log_debug("shardmaster: config %d finished, *ret == KV_NOTLEADER", config_no);
+    return;
+  }
+  event-&gt;Wait(SM_TIMEOUT);
+  if (event-&gt;status_ == Event::TIMEOUT) {
+    *ret = KV_TIMEOUT;
+    Log_debug("shardmaster: config %d finished, *ret == KV_TIMEOUT", config_no);
+  }
+  else {
+    *ret = KV_SUCCESS;
+    Log_debug("shardmaster: config %d finished, *ret == KV_SUCCESS", config_no);
+  }
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  // your code here
+  ShardConfigMarshallable& scm = dynamic_cast&lt;ShardConfigMarshallable&&gt;(m);
+  ShardConfig& new_config = scm.data_;
+  configs_[new_config.number] = new_config;
+  auto it = pending_events_.find(new_config.number);
+  if (it != pending_events_.end()) {
+    it-&gt;second-&gt;Set(1);
+    pending_events_.erase(it);
+  }
+}
+
+void ShardMasterServiceImpl::Balance(ShardConfig& config) {
+  size_t n_groups = config.group_servers_map_.size();
+  size_t n_shards = config.shard_group_map_.size();
+  if (n_groups == 0) {
+    for (auto& sh_g_pair : config.shard_group_map_)
+      sh_g_pair.second = 0;
+    return;
+  }
+  // normal groups have floor(n_shards / n_groups) shards
+  // overload groups have floor(n_shards / n_groups) + 1 shards
+  size_t n_mean_shards_in_group = n_shards / n_groups;
+  size_t n_expect_overload_groups = n_shards % n_groups;
+
+  std::map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt; group_shard_map;
+  std::vector&lt;uint32_t&gt; unalloc_shards;
+  for (const auto& g_svr_pair : config.group_servers_map_)
+    group_shard_map.insert({g_svr_pair.first, {}});
+  for (const auto& sh_g_pair : config.shard_group_map_) {
+    auto it = group_shard_map.find(sh_g_pair.second);
+    if (it != group_shard_map.end())
+      it-&gt;second.push_back(sh_g_pair.first);
+    else
+      unalloc_shards.push_back(sh_g_pair.first);
+  }
+
+  size_t n_overload_groups = 0;
+  for (const auto& g_sh_pair : group_shard_map)
+    n_overload_groups += g_sh_pair.second.size() &gt; n_mean_shards_in_group;
+  for (auto& g_sh_pair : group_shard_map) {
+    size_t n_shards_in_group = g_sh_pair.second.size();
+    if (g_sh_pair.second.size() &gt; n_mean_shards_in_group + 1)
+      VectorMoveBack(g_sh_pair.second, unalloc_shards,
+                     n_shards_in_group - (n_mean_shards_in_group + 1));
+    if (n_shards_in_group &gt;= n_mean_shards_in_group + 1
+        && n_overload_groups &gt; n_expect_overload_groups) {
+      VectorMoveBack(g_sh_pair.second, unalloc_shards, 1);
+      --n_overload_groups;
+    }
+  }
+  for (auto& g_sh_pair : group_shard_map) {
+    size_t n_shards_in_group = g_sh_pair.second.size();
+    if (n_shards_in_group &lt; n_mean_shards_in_group)
+      VectorMoveBack(unalloc_shards, g_sh_pair.second,
+                     n_mean_shards_in_group - n_shards_in_group);
+    if (n_shards_in_group &lt;= n_mean_shards_in_group
+        && n_overload_groups &lt; n_expect_overload_groups) {
+      VectorMoveBack(unalloc_shards, g_sh_pair.second, 1);
+      ++n_overload_groups;
+    }
+  }
+
+  for (const auto& g_sh_pair : group_shard_map) {
+    uint32_t group = g_sh_pair.first;
+    for (uint32_t shard : g_sh_pair.second)
+      config.shard_group_map_[shard] = group;
+  }
+}
+
+void ShardMasterServiceImpl::VectorMoveBack(std::vector&lt;uint32_t&gt;& src,
+                                            std::vector&lt;uint32_t&gt;& dst,
+                                            size_t len) {
+  // Log_debug("VectorMoveBack: %lu  -%lu-&gt;  %lu", src.size(), len, dst.size());
+  dst.reserve(dst.size() + len);
+  size_t src_new_len = src.size() - len;
+  for (size_t i = 0; i &lt; len; ++i)
+    dst.push_back(src[src_new_len + i]);
+  src.resize(src_new_len);
+}
+
+ShardConfig ShardMasterServiceImpl::NewConfigFromLast() {
+  if (configs_.empty()) {
+    ShardConfig config;
+    config.number = ++config_counter_;
+    return config;  
+  }
+  else {
+    ShardConfig config = configs_.rbegin()-&gt;second;
+    config_counter_ = max(config_counter_, config.number);
+    config.number = ++config_counter_;
+    return config;
+  }
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  return cli;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

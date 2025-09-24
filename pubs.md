@@ -21,6 +21,14 @@ Stony Brook University <br>
 ## Publications
    <ul>
      <li>
+     Mako: Speculative Distributed Transactions with Geo-Replication
+     [<a href="https://www.usenix.org/system/files/osdi25-shen-weihai.pdf">paper</a>]
+     <br>
+     Weihai Shen, Yang Cui, Siddhartha Sen, Sebastian Angel, and Shuai Mu
+     <br>
+     OSDI 25
+     </li>
+     <li>
      Viper: A Fast Snapshot Isolation Checker 
      [<a href="./pub/viper-eurosys23.pdf">paper</a>]
      <br>

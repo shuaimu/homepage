@@ -1,0 +1,372 @@
+<HTML>
+<HEAD>
+<TITLE>./spring19/LudwigOtto/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./spring19/LudwigOtto/src/kvraft/server.go<p><PRE>
+package raftkv
+
+import (
+	"labgob"
+	"labrpc"
+	"log"
+	"raft"
+	"sync"
+	"fmt"
+	"bytes"
+)
+
+const Debug = 0
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+
+type Op struct {
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match28-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	Op string //Get or PutAppend
+	Key string
+	Value string
+	C_id int64
+	O_id uint32
+}
+
+type Stat struct {
+	O_id uint32
+	Index int
+	Key string
+	Value string
+}
+
+type KVServer struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+	stopSnapshot chan bool
+</FONT>	updateSnapshot chan bool
+	createSnapshot chan bool
+
+	maxraftstate int // snapshot if log grows this big
+
+	// Your definitions here.
+	storage map[string]string
+	clnt_msg_stats map[int64](*Stat)
+	snapshotIndex int
+	updatedOffset int
+}
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match28-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_8.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
+	// Your code here.
+	op := new(Op)
+	op.Op = "Get"
+	op.Key = args.Key
+	op.Value = ""
+	op.C_id = args.C_id
+	op.O_id = args.O_id
+
+	reply.WrongLeader = true
+	reply.Value = ""
+	reply.Err = ""
+
+	val, ans := kv.isOldRequest(op)
+	if ans == YES {
+		//fmt.Printf("Duplicated Get, Key %s\n", op.Key)
+		reply.WrongLeader = false
+		reply.Err = OK
+		//reply.Value, _ = kv.storage[op.Key]
+		reply.Value = val
+		return
+	} else if ans == WAIT {
+		reply.WrongLeader = false
+		reply.Err = "Wait for commit"
+</FONT>		return
+	} else if ans == NOT {
+		return
+	}
+
+	if kv.rf != nil {
+<A NAME="9"></A><FONT color = #FF00FF><A HREF="match28-1.html#9" TARGET="1"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		_, _, isLeader := kv.rf.Start(op)
+		if isLeader {
+			//fmt.Printf("Leader %d got Get request from client %d\n", kv.me, op.C_id)
+			reply.WrongLeader = false
+			reply.Err = "Wait for commit"
+			return
+</FONT>		}
+	} else {
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match28-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_8.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		reply.Err = "Backend RF doesn't exist"
+	}
+}
+
+func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	// Your code here.
+	op := new(Op)
+	op.Op = args.Op
+	op.Key = args.Key
+	op.Value = args.Value
+	op.C_id = args.C_id
+	op.O_id = args.O_id
+
+	reply.WrongLeader = true
+	reply.Err = ""
+
+	_, ans := kv.isOldRequest(op)
+	if ans == YES {
+		//fmt.Printf("Leader %d got duplicated %s, Key %s Val %s O_id %d from client %d\n", kv.me, op.Op, op.Key, op.Value, op.O_id, op.C_id)
+		reply.WrongLeader = false
+		reply.Err = OK
+		return
+	} else if ans == WAIT {
+		reply.WrongLeader = false
+		reply.Err = "Wait for commit"
+</FONT>		return
+	} else if ans == NOT {
+		return
+	}
+
+	if kv.rf != nil {
+<A NAME="10"></A><FONT color = #FF0000><A HREF="match28-1.html#10" TARGET="1"><IMG SRC="../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		_, _, isLeader := kv.rf.Start(op)
+		if isLeader {
+			//fmt.Printf("Leader %d got first %s, Key %s Val %s O_id %d from client %d\n", kv.me, op.Op, op.Key, op.Value, op.O_id, op.C_id)
+			reply.WrongLeader = false
+			reply.Err = "Wait for commit"
+		}
+	} else {
+</FONT>		reply.Err = "Backend RF doesn't exist"
+	}
+
+}
+
+//
+// the tester calls Kill() when a KVServer instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *KVServer) Kill() {
+	//fmt.Printf("kv server %d goes over\n", kv.me)
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match28-1.html#7" TARGET="1"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.rf.Kill()
+	// Your code here, if desired.
+	kv.stopSnapshot &lt;- true
+	close(kv.applyCh)
+	//fmt.Printf("kv server %d killed\n", kv.me)
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Raft to
+// form the fault-tolerant key/value service.
+// me is the index of the current server in servers[].
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+// the k/v server should snapshot when Raft's saved state exceeds maxraftstate bytes,
+// in order to allow Raft to garbage-collect its log. if maxraftstate is -1,
+// you don't need to snapshot.
+// StartKVServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
+</FONT>	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+
+	kv := new(KVServer)
+	kv.me = me
+	if maxraftstate != -1 {
+		kv.maxraftstate = maxraftstate*4/5
+	} else {
+		kv.maxraftstate = maxraftstate
+	}
+
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.stopSnapshot = make(chan bool)
+	kv.updateSnapshot = make(chan bool)
+	kv.createSnapshot = make(chan bool)
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+
+<A NAME="8"></A><FONT color = #00FFFF><A HREF="match28-1.html#8" TARGET="1"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.storage = make(map[string]string)
+	kv.clnt_msg_stats = make(map[int64](*Stat))
+	kv.snapshotIndex = -1
+	kv.updatedOffset = -1
+</FONT>
+	kv.mu.Lock()
+	if maxraftstate != -1 {
+		kv.readSnapshot(-1)
+	}
+	kv.mu.Unlock()
+	go kv.StateMachine()
+	go kv.snapshotHandler()
+
+	return kv
+}
+
+func (kv *KVServer) StateMachine() {
+	for  m:= range kv.applyCh {
+		if m.CommandValid == true {
+			kv.mu.Lock()
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match28-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_11.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			op, ok := m.Command.(Op)
+			if !ok {
+				//fmt.Printf("Server %d, Type assertion fail: %v\n", kv.me, reflect.TypeOf(m.Command))
+				op = *(m.Command.(*Op))
+			}
+			stat, ok := kv.clnt_msg_stats[op.C_id]
+			if ok && stat.O_id == op.O_id && stat.Index != -1 {
+				//fmt.Printf("Duplicated commit. drop it\n")
+				kv.mu.Unlock()
+			} else {
+			if op.Op == "Get" {
+				//fmt.Printf("Server %d, Commit msg: %s\n", kv.me, msg)
+			} else if op.Op == "Put" {
+				kv.storage[op.Key] = op.Value
+				//fmt.Printf("Server %d, Commit Put: %v\n", kv.me, op.Value)
+			} else {
+				kv.storage[op.Key] += op.Value
+				//fmt.Printf("Server %d, Commit Append: %v\n", kv.me, op.Value)
+			}
+			kv.clnt_msg_stats[op.C_id] = &Stat{O_id: op.O_id, Index: m.CommandIndex, Key: op.Key, Value: kv.storage[op.Key]}
+			kv.mu.Unlock()
+			}
+		} else {
+</FONT>			if kv.maxraftstate != -1 {
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match28-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				kv.mu.Lock()
+				kv.updatedOffset = m.CommandIndex-1
+				kv.mu.Unlock()
+				if m.Command == nil {
+					kv.updateSnapshot &lt;- true
+				} else {
+					kv.createSnapshot &lt;- true
+				}
+			}
+		}
+	}
+}
+
+func (kv *KVServer) isOldRequest(op *Op) (string, string) {
+</FONT>	_, isLeader := kv.rf.GetState()
+	if !isLeader {
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match28-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_10.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		return "", NOT
+	}
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	if isLeader {
+		stat, ok := kv.clnt_msg_stats[op.C_id]
+		if ok && stat.O_id &gt;= op.O_id {
+			if stat.Index != -1 {
+				var val string
+				if kv.clnt_msg_stats[op.C_id].Key == op.Key {
+					val = kv.clnt_msg_stats[op.C_id].Value
+				} else {
+					fmt.Printf("Last Key %s\n", kv.clnt_msg_stats[op.C_id].Key)
+				}
+				return val, YES
+			} else {
+				return "", WAIT
+			}
+		} else {
+			kv.clnt_msg_stats[op.C_id] = &Stat{O_id: op.O_id, Index: -1, Key: op.Key, Value: ""}
+		}
+	}
+	return "", ""
+</FONT>}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match28-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_21.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *KVServer) readSnapshot(index int) {
+	//Called in Lock
+	snapshot := kv.rf.GetSnapshot(index)
+	if snapshot != nil {
+		r := bytes.NewBuffer(snapshot)
+		d := labgob.NewDecoder(r)
+
+		kv.storage = make(map[string]string)
+		kv.clnt_msg_stats = make(map[int64](*Stat))
+		kv.snapshotIndex = -1
+
+		d.Decode(&kv.storage)
+		d.Decode(&kv.clnt_msg_stats)
+		d.Decode(&kv.snapshotIndex)
+	} else {
+		kv.saveSnapshot(snapshot)
+	}
+}
+
+func (kv *KVServer) saveSnapshot(snapshot []byte) {
+	//Called in Lock
+	if snapshot != nil {
+		kv.rf.SaveSnapshotAndState(snapshot)
+	} else {
+		w := new(bytes.Buffer)
+		e := labgob.NewEncoder(w)
+		e.Encode(kv.storage)
+		e.Encode(kv.clnt_msg_stats)
+		e.Encode(kv.snapshotIndex)
+		data := w.Bytes()
+		kv.rf.SaveSnapshotAndState(data)
+	}
+}
+
+func (kv *KVServer) isReachLimit() (bool) {
+	//Called in Lock
+	size := kv.rf.GetStateSize()
+	if size &gt;= kv.maxraftstate {
+		return true
+	}
+	return false
+}
+
+func (kv *KVServer) snapshotHandler() {
+	for {
+		select {
+		case &lt;- kv.stopSnapshot:
+			return
+		case &lt;-kv.updateSnapshot:
+			kv.mu.Lock()
+			if kv.snapshotIndex &lt; kv.updatedOffset {
+				kv.readSnapshot(kv.updatedOffset)
+			}
+			kv.mu.Unlock()
+		case &lt;- kv.createSnapshot:
+			if kv.maxraftstate == -1 {
+				continue
+			}
+			kv.mu.Lock()
+			if kv.isReachLimit() {
+				kv.snapshotIndex = kv.updatedOffset
+				//fmt.Printf("kv server %d prepare to save snapshot\n", kv.me)
+				kv.saveSnapshot(nil)
+				//fmt.Printf("kv server %d prepare to trim log\n", kv.me)
+				kv.rf.Trim(kv.updatedOffset)
+			}
+			kv.mu.Unlock()
+</FONT>		}
+	}
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

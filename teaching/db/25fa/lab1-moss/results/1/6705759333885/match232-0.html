@@ -1,0 +1,290 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-2108arunk/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-2108arunk/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+
+void RaftServiceImpl::HandleRequestVote(const uint64_t& candidate_id,
+                                        const uint64_t& candidate_term,
+                                        const uint64_t& candidate_last_log_index, //basically the size of log
+                                        const uint64_t& candidate_last_log_term,
+                                        uint64_t *term,
+                                        bool_t *vote_granted,
+                                        rrr::DeferredReply* defer) {
+  /* Your code here */
+  *term = 0;
+  *vote_granted = false;
+
+  Log_info("Receive an RequestVote rpc from (%lu, term %lu, log_index %lu, log_term %lu), to (site_id, %lu, logsize %lu, cur_term %lu)", candidate_id, candidate_term, 
+          candidate_last_log_index, candidate_last_log_term, svr_-&gt;site_id_, svr_-&gt;log_vector.size(), svr_-&gt;cur_term);
+  //Log_info("Parameters, site_id %lu candidate_id %lu, last_log_index %lu, last_log_term %lu, *term %lu",
+  //                svr_-&gt;site_id_, candidate_id, last_log_index, last_log_term, *term);
+  svr_-&gt;mtx_.lock();
+
+    *vote_granted = 2;
+    uint64_t last_log_index = svr_-&gt;log_vector.size(), last_log_term  = 0;
+    if (last_log_index != 0) {
+      last_log_term = svr_-&gt;log_vector.back().first;
+    }
+    
+    uint64_t cur_term = svr_ -&gt; cur_term; 
+    // Candidate term is less than server term, reject
+    if (candidate_term &lt; svr_-&gt;cur_term) {
+      *vote_granted = 2;
+      *term = svr_-&gt;cur_term;
+    }
+    else // Current server log is more upto date than leader 
+    if (last_log_term &gt; candidate_last_log_term) {
+      *vote_granted = 2;
+      *term = svr_-&gt;cur_term;
+    }
+    else // Same term, but log of current server is bigger than canidate reject
+    if (last_log_term == candidate_last_log_term && last_log_index &gt; candidate_last_log_index ){
+      *vote_granted = 2;
+      *term = svr_-&gt;cur_term;
+    }
+    //Candidate term is greater than server than,
+    //Votes yes, and becomes a follower
+    else
+    if (candidate_term &gt; svr_-&gt;cur_term) {
+      *vote_granted = 1;
+      svr_-&gt;cur_term = candidate_term;
+      svr_-&gt;state = svr_-&gt;follower;
+      svr_-&gt;reset_time_out = true;
+      svr_ -&gt; vote_in_cur_term = true;
+    } 
+    else //already voted in current term
+    if (svr_ -&gt; vote_in_cur_term == true) {
+      *vote_granted = 2;
+      *term = svr_-&gt;cur_term;
+    }
+    else //Contacted a leader of current term
+    if (svr_-&gt;state == svr_-&gt;leader) {
+      *vote_granted = 2;
+      *term =  svr_-&gt;cur_term;
+    } 
+    else { //Same term, but not voted
+      svr_ -&gt; vote_in_cur_term = true;
+      *vote_granted = 1;
+      svr_-&gt;cur_term = candidate_term;
+      *term = svr_-&gt;cur_term;
+      svr_-&gt;state = svr_-&gt;follower;
+    }
+
+  svr_-&gt;mtx_.unlock();
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleAppendEntries(
+              const siteid_t& to_site_id,
+              const uint64_t& leader_term,
+              const siteid_t& leader_id,
+              const uint64_t& prev_log_index,
+              const uint64_t& prev_log_term,
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match232-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+              const uint64_t& leader_commit_index,
+              const vector &lt;type_pair&gt;& append_log_md,
+              uint64_t* followerAppendOK,
+              uint64_t* ask_term,
+              uint64_t* ask_index,
+              uint64_t* ask_log_length,
+              rrr::DeferredReply* defer) {
+</FONT>
+  /* Your code here */
+  *followerAppendOK = 0;
+  *ask_term = 0;
+  *ask_index = 0;
+  *ask_log_length = 0;
+  // std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(md_cmd).sp_data_;
+  //convert log first to desired format
+  Log_info("Inside HandleAppendEntries from (%lu to %lu), (term %lu, commit index %lu, append log %lu), followerAppendOK %d", 
+      leader_id, to_site_id, leader_term, leader_commit_index, append_log_md.size(), *followerAppendOK );
+
+  svr_-&gt;mtx_.lock();
+
+    int c_size = svr_-&gt;log_vector.size();
+    //This means followe has joined after disconnecting, update term number and do one more election
+    if (leader_term &lt; svr_-&gt;cur_term) {
+      //Case 1: 
+      *ask_term = svr_-&gt;cur_term;
+      *ask_index = svr_-&gt;log_vector.size();
+      *ask_log_length = svr_-&gt;log_vector.size();
+      *followerAppendOK = 2;
+
+      svr_-&gt;mtx_.unlock();
+      Log_info("Returned from Case 1 HandleAppendEntries from (%lu to %lu), (term %lu, commit Index %lu), to (logsize, %lu) followerAppendOK %d",
+            leader_id, to_site_id, leader_term, leader_commit_index, svr_-&gt;log_vector.size(), *followerAppendOK );
+      defer-&gt;reply();
+      //return;
+    }
+    else 
+    if (c_size != 0 && c_size &lt; prev_log_index) { //Update error
+      //Case 2:
+      *ask_term = svr_-&gt;cur_term;
+      *ask_index = svr_-&gt;log_vector.size();
+      *ask_log_length = svr_-&gt;log_vector.size();
+      *followerAppendOK = 2;
+
+      svr_-&gt;mtx_.unlock();
+      Log_info("Returned from Case 2 HandleAppendEntries from (%lu to %lu), (term %lu, commit Index %lu, pre log index %lu), followerAppendOK %d", 
+            leader_id, to_site_id, leader_term, leader_commit_index,prev_log_index, *followerAppendOK );
+      defer-&gt;reply();
+      //return;
+    } else {
+        //Unwrap the log vector
+        vector&lt;pair&lt;uint64_t, shared_ptr&lt;Marshallable&gt;&gt;&gt; append_log;
+        for (auto &t: append_log_md) {
+          std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(t.second).sp_data_;
+          append_log.push_back(make_pair(t.first, cmd));
+        }
+
+        // Case 3: This is the first entry to follower log, append all the log's recieved
+        if (c_size == 0) {
+          for (auto &t: append_log)
+            svr_ -&gt; log_vector.push_back(t);
+      
+          *ask_term = svr_-&gt;cur_term;
+          *ask_index = svr_-&gt;log_vector.size();
+          *ask_log_length = svr_-&gt;log_vector.size();
+          *followerAppendOK = 1;
+          svr_-&gt;reset_time_out = true;
+
+        svr_-&gt;mtx_.unlock();
+      
+        Log_info("Returned from Case 3 HandleAppendEntries from (%lu to %lu), (term %lu, commit Index %lu), to (logsize, %lu) followerAppendOK %d",
+            leader_id, to_site_id, leader_term, leader_commit_index, svr_-&gt;log_vector.size(), *followerAppendOK );
+        defer-&gt;reply();
+        //return;
+       } 
+       else {
+        //Case 4:
+          Log_info("Start Case 4 HandleAppendEntries from (%lu to %lu), (term %lu, commit Index %lu), to (logsize, %lu) followerAppendOK %d, prev_log_index %lu, prev_log_term %lu",
+            leader_id, to_site_id, leader_term, leader_commit_index, svr_-&gt;log_vector.size(), *followerAppendOK, prev_log_index, prev_log_term );
+          auto t = svr_-&gt;log_vector[prev_log_index-1];
+
+          // if term didn't matched . . do it afterwards
+          if (t.first != prev_log_term) {
+              // delete it and everything after it
+              Log_info("Start Case 4 HandleAppendEntries Terms not matched t.first %lu != prev_log_term  %lu, erase everything from %lu to %lu",t.first, prev_log_term,prev_log_index, c_size-1);
+              
+              // if (prev_log_term == 0)
+              //   svr_-&gt;log_vector.clear();
+              // else {    
+              //   for (int i = c_size-1; i &gt;= prev_log_index; i--) {
+              //     svr_-&gt;log_vector.pop_back();
+              //     Log_info("Start Case 4 i = %lu %lu", i, svr_-&gt;log_vector.size());
+              //   }
+              // }
+          
+              *ask_term = t.first;
+              if (prev_log_index == 0)
+                *ask_index = 0;
+              else
+                *ask_index = prev_log_index - 1;
+          
+              *ask_log_length = svr_-&gt;log_vector.size();
+              svr_-&gt;reset_time_out = true;
+              *followerAppendOK = 2;
+
+          svr_-&gt;mtx_.unlock();
+          defer-&gt;reply();
+          //return;
+        } 
+        else {
+          //Don't delete it, but delete everything after it
+          Log_info("terms == prev_log_term, delete no committed entries from %lu to %lu",prev_log_index, c_size-1 );
+          for (int i = c_size-1; i &gt;= prev_log_index; i-- )
+            svr_-&gt;log_vector.pop_back();
+    
+          Log_info("For Case 4 HandleAppendEntries from (%lu to %lu), (term %lu, commit Index %lu), to (logsize, %lu) followerAppendOK %d",
+            leader_id, to_site_id, leader_term, leader_commit_index, svr_-&gt;log_vector.size(), *followerAppendOK );
+
+          // Append new log entries now:
+          for (auto &x: append_log) {
+            svr_-&gt;log_vector.push_back(x);
+          }
+
+    
+          *ask_term = svr_-&gt;cur_term;
+          *ask_index = svr_-&gt;log_vector.size();
+          *ask_log_length = svr_-&gt;log_vector.size();
+          svr_-&gt;reset_time_out = true;
+          *followerAppendOK = 1;
+
+          //Update Commit Index
+          if (leader_commit_index &gt;= svr_-&gt; commit_index) {
+          svr_-&gt; commit_index = min(svr_-&gt;log_vector.size(), leader_commit_index);
+          }
+        
+          Log_info("Returned from Case 4 HandleAppendEntries from (%lu to %lu), (term %lu, commit Index %lu), to (logsize, %lu) followerAppendOK %d", 
+          leader_id, to_site_id, leader_term, leader_commit_index, svr_-&gt;log_vector.size(), *followerAppendOK );
+
+        svr_-&gt;mtx_.unlock();
+        defer-&gt;reply();
+        }
+     }
+  }    
+}
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match232-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  Log_info("receive an rpc: %s", req.c_str());
+  *res = "world";
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleEmptyAppendEntries( const uint64_t& leader_id,
+                                                const uint64_t& leader_term,
+                                                const uint64_t& leader_commit_index,
+                                                const uint64_t& to_site,
+</FONT>                                                uint64_t* response,
+                                                rrr::DeferredReply* defer) {
+  /* Your code here */
+  //Log_info("receive an AppendEmptyEntriesrpc: from (leader %lu, term %lu, commit_index %lu) to (site %lu, term %lu, logsize %lu)",
+  //          leader_id, leader_term, leader_commit_index, svr_-&gt;site_id_, svr_-&gt;cur_term, svr_-&gt;log_vector.size());
+  *response = 0;
+  // TODO Add condition for term number also 
+  svr_-&gt;mtx_.lock();
+
+    if ( svr_-&gt;cur_term &lt;= leader_term ) {
+      svr_-&gt;state = svr_-&gt;follower;
+      svr_-&gt;reset_time_out = true;
+      svr_-&gt;commit_index = min(leader_commit_index, (uint64_t)(svr_-&gt;log_vector.size()));
+      svr_-&gt;cur_term = leader_term;
+    }
+    
+    *response = svr_-&gt;cur_term;
+
+  svr_-&gt;mtx_.unlock();
+  // We have recieved a new commit index, we can commit log entries now
+  svr_-&gt;UpdateAppNext();
+  defer-&gt;reply();
+}
+
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

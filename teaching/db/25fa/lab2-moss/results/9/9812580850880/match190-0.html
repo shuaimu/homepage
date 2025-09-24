@@ -1,0 +1,144 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-arkn98/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-arkn98/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  /* 
+  Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it.
+  */
+
+  RaftServer& raft = this-&gt;GetRaftServer();
+
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+
+  uint64_t index, term;
+  auto c = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  if (!raft.Start(c, &index, &term)) {
+    return KV_NOTLEADER;
+  }
+
+  Coroutine::CurrentCoroutine()-&gt;Sleep(200000); // 200 ms
+
+  if (raft.commitIndex &gt;= index) {
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match190-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    return KV_SUCCESS;
+  }
+
+  return KV_TIMEOUT;
+}
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  RaftServer& raft = this-&gt;GetRaftServer();
+</FONT>
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("append");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+
+  uint64_t index, term;
+  auto c = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  if (!raft.Start(c, &index, &term)) {
+    return KV_NOTLEADER;
+  }
+
+  Coroutine::CurrentCoroutine()-&gt;Sleep(200000); // 200 ms
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match190-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  if (raft.commitIndex &gt;= index) {
+    return KV_SUCCESS;
+  }
+
+  return KV_TIMEOUT;
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+  RaftServer& raft = this-&gt;GetRaftServer();
+</FONT>
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("get");
+  s-&gt;data_.push_back(k);
+
+  uint64_t index, term;
+  auto c = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  if (!raft.Start(c, &index, &term)) {
+    return KV_NOTLEADER;
+  }
+
+  Coroutine::CurrentCoroutine()-&gt;Sleep(200000); // 200 ms
+
+  if (raft.commitIndex &gt;= index) {
+    *v = store[k];
+    return KV_SUCCESS;
+  }
+
+  return KV_TIMEOUT;
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  auto v = (MultiStringMarshallable*)(&m);
+
+  string op = v-&gt;data_[1];
+  string k = v-&gt;data_[2];
+
+  // do nothing if we get a "get"
+  if (op == "put") {
+    store[k] = v-&gt;data_[3];
+  } else if (op == "append") {
+    store[k] += v-&gt;data_[3];
+  }
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

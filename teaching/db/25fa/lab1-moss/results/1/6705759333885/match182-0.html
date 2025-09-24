@@ -1,0 +1,804 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-Surabhi-Gogte/src/deptran/raft/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-Surabhi-Gogte/src/deptran/raft/server.cc<p><PRE>
+
+
+#include "server.h"
+// #include "paxos_worker.h"
+#include "exec.h"
+#include "frame.h"
+#include "coordinator.h"
+#include "../classic/tpc_command.h"
+#include "mutex"
+
+namespace janus
+{
+
+  // private:
+  // RaftFrame **frame;
+  std::mutex cv_mutex;
+  std::mutex vr_mutex;
+
+  // int RaftServer::generateRandomNumber()
+  // {
+  //   // std::random_device rd;
+  //   // std::mt19937 gen(rd());
+  //   // std::uniform_int_distribution&lt;int&gt; dis(300, 500);
+
+  //   // return dis(gen);
+  //   return 600 + (rand() % (800 - 600 + 1));
+  // }
+
+  void RaftServer::ElectionTimeout()
+  {
+    Coroutine::CreateRun([this]()
+                         {
+      // add hbr coro here if the m1 doesnt work   
+                
+      while(true){
+      
+      if(state!=LEADER && !IsDisconnected()){
+      //int timeout = Rand().next(900,1500);
+      int timeout = Rand().next(1000,2800);
+      Log_info("Server %d has started sleep of : %f in state %d with timeout %d", site_id_, electionTimer.elapsed()*1000, state, timeout);
+
+      Coroutine::Sleep(timeout*1000);
+      Log_info("Server %d has elasped time of : %f in state %d with timeout %d", site_id_, electionTimer.elapsed()*1000, state, timeout);
+      if(electionTimer.elapsed()*1000&gt;timeout && state!=LEADER && !IsDisconnected()){
+        Log_info("Server %d has completed timeout of : %d & time elapsed is : %f", site_id_, timeout, electionTimer.elapsed()*1000);
+        SyncRequestVoteRPC();
+        Log_info("Server %d is in state %d in sync request vote", site_id_, state);
+        // state = CANDIDATE;
+        // electionTimer.start(); // extra
+        // currentTerm = currentTerm + 1;
+        // // Log_info("Server %d starts with leader election with term %d", site_id_, currentTerm + 1);
+        // bool_t totalVotes = 1;
+        // votedFor = site_id_;
+        // // auto n = commo()-&gt;rpc_par_proxies_[partition_id_].size();
+        // // Log_info("n is :%d", n);
+        // Log_debug("Coroutine for server %d for request vote started for term %d" ,site_id_, currentTerm);Log_debug("Coroutine for server %d for request vote started for term %d" ,site_id_, currentTerm);
+        // for (siteid_t i = 0; i &lt; 5; i++)
+        // {
+        //   if (i != site_id_ && !IsDisconnected())
+        //   {
+        //     uint64_t curr_Term;
+        //     bool_t vote_granted;
+        //     //  if (state == CANDIDATE)
+        //     //  {
+        //     if (state == CANDIDATE && !IsDisconnected())
+        //     {
+        //       Log_debug("Server %d isending request vote to %d", site_id_, i);
+        //       auto event = commo()-&gt;SendRequestVote(0, i, currentTerm, site_id_, logs.size(), currentTerm, &curr_Term, &vote_granted);
+        //       event-&gt;Wait(2000);
+
+        //       Log_info("Fetched response for %d with vote %d and term %d from server %d", site_id_, vote_granted, curr_Term, i);
+        //       if (curr_Term &gt; currentTerm && !IsDisconnected())
+        //       {
+        //         currentTerm = curr_Term;
+        //         state = FOLLOWER;
+        //         votedFor = 100;
+        //         electionTimer.start();
+        //         Log_info("Term of response: %d more than current term %d, converting server %d to state %d", curr_Term, currentTerm, site_id_, state);
+        //         // electionTimer.stop();
+        //         // electionTimer.start(); // extra
+        //         // add break maybe
+        //         // electionTimer.start();
+        //         break;
+        //       }
+        //       else if (state == CANDIDATE && curr_Term == currentTerm && vote_granted == 1 && !IsDisconnected())
+        //       {
+
+        //         totalVotes += vote_granted;
+
+        //         Log_info("total votes for %d with total votesvote %d and term %d from server %d", site_id_, vote_granted, curr_Term, i);
+        //         if (totalVotes &gt;= 3)
+        //         {
+        //           state = LEADER;
+        //           Log_info("Leader is %d in term %d", site_id_, currentTerm);
+        //           electionTimer.stop();
+        //           Log_debug("Leader timer stopped %f",electionTimer.elapsed());
+        //           HBR();
+        //           //  currentTerm = currentTerm + 1;
+        //           // electionCoroo-&gt;Yield();
+        //           // cout &lt;&lt; "leader bro " &lt;&lt; site_id_ &lt;&lt; endl;
+        //           // HBR();
+
+        //           break;
+        //         }
+        //       }
+        //     }
+            
+        //   }
+        // }
+        // if(state==CANDIDATE && totalVotes&lt;3){
+        //   electionTimer.start();
+        //   Log_info("is anyone here? %d", site_id_);
+        // }
+        Log_info("last sentence of request vote for  server %d", site_id_);
+        
+      }
+      }
+      Coroutine::Sleep(18500);
+      } });
+  }
+
+  void RaftServer::HBR()
+  {
+    Coroutine::CreateRun([this]()
+                         {
+                           // while(true){
+
+                           while (true)
+                           {
+                             if (!IsDisconnected() && state == LEADER)
+                             {
+                               // std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+                               //  lastHeartBeat = std::chrono::steady_clock::now();
+                               // std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+                               Log_info("Waking up heart beat func for server %d", site_id_);
+                               auto m = commo()-&gt;rpc_par_proxies_[partition_id_].size();
+                               ///*******
+                               Log_debug("Inside send append entries");
+                               for (int i = 0; i &lt; 5; i++)
+                               {
+                                 if (i != site_id_ && !IsDisconnected())
+                                 {
+                                   // label:
+                                   Log_debug("Inside send append entries in");
+                                   uint64_t curr_Term;
+                                   bool_t success;
+                                   uint64_t ack_len;
+                                   // Log_info("Sending the cmd to server %d from leader %d with params term %d, prevLogIndex %d, prevLogTerm: %d, commitIndex %d, cmd %d", i, site_id_, currentTerm, matchIndex[i], logs[matchIndex[i]].term, commitIndex, *logs[logs.size() - 1].cmd);
+                                   vector&lt;uint64_t&gt; pendingTerms;
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match182-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                   vector&lt;shared_ptr&lt;Marshallable&gt;&gt; pendingCmds;
+                                   for (int j = nextIndex[i]; j &lt; logs.size(); j++)
+                                   {
+                                     pendingTerms.push_back(logs[j].term);
+                                     pendingCmds.push_back(logs[j].cmd);
+                                   }
+                                   // auto prevLogTerm =
+                                   auto event = commo()-&gt;SendAppendEntries(0, i, currentTerm, site_id_, nextIndex[i]-1,
+</FONT>                                                                           logs[nextIndex[i]-1].term, commitIndex, pendingTerms, pendingCmds, &curr_Term, &ack_len, &success);
+                                   event-&gt;Wait();
+                                   // usleep(50000);
+                                   Log_info("Received the cmd response to server %d from leader %d : %d %d %d", i, site_id_, curr_Term, success, ack_len);
+                                   if (curr_Term &gt; currentTerm)
+                                   {
+                                     currentTerm = curr_Term;
+                                     state = FOLLOWER;
+                                     votedFor = 100;
+                                     Log_info("Server %d is converted from leader to state %d ", site_id_, state);
+                                     electionTimer.start();
+                                     break;
+                                   }
+                                   else if (curr_Term == currentTerm && state == LEADER)
+                                   {
+                                     if (success == 1 && ack_len &gt;= matchIndex[i])
+                                     {
+                                       Log_info("Success on server %d for append entry from leader %d, ack_len is %d", i, site_id_, ack_len);
+                                       // nextIndex[i] = nextIndex[i]+1;
+                                       matchIndex[i] = ack_len;
+                                       nextIndex[i] = ack_len + 1;
+                                       Log_info("match index is %d next index is %d for server %d", matchIndex[i], nextIndex[i], i);
+                                       // u
+                                       Log_info("does it reach here?");
+                                       while (commitIndex &lt; logs.size() - 1)
+                                       {
+                                         uint64_t acks = 0;
+                                         uint64_t minReplicated = INT64_MAX;
+                                         for (uint64_t match : matchIndex)
+                                         {
+                                           if (match &gt; commitIndex)
+                                           {
+                                             acks++;
+                                             minReplicated = min(match, minReplicated);
+                                           }
+                                         }
+                                         Log_info("Min replicated is %d, commitindex is %d", minReplicated, commitIndex);
+                                         if (acks &gt;= 3)
+                                         {
+                                           for (auto j = commitIndex + 1; j &lt;= minReplicated; j++)
+                                           {
+                                             Log_info("Inside for %d index commit", j);
+                                             app_next_(*logs[j].cmd);
+                                             Log_info("commited index %d", commitIndex);
+                                             commitIndex++;
+                                             Log_info("commit index incremented %d", commitIndex);
+                                           }
+                                         }
+                                         else
+                                         {
+                                           Log_info("Majority commit not reached :( %d", acks);
+                                           break;
+                                         }
+                                       }
+                                     }
+                                     else if (nextIndex[i] &gt;= 0)
+                                     {
+                                       nextIndex[i] = nextIndex[i] - 1;
+                                       //matchIndex[i] = matchIndex[i] - 1;
+                                       //  auto pending = min(matchIndex[i],logs.size()-1);
+                                       //  goto label;
+                                       Log_info("sent index decremented");
+                                       // Log_info("match index is %d next index is %d for server %d", matchIndex[i],nextIndex[i], i);
+                                       // add function to send more logs  to the server maybe
+                                     }
+
+                                   }
+                                 }
+                               }
+                               //// ******************
+                               // SendAppendEntriesRPC();
+                               //  for (siteid_t j = 0; j &lt; m; j++)
+                               //  {
+                               //    // currentTerm++;
+
+                               //    if (j != site_id_ && !IsDisconnected())
+                               //    {
+                               //      Log_info("Leader %d sending to server  %d with term %d", site_id_, j, currentTerm);
+                               //      uint64_t currTerm;
+                               //      bool_t followerAppendOK;
+                               //      uint64_t lastLogTerm = logs.size() == 0 ? 0 : logs[logs.size() - 1].term;
+                               //      //  if(commitIndex&gt;matchIndex[j]){
+                               //      //   auto pending =
+                               //      //  }
+                               //      //  auto event = commo()-&gt;SendEmptyAppendEntries(0, j, currentTerm, site_id_, logs.size() - 1,
+                               //      // lastLogTerm, commitIndex, &currTerm, &followerAppendOK);
+                               //      Log_info("Checking matchIndex %d , term %d on hb sserver: %d ", matchIndex[j], logs[matchIndex[j]].term, j);
+                               //      auto event = commo()-&gt;SendEmptyAppendEntries(0, j, currentTerm, site_id_, matchIndex[j],
+                               //                                                   logs[matchIndex[j]].term, commitIndex, &currTerm, &followerAppendOK);
+                               //      Log_info("Is Server %d disconnected ? %s is in term %d", site_id_, IsDisconnected() ? "true" : "false", currentTerm);
+                               //      Log_debug("Leader %d heartbeat sent to servers in state %d", site_id_, state);
+                               //      event-&gt;Wait();
+                               //      Log_debug("leader %d hb response came out of server %d, state %d ", site_id_, j, state);
+                               //      Log_info("followerAppendOK is %d for server %d with term as %d", followerAppendOK, j, currTerm);
+                               //      if (currTerm &gt; currentTerm && followerAppendOK &gt;= 0)
+                               //      {
+                               //        currentTerm = currTerm;
+                               //        state = FOLLOWER;
+                               //        votedFor = 100;
+                               //        Log_info("Server %d is converted from leader to state %d ", site_id_, state);
+                               //        electionTimer.start();
+                               //        break;
+                               //      }
+                               //      // if(followerAppendOK==-1){
+                               //      //  Log_info("was it here server %d",j);
+                               //      //  currentTerm = currTerm;
+                               //      //  state=FOLLOWER;
+                               //      //  votedFor = 100;
+                               //      //  electionTimer.start();
+                               //      //  break;
+                               //      // }
+                               //    }
+                               //  }
+                             }
+                             //  if (state != LEADER)
+                             //  {
+                             //    break;
+                             //  }
+                             Log_info("server hb %d went to sleep", site_id_);
+                             Coroutine::Sleep(HEARTBEAT_INTERVAL+7000);
+                             Log_info("leader %d came out of sleep", site_id_);
+                           }
+                           // Log_info("server hb %d went to sleep", site_id_);
+                           // Coroutine::Sleep(HEARTBEAT_INTERVAL);
+                           // Log_info("leader %d came out of sleep", site_id_);
+
+                           // Log_debug("Sleeping heratbeat rpc for %d for interval %d , its state %d", site_id_, HEARTBEAT_INTERVAL, state);
+                           // Coroutine::Sleep(HEARTBEAT_INTERVAL-50000);
+                           //   }
+                         });
+  }
+
+  void RaftServer::HeartBeatRPC(shared_ptr&lt;Coroutine&gt; coro)
+  {
+    Coroutine::CreateRun([this, coro]()
+                         {
+                           while (true)
+                           {
+                            //Coroutine::Sleep(HEARTBEAT_INTERVAL);
+                             Log_info("calling heart beat func for server %d", site_id_);
+                             auto m = commo()-&gt;rpc_par_proxies_[partition_id_].size();
+                             for (siteid_t j = 0; j &lt; m; j++)
+                             {
+                              // currentTerm++;
+                              Log_info("leader %d in loop j = %d", site_id_, j);
+                               if (j!=site_id_)
+                               {
+                                 uint64_t currTerm;
+                                 bool_t followerAppendOK;   
+                                 auto event = commo()-&gt;SendEmptyAppendEntries(0, j, currentTerm, site_id_, 0, 0, 0, &currTerm, &followerAppendOK);
+                                 Log_info("Server %d is disconnected %s ? :", site_id_, IsDisconnected() ? "true" : "false");
+                                 Log_info("leader %d went to servers in state %d", site_id_, state);
+                                 event-&gt;Wait();
+                                
+                                Log_info("leader %d came out of servers , state %d ", site_id_, state);
+                                Log_info("followerAppendOK is %d for server %d with term as %d",followerAppendOK,j, currTerm);
+                                if(currTerm&gt;currentTerm){
+                                  currentTerm=currTerm;
+                                  state=FOLLOWER;
+                                  votedFor = 100;
+                                  electionTimer.start();
+                                }
+                                //  if(followerAppendOK==0){
+                                //   Log_info("was it here server %d",j);
+                                //   currentTerm = currTerm;
+                                //   state=FOLLOWER;
+                                //   votedFor = 100;
+                                //   electionTimer.start();
+                                //   break;
+                                //  }
+                                if(state!=LEADER){
+                                  break;
+                                }
+                                 
+                               }
+                             }
+                             if(state!=LEADER){
+                              break;
+                             }
+                            Log_info("leader %d went to sleep", site_id_);
+                            Coroutine::Sleep(HEARTBEAT_INTERVAL+20000);
+                            Log_info("leader %d came out of sleep", site_id_);
+                           }
+                           coro-&gt;Continue();
+                           Coroutine::CurrentCoroutine()-&gt;Finished();
+                          
+                           Log_info("server %d is no longer leader %s and state is : %d and term is %d", site_id_, IsDisconnected() ? "true" : "false", state, currentTerm); });
+  }
+
+  // shared_ptr&lt;Coroutine&gt;
+  void RaftServer::SyncRequestVoteRPC()
+  {
+    Coroutine::CreateRun([this]()
+                         {
+                           //  while (true)
+                           //  {
+                           //  if (state != LEADER)
+                           //  {
+                           //    Log_info("Server %d has elasped time of : %f at start of timeout sleep", site_id_, electionTimer.elapsed());
+                           //    int timeout = Rand().next(600, 750); // is in millisec
+                           //    Log_info("Server %d has started timeout of : %d ms", site_id_, timeout);
+                           //    // Log_info("Server %d has completed timeout of : %d" ,site_id_, timeout);
+                           //    Coroutine::Sleep(timeout * 1000); // courotine sleep
+                           //    // cout &lt;&lt; electionTimer.elapsed() &lt;&lt; endl;
+                           //    // std::lock_guard&lt;std::mutex&gt; lock(vr_mutex);
+                           //    Log_info("Server %d has elasped time of : %f and timeout is %d", site_id_, electionTimer.elapsed(), timeout);
+                           //    if (!IsDisconnected() && electionTimer.elapsed() * 1000 &gt;= timeout && state != LEADER)
+                           //    {
+
+                           // Log_info("Server %d has completed timeout of : %d but time elapsed is : %f", site_id_, timeout, electionTimer.elapsed());
+                           //  electionTimer.start();
+                           //  state = CANDIDATE;
+                           //  electionTimer.start();
+                           //  currentTerm = currentTerm + 1;
+
+                           state = CANDIDATE;
+                           Log_info("Server %d is in state %d in sync request vote", site_id_, state);
+                           electionTimer.start(); // extra
+                           currentTerm = currentTerm + 1;
+                           // Log_info("Server %d starts with leader election with term %d", site_id_, currentTerm + 1);
+                           bool_t totalVotes = 1;
+                           votedFor = site_id_;
+                           // auto n = commo()-&gt;rpc_par_proxies_[partition_id_].size();
+                           // Log_info("n is :%d", n);
+                           uint64_t lastLogTerm = 0;
+                           uint64_t lastLogIndex = 0;
+                           // uint64_t logSize = 0;
+                           if (logs.size() &gt; 0)
+                           {
+                             lastLogTerm = logs[logs.size() - 1].term;
+                             lastLogIndex = logs.size() - 1;
+                             // logSize = logs.size();
+                           }
+
+                           for (siteid_t i = 0; i &lt; 5; i++)
+                           {
+                             if (i != site_id_ && !IsDisconnected())
+                             {
+                               uint64_t curr_Term;
+                               bool_t vote_granted;
+                               //  if (state == CANDIDATE)
+                               //  {
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match182-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                               if (state == CANDIDATE)
+                               {
+                                 Log_debug("Server %d isending request vote to %d", site_id_, i);
+                                 auto event = commo()-&gt;SendRequestVote(0, i, currentTerm, site_id_, logs.size() - 1, lastLogTerm, &curr_Term, &vote_granted);
+</FONT>                                 // auto event = commo()-&gt;SendRequestVote(0, i, currentTerm, site_id_, logs.size(), currentTerm, &curr_Term, &vote_granted);
+                                 event-&gt;Wait();
+
+                                 Log_info("Fetched response for %d with vote %d and term %d from server %d", site_id_, vote_granted, curr_Term, i);
+                                 if (curr_Term &gt; currentTerm)
+                                 {
+                                   currentTerm = curr_Term;
+                                   state = FOLLOWER;
+                                   votedFor = 100;
+
+                                   electionTimer.start();
+                                   Log_info("Term of response: %d more than current term %d, converting server %d to state %d", curr_Term, currentTerm, site_id_, state);
+                                   // electionTimer.stop();
+                                   // electionTimer.start(); // extra
+                                   // add break maybe
+                                   // electionTimer.start();
+                                   break;
+                                 }
+                                 else if (state == CANDIDATE && curr_Term == currentTerm && vote_granted == 1)
+                                 {
+                                   totalVotes += vote_granted;
+
+                                   Log_info("total votes for %d with total votesvote %d and term %d from server %d", site_id_, vote_granted, curr_Term, i);
+                                   if (totalVotes &gt;= 3)
+                                   {
+                                     state = LEADER;
+                                     Log_info("Leader is %d in term %d", site_id_, currentTerm);
+                                     electionTimer.stop();
+                                     fill(matchIndex.begin(), matchIndex.end(), 0);
+                                     fill(nextIndex.begin(), nextIndex.end(), logs.size());
+                                     // matchIndex[site_id_]=logs.size()-1;
+                                     Log_debug("Leader timer stopped %f", electionTimer.elapsed());
+                                     HBR();
+                                     //  currentTerm = currentTerm + 1;
+                                     // electionCoroo-&gt;Yield();
+                                     // cout &lt;&lt; "leader bro " &lt;&lt; site_id_ &lt;&lt; endl;
+                                     // HBR();
+
+                                     break;
+                                   }
+                                 }
+
+                                 //  else if (state == CANDIDATE && curr_Term != 0 && currentTerm &lt; curr_Term)
+                                 //  {
+                                 //    currentTerm = curr_Term;
+                                 //    state = FOLLOWER;
+                                 //    electionTimer.start();
+                                 //  }
+                               }
+                               //  else if (state == FOLLOWER)
+                               //  {
+                               //    totalVotes = 0;
+                               //    break;
+                               //  }
+                               // std::lock_guard&lt;std::mutex&gt; lock(vr_mutex);
+                               //}
+                             }
+                           }
+                           if (totalVotes &lt; 3 && state == CANDIDATE)
+                           {
+                             electionTimer.start();
+                             state = CANDIDATE;
+                           }
+
+                           Log_info("last sentence of request vote for  server %d", site_id_);
+                           // Coroutine::CurrentCoroutine()-&gt;Run();
+                           // Coroutine::CurrentCoroutine()-&gt;Yield();
+                         });
+    // return x;
+  }
+
+  RaftServer::RaftServer(Frame *frame)
+  {
+    frame_ = frame;
+    /* Your code here for server initialization. Note that this function is
+       called in a different OS thread. Be careful about thread safety if
+       you want to initialize variables here. */
+    // sid = frame-&gt;site_info_-&gt;id;
+    currentTerm = 0;
+    state = FOLLOWER;
+    electionTimer.start();
+    lastHeartBeat = std::chrono::steady_clock::now();
+    matchIndex = vector&lt;uint64_t&gt;(5, 0);
+
+    commitIndex = 0;
+    logs.push_back({0, shared_ptr&lt;Marshallable&gt;(nullptr)});
+    nextIndex = vector&lt;uint64_t&gt;(5, logs.size());
+    //  checkHeartBeat = Coroutine::CreateRun(ElectionTimeout());
+    //  ElectionTimeout();
+  }
+
+  RaftServer::~RaftServer()
+  {
+    /* Your code here for server teardown */
+    electionTimer.stop();
+    // Coroutine::CurrentCoroutine()-&gt;DoFinalize();
+  }
+
+  void RaftServer::Setup()
+  {
+    /* Your code here for server setup. Due to the asynchronous nature of the
+       framework, this function could be called after a RPC handler is triggered.
+       Your code should be aware of that. This function is always called in the
+       same OS thread as the RPC handlers. */
+    ElectionTimeout();
+    // HBR();
+    Log_info("Setup thread is active rightnow");
+    // SyncRequestVoteRPC();
+  }
+  // void RaftServer::commitEntries()
+  // {
+  //   // todo add functionality here
+
+  //   // for(int i=commitIndex;i&lt;=minReplicated;i++){
+  //   //   SendAppendEntriesRPC();
+  //   // }
+  // }
+
+  void RaftServer::SendAppendEntriesRPC()
+  {
+    // Coroutine::CreateRun([this]()
+    //{
+    // std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    Log_debug("Inside send append entries");
+    for (int i = 0; i &lt; 5; i++)
+    {
+      if (i != site_id_ && !IsDisconnected())
+      {
+        // label:
+        uint64_t curr_Term;
+        bool_t success;
+        uint64_t ack_len;
+        Log_info("Sending the cmd to server %d from leader %d with params term %d, prevLogIndex %d, prevLogTerm: %d, commitIndex %d, cmd %d", i, site_id_, currentTerm, nextIndex[i], logs[nextIndex[i]].term, commitIndex, *logs[logs.size() - 1].cmd);
+        vector&lt;uint64_t&gt; pendingTerms;
+        vector&lt;shared_ptr&lt;Marshallable&gt;&gt; pendingCmds;
+        for (int j = matchIndex[i] + 1; j &lt; logs.size(); j++)
+        {
+          pendingTerms.push_back(logs[j].term);
+          pendingCmds.push_back(logs[j].cmd);
+        }
+
+        auto event = commo()-&gt;SendAppendEntries(0, i, currentTerm, site_id_, matchIndex[i],
+                                                logs[matchIndex[i]].term, commitIndex, pendingTerms, pendingCmds, &curr_Term, &ack_len, &success);
+        event-&gt;Wait();
+        // usleep(50000);
+        Log_info("Received the cmd response to server %d from leader %d : %d %d %d", i, site_id_, curr_Term, success, ack_len);
+        if (curr_Term &gt; currentTerm)
+        {
+          currentTerm = curr_Term;
+          state = FOLLOWER;
+          votedFor = 100;
+          Log_info("Server %d is converted from leader to state %d ", site_id_, state);
+          electionTimer.start();
+          break;
+        }
+        else if (curr_Term == currentTerm && state == LEADER)
+        {
+          if (success == 1 && ack_len &gt;= matchIndex[i])
+          {
+            Log_info("Success on server %d for append entry from leader %d, ack_len is %d", i, site_id_, ack_len);
+            // nextIndex[i] = nextIndex[i]+1;
+            matchIndex[i] = ack_len;
+            nextIndex[i] = ack_len + 1;
+            Log_info("match index is %d next index is %d for server %d", matchIndex[i], nextIndex[i], i);
+            // u
+            Log_info("does it reach here?");
+            while (commitIndex &lt; logs.size() - 1)
+            {
+              uint64_t acks = 0;
+              uint64_t minReplicated = INT64_MAX;
+              for (uint64_t match : matchIndex)
+              {
+                if (match &gt; commitIndex)
+                {
+                  acks++;
+                  minReplicated = min(match, minReplicated);
+                }
+              }
+              Log_info("Min replicated is %d, commitindex is %d", minReplicated, commitIndex);
+              if (acks &gt;= 3)
+              {
+                for (auto j = commitIndex + 1; j &lt;= minReplicated; j++)
+                {
+                  Log_info("Inside for %d index commit", j);
+                  app_next_(*logs[j].cmd);
+                  Log_info("commited index %d", commitIndex);
+                  commitIndex++;
+                  Log_info("commit index incremented %d", commitIndex);
+                }
+              }
+              else
+              {
+                Log_info("Majority commit not reached :( %d", acks);
+                break;
+              }
+            }
+          }
+          else if (matchIndex[i] &gt; 0)
+          {
+            nextIndex[i] = nextIndex[i] - 1;
+            matchIndex[i] = matchIndex[i] - 1;
+            //  auto pending = min(matchIndex[i],logs.size()-1);
+            //  goto label;
+            Log_info("not doing  anything");
+            // Log_info("match index is %d next index is %d for server %d", matchIndex[i],nextIndex[i], i);
+            // add function to send more logs  to the server maybe
+          }
+        }
+      }
+    }
+    // commit stuff info
+    //  Log_info("does it reach here?");
+    //  uint64_t minReplicated = INT64_MAX;
+    //  for(uint64_t match : matchIndex){
+    //    minReplicated = min(match,minReplicated);
+    //  }
+    //  Log_info("Min replicated is %d, commitindex is %d", minReplicated,commitIndex);
+    //  if(commitIndex&lt;minReplicated){
+    //    Log_info("Inside commit if cond");
+    //    for(int j=commitIndex+1;j&lt;=minReplicated;j++){
+    //      Log_info("Inside for %d index commit", j);
+    //      app_next_(*logs[j].cmd);
+
+    //     Log_info("commited index %d", commitIndex);
+    //     commitIndex++;
+    //   }
+
+    // }
+    // Log_info("does it reach here?");
+    // while (commitIndex &lt; logs.size() - 1)
+    // {
+    //   uint64_t acks = 0;
+    //   uint64_t minReplicated = INT64_MAX;
+    //   for (uint64_t match : matchIndex)
+    //   {
+    //     if (match &gt; commitIndex)
+    //     {
+    //       acks++;
+    //       minReplicated = min(match, minReplicated);
+    //     }
+    //   }
+    //   Log_info("Min replicated is %d, commitindex is %d", minReplicated, commitIndex);
+    //   if (acks &gt;= 3)
+    //   {
+    //     for (auto j = commitIndex + 1; j &lt;= minReplicated; j++)
+    //     {
+    //       Log_info("Inside for %d index commit", j);
+    //       app_next_(*logs[j].cmd);
+    //       Log_info("commited index %d", commitIndex);
+    //       commitIndex++;
+    //       Log_info("commit index incremented %d", commitIndex);
+    //     }
+    //   }
+    //   else
+    //   {
+    //     Log_info("Majority commit not reached :( %d", acks);
+    //     break;
+    //   }
+    // }
+
+    Log_info("end of append entries,  commit index %d", commitIndex);
+
+    //});
+  }
+
+  bool RaftServer::Start(shared_ptr&lt;Marshallable&gt; &cmd,
+                         uint64_t *index,
+                         uint64_t *term)
+  {
+    /* Your code here. This function can be called from another OS thread. */
+    if (state != LEADER)
+    {
+      return false;
+    }
+    // if (!IsDisconnected())
+    // {
+    // std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+
+    // log_abc entry;
+    // entry.term = currentTerm; // Set the term
+    // entry.cmd = cmd;
+    mtx_.lock();
+    Log_info("Is it reaching here in start : %d with llog size %d", site_id_, logs.size());
+    // unique_lock&lt;std::mutex&gt; lock(mtx_);
+    logs.push_back({currentTerm, cmd});
+    Log_info("log last %d %d index", logs[logs.size() - 1].cmd.get(), logs.size() - 1);
+    Log_info("Is it rgetting pushed to logs : %d ", site_id_);
+    nextIndex[site_id_] = nextIndex[site_id_] + 1;
+    matchIndex[site_id_] = logs.size() - 1;
+    // mtx_.unlock();
+    // std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    Log_info("After push here in start : %d with llog size %d", site_id_, logs.size());
+    *index = logs.size() - 1;
+    *term = currentTerm;
+    mtx_.unlock();
+    // SendAppendEntriesRPC();
+    return true;
+    // }
+    // else
+    // {
+    //   *index = logs.size()-1;
+    //   *term = currentTerm;
+    //   return true;
+    // }
+  }
+
+  void RaftServer::GetState(bool *is_leader, uint64_t *term)
+  {
+    /* Your code here. This function can be called from another OS thread. */
+    // if(currentTerm  == 0){
+    //   *is_leader = false;
+    // }
+    *term = currentTerm;
+    if (state == LEADER)
+    {
+
+      *is_leader = true;
+    }
+    else
+    {
+      *is_leader = false;
+    }
+    Log_info("Server %d is in state %d in term %d", site_id_, state, *term);
+    // if(logs.l)
+  }
+
+  // void RaftServer::SyncRpcExample() {
+  //   /* This is an example of synchronous RPC using coroutine; feel free to
+  //      modify this function to dispatch/receive your own messages.
+  //      You can refer to the other function examples in commo.h/cc on how
+  //      to send/recv a Marshallable object over RPC. */
+  //   Coroutine::CreateRun([this](){
+  //     string res;
+  //     auto event = commo()-&gt;SendString(0, /* partition id is always 0 for lab1 */
+  //                                      0, "hello", &res);
+  //     event-&gt;Wait(1000000); //timeout after 1000000us=1s
+  //     if (event-&gt;status_ == Event::TIMEOUT) {
+  //       Log_info("timeout happens");
+  //     } else {
+  //       Log_info("rpc response is: %s", res.c_str());
+  //     }
+  //   });
+  // }
+
+  /* Do not modify any code below here */
+
+  void RaftServer::Disconnect(const bool disconnect)
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    verify(disconnected_ != disconnect);
+    // global map of rpc_par_proxies_ values accessed by partition then by site
+    static map&lt;parid_t, map&lt;siteid_t, map&lt;siteid_t, vector&lt;SiteProxyPair&gt;&gt;&gt;&gt; _proxies{};
+    if (_proxies.find(partition_id_) == _proxies.end())
+    {
+      _proxies[partition_id_] = {};
+    }
+    RaftCommo *c = (RaftCommo *)commo();
+    if (disconnect)
+    {
+      verify(_proxies[partition_id_][loc_id_].size() == 0);
+      verify(c-&gt;rpc_par_proxies_.size() &gt; 0);
+      auto sz = c-&gt;rpc_par_proxies_.size();
+      _proxies[partition_id_][loc_id_].insert(c-&gt;rpc_par_proxies_.begin(), c-&gt;rpc_par_proxies_.end());
+      c-&gt;rpc_par_proxies_ = {};
+      verify(_proxies[partition_id_][loc_id_].size() == sz);
+      verify(c-&gt;rpc_par_proxies_.size() == 0);
+    }
+    else
+    {
+      verify(_proxies[partition_id_][loc_id_].size() &gt; 0);
+      auto sz = _proxies[partition_id_][loc_id_].size();
+      c-&gt;rpc_par_proxies_ = {};
+      c-&gt;rpc_par_proxies_.insert(_proxies[partition_id_][loc_id_].begin(), _proxies[partition_id_][loc_id_].end());
+      _proxies[partition_id_][loc_id_] = {};
+      verify(_proxies[partition_id_][loc_id_].size() == 0);
+      verify(c-&gt;rpc_par_proxies_.size() == sz);
+    }
+    disconnected_ = disconnect;
+  }
+
+  bool RaftServer::IsDisconnected()
+  {
+    return disconnected_;
+  }
+
+} // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

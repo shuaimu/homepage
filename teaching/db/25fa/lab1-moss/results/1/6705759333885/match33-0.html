@@ -1,0 +1,560 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-RotonEvan/src/deptran/raft/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-RotonEvan/src/deptran/raft/server.cc<p><PRE>
+
+
+#include "server.h"
+// #include "paxos_worker.h"
+#include "exec.h"
+#include "frame.h"
+#include "coordinator.h"
+#include "../classic/tpc_command.h"
+
+using namespace std;
+
+namespace janus {
+
+
+void RaftServer::election() {
+  
+  // // raft_mtx_.lock();
+  state = 0;
+  // increment currentTerm
+  currentTerm++;
+
+  // *cout &lt;&lt; "starting election at server " &lt;&lt; site_id_ &lt;&lt; " at term " &lt;&lt; currentTerm &lt;&lt; endl;
+  // set heartbeat
+  lastHeartbeat = std::chrono::duration_cast&lt;std::chrono::milliseconds&gt;(
+    std::chrono::system_clock::now().time_since_epoch()).count();
+  // vote for self
+  int count = 1;
+  votedFor = site_id_;
+  // store current term
+  uint64_t electionTerm = currentTerm;
+  // store last log index and term
+  raft_mtx_.lock();
+  uint64_t electionLLI = log.size() - 1;
+  uint64_t electionLLT = log[electionLLI][0];
+  raft_mtx_.unlock();
+
+  // send request vote to all other servers
+  int totalcount = 1;
+  // // raft_mtx_.unlock();
+  // // *cout &lt;&lt; "sending request vote from server " &lt;&lt; site_id_ &lt;&lt; " to all other servers" &lt;&lt; endl;
+  for (int i = 0; i &lt; 5; i++) {
+    uint64_t retTerm = 0;
+    bool_t voteGranted;
+    if (i != site_id_) {
+      // // *cout &lt;&lt; "sending request vote from server " &lt;&lt; site_id_ &lt;&lt; " to server " &lt;&lt; i &lt;&lt; endl;
+      // Coroutine::CreateRun([this, i, electionTerm, &retTerm,  &voteGranted, &count, &totalcount]() {
+        // // raft_mtx_.lock();
+        auto event = commo()-&gt;SendRequestVote(0, i, electionTerm, site_id_, log.size()-1, log[log.size()-1][0], &retTerm, &voteGranted);
+        event-&gt;Wait(100000); //timeout after 1000000us=1s
+        // Coroutine::Sleep(5000);
+        // // *cout &lt;&lt; "Vote granted: " &lt;&lt; voteGranted &lt;&lt; endl;
+        // raft_mtx_.lock();
+        // if (state != 0) {
+        //   // raft_mtx_.unlock();
+        //   return;
+        // }
+        if (retTerm &gt; electionTerm) {
+          // // *cout &lt;&lt; "election term changed" &lt;&lt; endl;
+          // // *cout &lt;&lt; "election term changed from: " &lt;&lt; electionTerm &lt;&lt; " to current term: " &lt;&lt; currentTerm &lt;&lt; endl;
+          state = 1;
+          currentTerm = retTerm;
+          votedFor = -1;
+          lastHeartbeat = std::chrono::duration_cast&lt;std::chrono::milliseconds&gt;(std::chrono::system_clock::now().time_since_epoch()).count();
+          // raft_mtx_.unlock();
+          // electionHandler();
+          return;
+        } else if (retTerm == electionTerm) {
+          // // *cout &lt;&lt; ""
+          totalcount++;
+          if (voteGranted) {
+            count++;
+          }
+        }
+        // raft_mtx_.unlock();
+      // });
+    }
+  }
+  if (count &gt;= 3) {
+    // majority
+    state = 2; // leader
+    // *cout &lt;&lt; "leader elected at server " &lt;&lt; site_id_ &lt;&lt; endl;
+    // set nextIndex to last log index + 1
+    // raft_mtx_.lock();
+    for (int i = 0; i &lt; 5; i++) {
+      nextIndex[i] = log.size();
+      // matchIndex[i] = log.size() - 1;
+    }
+    // raft_mtx_.unlock();
+    heartbeatHandler();
+    // return;
+  } else {
+    // no majority
+    // // *cout &lt;&lt; "no majority" &lt;&lt; endl;
+    state = 1; // follower
+    // return;
+  }
+}
+
+void RaftServer::electionHandler() {
+  electionCoroutine = Coroutine::CreateRun([this]() {
+    while(true) {
+      // // raft_mtx_.lock();
+      // set timeout interval to random number between 150 and 300
+      timeoutInterval = rand() % 500 + 2000;
+      // // *cout &lt;&lt; "timeout interval at server " &lt;&lt; site_id_ &lt;&lt; ": " &lt;&lt; timeoutInterval &lt;&lt; endl;
+      uint64_t t = timeoutInterval * 1000;
+      // Coroutine::Sleep(t);
+      uint64_t electionTerm = currentTerm;
+      // // *cout &lt;&lt; "election term at server " &lt;&lt; site_id_ &lt;&lt; ": " &lt;&lt; electionTerm &lt;&lt; endl;
+      while(true) {
+        // usleep(10000);
+        Coroutine::Sleep(50000);
+
+        // raft_mtx_.lock();
+        if (state == 2) {
+          // raft_mtx_.unlock();
+          // return;
+          break;
+        }
+
+        if (electionTerm != currentTerm) {
+          // // *cout &lt;&lt; "election term changed" &lt;&lt; endl;
+          // // *cout &lt;&lt; "election term changed from: " &lt;&lt; electionTerm &lt;&lt; " to current term: " &lt;&lt; currentTerm &lt;&lt; endl;
+          // raft_mtx_.unlock();
+          break;
+        }
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match33-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        uint64_t now = std::chrono::duration_cast&lt;std::chrono::milliseconds&gt;(std::chrono::system_clock::now().time_since_epoch()).count();
+        // // *cout &lt;&lt; "now: " &lt;&lt; now &lt;&lt; endl;
+        if (now - lastHeartbeat &gt;= timeoutInterval) {
+</FONT>          // // *cout &lt;&lt; "now: " &lt;&lt; now &lt;&lt; " lastHeartbeat: " &lt;&lt; lastHeartbeat &lt;&lt; " now - lastHeartbeat: " &lt;&lt; now - lastHeartbeat &lt;&lt; " timeoutInterval: " &lt;&lt; timeoutInterval &lt;&lt; " at server: " &lt;&lt; site_id_ &lt;&lt; endl;
+          // // *cout &lt;&lt; "election at server " &lt;&lt; site_id_ &lt;&lt; endl;
+          // raft_mtx_.unlock();
+          election();
+          // return;
+        } else {
+          // raft_mtx_.unlock();
+        }
+      }
+
+    }
+  });
+
+      
+      // if (state != 2) {
+      //   // timeout();
+      //   // // *cout &lt;&lt; "timeout at server " &lt;&lt; site_id_ &lt;&lt; endl;
+      //   // // raft_mtx_.lock();
+
+      //   uint64_t now = std::chrono::duration_cast&lt;std::chrono::milliseconds&gt;(
+      //     std::chrono::system_clock::now().time_since_epoch()).count();
+      //   // // *cout &lt;&lt; "now: " &lt;&lt; now &lt;&lt; endl;
+      //   if (now - lastHeartbeat &gt; timeoutInterval) {
+      //     // print now, lastHeartbeat, now - lastHeartbeat, timeoutInterval
+      //     // *cout &lt;&lt; "now: " &lt;&lt; now &lt;&lt; " lastHeartbeat: " &lt;&lt; lastHeartbeat &lt;&lt; " now - lastHeartbeat: " &lt;&lt; now - lastHeartbeat &lt;&lt; " timeoutInterval: " &lt;&lt; timeoutInterval &lt;&lt; " at server: " &lt;&lt; site_id_ &lt;&lt; endl;
+      //     // // *cout &lt;&lt; "term now at server " &lt;&lt; site_id_ &lt;&lt; ": " &lt;&lt; currentTerm &lt;&lt; endl;
+      //     // // *cout &lt;&lt; "election timeout at server " &lt;&lt; site_id_ &lt;&lt; endl;
+      //     // convert to candidate
+          
+      //     // start election
+      //     // add mutex here
+      //     // raft_mtx_.lock();
+      //     state = 0;
+      //     // increment currentTerm
+      //     currentTerm++;
+      //     // set heartbeat
+      //     lastHeartbeat = std::chrono::duration_cast&lt;std::chrono::milliseconds&gt;(
+      //       std::chrono::system_clock::now().time_since_epoch()).count();
+      //     // vote for self
+      //     int count = 1;
+      //     votedFor = site_id_;
+      //     // send request vote to all other servers
+      //     int totalcount = 1;
+      //     // raft_mtx_.unlock();
+      //     for (int i = 0; i &lt; 5; i++) {
+      //       uint64_t retTerm;
+      //       bool_t voteGranted;
+      //       if (i != site_id_) {
+      //         Coroutine::CreateRun([this, i, &retTerm,  &voteGranted, &count, &totalcount]() {
+      //           // // raft_mtx_.lock();
+      //           auto event = commo()-&gt;SendRequestVote(0, i, currentTerm, site_id_, log.size()-1, log[log.size()-1][0], &currentTerm, &state, &retTerm, &voteGranted);
+      //           event-&gt;Wait(50000); //timeout after 1000000us=1s
+      //           // // *cout &lt;&lt; "Vote granted: " &lt;&lt; voteGranted &lt;&lt; endl;
+      //           // raft_mtx_.lock();
+      //           if (event-&gt;status_ == Event::TIMEOUT) {
+      //             Log_info("timeout happens");
+      //           } else {
+      //             totalcount++;
+      //             if (voteGranted) {
+      //               count++;
+      //             }
+      //             // if (retTerm &gt; currentTerm) {
+      //             //   currentTerm = retTerm;
+      //             //   state = 1;
+      //             // }
+      //           }
+      //           // raft_mtx_.unlock();
+      //         });
+      //       }
+      //     }
+      //     while (true)  {
+      //       // if (now - lastHeartbeat &gt; timeoutInterval) {
+      //       //   // timeout
+      //       //   break;
+      //       // }
+      //       // // *cout &lt;&lt; "waiting for responses" &lt;&lt; endl;
+      //       // // raft_mtx_.lock();
+      //       if (totalcount &gt;= 3 && count &gt;= 3) {
+      //         // majority
+      //         state = 2; // leader
+      //         // *cout &lt;&lt; "leader elected at server " &lt;&lt; site_id_ &lt;&lt; endl;
+      //         // set nextIndex to last log index + 1
+      //         // raft_mtx_.lock();
+      //         for (int i = 0; i &lt; 5; i++) {
+      //           nextIndex[i] = log.size();
+      //           // matchIndex[i] = log.size() - 1;
+      //         }
+      //         // raft_mtx_.unlock();
+      //         heartbeatHandler();
+      //         break;
+      //       } else if (totalcount &gt;= 3 && count &lt; 3) {
+      //         // no majority
+      //         // // *cout &lt;&lt; "no majority" &lt;&lt; endl;
+      //         state = 0; // candidate
+      //         break;
+      //       } else {
+      //         // wait for responses
+      //         // // *cout &lt;&lt; "waiting for responses" &lt;&lt; endl;
+      //         Coroutine::Sleep(1000);
+      //       }
+      //       // // raft_mtx_.unlock();
+            
+      //     }
+          
+          
+      //   } else {
+      //     // no need to start election
+      //     // set timeout interval to random number between 150 and 300 ans subtract now - lastHeartbeat
+      //     timeoutInterval = rand() % 150 + 1000;
+      //     // // *cout &lt;&lt; "Server: " &lt;&lt; site_id_ &lt;&lt; " timeout interval set to: " &lt;&lt; timeoutInterval &lt;&lt; endl;
+      //   }
+      // } else {
+      //   // reset the election timer if we are the leader
+      //   lastHeartbeat = std::chrono::duration_cast&lt;std::chrono::milliseconds&gt;(
+      //     std::chrono::system_clock::now().time_since_epoch()).count();
+      //   // print log for all servers
+        
+      // }
+      // // raft_mtx_.unlock();
+    // }
+  // });
+}
+
+void RaftServer::heartbeatHandler() {
+  // Coroutine::CreateRun([this]() {
+    // int heartbeatcount = 0;
+    // // raft_mtx_.lock();
+    uint64_t heartTerm = currentTerm;
+    // raft_mtx_.unlock();
+    while(!IsDisconnected()) {
+      uint64_t t = 200000;
+      Coroutine::Sleep(t);
+      
+      if (state == 2) {
+        // // *cout &lt;&lt; "heartbeat count at server " &lt;&lt; site_id_ &lt;&lt; ": " &lt;&lt; heartbeatcount &lt;&lt; endl;
+        // heartbeatcount++;
+        // heartbeat();
+        // // *cout &lt;&lt; "heartbeat interval: " &lt;&lt; HEARTBEAT_INTERVAL &lt;&lt; endl;
+        int last_log_index = log.size() - 1;
+        // int count = 0;
+        // // raft_mtx_.unlock();
+        // Coroutine::CreateRun([this,last_log_index, heartTerm]() {
+        for (int i = 0; i &lt; 5; i++)
+        {
+          if (i != site_id_) {
+            // // *cout &lt;&lt; "last_log_index: " &lt;&lt; last_log_index &lt;&lt; " nextIndex[i]: " &lt;&lt; nextIndex[i] &lt;&lt; endl;
+            // if (last_log_index &gt;= nextIndex[i]) {
+              // // raft_mtx_.lock();
+            // // *cout &lt;&lt; "sending append entries from server " &lt;&lt; site_id_ &lt;&lt; " to server " &lt;&lt; i &lt;&lt; endl;
+            uint64_t heartIndex = nextIndex[i];
+            uint64_t prevLogIndex = heartIndex - 1;
+            uint64_t prevLogTerm = log[prevLogIndex][0];
+            
+            vector&lt;vector&lt;uint64_t&gt;&gt; entries;
+            for (int j = nextIndex[i]; j &lt; log.size(); j++) {
+              entries.push_back(log[j]);
+            }
+            uint64_t leaderCommit = commitIndex;
+            uint64_t retTerm = 0;
+            bool_t success = false;
+            // // raft_mtx_.unlock();
+            
+              // mtx_.lock();
+            auto event = commo()-&gt;SendAppendEntries(0, i, heartTerm, site_id_, prevLogIndex, prevLogTerm, entries, leaderCommit, &retTerm, &success);
+            event-&gt;Wait(1000000);
+            if (event-&gt;status_ == Event::TIMEOUT) {
+              // // *cout &lt;&lt; "timout at server " &lt;&lt; i &lt;&lt; endl;
+            } else {
+              if (success) {
+                // // *cout &lt;&lt; "success for server " &lt;&lt; i &lt;&lt; endl;
+                // update nextIndex and matchIndex
+                int l = (log).size();
+                (nextIndex)[i] += entries.size();
+                (matchIndex)[i] = (nextIndex)[i] - 1;
+                // // *cout &lt;&lt; "success for server " &lt;&lt; i &lt;&lt; " nextIndex[" &lt;&lt; i &lt;&lt; "]: " &lt;&lt; (nextIndex)[i] &lt;&lt; " at term " &lt;&lt; retTerm &lt;&lt; endl;
+              } else {
+                if (retTerm &gt; currentTerm) {
+                  currentTerm = retTerm;
+                  state = 1;
+                  votedFor = -1;
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match33-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                  lastHeartbeat = std::chrono::duration_cast&lt;std::chrono::milliseconds&gt;(
+                    std::chrono::system_clock::now().time_since_epoch()).count();
+                } else if (retTerm == currentTerm) {
+</FONT>                  // decrement nextIndex only if it is not 1
+                  // if ((*nextIndex)[site_id] &gt; 1)
+                    (nextIndex)[i] = heartIndex-1;
+                    if (nextIndex[i] &gt; 1000) {
+                      // *cout &lt;&lt; "nextIndex[" &lt;&lt; i &lt;&lt; "]: " &lt;&lt; nextIndex[i] &lt;&lt; " at term " &lt;&lt; retTerm &lt;&lt; endl;
+                    }
+                }
+                // return sendAppendEntries(i, currentTerm, site_id_, nextIndex[i] - 1, log[nextIndex[i] - 1][0], entries, leaderCommit);
+              }
+              if (retTerm &gt; currentTerm) {
+                currentTerm = retTerm;
+                state = 1;
+                votedFor = -1;
+                lastHeartbeat = std::chrono::duration_cast&lt;std::chrono::milliseconds&gt;(
+                    std::chrono::system_clock::now().time_since_epoch()).count();
+              }
+            }
+                  // // raft_mtx_.lock(
+                
+            // } 
+            // else {
+            //   uint64_t retTerm = 0;
+            //   bool_t success;
+            //   // // *cout &lt;&lt; "sending heartbeat from server " &lt;&lt; site_id_ &lt;&lt; " to server " &lt;&lt; i &lt;&lt; endl;
+            //   uint64_t prevLogIndex = nextIndex[i] - 1;
+            //   uint64_t prevLogTerm = log[prevLogIndex][0];
+            //   vector&lt;vector&lt;uint64_t&gt;&gt; entries;
+            //   uint64_t leaderCommit = commitIndex;
+            //   auto event = commo()-&gt;SendAppendEntries(0, i, heartTerm, site_id_, prevLogIndex, prevLogTerm, entries, leaderCommit, &retTerm, &success);
+            //   // // *cout &lt;&lt; "heartbeat sent from server " &lt;&lt; site_id_ &lt;&lt; " to server " &lt;&lt; i &lt;&lt; endl;
+            //   event-&gt;Wait(100000); //timeout after 100000us=0.1s
+            //   if (retTerm &gt; currentTerm) {
+            //     currentTerm = retTerm;
+            //     state = 1;
+            //     votedFor = -1;
+            //     lastHeartbeat = std::chrono::duration_cast&lt;std::chrono::milliseconds&gt;(
+            //           std::chrono::system_clock::now().time_since_epoch()).count();
+            //   }
+            // }
+          }
+        }
+        // });
+        // check if there exists an N such that N &gt; commitIndex, a majority of matchIndex[i] &gt;= N, and log[N].term == currentTerm
+        // // *cout &lt;&lt; "checking for majority" &lt;&lt; endl;
+
+        // t = 100000;
+        // Coroutine::Sleep(t);
+        // mtx_.lock();
+        // Coroutine::CreateRun([this]() {
+          int N = log.size() - 1;
+          int count = 0;
+          // print the log
+          // for (int i = 0; i &lt; log.size(); i++) {
+          //   // *cout &lt;&lt; "log[" &lt;&lt; i &lt;&lt; "]: " &lt;&lt; log[i][0] &lt;&lt; " " &lt;&lt; log[i][1] &lt;&lt; endl;
+          // }
+          uint64_t oldCommit = commitIndex, endCommit = commitIndex;
+          for (int n = commitIndex + 1; n &lt;= N; n++) {
+            // // *cout &lt;&lt; "trying to commit command: " &lt;&lt; log[n][1] &lt;&lt; " for commitIndex: " &lt;&lt; n &lt;&lt; endl;
+            count = 1;
+            for (int i = 0; i &lt; 5; i++) {
+              
+              if (i != site_id_) {
+                if (matchIndex[i] &gt;= n && log[n][0] == currentTerm) 
+                  count++;
+              
+              }
+              
+              
+            }
+            if (count &gt;= 3) {
+              endCommit = n;
+              // *cout &lt;&lt; "count: " &lt;&lt; count &lt;&lt; endl;
+            }
+          }
+          // // *cout &lt;&lt; "count: " &lt;&lt; count &lt;&lt; endl;
+          // send all logs from oldCommit to endCommit to app_next_
+          for (int n = oldCommit + 1; n &lt;= endCommit; n++) {
+            // pass committed command to app_next_
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match33-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+            uint64_t cmd_ = log[n][1];
+            // convert cmd_ to marshallable
+            auto cmdptr = std::make_shared&lt;TpcCommitCommand&gt;();
+            auto vpd_p = std::make_shared&lt;VecPieceData&gt;();
+            vpd_p-&gt;sp_vec_piece_data_ = std::make_shared&lt;vector&lt;shared_ptr&lt;SimpleCommand&gt;&gt;&gt;();
+            cmdptr-&gt;tx_id_ = cmd_;
+            cmdptr-&gt;ret_ = log[n][0];
+</FONT>            cmdptr-&gt;cmd_ = vpd_p;
+            // auto cmd_m = *(dynamic_pointer_cast&lt;Marshallable&gt;(cmdptr));
+            // *cout &lt;&lt; "leader: " &lt;&lt; site_id_ &lt;&lt; " committing command: " &lt;&lt; cmd_ &lt;&lt; endl;
+            app_next_(*dynamic_pointer_cast&lt;Marshallable&gt;(cmdptr));
+          }
+          commitIndex = endCommit;
+          lastApplied = commitIndex;
+        // });
+        
+        
+        // uint64_t t = 200000;
+        // Coroutine::Sleep(t);
+        
+        // // *cout &lt;&lt; "heartbeat complete at server " &lt;&lt; site_id_ &lt;&lt; endl;
+      } else {
+        // // *cout &lt;&lt; "Server " &lt;&lt; site_id_ &lt;&lt; " is not leader" &lt;&lt; endl;
+        break;
+      }
+      // heartbeat();
+      // Coroutine::Sleep(HEARTBEAT_INTERVAL);
+      
+    }
+  // });
+  
+  
+}
+
+RaftServer::RaftServer(Frame * frame) {
+  frame_ = frame ;
+  /* Your code here for server initialization. Note that this function is 
+     called in a different OS thread. Be careful about thread safety if 
+     you want to initialize variables here. */
+
+}
+
+RaftServer::~RaftServer() {
+  /* Your code here for server teardown */
+
+}
+
+void RaftServer::Setup() {
+  // // *cout &lt;&lt; "Inside RaftServer::Setup(); Server ID: " &lt;&lt; site_id_ &lt;&lt; endl;
+  Coroutine::CreateRun([this]() {
+    // *cout &lt;&lt; "Server " &lt;&lt; site_id_ &lt;&lt; " is " &lt;&lt; state &lt;&lt; " at term " &lt;&lt; currentTerm &lt;&lt; endl;
+    electionHandler();
+    // heartbeatHandler();
+    // *cout &lt;&lt; "initialized server " &lt;&lt; site_id_ &lt;&lt; endl;
+    /* Your code here for server setup. Due to the asynchronous nature of the 
+      framework, this function could be called after a RPC handler is triggered. 
+      Your code should be aware of that. This function is always called in the 
+      same OS thread as the RPC handlers. */
+    // SyncRpcExample();
+  });
+  
+}
+
+
+
+bool RaftServer::Start(shared_ptr&lt;Marshallable&gt; &cmd,
+                       uint64_t *index,
+                       uint64_t *term) {
+  /* Your code here. This function can be called from another OS thread. */
+  raft_mtx_.lock();
+  if (state != 2) {
+    raft_mtx_.unlock();
+    return false;
+  }
+  auto tpc_cmd = dynamic_pointer_cast&lt;TpcCommitCommand&gt;(cmd);
+  uint64_t cmd_ = tpc_cmd-&gt;tx_id_;
+  // *cout &lt;&lt; "Received command: " &lt;&lt; cmd_ &lt;&lt; " at server " &lt;&lt; site_id_ &lt;&lt; endl;
+  // // raft_mtx_.lock();
+  log.push_back({currentTerm, cmd_});
+  *index = log.size()-1;
+  *term = currentTerm;
+  // *cout &lt;&lt; "command " &lt;&lt; cmd_ &lt;&lt; " handled at server " &lt;&lt; site_id_ &lt;&lt; endl;
+  raft_mtx_.unlock();
+  return true;
+}
+
+void RaftServer::GetState(bool *is_leader, uint64_t *term) {
+  /* Your code here. This function can be called from another OS thread. */
+  raft_mtx_.lock();
+  *is_leader = (state == 2) ? true : false;
+  *term = currentTerm;
+  raft_mtx_.unlock();
+}
+
+void RaftServer::SyncRpcExample() {
+  /* This is an example of synchronous RPC using coroutine; feel free to 
+     modify this function to dispatch/receive your own messages. 
+     You can refer to the other function examples in commo.h/cc on how 
+     to send/recv a Marshallable object over RPC. */
+  Coroutine::CreateRun([this](){
+    string res;
+    auto event = commo()-&gt;SendString(0, /* partition id is always 0 for lab1 */
+                                     0, "hello", &res);
+    event-&gt;Wait(2000000); //timeout after 1000000us=1s
+    if (event-&gt;status_ == Event::TIMEOUT) {
+      Log_info("timeout happens");
+    } else {
+      Log_info("rpc response is: %s", res.c_str()); 
+    }
+  });
+  // *cout &lt;&lt; "outside syncrpc call" &lt;&lt; endl;
+}
+
+/* Do not modify any code below here */
+
+void RaftServer::Disconnect(const bool disconnect) {
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+  verify(disconnected_ != disconnect);
+  // global map of rpc_par_proxies_ values accessed by partition then by site
+  static map&lt;parid_t, map&lt;siteid_t, map&lt;siteid_t, vector&lt;SiteProxyPair&gt;&gt;&gt;&gt; _proxies{};
+  if (_proxies.find(partition_id_) == _proxies.end()) {
+    _proxies[partition_id_] = {};
+  }
+  RaftCommo *c = (RaftCommo*) commo();
+  if (disconnect) {
+    verify(_proxies[partition_id_][loc_id_].size() == 0);
+    verify(c-&gt;rpc_par_proxies_.size() &gt; 0);
+    auto sz = c-&gt;rpc_par_proxies_.size();
+    _proxies[partition_id_][loc_id_].insert(c-&gt;rpc_par_proxies_.begin(), c-&gt;rpc_par_proxies_.end());
+    c-&gt;rpc_par_proxies_ = {};
+    verify(_proxies[partition_id_][loc_id_].size() == sz);
+    verify(c-&gt;rpc_par_proxies_.size() == 0);
+  } else {
+    // // raft_mtx_.lock();
+    // state = 1;
+    // // raft_mtx_.unlock();
+    verify(_proxies[partition_id_][loc_id_].size() &gt; 0);
+    auto sz = _proxies[partition_id_][loc_id_].size();
+    c-&gt;rpc_par_proxies_ = {};
+    c-&gt;rpc_par_proxies_.insert(_proxies[partition_id_][loc_id_].begin(), _proxies[partition_id_][loc_id_].end());
+    _proxies[partition_id_][loc_id_] = {};
+    verify(_proxies[partition_id_][loc_id_].size() == 0);
+    verify(c-&gt;rpc_par_proxies_.size() == sz);
+  }
+  disconnected_ = disconnect;
+}
+
+bool RaftServer::IsDisconnected() {
+  return disconnected_;
+}
+
+} // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

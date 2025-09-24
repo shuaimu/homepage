@@ -1,0 +1,263 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-karthikbhata97/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-karthikbhata97/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+#include &lt;boost/serialization/map.hpp&gt;
+#include &lt;boost/serialization/vector.hpp&gt;
+
+namespace janus {
+struct SampleCmd {
+    std::map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt; gid_server_map{};
+    std::vector&lt;uint32_t&gt; gids{};
+    int32_t shard{};
+    uint32_t gid{};
+    int32_t config_no{};
+
+    template&lt;class Archive&gt;
+    void serialize(Archive &ar, unsigned int) {
+        ar & gid_server_map & gids & shard & gid & config_no;
+    }
+
+    static std::string to_string(SampleCmd cmd) {
+        std::stringstream ss;
+        boost::archive::text_oarchive to(ss);
+        to &lt;&lt; cmd;
+        return ss.str();
+    }
+
+    static SampleCmd from_string(const std::string& s) {
+        std::istringstream ss(s);
+        boost::archive::text_iarchive ti(ss);
+        SampleCmd cmd{};
+        ti &gt;&gt; cmd;
+        return cmd;
+    }
+
+};
+
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  SampleCmd cmd{};
+  cmd.gid_server_map = gid_server_map;
+  auto result = replcate("join", SampleCmd::to_string(cmd));
+  *ret = result.result;
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  SampleCmd cmd{};
+  cmd.gids = gids;
+  auto result = replcate("leave", SampleCmd::to_string(cmd));
+  *ret = result.result;
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  SampleCmd cmd{};
+  cmd.shard = shard;
+  cmd.gid = gid;
+  auto result = replcate("move", SampleCmd::to_string(cmd));
+  *ret = result.result;
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+  // your code here
+  SampleCmd cmd{};
+  cmd.config_no = config_no;
+  auto result = replcate("query", SampleCmd::to_string(cmd));
+  *ret = result.result;
+  *config = result.config;
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  // your code here
+  std::unique_lock&lt;std::mutex&gt; lk{mutex_};
+  Log_info("Performing OnNextCommand");
+  auto v = (MultiStringMarshallable*)(&m);
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match40-1.html#3" TARGET="1"><IMG SRC="../../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  auto oid = v-&gt;data_[0];
+  auto op = v-&gt;data_[1];
+  auto args = v-&gt;data_[2];
+  auto cmd = SampleCmd::from_string(args);
+</FONT>  ShardConfig result;
+
+  if(op == "join") {
+      Log_info("Performing join");
+      auto current_config = configs_[latest_config_];
+      for(auto& item: cmd.gid_server_map) {
+          current_config = ShardConfig::add_group(current_config, item.first, item.second);
+      }
+      latest_config_++;
+      current_config.number = latest_config_;
+      configs_[latest_config_] = current_config;
+      result = current_config;
+  } else if(op == "leave") {
+      Log_info("Performing leave");
+      auto current_config = configs_[latest_config_];
+      for(auto& item: cmd.gids) {
+          current_config = ShardConfig::remove_group(current_config, item);
+      }
+      latest_config_++;
+      current_config.number = latest_config_;
+      configs_[latest_config_] = current_config;
+      result = current_config;
+  } else if(op == "move") {
+      Log_info("Performing move");
+      auto current_config = configs_[latest_config_];
+      current_config = ShardConfig::move_shard(current_config, cmd.shard, cmd.gid);
+      latest_config_++;
+      current_config.number = latest_config_;
+      configs_[latest_config_] = current_config;
+      result = current_config;
+  } else if(op == "query") {
+      Log_info("Performing query");
+      if(cmd.config_no == -1) {
+          result = configs_[latest_config_];
+      } else {
+          result = configs_[cmd.config_no];
+      }
+  }
+
+  Log_info("Current state with config number: %d =&gt; %s", latest_config_, result.to_string().c_str());
+  if(id_map_.find(oid) != id_map_.end()) {
+      id_map_[oid]-&gt;Set(result);
+  }
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  return cli;
+}
+
+ShardReplicationResult ShardMasterServiceImpl::replcate(const string &op, const string &args) {
+
+    std::unique_lock&lt;std::mutex&gt; lk{mutex_};
+    MultiStringMarshallable cmd{};
+    auto oid_str = std::to_string(request_id_++);
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match40-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    cmd.data_.push_back(oid_str);
+    cmd.data_.push_back(op);
+    cmd.data_.push_back(args);
+    std::shared_ptr&lt;Marshallable&gt; s = std::make_shared&lt;MultiStringMarshallable&gt;(cmd);
+    uint64_t log_index, log_term;
+</FONT>
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match40-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    auto event = Reactor::CreateSpEvent&lt;BoxEvent&lt;ShardConfig&gt;&gt;();
+    id_map_[oid_str] = event;
+
+    auto status = GetRaftServer().Start(s, &log_index, &log_term);
+    if(!status) {
+        Log_info("Request skipped, not a leader");
+        id_map_.erase(oid_str);
+        return ShardReplicationResult{KV_NOTLEADER, {}};
+</FONT>    }
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match40-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    Log_info("Performing %s on partition: %d", op.c_str(), GetRaftServer().partition_id_);
+    lk.unlock();
+    event-&gt;Wait(500 * 1000);
+    lk.lock();
+    if(!event-&gt;IsReady()) {
+        Log_info("Request timed out");
+        id_map_.erase(oid_str);
+        return ShardReplicationResult{KV_TIMEOUT, {}};
+</FONT>    }
+
+    auto value = event-&gt;Get();
+    Log_info("Got value");
+    return ShardReplicationResult{KV_SUCCESS, value};
+}
+
+} // namespace janus
+ShardConfig ShardConfig::add_group(ShardConfig sc, uint32_t group_id, vector&lt;uint32_t&gt; servers) {
+    if(sc.group_servers_map_.find(group_id) != sc.group_servers_map_.end()) {
+        Log_info("Group id %d already exists", group_id);
+        return sc;
+    }
+    auto total_servers = sc.group_servers_map_.size();
+    auto max_per_server = sc.shard_group_map_.size() / (total_servers + 1);
+    Log_info("Total servers: %d, total shards: %d, shard per server: %d", total_servers, sc.shard_group_map_.size(), max_per_server);
+
+    std::map&lt;uint32_t, uint32_t&gt; shard_count;
+    for(auto& item: sc.shard_group_map_) {
+        if(item.second != 0 && shard_count[item.second] &lt; max_per_server) {
+            shard_count[item.second]++;
+        } else {
+            item.second = group_id;
+        }
+    }
+
+    sc.group_servers_map_[group_id] = servers;
+    return sc;
+}
+
+ShardConfig ShardConfig::remove_group(ShardConfig sc, uint32_t group_id) {
+    if(sc.group_servers_map_.find(group_id) == sc.group_servers_map_.end()) {
+        Log_info("Group id %d does not exists", group_id);
+        return sc;
+    }
+
+    std::vector&lt;uint32_t&gt; all_groups{};
+    for(auto& item: sc.group_servers_map_) {
+        if(item.first != group_id) {
+            all_groups.push_back(item.first);
+        }
+    }
+
+    auto i = 0;
+    auto total = all_groups.size();
+    for(auto& item: sc.shard_group_map_) {
+        if(item.second == group_id) {
+            item.second = all_groups[i % total];
+            i++;
+        }
+    }
+
+    sc.group_servers_map_.erase(group_id);
+    return sc;
+}
+
+ShardConfig ShardConfig::move_shard(ShardConfig sc, uint32_t shard, uint32_t gid) {
+    if(sc.group_servers_map_.find(gid) == sc.group_servers_map_.end()) {
+        Log_info("Group id %d does not exists", gid);
+        return sc;
+    }
+
+    sc.shard_group_map_[shard] = gid;
+    return sc;
+}
+
+std::string ShardConfig::to_string() const {
+    std::stringstream ss;
+    ss &lt;&lt; "\n\tgroup ids: ";
+    for(const auto& item: group_servers_map_) {
+        ss &lt;&lt; item.first;
+    }
+    ss &lt;&lt; "\n\tshard mapping: ";
+    for(const auto& item: shard_group_map_) {
+        ss &lt;&lt; "(" &lt;&lt; item.first &lt;&lt; "," &lt;&lt; item.second &lt;&lt; ") ";
+    }
+    return ss.str();
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

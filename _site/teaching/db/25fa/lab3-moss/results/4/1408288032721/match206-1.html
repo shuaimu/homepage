@@ -1,0 +1,362 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-BruceWang3077/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-omkar-rajwade-sbu-1/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+#include &lt;cmath&gt;
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match206-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+namespace janus {
+
+static int volatile x1 =
+MarshallDeputy::RegInitializer(100,
+                                     [] () -&gt; Marshallable* {
+                                       return new ConfigMarshallable;
+                                     });
+
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+</FONT>  
+  //add an initial empty config if there's nothing in config
+  if(configs_.size() == 0)
+  {
+    ShardConfig tempShardConfig;
+    configs_.insert(std::pair&lt;uint32_t,ShardConfig&gt;(0,tempShardConfig));
+    lastConfigIdx = 0;
+  }
+
+  //grab last config, create new config from it
+  ShardConfig lastConfig =  configs_[lastConfigIdx];
+  ShardConfig newConfig;
+  newConfig.number = lastConfig.number + 1;
+  newConfig.group_servers_map_ = lastConfig.group_servers_map_;
+  //insert all the new servers in the new config map
+  for(auto& p : gid_server_map)
+  {
+    newConfig.group_servers_map_.insert(p);
+  }
+
+  //instantiate to 0 for the case where all replica groups leave
+  uint32_t maxShardsPerReplica = 0;
+  uint32_t nReplicas = newConfig.group_servers_map_.size();
+
+  //make sure the number of replicas is not 0 
+  
+  if(nReplicas != 0)
+  {
+    maxShardsPerReplica = floor(10/nReplicas);
+    newConfig.shard_group_map_ = lastConfig.shard_group_map_;
+  }
+
+    map&lt;uint32_t,uint32_t&gt; gidCount;
+    for(auto &p:newConfig.group_servers_map_)
+    {
+      gidCount[p.first] = 0;
+    }
+    for(int i=1;i&lt;=10;i++)
+    {
+      gidCount[newConfig.shard_group_map_[i]] +=1;
+    }
+
+    auto it = newConfig.group_servers_map_.cbegin();
+    uint32_t currentGid;
+    bool processingDone = false;
+    Log_info("Just before starting reconfiguration");
+    printState(newConfig);
+    for(int i=1;i&lt;=10;i++)
+    {
+      currentGid = it-&gt;first;
+      Log_info("current gid is %d:",currentGid);
+      while(gidCount[currentGid] &gt; maxShardsPerReplica)
+      {
+        it++;
+        if (it == newConfig.group_servers_map_.cend())
+        {
+          processingDone = true;
+          break;
+        }
+        currentGid = it-&gt;first;
+      }
+      if(processingDone)
+      {
+        break;
+      }
+      if(newConfig.shard_group_map_[i] == 0 || gidCount[newConfig.shard_group_map_[i]] &gt; maxShardsPerReplica)
+      {
+        gidCount[newConfig.shard_group_map_[i]] -= 1;
+        newConfig.shard_group_map_[i] = currentGid;
+        gidCount[newConfig.shard_group_map_[i]] += 1;
+      }
+    }
+
+    //new config is ready here
+    int64_t oid = GetNextOpId();
+    shared_ptr&lt;ConfigMarshallable&gt; s = make_shared&lt;ConfigMarshallable&gt;();
+    s-&gt;cmd_ = "join";
+    s-&gt;sc_ = newConfig;
+    s-&gt;opid_ = to_string(oid);
+    shared_ptr&lt;Marshallable&gt; sMar = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+    //start replication here
+    uint64_t raftLeaderIndex,raftLeaderTerm;
+
+    bool isLeader = GetRaftServer().Start(sMar,&raftLeaderIndex,&raftLeaderTerm);
+
+    bool replied = false;
+    if(!isLeader)
+    {
+      *ret = KV_NOTLEADER;
+      defer-&gt;reply();
+      replied = true;
+    }
+
+    if(!replied)
+    {
+      if(outstanding_requests_.find(to_string(oid)) == outstanding_requests_.end())
+      {
+        outstanding_requests_[to_string(oid)] = nullptr;
+      }
+
+      if(outstanding_requests_[to_string(oid)] == nullptr)
+      {
+        outstanding_requests_[to_string(oid)] = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+      }
+
+      outstanding_requests_[to_string(oid)]-&gt;Wait(2000000);
+
+      if(outstanding_requests_[to_string(oid)]-&gt;status_ == Event::TIMEOUT)
+      {
+        //Should we store this anyway for "record"?
+        outstanding_requests_[to_string(oid)] = nullptr;
+        *ret = KV_TIMEOUT;
+        defer-&gt;reply();
+        replied = true;
+      }
+      outstanding_requests_[to_string(oid)] = nullptr;
+
+      if(!replied)
+      {
+        *ret = KV_SUCCESS;
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match206-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        defer-&gt;reply();
+      }
+    }
+}
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+  if(configs_.size() == 0)
+  {
+    ShardConfig tempShardConfig;
+    configs_.insert(std::pair&lt;uint32_t,ShardConfig&gt;(0,tempShardConfig));
+</FONT>    lastConfigIdx = 0;
+  }
+
+  //grab last config, create new config from it
+  ShardConfig lastConfig =  configs_[lastConfigIdx];
+  ShardConfig newConfig;
+  newConfig.number = lastConfig.number + 1;
+  newConfig.group_servers_map_ = lastConfig.group_servers_map_;
+  Log_info("Before removing gids");
+  printState(newConfig);
+  //insert all the new servers in the new config map
+  for(auto& p : gids)
+  {
+    newConfig.group_servers_map_.erase(p);
+  }
+  Log_info("After removing gids");
+  printState(newConfig);
+  //instantiate to 0 for the case where all replica groups leave
+  uint32_t maxShardsPerReplica = 0;
+  uint32_t nReplicas = newConfig.group_servers_map_.size();
+
+  
+  //make sure the number of replicas is not 0 
+  if(nReplicas != 0)
+  {
+  maxShardsPerReplica = ceil(10/nReplicas);
+  newConfig.shard_group_map_ = lastConfig.shard_group_map_;
+  }
+  Log_info("After assigning shard to group map");
+  printState(newConfig);
+    map&lt;uint32_t,uint32_t&gt; oldGids;
+    map&lt;uint32_t,uint32_t&gt; gidCount;
+    for(auto &p:lastConfig.group_servers_map_)
+    {
+      oldGids[p.first] = 1;
+    }
+    for(auto &p:newConfig.group_servers_map_)
+    {
+      oldGids[p.first] = 0;
+    }
+   for(int i=0;i&lt;=10;i++)
+   {
+    gidCount[lastConfig.shard_group_map_[i]] +=1;
+   }
+
+    uint32_t currentGid;
+    uint32_t currentShardGroup;
+    auto it = newConfig.group_servers_map_.cbegin();
+    for(int i=1;i&lt;=10;i++)
+    {
+      currentGid = it-&gt;first;
+      while(gidCount[currentGid] &gt; maxShardsPerReplica)
+      {
+        it++;
+        currentGid = it-&gt;first;
+      }
+      currentShardGroup = newConfig.shard_group_map_[i];
+      if( oldGids[currentShardGroup] == 1 )
+      {
+        gidCount[currentShardGroup] -= 1;
+        newConfig.shard_group_map_[i] = currentGid;
+        gidCount[currentGid] += 1;
+      }
+    }
+
+    //new config is ready here
+    int64_t oid = GetNextOpId();
+    shared_ptr&lt;ConfigMarshallable&gt; s = make_shared&lt;ConfigMarshallable&gt;();
+    s-&gt;cmd_ = "leave";
+    s-&gt;sc_ = newConfig;
+    s-&gt;opid_ = to_string(oid);
+    shared_ptr&lt;Marshallable&gt; sMar = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+    //start replication here
+    uint64_t raftLeaderIndex,raftLeaderTerm;
+
+    bool isLeader = GetRaftServer().Start(sMar,&raftLeaderIndex,&raftLeaderTerm);
+
+    bool replied = false;
+    if(!isLeader)
+    {
+      *ret = KV_NOTLEADER;
+      defer-&gt;reply();
+      replied = true;
+    }
+
+    if(!replied)
+    {
+      if(outstanding_requests_.find(to_string(oid)) == outstanding_requests_.end())
+      {
+        outstanding_requests_[to_string(oid)] = nullptr;
+      }
+
+      if(outstanding_requests_[to_string(oid)] == nullptr)
+      {
+        outstanding_requests_[to_string(oid)] = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+      }
+
+      outstanding_requests_[to_string(oid)]-&gt;Wait(2000000);
+
+      if(outstanding_requests_[to_string(oid)]-&gt;status_ == Event::TIMEOUT)
+      {
+        //Should we store this anyway for "record"?
+        outstanding_requests_[to_string(oid)] = nullptr;
+        *ret = KV_TIMEOUT;
+        defer-&gt;reply();
+        replied = true;
+      }
+      outstanding_requests_[to_string(oid)] = nullptr;
+
+      if(!replied)
+      {
+        *ret = KV_SUCCESS;
+        defer-&gt;reply();
+      }
+    }
+}
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+  // your code here
+  Log_info("In query function");
+  //extremely bad version for testing
+  if(GetRaftServer().lcf != 0)
+  {
+    *ret = KV_NOTLEADER;
+    ShardConfig temp;
+    *config = temp;
+    defer-&gt;reply();
+  }
+  else
+  {
+    printState(configs_[lastConfigIdx]);
+    *ret = KV_SUCCESS;
+    *config = configs_[lastConfigIdx];
+    defer-&gt;reply();
+  }
+
+}
+
+void ShardMasterServiceImpl::printState(ShardConfig currentConfig)
+{
+    Log_info("Group -&gt; Servers map:");
+    string pStr = "";
+    for(auto &p: currentConfig.group_servers_map_)
+    {
+      string vectorStr = "{";
+      for(int i=0;i&lt;p.second.size();i++)
+      {
+        vectorStr += to_string(p.second.at(i)) + ",";
+      }
+      vectorStr += "}";
+      pStr += to_string(p.first) + vectorStr + "|";       
+    }
+    Log_info("%s",pStr.c_str());
+    Log_info("Shards -&gt; Groups map:");
+    pStr = "";
+    for(auto &p: currentConfig.shard_group_map_)
+    {
+      pStr += to_string(p.first) + ":" + to_string(p.second) + "|";      
+    }
+    Log_info("%s",pStr.c_str());
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+    auto v = (ConfigMarshallable*)(&m);
+    string oid = v-&gt;opid_;
+    string optype = v-&gt;cmd_;
+    ShardConfig sc = v-&gt;sc_;
+    //this means event did not timeout
+    if(optype == "join")
+    {
+        configs_[sc.number] = sc;
+        lastConfigIdx = sc.number;
+        Log_info("Partition %d site %d: Join committed",GetRaftServer().partition_id_,GetRaftServer().loc_id_);
+    }
+    if(optype == "leave")
+    {
+        configs_[sc.number] = sc;
+        lastConfigIdx = sc.number;
+        Log_info("Partition %d site %d: Join committed",GetRaftServer().partition_id_,GetRaftServer().loc_id_);
+    }
+    if(optype == "query") // handle synchronously in "query" function
+    {
+        Log_info("Partition %d site %d: Query committed",GetRaftServer().partition_id_,GetRaftServer().loc_id_);
+    }
+    if(outstanding_requests_.find(oid) != outstanding_requests_.end() && outstanding_requests_[oid] != nullptr)
+    {
+      outstanding_requests_[oid]-&gt;Set(1);
+    }
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  return cli;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

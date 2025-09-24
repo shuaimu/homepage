@@ -1,0 +1,108 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-kanavtalwar/src/shardmaster/service.h</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-shreyalabba/src/shardmaster/service.h<p><PRE>
+
+#pragma once
+
+#include "../deptran/__dep__.h"
+#include "../deptran/raft/server.h"
+
+class ShardConfig {
+ public:
+  int32_t number{0};
+  map&lt;uint32_t, uint32_t&gt; shard_group_map_{{1,0},{2,0},{3,0},{4,0},{5,0},{6,0},{7,0},{8,0},{9,0},{10,0}};
+  map&lt;uint32_t, vector&lt;uint32_t&gt;&gt; group_servers_map_{};
+  map&lt;uint32_t, uint32_t&gt; group_shard_mapping{};
+  // Lab Shard: you can add functions to this class but do not add/remove member variables
+};
+
+inline Marshal& operator&gt;&gt;(Marshal& m, ShardConfig& rhs) {
+  m &gt;&gt; rhs.number &gt;&gt; rhs.shard_group_map_ &gt;&gt; rhs.group_servers_map_;
+  return m;
+}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match242-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_10.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+inline Marshal& operator&lt;&lt;(Marshal& m, const ShardConfig& rhs) {
+  m &lt;&lt; rhs.number &lt;&lt; rhs.shard_group_map_ &lt;&lt; rhs.group_servers_map_;
+  return m;
+}
+
+#include "shardmaster_rpc.h"
+
+namespace janus {
+
+class ShardedState : public Marshallable {
+ public:
+  ShardedState() : Marshallable(MarshallDeputy::CMD_MULTI_STRING) {} 
+  string operation;
+  // int32_t configNumber;
+  // map&lt;uint32_t, uint32_t&gt; shard_group_map;
+  ShardConfig config;
+  Marshal& ToMarshal(Marshal& m) const override {
+</FONT>    // m &lt;&lt; operation;
+    // m &lt;&lt; configNumber;
+    // m &lt;&lt; shard_group_map.size();
+    // for(auto i=shard_group_map.begin();i!=shard_group_map.end();i++){
+    //   m &lt;&lt; i-&gt;first &lt;&lt; i-&gt;second;
+    // }
+    m &lt;&lt; operation;
+    m &lt;&lt; config.number &lt;&lt;config.shard_group_map_ &lt;&lt; config.group_servers_map_;
+    return m;
+  }
+
+  Marshal& FromMarshal(Marshal& m) override {
+    m &gt;&gt; operation;
+    // m &gt;&gt; configNumber;
+    // int size=0;
+    // m &gt;&gt; size;
+    // for(int i=0;i&lt;size;i++){
+    //   uint32_t replicaGroup,numberOfShards;
+    //   m &gt;&gt; replicaGroup &gt;&gt; numberOfShards;
+    //   shard_group_map[replicaGroup]=numberOfShards;
+    // }
+    m &gt;&gt; config.number &gt;&gt; config.shard_group_map_ &gt;&gt; config.group_servers_map_;
+    return m;
+  }
+};
+
+// class TxLogServer;
+// class KvServer;
+class ShardMasterClient;
+class ShardMasterServiceImpl : public ShardMasterService {
+ public:
+  shared_ptr&lt;TxLogServer&gt; sp_log_svr_{}; 
+  const uint64_t SM_TIMEOUT = 10000000; // 10s
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match242-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  map&lt;uint32_t, ShardConfig&gt; configs_{}; 
+  SharedIntEvent event{};
+  // add your own variables here if needed 
+
+  // add your own functions here if needed  
+
+  // do not change anything below
+  RaftServer& GetRaftServer() {
+    auto p = dynamic_pointer_cast&lt;RaftServer&gt;(sp_log_svr_);
+    verify(p != nullptr);
+    return *p;
+  }
+  ShardMasterServiceImpl() {}
+  virtual void Join(const std::map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) override;
+</FONT>  virtual void Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) override;
+  virtual void Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) override;
+  virtual void Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) override;
+  shared_ptr&lt;Marshallable&gt; MarshallableSharedPtr(ShardConfig s,string operation);
+  void OnNextCommand(Marshallable& m);
+  shared_ptr&lt;ShardMasterClient&gt; CreateClient();
+};
+
+} // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

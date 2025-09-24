@@ -1,0 +1,321 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-ajayhegde96/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-upuneetu/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+
+void RaftServiceImpl::HandleRequestVote(const uint64_t& candidateTerm,
+                                        const uint64_t& candidateId, 
+                                        const uint64_t& lastLogIndex,
+                                        const uint64_t& lastLogTerm,
+                                        uint64_t* retTerm,
+                                        bool_t* vote_granted,
+                                        uint64_t* returnSiteId,
+                                        rrr::DeferredReply* defer) { 
+  /* Your code here */
+  *retTerm = this-&gt;svr_-&gt;currentTerm;
+  *vote_granted = false;
+  *returnSiteId = this-&gt;svr_-&gt;site_id_;
+
+  if(candidateTerm &gt; this-&gt;svr_-&gt;currentTerm || 
+    (candidateTerm == this-&gt;svr_-&gt;currentTerm && 
+    (this-&gt;svr_-&gt;votedFor == candidateId || this-&gt;svr_-&gt;votedFor == std::numeric_limits&lt;uint64_t&gt;::max()))) {
+    
+    if(this-&gt;svr_-&gt;serverState != ServerState::FOLLOWER)
+    {
+      Log_info("[StateChange][TermChange] demote to follower server:%d, currTerm:%lld, voterTerm:%lld ", 
+                    this-&gt;svr_-&gt;site_id_, this-&gt;svr_-&gt;currentTerm, candidateTerm);
+      this-&gt;svr_-&gt;mtx_.lock();
+      this-&gt;svr_-&gt;serverState = ServerState::FOLLOWER;
+      this-&gt;svr_-&gt;nVotesReceived = 0;
+      this-&gt;svr_-&gt;largestVoterTerm = 0;
+      this-&gt;svr_-&gt;votedFor = candidateId;// mutex required?
+      this-&gt;svr_-&gt;currentTerm = candidateTerm;
+      this-&gt;svr_-&gt;mtx_.unlock();
+    }
+    
+    if(lastLogTerm &gt; this-&gt;svr_-&gt;lastLogTerm || 
+        (lastLogTerm == this-&gt;svr_-&gt;lastLogTerm && lastLogIndex &gt;= this-&gt;svr_-&gt;lastLogIndex)){
+      //Log_debug("[HandleRequestVote] server:%d to server:%d grant vote", this-&gt;svr_-&gt;site_id_, candidateId);
+      *retTerm = this-&gt;svr_-&gt;currentTerm;
+      *vote_granted = true;
+      
+      this-&gt;svr_-&gt;mtx_.lock();
+      this-&gt;svr_-&gt;votedFor = candidateId;// mutex required?
+      this-&gt;svr_-&gt;currentTerm = candidateTerm;
+      this-&gt;svr_-&gt;mtx_.unlock();
+      
+      auto status = this-&gt;svr_-&gt;bgTimeoutEventIsInit?this-&gt;svr_-&gt;bgTimeoutEvent-&gt;status_:Event::INIT;
+      while(!this-&gt;svr_-&gt;bgTimeoutEventIsInit || (status != Event::WAIT && status != Event::INIT)){
+        if(Reactor::sp_running_coro_th_)
+          Coroutine::Sleep(5000);
+          //Log_debug("EvenLoop in server:%d", this-&gt;svr_-&gt;id);
+        status = this-&gt;svr_-&gt;bgTimeoutEventIsInit?this-&gt;svr_-&gt;bgTimeoutEvent-&gt;status_:Event::INIT;
+      }
+      this-&gt;svr_-&gt;bgTimeoutEvent-&gt;Set(EventStatus::ELECTION_PASS); //- reset election timer
+    }
+    this-&gt;svr_-&gt;currentTerm = candidateTerm; //could be an issue check
+  }
+  
+  if(*vote_granted == false)
+      ;//Log_debug("[HandleRequestVote] server:%d to server:%d reject vote serverTerm:%ld candidateTerm:%ld", this-&gt;svr_-&gt;site_id_, candidateId, this-&gt;svr_-&gt;currentTerm, candidateTerm);
+  defer-&gt;reply();                             
+}
+
+void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t& leaderTerm,
+                                                const uint64_t& leader_id,
+                                                const uint64_t& prevLogIndex,
+                                                const vector&lt;uint64_t&gt;& prevLogTerms,
+                                                const uint64_t& leaderLastLogIndex,
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match18-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                                const uint64_t& leaderCommitIndex,
+                                                uint64_t* returnTerm,
+                                                bool_t* followerAppendOK,
+                                                uint64_t* returnSiteId,
+                                                uint64_t* nextRequiredLogIndex,
+                                                rrr::DeferredReply* defer){
+  *followerAppendOK = true;
+</FONT>  *returnTerm = this-&gt;svr_-&gt;currentTerm;
+  *returnSiteId = this-&gt;svr_-&gt;site_id_;
+  *nextRequiredLogIndex = 1;
+  if(leaderTerm &gt; LOGS_REQUIRED_AFTER_TERM)
+  Log_debug("[HandleHB] server:%d leader:%d currT:%d leaderT:%d prevLogIndex:%d lastLogIndex:%d", 
+              this-&gt;svr_-&gt;id, leader_id, this-&gt;svr_-&gt;currentTerm, leaderTerm, prevLogIndex, this-&gt;svr_-&gt;lastLogIndex);
+  
+  if(leaderTerm &lt; this-&gt;svr_-&gt;currentTerm) //send false if term less
+    *followerAppendOK = false;
+  else if(prevLogIndex &gt; 0) {
+    int firstMismatchIndex = prevLogIndex, idx = prevLogTerms.size()-1;
+    while(idx&gt;=0 && this-&gt;svr_-&gt;logsTerm[firstMismatchIndex-1] != prevLogTerms[idx]) {
+      idx--;
+      firstMismatchIndex--;
+    }
+    if(idx==-1) {
+      *followerAppendOK = false;
+      *nextRequiredLogIndex = firstMismatchIndex;
+    }
+    else {
+      *nextRequiredLogIndex = firstMismatchIndex+1;
+    }
+  }
+  if(*followerAppendOK) {
+    ;
+    // don't resize here, but do resizing only in AE
+  }
+  
+  if(this-&gt;svr_-&gt;serverState != ServerState::FOLLOWER){
+    if(this-&gt;svr_-&gt;serverState == ServerState::CANDIDATE || 
+      this-&gt;svr_-&gt;currentTerm &lt; leaderTerm) //if candidate or leader and received hb from &gt;= term
+    {
+      this-&gt;svr_-&gt;mtx_.lock();
+      this-&gt;svr_-&gt;serverState = ServerState::FOLLOWER;
+      //i'm updating term in next if block
+      this-&gt;svr_-&gt;nVotesReceived = 0;
+      this-&gt;svr_-&gt;largestVoterTerm = 0;
+      this-&gt;svr_-&gt;mtx_.unlock();
+      Log_info("[StateChange][HandleHB] demote to follower server:%d, currTerm:%lld, leaderTerm:%lld leaderId:%d", 
+              this-&gt;svr_-&gt;site_id_, this-&gt;svr_-&gt;currentTerm, leaderTerm, leader_id);
+      
+      auto status = this-&gt;svr_-&gt;bgTimeoutEventIsInit?this-&gt;svr_-&gt;bgTimeoutEvent-&gt;status_:Event::INIT;
+      while(!this-&gt;svr_-&gt;bgTimeoutEventIsInit || (status != Event::WAIT && status != Event::INIT)) {
+        if(Reactor::sp_running_coro_th_)
+          Coroutine::Sleep(5000);
+        Log_debug("EvenLoop in server:%d HB from server:%d", this-&gt;svr_-&gt;loc_id_, leader_id);
+        status = this-&gt;svr_-&gt;bgTimeoutEventIsInit?this-&gt;svr_-&gt;bgTimeoutEvent-&gt;status_:Event::INIT;
+      }
+      this-&gt;svr_-&gt;bgTimeoutEvent-&gt;Set(EventStatus::HB_PASS); //reset timer
+    }
+  }
+
+  if(leaderTerm &gt; this-&gt;svr_-&gt;currentTerm){
+    this-&gt;svr_-&gt;mtx_.lock();
+    this-&gt;svr_-&gt;leaderId = leader_id;
+    this-&gt;svr_-&gt;votedFor = std::numeric_limits&lt;uint64_t&gt;::max();//is this really required?
+    this-&gt;svr_-&gt;currentTerm = leaderTerm;
+    this-&gt;svr_-&gt;mtx_.unlock();
+  }
+  //may have to move this up for concurrency issues - when other coroutines are using your this-&gt; vars
+  if(*followerAppendOK){
+    //commit logic : commit to servers
+    if(this-&gt;svr_-&gt;lastCommitIndex &lt; leaderCommitIndex)
+    {
+      if(leaderTerm &gt; LOGS_REQUIRED_AFTER_TERM)
+      Log_debug("[CommitAttemptHB] by server:%d at nextCommitIndex:%d prevLogIndex:%d LLI:%d", this-&gt;svr_-&gt;id, this-&gt;svr_-&gt;lastCommitIndex+1, prevLogIndex, this-&gt;svr_-&gt;lastLogIndex);
+      uint64_t lastPossibleCommitIndex = min(leaderCommitIndex, this-&gt;svr_-&gt;lastLogIndex);
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match18-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      for(uint64_t i = this-&gt;svr_-&gt;lastCommitIndex+1; i &lt;= lastPossibleCommitIndex; i++)
+      {
+        this-&gt;svr_-&gt;app_next_(*this-&gt;svr_-&gt;logs[i-1]);
+</FONT>        auto& command = dynamic_cast&lt;TpcCommitCommand&&gt;(*this-&gt;svr_-&gt;logs[i-1]);
+        Log_debug("[CommitDone] by server:%d at logIndex:%d cmd:%d", this-&gt;svr_-&gt;id, i, command.tx_id_);
+      }
+      
+      this-&gt;svr_-&gt;lastCommitIndex = lastPossibleCommitIndex;
+    }
+    
+    auto status = this-&gt;svr_-&gt;bgTimeoutEventIsInit?this-&gt;svr_-&gt;bgTimeoutEvent-&gt;status_:Event::INIT;
+    while(!this-&gt;svr_-&gt;bgTimeoutEventIsInit || (status != Event::WAIT && status != Event::INIT)) {
+      if(Reactor::sp_running_coro_th_)
+        Coroutine::Sleep(5000);
+      Log_debug("EvenLoop in server:%d HB from server:%d", this-&gt;svr_-&gt;loc_id_, leader_id);
+      status = this-&gt;svr_-&gt;bgTimeoutEventIsInit?this-&gt;svr_-&gt;bgTimeoutEvent-&gt;status_:Event::INIT;
+    }
+    this-&gt;svr_-&gt;bgTimeoutEvent-&gt;Set(EventStatus::HB_PASS); //received correct hb, reset timer
+  }
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleAppendEntries(const MarshallDeputy& md_cmd,
+                                          const uint64_t& logTerm,
+                                          const uint64_t& leaderTerm,
+                                          const uint64_t& leader_id,
+                                          const uint64_t& prevLogIndex,
+                                          const uint64_t& prevLogTerm,
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match18-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                          const uint64_t& leaderCommitIndex,
+                                          uint64_t* returnTerm,
+                                          bool_t* followerAppendOK,
+                                          uint64_t* returnSiteId,
+                                          /*uint64_t* matchIndex,*/
+                                          rrr::DeferredReply* defer) {
+  /* Your code here */
+  std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(md_cmd).sp_data_;
+</FONT>  *followerAppendOK = true;
+  *returnTerm = this-&gt;svr_-&gt;currentTerm;
+  *returnSiteId = this-&gt;svr_-&gt;site_id_;
+  if(leaderTerm &gt; LOGS_REQUIRED_AFTER_TERM)
+  Log_debug("[HandleAE] server:%d leader:%d currT:%d leaderT:%d prevLogIndex:%d lastLogIndex:%d", 
+              this-&gt;svr_-&gt;id, leader_id, this-&gt;svr_-&gt;currentTerm, leaderTerm, prevLogIndex, this-&gt;svr_-&gt;lastLogIndex);
+  if(leaderTerm &lt; this-&gt;svr_-&gt;currentTerm) {
+    *followerAppendOK = false;
+  }
+  else if(prevLogIndex != 0 && prevLogIndex &gt; this-&gt;svr_-&gt;lastLogIndex) //keep sending false
+    *followerAppendOK = false;
+  else if(prevLogIndex &gt; 0 && this-&gt;svr_-&gt;logsTerm[prevLogIndex-1] != prevLogTerm)
+    *followerAppendOK = false;
+  if(*followerAppendOK) {
+    //relook this? TODO: could be point of failure
+    if(prevLogIndex &lt; this-&gt;svr_-&gt;lastLogIndex)
+    {
+      Log_debug("[HandleAE] Resizing in server:%d prevLogIndex:%d LLI:%d currT:%d leaderT:%d", this-&gt;svr_-&gt;id, prevLogIndex, this-&gt;svr_-&gt;lastLogIndex, this-&gt;svr_-&gt;currentTerm, leaderTerm);
+      this-&gt;svr_-&gt;logMutex.lock();
+      this-&gt;svr_-&gt;lastLogIndex = prevLogIndex;
+      this-&gt;svr_-&gt;logs.resize(prevLogIndex);
+      this-&gt;svr_-&gt;logsTerm.resize(this-&gt;svr_-&gt;lastLogIndex);
+      this-&gt;svr_-&gt;logMutex.unlock();
+    }
+  }
+
+  if(this-&gt;svr_-&gt;serverState != ServerState::FOLLOWER){
+    if(this-&gt;svr_-&gt;serverState == ServerState::CANDIDATE || 
+      this-&gt;svr_-&gt;currentTerm &lt; leaderTerm) //if candidate or leader and received hb from &gt;= term
+    {
+      this-&gt;svr_-&gt;mtx_.lock();
+      this-&gt;svr_-&gt;serverState = ServerState::FOLLOWER;
+      //im updating term in next if block
+      this-&gt;svr_-&gt;nVotesReceived = 0;
+      this-&gt;svr_-&gt;largestVoterTerm = 0;
+      this-&gt;svr_-&gt;mtx_.unlock();
+      Log_info("[StateChange][HandleAE] demote to follower svr:%d, currTerm:%lld, leaderTerm:%lld leaderId:%d", 
+              this-&gt;svr_-&gt;site_id_, this-&gt;svr_-&gt;currentTerm, leaderTerm, leader_id);
+      
+      auto status = this-&gt;svr_-&gt;bgTimeoutEventIsInit?this-&gt;svr_-&gt;bgTimeoutEvent-&gt;status_:Event::INIT;
+      /*
+      while(!this-&gt;svr_-&gt;bgTimeoutEventIsInit || (status != Event::WAIT && status != Event::INIT)) {
+        if(Reactor::sp_running_coro_th_)
+          Coroutine::Sleep(1000);
+        //Log_debug("EvenLoop in server:%d HB from server:%d", this-&gt;svr_-&gt;loc_id_, leader_id);
+        status = this-&gt;svr_-&gt;bgTimeoutEventIsInit?this-&gt;svr_-&gt;bgTimeoutEvent-&gt;status_:Event::INIT;
+      }
+      */
+      this-&gt;svr_-&gt;bgTimeoutEvent-&gt;Set(EventStatus::HB_PASS); //reset timer
+    }
+  }
+
+  if(leaderTerm &gt; this-&gt;svr_-&gt;currentTerm){
+    this-&gt;svr_-&gt;mtx_.lock();
+    this-&gt;svr_-&gt;leaderId = leader_id;
+    this-&gt;svr_-&gt;votedFor = std::numeric_limits&lt;uint64_t&gt;::max();//is this really required?
+    this-&gt;svr_-&gt;currentTerm = leaderTerm;
+    this-&gt;svr_-&gt;mtx_.unlock();
+  }
+
+  if(*followerAppendOK){
+    //append entries and signal to reset timer
+    
+    this-&gt;svr_-&gt;logMutex.lock();
+    auto& command = dynamic_cast&lt;TpcCommitCommand&&gt;(*cmd);
+    Log_debug("[AppendDone] cmd:%d in server:%d at logIndex:%d logTerm:%d", 
+              command.tx_id_, this-&gt;svr_-&gt;id, this-&gt;svr_-&gt;lastLogIndex+1, logTerm);
+    this-&gt;svr_-&gt;logs.push_back(cmd);
+    this-&gt;svr_-&gt;logsTerm.push_back(logTerm);
+    this-&gt;svr_-&gt;lastLogIndex++;
+    this-&gt;svr_-&gt;lastLogTerm = logTerm;
+    this-&gt;svr_-&gt;logMutex.unlock();
+
+    //commit logic : commit to servers
+    if(this-&gt;svr_-&gt;lastCommitIndex &lt; leaderCommitIndex)
+    {
+      if(leaderTerm &gt; LOGS_REQUIRED_AFTER_TERM)
+      Log_debug("[CommitAttemptAE] by server:%d at lastCommitIndex:%d leaderCommitIndex:%d prevLogIndex:%d", this-&gt;svr_-&gt;id, this-&gt;svr_-&gt;lastCommitIndex+1, leaderCommitIndex, prevLogIndex);
+      uint64_t lastPossibleCommitIndex = min(leaderCommitIndex, this-&gt;svr_-&gt;lastLogIndex);
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match18-0.html#3" TARGET="0"><IMG SRC="../../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      for(uint64_t i = this-&gt;svr_-&gt;lastCommitIndex+1; i &lt;= lastPossibleCommitIndex; i++)
+      {
+        this-&gt;svr_-&gt;app_next_(*this-&gt;svr_-&gt;logs[i-1]);
+</FONT>        auto& command = dynamic_cast&lt;TpcCommitCommand&&gt;(*this-&gt;svr_-&gt;logs[i-1]);
+        Log_debug("[CommitDone] by server:%d at logIndex:%d cmd:%d", this-&gt;svr_-&gt;id, i, command.tx_id_);
+      }
+      this-&gt;svr_-&gt;lastCommitIndex = lastPossibleCommitIndex;
+    }
+
+    auto status = this-&gt;svr_-&gt;bgTimeoutEventIsInit?this-&gt;svr_-&gt;bgTimeoutEvent-&gt;status_:Event::INIT;
+    while(!this-&gt;svr_-&gt;bgTimeoutEventIsInit || (status != Event::WAIT && status != Event::INIT)) {
+      if(Reactor::sp_running_coro_th_)
+        Coroutine::Sleep(5000);
+      //Log_debug("EvenLoop in server:%d AE from server:%d", this-&gt;svr_-&gt;loc_id_, leader_id);
+      status = this-&gt;svr_-&gt;bgTimeoutEventIsInit?this-&gt;svr_-&gt;bgTimeoutEvent-&gt;status_:Event::INIT;
+    }
+    this-&gt;svr_-&gt;bgTimeoutEvent-&gt;Set(EventStatus::APPEND_PASS); //received correct hb, reset timer
+  }
+  else{
+    //do nothing
+  }
+
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("receive an rpc: %s", req.c_str());
+  *res = "world";
+  defer-&gt;reply();
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

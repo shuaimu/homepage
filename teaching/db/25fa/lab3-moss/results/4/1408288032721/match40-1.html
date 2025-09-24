@@ -1,0 +1,237 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-karthikbhata97/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-karthikbhata97/src/shardkv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+#include "frame.h"
+#include "../shardmaster/client.h"
+
+namespace janus {
+
+int64_t ShardKvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int ShardKvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+    auto is_leader = update_config_if_expired();
+    if(!is_leader) return KV_NOTLEADER;
+    auto result = replicate_log(oid, "put", k, v);
+    return result.status;
+}
+
+int ShardKvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+    auto is_leader = update_config_if_expired();
+    if(!is_leader) return KV_NOTLEADER;
+    auto result = replicate_log(oid, "append", k, v);
+    return result.status;
+}
+
+int ShardKvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+    auto is_leader = update_config_if_expired();
+    if(!is_leader) return KV_NOTLEADER;
+    auto result = replicate_log(oid, "get", k, "");
+    *v = result.value;
+    Log_info("Get returned: %s", v-&gt;c_str());
+    return result.status;
+}
+
+void ShardKvServer::OnNextCommand(Marshallable& m) {
+    auto v = (MultiStringMarshallable*)(&m);
+    std::unique_lock&lt;std::mutex&gt; lk{mutex_};
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match40-0.html#3" TARGET="0"><IMG SRC="../../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    auto oid = v-&gt;data_[0];
+    auto op = v-&gt;data_[1];
+    auto key = v-&gt;data_[2];
+    auto val = v-&gt;data_[3];
+</FONT>
+    std::string result{};
+
+    if(op == "put") {
+        auto shard = ShardKvClient{}.Key2Shard(key);
+        sharded_kv_[shard][key] = val;
+        Log_info("Inserting (%s, %s)", key.c_str(), val.c_str());
+        result = sharded_kv_[shard][key];
+    } else if(op == "append") {
+        auto shard = ShardKvClient{}.Key2Shard(key);
+        sharded_kv_[shard][key] += val;
+        Log_info("Updating (%s, %s -&gt; %s)", key.c_str(), val.c_str(), kv_[key].c_str());
+        result = sharded_kv_[shard][key];
+    } else if(op == "get") {
+        auto shard = ShardKvClient{}.Key2Shard(key);
+        result = sharded_kv_[shard][key];
+    } else if(op == "config") {
+        auto new_config = ShardConfig::from_string(val);
+        auto my_part = GetRaftServer().partition_id_;
+        for(auto& item: new_config.shard_group_map_) {
+            if(item.second == my_part && current_config_.shard_group_map_[item.first] != my_part) {
+                // Fetch
+                sharded_kv_[item.first] = get_shard(item.first, current_config_.shard_group_map_[item.first]);
+            }
+        }
+    }
+
+    if(oid_map_.find(oid) != oid_map_.end()) {
+        oid_map_[oid]-&gt;Set(result);
+    }
+}
+
+shared_ptr&lt;ShardKvClient&gt; ShardKvServer::CreateClient(Communicator* comm) {
+  auto cli = make_shared&lt;ShardKvClient&gt;();
+  cli-&gt;commo_ = comm;
+  verify(cli-&gt;commo_ != nullptr);
+  static uint32_t id = 0;
+  id++;
+  cli-&gt;cli_id_ = id; 
+  return cli;
+}
+
+ReplicationResult ShardKvServer::replicate_log(const uint64_t &op_id, const std::string& op, const string &k, const string &v) {
+    MultiStringMarshallable cmd{};
+    auto oid_str = std::to_string(op_id);
+    cmd.data_.push_back(oid_str);
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match40-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    cmd.data_.push_back(op);
+    cmd.data_.push_back(k);
+    cmd.data_.push_back(v);
+    std::shared_ptr&lt;Marshallable&gt; s = std::make_shared&lt;MultiStringMarshallable&gt;(cmd);
+    uint64_t log_index, log_term;
+</FONT>
+    std::unique_lock&lt;std::mutex&gt; lk{mutex_};
+    Log_info("%s shardkvserver raft status", GetRaftServer().server_info().c_str());
+
+    if(op != "config") {
+        auto shard = ShardKvClient{}.Key2Shard(k);
+        if(current_config_.shard_group_map_[shard] != GetRaftServer().partition_id_) {
+            Log_info("Does not belong to my group");
+            return {KV_SHARD_NOT_FOUND, ""};
+        }
+    }
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match40-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    auto event = Reactor::CreateSpEvent&lt;BoxEvent&lt;std::string&gt;&gt;();
+    oid_map_[oid_str] = event;
+
+    auto status = GetRaftServer().Start(s, &log_index, &log_term);
+    if(!status) {
+        Log_info("Request skipped, not a leader");
+        oid_map_.erase(oid_str);
+        return ReplicationResult{KV_NOTLEADER, ""};
+</FONT>    }
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match40-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    Log_info("Performing %s on (%s, %s)", op.c_str(), k.c_str(), v.c_str());
+    lk.unlock();
+    event-&gt;Wait(3000 * 1000);
+    lk.lock();
+    if(!event-&gt;IsReady()) {
+        Log_info("Request timed out");
+        oid_map_.erase(oid_str);
+        return ReplicationResult{KV_TIMEOUT, oid_str};
+</FONT>    }
+
+    auto value = event-&gt;Get();
+    Log_info("Got value as %s for key %s", value.c_str(), k.c_str());
+    return ReplicationResult{KV_SUCCESS, value};
+}
+
+bool ShardKvServer::update_config_if_expired() {
+    std::lock_guard&lt;std::mutex&gt; lk{config_update_mutex_};
+    bool is_leader;
+    uint64_t term;
+    GetRaftServer().GetState(&is_leader, &term);
+    if(!is_leader) {
+        Log_info("not a leader");
+        return false;
+    }
+
+    Log_info("leader, checking config");
+    auto diff = std::chrono::system_clock::now() - last_config_check_;
+    if(diff &lt; std::chrono::milliseconds{50}) {
+        Log_info("config updated recently");
+        return true;
+    }
+
+    last_config_check_ = std::chrono::system_clock::now();
+
+    ShardConfig sc;
+    auto status = get_config(-1, &sc);
+    if(status != KV_SUCCESS) {
+        Log_info("Failed to get config");
+        return true;
+    }
+
+    Log_info("Got config: %s", sc.to_string().c_str());
+    if(sc.number &lt;= current_config_.number)  {
+        Log_info("No config update required");
+        return true;
+    }
+
+    auto success = replicate_log(GetNextOpId(), "config", "config", ShardConfig::to_string(sc));
+    if(success.status != KV_SUCCESS) {
+        Log_info("Failed to update config");
+        return true;
+    }
+    return true;
+}
+
+uint32_t ShardKvServer::get_config(uint32_t number, ShardConfig *sc) {
+    Log_info("Getting config: %d", number);
+    auto proxies = GetRaftServer().commo_-&gt;rpc_par_proxies_[0];
+    for(auto& p: proxies) {
+        Log_info("Checking site: %d", p.first);
+        auto sm_proxy = (ShardMasterProxy*)p.second;
+        uint32_t  ret;
+
+        if(ret == KV_SUCCESS) {
+            return ret;
+        }
+    }
+    verify(false);
+}
+
+std::map&lt;std::string, std::string&gt; ShardKvServer::get_shard(uint32_t shard_number, uint32_t partition_number) {
+    Log_info("fetching shard %d", shard_number);
+    auto proxies = GetRaftServer().commo_-&gt;rpc_par_proxies_[partition_number];
+    for(auto& p: proxies) {
+        auto kv_proxy = (ShardKvProxy*)p.second;
+        uint32_t  ret;
+
+        std::map&lt;string, string&gt; m;
+        kv_proxy-&gt;FetchShard(shard_number, &ret, &m);
+        if(ret == KV_SUCCESS) {
+            return m;
+        }
+    }
+    verify(false);
+}
+
+int ShardKvServer::FetchShard(const uint32_t &shard_id, map&lt;string, string&gt; *shard_snapshot) {
+    Log_info("returning shard %d", shard_id);
+    *shard_snapshot = sharded_kv_[shard_id];
+    return KV_SUCCESS;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

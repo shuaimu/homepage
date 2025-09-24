@@ -1,0 +1,391 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-PranavDani/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-PranavDani/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+namespace janus {
+
+  static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_SNAPSHOT,
+      []() -&gt; Marshallable* {
+        return new ShardMarshallable;
+      });
+
+  void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map,
+    uint32_t* ret, rrr::DeferredReply* defer) {
+    // your code here
+    uint64_t oid = op_id_cnt_++;
+    opMap[oid] = false;
+    ShardConfig config;
+    config = configs_[lastConfig];
+
+    lastConfig++;
+    config.number = lastConfig;
+
+    vector&lt;int&gt; newGroups;
+    for (auto& groupEntry : gid_server_map) {
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match130-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      newGroups.push_back(groupEntry.first);
+
+    }
+
+
+    for (auto it = gid_server_map.begin(); it != gid_server_map.end(); it++) {
+      config.group_servers_map_[it-&gt;first] = it-&gt;second;
+</FONT>    }
+
+    if (config.group_servers_map_.size() == 0) {
+      for (int i = 1; i &lt;= 10; i++) {
+        config.shard_group_map_[i] = 0;
+      }
+    }
+    else if (config.group_servers_map_.size() == 1) {
+      for (auto& it : config.group_servers_map_) {
+        for (int i = 1; i &lt;= 10; i++) {
+          config.shard_group_map_[i] = it.first;
+        }
+      }
+    }
+    else {
+      int totalShards = config.shard_group_map_.size();
+      int totalGroups = config.group_servers_map_.size();
+
+      int shardsPerGroup = totalShards / totalGroups;
+
+      vector&lt;int&gt; groups;
+      for (auto& groupEntry : config.group_servers_map_) {
+        groups.push_back(groupEntry.first);
+      }
+
+      for (int i = 0; i &lt; groups.size(); i++) {
+        int count = 1;
+        for (int j = 1; j &lt;= 10; j++) {
+          if (config.shard_group_map_[j] == groups[i] && count &lt;= shardsPerGroup) {
+            count++;
+          }
+          else if (config.shard_group_map_[j] == groups[i] && count &gt; shardsPerGroup) {
+            config.shard_group_map_[j] = 0;
+          }
+        }
+
+      }
+
+      for (int i = 0; i &lt; newGroups.size(); i++) {
+        for (int j = 1; j &lt;= 10; j++) {
+          if (config.shard_group_map_[j] == 0) {
+            config.shard_group_map_[j] = newGroups[i];
+          }
+        }
+      }
+
+
+
+    }
+
+    auto s = make_shared&lt;ShardMarshallable&gt;();
+    s-&gt;id = oid;
+    s-&gt;type = "join";
+    s-&gt;config = config;
+
+    uint64_t index = -1;
+    uint64_t term = -1;
+
+    std::shared_ptr&lt;Marshallable&gt; cmd = s;
+
+    bool isLeader = GetRaftServer().Start(cmd, &index, &term);
+
+    if (isLeader) {
+      auto now = std::chrono::high_resolution_clock::now();
+      std::chrono::high_resolution_clock::time_point timeout = std::chrono::system_clock::now() + std::chrono::milliseconds(2000);
+
+      while (now &lt; timeout) {
+        now = std::chrono::high_resolution_clock::now();
+
+        if (opMap[oid]) {
+          Log_debug("Join committed by leader %d (site %d)", sp_log_svr_-&gt;loc_id_, sp_log_svr_-&gt;site_id_);
+          *ret = KV_SUCCESS;
+          break;
+        }
+
+        Coroutine::Sleep(1000);
+      }
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match130-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      if (now &gt;= timeout) {
+        *ret = KV_TIMEOUT;
+      }
+
+    }
+    else {
+      *ret = KV_NOTLEADER;
+    }
+
+    defer-&gt;reply();
+  }
+
+
+  void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids,
+    uint32_t* ret, rrr::DeferredReply* defer) {
+</FONT>    // your code here
+    uint64_t oid = op_id_cnt_++;
+    opMap[oid] = false;
+    ShardConfig config = configs_[lastConfig];
+
+    auto s = make_shared&lt;ShardMarshallable&gt;();
+
+    uint64_t index = -1;
+    uint64_t term = -1;
+
+    config.number = lastConfig;
+
+    for (int i = 0; i &lt; gids.size(); i++) {
+      for (int j = 1; j &lt;= 10; j++) {
+        if (config.shard_group_map_[j] == gids[i]) {
+          config.shard_group_map_[j] = 0;
+        }
+      }
+    }
+
+    for (auto& gid : gids) {
+      config.group_servers_map_.erase(gid);
+    }
+
+    int totalShards = config.shard_group_map_.size();
+    int totalGroups = config.group_servers_map_.size();
+
+    vector&lt;int&gt; groups;
+    for (auto& groupEntry : config.group_servers_map_) {
+      groups.push_back(groupEntry.first);
+    }
+
+    for (int i = 1; i &lt;= 10; i++) {
+      if (config.shard_group_map_[i] == 0) {
+        config.shard_group_map_[i] = groups[i % groups.size()];
+      }
+    }
+
+
+    s-&gt;id = oid;
+    s-&gt;type = "leave";
+    s-&gt;config = config;
+
+    std::shared_ptr&lt;Marshallable&gt; cmd = s;
+
+    bool isLeader = GetRaftServer().Start(cmd, &index, &term);
+
+    if (isLeader) {
+      auto now = std::chrono::high_resolution_clock::now();
+      std::chrono::high_resolution_clock::time_point timeout = std::chrono::system_clock::now() + std::chrono::milliseconds(2000);
+
+      while (now &lt; timeout) {
+        now = std::chrono::high_resolution_clock::now();
+
+        if (opMap[oid]) {
+          Log_debug("Leave committed by leader %d (site %d)", sp_log_svr_-&gt;loc_id_, sp_log_svr_-&gt;site_id_);
+          *ret = KV_SUCCESS;
+          break;
+        }
+
+        Coroutine::Sleep(1000);
+      }
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match130-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      if (now &gt;= timeout) {
+        *ret = KV_TIMEOUT;
+      }
+
+    }
+    else {
+      *ret = KV_NOTLEADER;
+    }
+
+    defer-&gt;reply();
+  }
+
+
+  void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid,
+    uint32_t* ret, rrr::DeferredReply* defer) {
+</FONT>    // your code here
+    uint64_t oid = op_id_cnt_++;
+    opMap[oid] = false;
+
+    auto s = make_shared&lt;ShardMarshallable&gt;();
+
+    uint64_t index = -1;
+    uint64_t term = -1;
+
+    ShardConfig config = configs_[lastConfig];
+
+    config.number = lastConfig;
+    config.shard_group_map_[shard] = gid;
+
+    s-&gt;id = oid;
+    s-&gt;type = "move";
+    s-&gt;config = config;
+
+    std::shared_ptr&lt;Marshallable&gt; cmd = s;
+
+    bool isLeader = GetRaftServer().Start(cmd, &index, &term);
+
+    if (isLeader) {
+      auto now = std::chrono::high_resolution_clock::now();
+      std::chrono::high_resolution_clock::time_point timeout = std::chrono::system_clock::now() + std::chrono::milliseconds(2000);
+
+      while (now &lt; timeout) {
+        now = std::chrono::high_resolution_clock::now();
+
+        if (opMap[oid]) {
+          Log_debug("Move committed by leader %d (site %d)", sp_log_svr_-&gt;loc_id_, sp_log_svr_-&gt;site_id_);
+          *ret = KV_SUCCESS;
+          break;
+        }
+
+        Coroutine::Sleep(1000);
+      }
+
+      if (now &gt;= timeout) {
+        *ret = KV_TIMEOUT;
+      }
+
+    }
+    else {
+      *ret = KV_NOTLEADER;
+    }
+
+
+    defer-&gt;reply();
+  }
+
+
+  std::string ShardMasterServiceImpl::printShardConfig(const ShardConfig& config) {
+    std::stringstream ss;
+    ss &lt;&lt; "ShardConfig: {\n"
+      &lt;&lt; "  number: " &lt;&lt; config.number &lt;&lt; ",\n"
+      &lt;&lt; "  shard_group_map_: {";
+    for (const auto& pair : config.shard_group_map_) {
+      ss &lt;&lt; "{" &lt;&lt; pair.first &lt;&lt; ", " &lt;&lt; pair.second &lt;&lt; "}, ";
+    }
+    ss &lt;&lt; "},\n"
+      &lt;&lt; "  group_servers_map_: {";
+    for (const auto& pair : config.group_servers_map_) {
+      ss &lt;&lt; pair.first &lt;&lt; ": [";
+      for (const auto& val : pair.second) {
+        ss &lt;&lt; val &lt;&lt; ", ";
+      }
+      ss &lt;&lt; "], ";
+    }
+    ss &lt;&lt; "}\n}";
+    return ss.str();
+  }
+
+  void ShardMasterServiceImpl::Query(const int32_t& config_no,
+    uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+    // your code here
+    uint64_t oid = op_id_cnt_++;
+    opMap[oid] = false;
+
+    auto s = make_shared&lt;ShardMarshallable&gt;();
+    s-&gt;id = oid;
+    s-&gt;type = "query";
+
+    uint64_t index = -1;
+    uint64_t term = -1;
+
+    std::shared_ptr&lt;Marshallable&gt; cmd = s;
+
+    bool isLeader = GetRaftServer().Start(cmd, &index, &term);
+
+    if (isLeader) {
+      auto now = std::chrono::high_resolution_clock::now();
+      std::chrono::high_resolution_clock::time_point timeout = std::chrono::system_clock::now() + std::chrono::milliseconds(2000);
+
+      while (now &lt; timeout) {
+        now = std::chrono::high_resolution_clock::now();
+
+        if (opMap[oid]) {
+
+          Log_info("Query committed by leader %d (site %d)", sp_log_svr_-&gt;loc_id_, sp_log_svr_-&gt;site_id_);
+
+          if (config_no == -1 || config_no &gt; lastConfig) {
+            *config = configs_[lastConfig];
+
+            Log_debug("%s", printShardConfig(configs_[lastConfig]).c_str());
+          }
+          else {
+            *config = configs_[config_no];
+          }
+
+          *ret = KV_SUCCESS;
+          break;
+        }
+
+        Coroutine::Sleep(1000);
+      }
+
+      if (now &gt;= timeout) {
+        *ret = KV_TIMEOUT;
+      }
+
+    }
+    else {
+      *ret = KV_NOTLEADER;
+    }
+
+    defer-&gt;reply();
+  }
+
+  void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+    // your code here
+    auto v = (ShardMarshallable*)(&m);
+
+    Log_debug("OnNextCommand of type %s in site %d", v-&gt;type.c_str(), sp_log_svr_-&gt;site_id_);
+    uint64_t oid = v-&gt;id;
+    string type = v-&gt;type;
+    ShardConfig config = v-&gt;config;
+
+    if (opMap[oid]) {
+      Log_info("Already committed in shard master");
+      return;
+    }
+
+    mtx.lock();
+    if (type == "join") {
+      configs_[config.number] = config;
+      Log_debug("%s", printShardConfig(config).c_str());
+    }
+    else if (type == "leave") {
+      configs_[config.number] = config;
+    }
+    else if (type == "move") {
+      configs_[config.number] = config;
+    }
+    else if (type == "query") {
+    }
+    opMap[oid] = true;
+    mtx.unlock();
+
+  }
+
+  // do not change anything below
+  shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+    auto cli = make_shared&lt;ShardMasterClient&gt;();
+    cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+    uint32_t id = sp_log_svr_-&gt;site_id_;
+    return cli;
+  }
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

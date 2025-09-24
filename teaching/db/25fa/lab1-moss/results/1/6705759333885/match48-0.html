@@ -1,0 +1,70 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-JayaramKrovvidi/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-JayaramKrovvidi/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+
+void RaftServiceImpl::HandleRequestVote(const siteid_t& candidateId, const uint64_t& candidateTerm,
+                                        const size_t& candidateLogLength, const uint64_t& candidateLastTerm,
+                                        uint64_t *followerTerm, bool_t *voteGranted, rrr::DeferredReply* defer) {
+  /* Your code here */
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match48-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_16.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  tuple&lt;uint64_t, bool&gt; ret = svr_ -&gt; onVoteRequestReceived(candidateId, candidateTerm, candidateLogLength, candidateLastTerm);
+  *followerTerm = get&lt;0&gt;(ret);
+  *voteGranted = get&lt;1&gt;(ret);
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleAppendLogs(const siteid_t& leaderId, const uint64_t& leaderTerm,
+                                        const size_t& prefixLength, const uint64_t& prefixTerm,
+</FONT>                                        const size_t& leaderCommitLength, const std::vector&lt;size_t&gt;& logIndexes,
+                                        const std::vector&lt;uint64_t&gt;& logTerms,
+                                        const std::vector&lt;janus::MarshallDeputy&gt;& logCmds,
+                                        uint64_t *followerTerm, size_t *acknowledge, bool_t *followerAppendOK,
+                                        rrr::DeferredReply* defer) {
+
+  vector&lt;RaftServer :: LogEntry&gt; leaderLog = {};
+  for(int i = 0; i &lt; logIndexes.size(); i++) {
+    leaderLog.push_back(RaftServer :: LogEntry(logTerms[i], logIndexes[i], const_cast&lt;MarshallDeputy&&gt;(logCmds[i]).sp_data_));
+  }
+
+  tuple&lt;uint64_t, uint64_t, bool&gt; res = svr_ -&gt; onReceiveLog(leaderId, leaderTerm, prefixLength, prefixTerm, leaderCommitLength, leaderLog);
+  *followerTerm = get&lt;0&gt;(res);
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match48-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_11.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  *acknowledge = get&lt;1&gt;(res);
+  *followerAppendOK = get&lt;2&gt;(res);
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("receive an rpc: %s", req.c_str());
+</FONT>  *res = "world";
+  defer-&gt;reply();
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

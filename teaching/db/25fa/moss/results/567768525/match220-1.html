@@ -1,0 +1,238 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/akundhuru/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./spring19/anujverma1710/src/kvraft/server.go<p><PRE>
+package raftkv
+
+import (
+	"bytes"
+	"labgob"
+	"labrpc"
+	"log"
+	"raft"
+	"sync"
+	"time"
+)
+
+const Debug = 0
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+type Op struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+	Key           string
+	Value         string
+	ClientId      int64
+	OperationType string
+	RequestID     int64
+}
+
+type KVServer struct {
+	mu      sync.Mutex
+	me      int
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match220-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	maxraftstate int // snapshot if log grows this big
+
+	// Your definitions here.
+	dataStore               map[string]string     // for storing key value data
+	resultTransferChannel   map[int64]chan Result // for transfering result according to request of Client (ClientId)
+	lastCommitedOpRequestID map[int64]int64       // for recording requestId of every clients
+
+	latestCommitedLogIndex int
+}
+
+type Result struct {
+</FONT>	OpRequestID int64
+	Value       string
+}
+
+func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
+	// Your code here.
+
+	_, isLeader := kv.rf.GetState() //server needs to detect that whether it is a leader or not
+
+	if !isLeader {
+		reply.WrongLeader = true
+	} else {
+		reply.WrongLeader = false
+		//For entering an Op in the Raft log
+		kv.rf.Start(Op{args.Key, "", args.ClientId, "Get", args.OpRequestIndex})
+
+		kv.mu.Lock()
+		_, ok := kv.resultTransferChannel[args.ClientId]
+		if !ok {
+			kv.resultTransferChannel[args.ClientId] = make(chan Result)
+		}
+		kv.mu.Unlock()
+
+		select {
+		case &lt;-time.After(1 * time.Second):
+			reply.Err = "TimeOut"
+			reply.WrongLeader = true
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match220-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		case result := &lt;-kv.resultTransferChannel[args.ClientId]:
+			if result.OpRequestID == args.OpRequestIndex {
+				if result.Value == "" {
+</FONT>					reply.Err = ErrNoKey
+				} else {
+					reply.Err = OK
+					reply.Value = result.Value
+				}
+			}
+
+		}
+	}
+}
+
+func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	// Your code here.
+
+	_, isLeader := kv.rf.GetState() //server needs to detect that whether it is a leader or not
+
+	if !isLeader {
+		reply.WrongLeader = true
+	} else {
+		reply.WrongLeader = false
+		kv.mu.Lock()
+		_, ok := kv.resultTransferChannel[args.ClientId]
+		if !ok {
+			kv.resultTransferChannel[args.ClientId] = make(chan Result)
+		}
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match220-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		kv.mu.Unlock()
+		//For entering an Op in the Raft log
+		kv.rf.Start(Op{args.Key, args.Value, args.ClientId, args.Op, args.OpRequestIndex})
+		select {
+		case &lt;-time.After(1 * time.Second):
+</FONT>			reply.Err = "TimeOut"
+			reply.WrongLeader = true
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match220-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		case result := &lt;-kv.resultTransferChannel[args.ClientId]:
+			if result.OpRequestID &gt;= args.OpRequestIndex {
+				reply.Err = OK
+</FONT>			}
+		}
+	}
+}
+
+//
+// the tester calls Kill() when a KVServer instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *KVServer) Kill() {
+	kv.rf.Kill()
+	// Your code here, if desired.
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Raft to
+// form the fault-tolerant key/value service.
+// me is the index of the current server in servers[].
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+// the k/v server should snapshot when Raft's saved state exceeds maxraftstate bytes,
+// in order to allow Raft to garbage-collect its log. if maxraftstate is -1,
+// you don't need to snapshot.
+// StartKVServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
+	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+
+	kv := new(KVServer)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+
+	// You may need initialization code here.
+	kv.dataStore = make(map[string]string)
+	kv.applyCh = make(chan raft.ApplyMsg, 100)
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match220-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.resultTransferChannel = make(map[int64]chan Result)
+	kv.lastCommitedOpRequestID = make(map[int64]int64)
+
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+
+	// You may need initialization code here.
+
+	go func() {
+		for {
+			msg := &lt;-kv.applyCh
+</FONT>			if !msg.UseSnapshot {
+				command := msg.Command.(Op)
+				result := Result{command.RequestID, ""}
+
+				if kv.lastCommitedOpRequestID[command.ClientId] &lt; command.RequestID {
+					if command.OperationType == "Append" {
+						kv.dataStore[command.Key] = kv.dataStore[command.Key] + command.Value
+					} else if command.OperationType == "Put" {
+						kv.dataStore[command.Key] = command.Value
+					}
+					kv.lastCommitedOpRequestID[command.ClientId] = command.RequestID
+				}
+
+				value, ok := kv.dataStore[command.Key]
+				if ok {
+					result.Value = value
+				}
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match220-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				if msg.CommandIndex &gt; kv.latestCommitedLogIndex {
+					kv.latestCommitedLogIndex = msg.CommandIndex
+				}
+
+				select {
+				case kv.resultTransferChannel[command.ClientId] &lt;- result:
+				default:
+</FONT>				}
+
+				if kv.maxraftstate != -1 && kv.rf.GetRaftStateSize() &gt;= kv.maxraftstate {
+					w := new(bytes.Buffer)
+					e := labgob.NewEncoder(w)
+					e.Encode(kv.dataStore)
+					e.Encode(kv.lastCommitedOpRequestID)
+					data := w.Bytes()
+					go kv.rf.UpdateSnapshot(data, kv.latestCommitedLogIndex)
+				}
+
+			} else {
+				data := msg.Snapshot
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match220-0.html#6" TARGET="0"><IMG SRC="../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				r := bytes.NewBuffer(data)
+				d := labgob.NewDecoder(r)
+				d.Decode(&kv.dataStore)
+				d.Decode(&kv.lastCommitedOpRequestID)
+</FONT>				kv.latestCommitedLogIndex = msg.CommandIndex
+			}
+		}
+	}()
+	return kv
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

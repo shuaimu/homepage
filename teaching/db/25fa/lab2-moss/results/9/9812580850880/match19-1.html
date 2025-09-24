@@ -1,0 +1,224 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-DanielDeLayo/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-sugamxp-1/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int KvServer::Put(const uint64_t& oid, const string& k, const string& v) {
+  /*
+  Your are recommended to use MultiStringMarshallable as the format
+  for the log entries. Here is an example how you can use it.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  */
+  /* your code here */
+  RaftServer& server = GetRaftServer();
+  // server.mtx_.lock();
+  // Coroutine::CreateRun([&, this](){
+  putEvent = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match19-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  shared_ptr&lt;MultiStringMarshallable&gt; s =
+      make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+</FONT>  s-&gt;data_.push_back(v);
+
+  auto cmdptr_m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+
+  Log_info("{PUT CALLED} SERVERID = %d = oid = %d key = %s value = %s",
+           server.loc_id_, oid, k.c_str(), v.c_str());
+
+  if (server.serverState != LEADER) {
+    // server.mtx_.unlock();
+    return KV_NOTLEADER;
+  }
+
+  is_leader = server.Start(cmdptr_m, &index, &term);
+
+  // Coroutine::Sleep(6000000);
+  putEvent-&gt;Wait(900000);
+  if (putEvent-&gt;status_ == Event::TIMEOUT) {
+    // server.mtx_.unlock();
+    return KV_TIMEOUT;
+  } else if (putEvent-&gt;get() == 1) {
+    Log_info("{PUT SUCCESS} SERVERID %d", server.loc_id_);
+    // server.mtx_.unlock();
+
+    return KV_SUCCESS;
+  }
+  // server.mtx_.unlock();
+
+  return KV_TIMEOUT;
+
+  // });
+}
+
+int KvServer::Append(const uint64_t& oid, const string& k, const string& v) {
+  /* your code here */
+  RaftServer& server = GetRaftServer();
+
+  appendEvent = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match19-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  shared_ptr&lt;MultiStringMarshallable&gt; s =
+      make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("append");
+  s-&gt;data_.push_back(k);
+</FONT>  s-&gt;data_.push_back(v);
+
+  auto cmdptr_m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+
+  Log_info("{APPEND CALLED} SERVERID = %d SERVER_STATE = %d", server.loc_id_,
+           server.serverState);
+
+  if (server.serverState != LEADER) {
+    return KV_NOTLEADER;
+  }
+
+  is_leader = server.Start(cmdptr_m, &index, &term);
+  // Coroutine::Sleep(6000000);
+  appendEvent-&gt;Wait(900000);
+  if (appendEvent-&gt;status_ == Event::TIMEOUT) {
+    if (server.serverState == LEADER) return KV_NOTLEADER;
+    return KV_TIMEOUT;
+  } else if (appendEvent-&gt;get() == 1) {
+    Log_info("{APPEND SUCCESS} SERVERID = %d", server.loc_id_);
+    return KV_SUCCESS;
+  }
+  return KV_TIMEOUT;
+
+  Log_info("{APPEND} SERVERID = %d oid = %d key = %s value = %s",
+           server.loc_id_, oid, k.c_str(), v.c_str());
+}
+
+int KvServer::Get(const uint64_t& oid, const string& k, string* v) {
+  /* your code here */
+  RaftServer& server = GetRaftServer();
+
+  getEvent = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match19-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  shared_ptr&lt;MultiStringMarshallable&gt; s =
+      make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("get");
+  s-&gt;data_.push_back(k);
+</FONT>
+  auto cmdptr_m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+
+  if (server.serverState != LEADER) {
+    return KV_NOTLEADER;
+  }
+  is_leader = server.Start(cmdptr_m, &index, &term);
+  getEvent-&gt;Wait(900000);
+  if (getEvent-&gt;status_ == Event::TIMEOUT) {
+    return KV_TIMEOUT;
+  } else if (getEvent-&gt;get() == 1) {
+    *v = kv[k];
+    Log_info("{GET SUCCESS} SERVERID = %d key = %s value = %d", server.loc_id_,
+             k.c_str(), v-&gt;c_str());
+
+    return KV_SUCCESS;
+  }
+  Log_info("{GET} SERVERID = %d oid = %d key = %s", server.loc_id_, oid,
+           k.c_str());
+
+  return KV_TIMEOUT;
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  /* your code here */
+  Coroutine::CreateRun([this, &m]() {
+    RaftServer& server = GetRaftServer();
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match19-0.html#3" TARGET="0"><IMG SRC="../../../bitmaps/tm_3_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    server.mtx_.lock();
+    auto v = (MultiStringMarshallable*)(&m);
+    uint64_t oid = stoul(v-&gt;data_[0]);
+    string operation = v-&gt;data_[1];
+</FONT>    if (operation == "put") {
+      string key = v-&gt;data_[2];
+      string value = v-&gt;data_[3];
+      kv[key] = value;
+      Log_info(
+          "{PUT OnNextCommand} SERVERID = %d key = %s value = %s is_leader = "
+          "%d",
+          server.loc_id_, key.c_str(), kv[key].c_str(), is_leader);
+
+      if (server.serverState == LEADER) {
+        server.mtx_.unlock();
+        putEvent-&gt;Set(1);
+      }
+    } else if (operation == "append") {
+      string key = v-&gt;data_[2];
+      string value = v-&gt;data_[3];
+      if (kv.find(key) == kv.end()) {
+        kv[key] = value;
+        Log_info(
+            "{APPEND KEY NOT FOUND} SERVERID = %d key = %s value = %s "
+            "is_leader = %d",
+            server.loc_id_, key.c_str(), kv[key].c_str(), is_leader);
+      } else {
+        kv[key] += value;
+        Log_info(
+            "{APPEND KEY FOUND} SERVERID = %d key = %s value = %s is_leader = "
+            "%d",
+            server.loc_id_, key.c_str(), kv[key].c_str(), is_leader);
+      }
+      if (server.serverState == LEADER) {
+        server.mtx_.unlock();
+        appendEvent-&gt;Set(1);
+      }
+    } else if (operation == "get") {
+      if (server.serverState == LEADER) {
+        server.mtx_.unlock();
+        getEvent-&gt;Set(1);
+      }
+    }
+    server.mtx_.unlock();
+  });
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

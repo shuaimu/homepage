@@ -1,0 +1,173 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-Aditiii/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-Aditiii/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+#include "future"
+#include "future"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+shared_ptr&lt;IntEvent&gt; 
+KvServer::callToStart(shared_ptr&lt;Marshallable&gt; cmdptr_m, uint64_t &ind, uint64_t &term) {
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  RaftServer& rs = GetRaftServer();
+  bool success = rs.Start(cmdptr_m, &ind, &term);
+  return ev;
+}
+
+int KvServer::Put(const uint64_t& oid, const string& k, const string& v) {
+  RaftServer& rs = GetRaftServer();
+  if (rs.isLeader) {
+    Log_info("Executing Put Operation for %d with key:value %s:%s", sp_log_svr_-&gt;site_id_, k.c_str(), v.c_str());
+    //auto future = async(launch::async, [oid, k, v, this]() {
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("put");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);
+    uint64_t ind;
+    uint64_t term;
+    auto cmdptr_m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+    auto event = callToStart(cmdptr_m, ind, term);
+    event-&gt;Wait(500000);
+    if (data[k]==v) {
+        return KV_SUCCESS;
+    } else {
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match217-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      return KV_TIMEOUT;
+    }
+  } else {
+    return KV_NOTLEADER;
+  }
+  //});
+  //return future.get();
+}
+
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  RaftServer& rs = GetRaftServer();
+</FONT>  if (rs.isLeader) {
+    Log_info("Executing Append Operation for %d with key:value %s:%s", sp_log_svr_-&gt;site_id_, k.c_str(), v.c_str());
+  //auto future = async(launch::async, [oid, k, v, this]() {
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("append");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);
+    uint64_t ind;
+    uint64_t term;
+    auto cmdptr_m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+    string oldValue = data[k].c_str();
+    auto event = callToStart(cmdptr_m, ind, term);
+    event-&gt;Wait(500000);
+    Log_info("%s, %s - printing appended value", oldValue.append(v).c_str(), data[k].c_str());
+    if (oldValue.append(v).compare(data[k])) {
+        return KV_SUCCESS;
+    } else {
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match217-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        return KV_NOTLEADER;
+    }
+  } else {
+    return KV_NOTLEADER;
+  }
+  //});
+  //return future.get();
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) { 
+  RaftServer& rs = GetRaftServer();
+</FONT>  if (rs.isLeader) {
+    Log_info("Executing Get Operation for %d with key %s", sp_log_svr_-&gt;site_id_, k.c_str());  
+  //auto future = async(launch::async, [oid, k, v, this]() {
+    timeout = true;
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("get");
+    s-&gt;data_.push_back(k);
+    RaftServer& rs = GetRaftServer();
+    uint64_t ind;
+    uint64_t term;
+    auto cmdptr_m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+    auto event = callToStart(cmdptr_m, ind, term);
+    event-&gt;Wait(500000);
+    if (!timeout && data.find(k)!=data.end()) {
+        *v = data[k];
+        return KV_SUCCESS;
+    } else {
+        return KV_TIMEOUT;
+    }
+  } else {
+    return KV_NOTLEADER;
+  }
+  //});
+  //return future.get();
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  Coroutine::CreateRun([&m, this](){
+    RaftServer& rs = GetRaftServer();
+    auto command = (MultiStringMarshallable*)(&m);
+    if (command-&gt;data_.empty()) {
+      return;
+    }
+    string operationType = command-&gt;data_[1];
+    if (operationType == "put") {
+      string key = command-&gt;data_[2];
+      string value = command-&gt;data_[3];
+      data[key] = value;
+      Log_info("Applied Put operation for key:value %s:%s for %d", key.c_str(), value.c_str(), rs.site_id_);
+    } else if (operationType == "append") {
+      string key = command-&gt;data_[2];
+      string value = command-&gt;data_[3];
+      data[key].append(value);
+      Log_info("Applied Append operation for value %s:%s for %d", key.c_str(), value.c_str(), rs.site_id_);
+    } else {
+      Log_info("Applied Get operation"); 
+      timeout = false;
+    }
+  });
+}
+  
+  
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

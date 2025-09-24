@@ -1,0 +1,352 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/Ravali5/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/Ravali5/src/kvraft/server.go<p><PRE>
+package raftkv
+
+import (
+	"labgob"
+	"labrpc"
+	"log"
+	"raft"
+	"sync"
+	//"fmt"
+	"strconv"
+	"time"
+)
+
+const Debug = 0
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+
+type Op struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+	Key string
+	Value string
+	ClientId int
+	OrderId int
+	Operation string
+}
+
+type KVServer struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	maxraftstate int // snapshot if log grows this big
+
+	// Your definitions here.
+	keyvalues map[string]string
+	applyChData map[int]chan Op // each request can wait independently without conflicts!!
+	duplicateCheck map[string]int
+}
+
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match120-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_7.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
+	// Your code here.
+	var op Op
+	op.Key = args.Key
+	op.ClientId = args.ClientId
+	op.OrderId = args.OrderId
+	op.Operation = "Get"
+	uniqueId := strconv.Itoa(args.OrderId)+" "+strconv.Itoa(args.ClientId)
+	//returnValue := ""
+
+	index,_,isLeader := kv.rf.Start(op)
+	if isLeader{
+</FONT><A NAME="1"></A><FONT color = #00FF00><A HREF="match120-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		reply.WrongLeader = false
+		reply.Err = ""
+
+		kv.mu.Lock()
+		ch,ok := kv.applyChData[index]
+		if ok{
+			//fmt.Println("channel already present")
+		}else{
+			kv.applyChData[index] = make(chan Op)
+			ch = kv.applyChData[index]
+		}
+
+		_, ok2 := kv.duplicateCheck[uniqueId]
+</FONT>		if ok2{
+			//fmt.Println(" duplicate check for get !! ",uniqueId)
+			reply.Value = kv.keyvalues[args.Key]
+			kv.mu.Unlock()
+			return
+		}
+
+		kv.mu.Unlock()
+
+		//wait till response
+		select{
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match120-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		case chOp := &lt;- ch:
+			uid := strconv.Itoa(chOp.OrderId)+" "+strconv.Itoa(chOp.ClientId)
+			if uid == uniqueId{
+				reply.Value = chOp.Value
+</FONT>			}else{
+				//fmt.Println(" received wrong message from chan : waiting for op ",op," but got ",chOp)
+				reply.Err = "wrong commit"
+			}
+		case &lt;- time.After(1000*time.Millisecond):
+			//fmt.Println("no response from the raft server so timeout for request : ",uniqueId)
+			reply.Err = "Timedout"
+		}
+
+		// This is failing intermettently.
+		/*
+		for{
+			val,ok := kv.applyChData[index]
+			if ok{
+				uid = strconv.Itoa(val.OrderId)+" "+strconv.Itoa(val.ClientId)
+				returnValue = val.Value
+				break
+			}
+		}
+
+		if reply.Err != "Timedout"{
+			if uid == uniqueId{
+				reply.Value = returnValue
+			}else{
+				reply.Err = "wrong commit"
+			}
+		}*/
+	}else{
+		reply.WrongLeader = true
+	}
+}
+
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match120-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	// Your code here.
+	var op Op
+	op.Key = args.Key
+	op.Value = args.Value
+	op.ClientId = args.ClientId
+</FONT>	op.OrderId = args.OrderId
+	op.Operation = args.Op
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match120-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	uniqueId := strconv.Itoa(args.OrderId)+" "+strconv.Itoa(args.ClientId)
+
+	index,_,isLeader := kv.rf.Start(op)
+	if isLeader{
+</FONT><A NAME="2"></A><FONT color = #0000FF><A HREF="match120-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		reply.WrongLeader = false
+		reply.Err = ""
+
+		kv.mu.Lock()
+		ch,ok := kv.applyChData[index]
+		if ok{
+			//fmt.Println("channel already present")
+		}else{
+			kv.applyChData[index] = make(chan Op)
+			ch = kv.applyChData[index]
+		}
+
+		_, ok2 := kv.duplicateCheck[uniqueId]
+</FONT>		if ok2{
+			kv.mu.Unlock()
+			return
+		}
+		
+		kv.mu.Unlock()
+
+		//wait till response
+		select{
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match120-1.html#7" TARGET="1"><IMG SRC="../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		case chOp := &lt;- ch:
+			uid := strconv.Itoa(chOp.OrderId)+" "+strconv.Itoa(chOp.ClientId)
+			if uid == uniqueId{
+</FONT>				return
+			}else{
+				//fmt.Println(" received wrong message for put/Append from chan : waiting for op ",op," but got ",chOp)
+				reply.Err = "wrong commit"
+			}
+		case &lt;- time.After(500*time.Millisecond):
+			//fmt.Println(" put/append timedout!!! ",uniqueId)
+			reply.Err = "Timedout"
+		}
+
+		/*for{
+			val,ok := kv.applyChData[index]
+			if ok{
+				uid = strconv.Itoa(val.OrderId)+" "+strconv.Itoa(val.ClientId)
+				break
+			}
+		}*/
+
+		/*if reply.Err != "Timedout"{
+			if uid == uniqueId{
+				/*_,dup := kv.duplicateCheck[uniqueId]
+				if !dup{
+					kv.duplicateCheck[uniqueId] = 1
+					if cmd.Operation == "Put"{
+						kv.keyvalues[cmd.Key] = cmd.Value
+					}
+					if cmd.Operation == "Append"{
+						_,present := kv.keyvalues[cmd.Key]
+						if present{
+							kv.keyvalues[cmd.Key]+=cmd.Value
+						}else{
+							kv.keyvalues[cmd.Key] = cmd.Value
+						}
+					}
+				}*/
+				/*_,dup := kv.duplicateCheck[uniqueId]
+				if !dup{
+					kv.mu.Lock()
+					kv.duplicateCheck[uniqueId] = 1
+					if args.Op == "Put"{
+						kv.keyvalues[args.Key] = args.Value
+					}
+					if args.Op == "Append"{
+						_,present := kv.keyvalues[args.Key]
+						if present{
+							kv.keyvalues[args.Key]+=args.Value
+						}else{
+							kv.keyvalues[args.Key] = args.Value
+						}
+					}
+					kv.mu.Unlock()
+				}
+			}else{
+				reply.Err ="wrong commit"
+			}
+		}*/
+
+	}else{
+		reply.WrongLeader = true
+	}
+
+}
+
+//
+// the tester calls Kill() when a KVServer instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *KVServer) Kill() {
+	kv.rf.Kill()
+	// Your code here, if desired.
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Raft to
+// form the fault-tolerant key/value service.
+// me is the index of the current server in servers[].
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+// the k/v server should snapshot when Raft's saved state exceeds maxraftstate bytes,
+// in order to allow Raft to garbage-collect its log. if maxraftstate is -1,
+// you don't need to snapshot.
+// StartKVServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
+	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+
+	kv := new(KVServer)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+
+	// You may need initialization code here.
+
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+
+	// You may need initialization code here.
+	kv.keyvalues=make(map[string]string)
+	//kv.applyChData=make(map[int]Op)
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match120-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.applyChData = make(map[int]chan Op)
+	kv.duplicateCheck=make(map[string]int)
+
+	go func(){
+		for{
+			logEntry := &lt;- kv.applyCh
+			cmdIndex := logEntry.CommandIndex
+</FONT>			//fmt.Println(" log entry from raft ",logEntry," server ",kv.me)
+			if cmdIndex == 0{
+				//fmt.Println("coming here 0000 ",kv.me)
+				continue
+			}
+			cmd := logEntry.Command.(Op)
+			cmdValid := logEntry.CommandValid
+			uniqueId := strconv.Itoa(cmd.OrderId)+" "+strconv.Itoa(cmd.ClientId)
+			if cmdValid{
+				kv.mu.Lock()
+				_,dup := kv.duplicateCheck[uniqueId]
+				if !dup{
+					//fmt.Println(" unique id of request .... ",strconv.Itoa(cmd.OrderId)," ",strconv.Itoa(cmd.ClientId))
+					kv.duplicateCheck[uniqueId] = 1
+					if cmd.Operation == "Put"{
+						kv.keyvalues[cmd.Key] = cmd.Value
+					}
+					if cmd.Operation == "Append"{
+						_,present := kv.keyvalues[cmd.Key]
+						if present{
+							kv.keyvalues[cmd.Key]+=cmd.Value
+						}else{
+							//fmt.Println(" key is not yet present for append request ",cmd.OrderId," ",cmd.ClientId," key is ",cmd.Key)
+							kv.keyvalues[cmd.Key] = cmd.Value
+						}
+					}
+				}else{
+					//fmt.Println(" duplicate msg from appply ch......",cmd.OrderId," ",cmd.ClientId,"   in server ",kv.me)
+				}
+				if cmd.Operation == "Get"{
+					//fmt.Println("This is a get brequest ... server",kv.me," unique id ",cmd.OrderId," ",cmd.ClientId)
+					cmd.Value = kv.keyvalues[cmd.Key]
+				}
+				ch, ok := kv.applyChData[cmdIndex]
+				if ok{
+					go func(ch chan Op,cmd Op){
+					ch &lt;- cmd
+					}(ch,cmd)
+					//go func(ch chan Op,cmd Op){
+						// to avoid 8192 go routines error, go routine exits after a second
+						//select{
+						//case ch &lt;- cmd:
+						//case &lt;-time.After(1000*time.Millisecond):
+						//}
+					//}(ch,cmd)
+				}else{
+					//fmt.Println("chanel is not present for unique id ",uniqueId," in server ",kv.me)
+				}
+				kv.mu.Unlock()
+			}
+		}
+	}()
+
+	return kv
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

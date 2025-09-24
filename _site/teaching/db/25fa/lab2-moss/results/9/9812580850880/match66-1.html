@@ -1,0 +1,265 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-arkn98/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-himanshu-ckh/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match66-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  /* 
+  Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  */
+  /* your code here */
+  // shared_ptr&lt;Marshallable&gt; &cmd
+
+  RaftServer& rf = this-&gt;GetRaftServer();
+
+  rf.mtx_.lock();
+</FONT>  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  s-&gt;isReplicated = false;
+  
+  uint64_t index = (uint64_t)rf.logs.at(rf.logs.size() - 1).index;
+  uint64_t term = (uint64_t)rf.currentTerm;
+  shared_ptr&lt;Marshallable&gt; cmd = s;
+  
+  rf.mtx_.unlock();
+
+  bool result = rf.Start(cmd, &index, &term);
+
+  // If we get the result back as true -&gt; that means its a leader
+  if(result) {
+    std::cout &lt;&lt; std::boolalpha &lt;&lt; result &lt;&lt; endl;
+    cout&lt;&lt; "Found the leader and the leader Id is for the Key value store" &lt;&lt; rf.loc_id_ &lt;&lt; endl;
+    //Logic to check if Oid is present 
+    Timer timer = Timer();
+    timer.start();
+    while (timer.elapsed() * pow(10,6) &lt; WAIT_TIME && (s-&gt;isReplicated == false)) {
+      Coroutine::Sleep(WAIT_TIME / 10);
+    }
+    timer.reset();
+    if(s-&gt;isReplicated) {
+      // rf.mtx_.lock();
+      // this-&gt;isReplicated = false;
+      // rf.mtx_.unlock();
+      return KV_SUCCESS;
+    } else {
+      return KV_TIMEOUT;
+    }
+  } else {
+    //Log_info("Leader Id is different and returned false and the leader Id is %d for the Key value store", rf.loc_id_);
+    return KV_NOTLEADER;
+  }
+}
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match66-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+  RaftServer& rf = this-&gt;GetRaftServer();
+
+  rf.mtx_.lock();
+</FONT>  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("append");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  s-&gt;isReplicated = false;
+
+  uint64_t index = (uint64_t)rf.logs.at(rf.logs.size() - 1).index;
+  uint64_t term = (uint64_t)rf.currentTerm;
+  shared_ptr&lt;Marshallable&gt; cmd = s;
+  std::vector&lt;std::string&gt; val = this-&gt;kv_store[k];
+  val.push_back(v);
+  
+  bool result = rf.Start(cmd, &index, &term);
+  rf.mtx_.unlock();
+  // If we get the result back as true -&gt; that means its a leader
+  if(result) {
+    std::cout &lt;&lt; val.at(val.size() - 1) &lt;&lt; endl;
+    std::cout &lt;&lt; std::boolalpha &lt;&lt; result &lt;&lt; endl;
+    std::cout &lt;&lt; v &lt;&lt; endl;
+
+    Log_info("Found the leader and the leader Id is %d for the Key value store", rf.candidateId);
+    // //Push the val to the given key in the kv_store
+    //Logic to check if Oid is present 
+    Timer timer = Timer();
+    timer.start();
+    while (timer.elapsed() * pow(10,6) &lt; WAIT_TIME && (s-&gt;isReplicated == false)) {
+      Coroutine::Sleep(WAIT_TIME / 10);
+    }
+    timer.reset();
+    if(s-&gt;isReplicated) {
+      // rf.mtx_.lock();
+      // this-&gt;isReplicated = false;
+      // rf.mtx_.unlock();
+      return KV_SUCCESS;
+    } else {
+      return KV_TIMEOUT;
+    }
+  } else {
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match66-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    return KV_NOTLEADER;
+  }
+
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+  /* your code here */
+  RaftServer& rf = this-&gt;GetRaftServer();
+</FONT>
+  rf.mtx_.lock();
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("get");
+  s-&gt;data_.push_back(k);
+  s-&gt;isReplicated = false;
+
+  uint64_t index = (uint64_t)rf.logs.at(rf.logs.size() - 1).index;
+  uint64_t term = (uint64_t)rf.currentTerm;
+  shared_ptr&lt;Marshallable&gt; cmd = s;
+  rf.mtx_.unlock();
+
+  bool result = rf.Start(cmd, &index, &term);
+
+  if(result) {
+    std::cout &lt;&lt; std::boolalpha &lt;&lt; result &lt;&lt; endl;
+    Log_info("Found the leader and leader Id is  %d for the Key value store", rf.candidateId);
+    //If we found the leader, we'll fetch the value for the Get
+    Timer timer = Timer();
+    timer.start();
+    while (timer.elapsed() * pow (10,6) &lt; WAIT_TIME && (s-&gt;isReplicated == false)) {
+      Coroutine::Sleep(WAIT_TIME / 10);
+    }
+    timer.reset();
+    if(s-&gt;isReplicated) {
+      if(this-&gt;kv_store.find(k) != this-&gt;kv_store.end()) {
+      //This means that the key exists in the Key value store
+      auto value = this-&gt;kv_store[k].back();
+      *v = value;
+      // rf.mtx_.lock();
+      // this-&gt;isReplicated = false;
+      // rf.mtx_.unlock();
+      return KV_SUCCESS;
+    }
+      return KV_TIMEOUT;
+    } else {
+      return KV_TIMEOUT;
+    }
+  }
+  return KV_NOTLEADER;
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  auto v = (MultiStringMarshallable*)(&m);
+  // auto allValues = v-&gt;data_.back();
+  RaftServer& rf = this-&gt;GetRaftServer();
+
+  rf.mtx_.lock();
+  auto oid = v-&gt;data_.at(0);
+  auto command = v-&gt;data_.at(1);
+  auto key = v-&gt;data_.at(2);
+  this-&gt;isReplicated = true;
+  v-&gt;isReplicated = true;
+  rf.mtx_.unlock();
+
+  if(command == "get") { 
+    cout &lt;&lt; "This is a get command for key" &lt;&lt; key &lt;&lt; endl;
+  } else if(command == "put") {
+    rf.mtx_.lock();
+    // auto val = v-&gt;data_.at(3);
+    std::vector&lt;std::string&gt; val;
+    val.push_back(v-&gt;data_.at(3));
+    this-&gt;kv_store[key] = val;
+    rf.mtx_.unlock();
+    cout&lt;&lt;"This is a put command for the Key" &lt;&lt; key &lt;&lt; endl;
+
+  } else {
+    rf.mtx_.lock();
+    //Key Found in the Append entry and we can Get the value and append it new Value
+    cout&lt;&lt;"This is a Append command for the Key" &lt;&lt; key &lt;&lt; "And Value is" &lt;&lt; v-&gt;data_.at(3) &lt;&lt; endl;
+    if(this-&gt;kv_store.find(key) != this-&gt;kv_store.end() && this-&gt;kv_store[key].size() &gt; 0) {
+      cout&lt;&lt; "Inside the if statement in Append onNextCommand" &lt;&lt; endl;
+      try {
+        cout&lt;&lt; "Inside the try statement in Append onNextCommand" &lt;&lt; endl;
+        cout&lt;&lt; this-&gt;kv_store[key].size() &lt;&lt; endl;
+        auto val = v-&gt;data_.at(3);
+        cout&lt;&lt; "Inside Try method and checking for the Key" &lt;&lt; this-&gt;kv_store[key].back() &lt;&lt; endl;
+        auto oldVal = this-&gt;kv_store[key].back();
+        cout &lt;&lt; "Old value before append is " &lt;&lt; oldVal &lt;&lt; endl;
+        auto newVal = oldVal + val;
+        cout &lt;&lt; "New value before append is " &lt;&lt; newVal &lt;&lt; endl;
+        std::vector&lt;std::string&gt; storeVal;
+        storeVal.push_back(newVal);
+        this-&gt;kv_store[key] = storeVal;
+      }catch(...) {
+        cout &lt;&lt; "Crashed in append, size of data is " &lt;&lt; v-&gt;data_.size()&lt;&lt; endl;
+      }
+     
+
+    } else {
+      std::vector&lt;std::string&gt; val;
+      val.push_back(v-&gt;data_.at(3));
+      this-&gt;kv_store[key] = val;
+    }
+    
+    rf.mtx_.unlock();
+    cout &lt;&lt; "This is an append command for the key" &lt;&lt; key &lt;&lt; endl;
+  }
+  /* your code here */
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

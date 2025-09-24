@@ -1,0 +1,165 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-Apeksha115908828/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-prajjawal05/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int KvServer::StartAgreement(shared_ptr&lt;MultiStringMarshallable&gt; msg) {
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_); 
+  auto msgs = msg-&gt;data_;
+  string oid = msgs[0];
+  Log_debug("start agreement is called for oid: %s", oid);
+  uint64_t index = 0, currTerm = 0;
+  shared_ptr&lt;Marshallable&gt; cmd(msg);
+  shared_ptr&lt;IntEvent&gt; msgAck;
+  msgAck = Reactor::CreateSpEvent&lt;IntEvent&gt;(1);
+
+  bool is_leader = this-&gt;GetRaftServer().Start(cmd, &index, &currTerm);
+
+  if(!is_leader) {
+    return KV_NOTLEADER;
+  }
+
+  msgAcks.insert({oid, msgAck});
+  msgAck-&gt;Wait(10*1000*1000);
+  msgAcks.erase(oid);
+
+  if(msgAck-&gt;status_ == Event::TIMEOUT) {
+    return KV_TIMEOUT;
+  }
+
+  return KV_SUCCESS;
+}
+
+bool KvServer::isLeader() {
+  bool is_leader = false;
+  uint64_t curr_term = 0;
+  this-&gt;GetRaftServer().GetState(&is_leader, &curr_term);
+
+  return is_leader;
+}
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match39-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  /* 
+  Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it.
+  */
+  /* your code here */
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_); 
+
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+</FONT>  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+
+  return this-&gt;StartAgreement(s);
+}
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match39-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_); 
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+</FONT>  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("append");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match39-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  return this-&gt;StartAgreement(s);
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_); 
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+</FONT>  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("get");
+  s-&gt;data_.push_back(k);
+  /* your code here */
+  auto resp = this-&gt;StartAgreement(s);
+
+  if(resp == KV_SUCCESS) {
+    auto it = dict.find(k);
+    string value = it-&gt;second;
+    *v = value;
+  }
+
+  return resp;
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  auto v = (MultiStringMarshallable*)(&m);
+  /* your code here */
+  auto msgs = v-&gt;data_;
+  Log_debug("On next command is called with oid: %s", msgs[0].c_str());
+  string oid = msgs[0];
+  char op = msgs[1][0];
+  string key = msgs[2];
+
+  auto it = dict.find(key);
+  if(op != 'g') {
+    string value = msgs[3];
+    if(it == dict.end()) {
+      dict.insert({key, value});
+    } else {
+      it-&gt;second = op == 'p' ? 
+		value : it-&gt;second + value;
+    }
+  }
+
+  if(msgAcks.find(oid) != msgAcks.end()) {
+    auto msgAck = msgAcks.find(oid)-&gt;second;
+    msgAck-&gt;Set(1);
+  }
+  return;
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

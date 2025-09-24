@@ -1,0 +1,355 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-Nitish5499-1/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-priyanshisinha99/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  /* 
+  Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  */
+  /* your code here */
+  // Coroutine::Sleep(100000);
+  auto evPut = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  opidMap.insert({to_string(oid), evPut});
+  uint64_t idx = 0;
+  uint64_t term = 0;
+  Log_info("put working for oid %llu", oid);
+
+  mtx.lock();
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  mtx.unlock();
+
+  cout &lt;&lt; "S DATA" &lt;&lt; endl;
+
+  for (int i = 0; i &lt; s-&gt;data_.size(); i++)
+  {
+    cout &lt;&lt; s-&gt;data_[i] &lt;&lt; " ";
+  }
+
+  cout &lt;&lt; endl;
+  
+  
+  auto sendCMD = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  if (!(GetRaftServer().Start(sendCMD, &idx, &term))) {
+    Log_info("not the leader!");
+    return KV_NOTLEADER;
+  }
+  evPut-&gt;Wait(100000);
+  // Coroutine::Sleep(100000);
+
+  if (evPut-&gt;status_ == Event::TIMEOUT) {
+    Log_info("PUT | Returning timeout");
+    return KV_TIMEOUT;
+  }
+  else {
+    // opidMap.at(oid) = ev;
+    Log_info("PUT | Returning success");
+    opidMap.erase(to_string(oid));
+    return KV_SUCCESS;
+  }
+  // Coroutine::Sleep(200000);
+  
+
+  // if (opidMap.find(oid) == opidMap.end()) {
+  //   opidMap.insert({oid, ev});
+  // } else {
+
+  // }
+
+  // if (idx&gt;=idxRaftPeer){
+  //   Log_info("PUT | Returning success");
+  //   return KV_SUCCESS;
+
+  // } else {
+  //   Log_info("PUT | returning Timeout");
+  //   return KV_TIMEOUT;
+  // }
+  return KV_TIMEOUT;
+}
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+  // Coroutine::Sleep(100000);
+  auto evApp = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  opidMap.insert({to_string(oid), evApp});
+  string findkey = "";
+  uint64_t idx = 0;
+  uint64_t term = 0;
+  Log_info("Append working for oid %llu", oid);
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  // auto value = hashmap.find(k);
+  // Log_info("Append | Key %s, Value %s", (value-&gt;first).c_str(), (value-&gt;second).c_str());
+  // if (hashmap.find(k) != hashmap.end()) {
+  //   // hashmap.at(k) += v;
+  //   s-&gt;data_.push_back(to_string(oid));
+  //   s-&gt;data_.push_back("append");
+  //   s-&gt;data_.push_back(k);
+  //   // auto value = hashmap.find(k);
+  //   // s-&gt;data_.push_back(value-&gt;second);  
+  //   s-&gt;data_.push_back(v);
+  // }
+  // else {
+  //   Log_info("Put instead of append for key %s and value %s", k.c_str(), v.c_str());
+  //   s-&gt;data_.push_back(to_string(oid));
+  //   s-&gt;data_.push_back("put");
+  //   s-&gt;data_.push_back(k);
+  //   s-&gt;data_.push_back(v);
+  // }
+  s-&gt;data_.push_back(to_string(oid));
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match20-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  s-&gt;data_.push_back("append");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  auto appCMD = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  if (!(GetRaftServer().Start(appCMD, &idx, &term))) {
+    return KV_NOTLEADER;
+</FONT>  }
+  evApp-&gt;Wait(100000);
+  // Coroutine::Sleep(100000);
+
+
+
+  if (evApp-&gt;status_ == Event::TIMEOUT) {
+    Log_info("Append | Returning timeout");
+    return KV_TIMEOUT;
+  }
+  else {
+    // opidMap.at(oid) = ev;
+    Log_info("Append | Returning success");
+    opidMap.erase(to_string(oid));
+
+    return KV_SUCCESS;
+  }
+
+  // Coroutine::Sleep(100000);
+  // idxRaftPeer += 1;
+  // Log_info("APPEND | index of Raft %d | Index of kvserver %d", idx, idxRaftPeer);
+  // if (idx&gt;=idxRaftPeer){
+  //   // idxRaftPeer = idx;
+  //   return KV_SUCCESS;
+  // } else {
+  //   return KV_TIMEOUT;
+  // }
+  return KV_TIMEOUT;
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+  /* your code here */
+  // Coroutine::Sleep(100000);
+  auto evGet = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  opidMap.insert({to_string(oid), evGet});
+  uint64_t idx = 0;
+  uint64_t term = 0;
+  Log_info("Get working for oid %d", oid);
+  Log_info("Len of hashmap %d", hashmap.size());
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match20-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("get");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back("GET_DUMMY_VALUE");
+  // s-&gt;data_.push_back(value-&gt;second);
+  auto sendCMD = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+</FONT>  Log_info("GET: value for given key %s", k.c_str());
+  if (!(GetRaftServer().Start(sendCMD, &idx, &term))) {
+    Log_info("not the leader!");
+    return KV_NOTLEADER;
+  }
+  // idxRaftPeer += 1;
+
+  // auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+
+  // Coroutine::Sleep(100000);
+  // std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+  // ev-&gt;Wait(10000);
+
+  // if (ev-&gt;status_ == TIMEOUT) {
+
+  // }
+  evGet-&gt;Wait(100000);
+  // Coroutine::Sleep(100000);
+
+  if (evGet-&gt;status_ == Event::TIMEOUT) {
+    Log_info("GET | returning Timeout");
+    return KV_TIMEOUT;
+  }
+  else {
+    // opidMap.at(oid) = ev;
+    Log_info("GET | Returning success");
+    auto value = hashmap.find(k); 
+    *v = value-&gt;second;
+    opidMap.erase(to_string(oid));
+    return KV_SUCCESS;
+  }
+  // Log_info("GET | index of Raft %d | Index of kvserver %d", idx, idxRaftPeer);
+  // if (idx&gt;=idxRaftPeer){
+  //   // idxRaftPeer = idx;
+  //   Log_info("GET | Returning success");
+  //   *v = value-&gt;second;
+  //   return KV_SUCCESS;
+
+  // } else {
+  //   Log_info("GET | returning Timeout");
+  //   return KV_TIMEOUT;
+  // }
+  
+  
+  // return *v;
+  return KV_TIMEOUT;
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  // Coroutine::Sleep(100000);
+  Log_info("On next cmd working");
+  auto v = (MultiStringMarshallable*)(&m);
+  // Log_info("On next cmd TEST %d", v-&gt;data_.size());
+  // if (v-&gt;data_.size() == 0) {
+  //   Log_info("Something is recommitted");
+  //   return;
+  // }
+
+  for (int i = 0; i &lt; v-&gt;data_.size(); i++) {
+    cout &lt;&lt; v-&gt;data_[i] &lt;&lt; " ";
+  }
+  cout &lt;&lt; endl;
+
+  string value = v-&gt;data_[3];
+  // v-&gt;data_.pop_back();
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match20-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  string key = v-&gt;data_[2];
+  // v-&gt;data_.pop_back();
+  string operation = v-&gt;data_[1];
+  // v-&gt;data_.pop_back();
+  string opid = v-&gt;data_[0];
+  // v-&gt;data_.pop_back();
+
+  // string oid = v-&gt;data_.front();
+  // // v-&gt;data_.front();
+  // // Log_info("0");
+  // string s = v-&gt;data_.back();
+  // // Log_info("1");
+  // v-&gt;data_.pop_back();
+  // // Log_info("2");
+  // string k = v-&gt;data_.back();
+  // // Log_info("3");
+  // v-&gt;data_.pop_back();
+  // Log_info("4");
+  // string action = v-&gt;data_.back();
+  // Log_info("action %s", action.c_str());
+  // v-&gt;data_.pop_back();
+  
+  Log_info("opid %s", opid.c_str());
+</FONT>  // Log_info("Key %s, value %s",k.c_str(), s.c_str());
+  if (operation=="get") {
+    Log_info("getting get");
+    
+  }
+  if (operation=="put") {
+    if (hashmap.find(key) != hashmap.end()) {
+      hashmap[key.c_str()] = value.c_str();
+    } else {
+      hashmap.insert({key.c_str(),value.c_str()});
+    }
+  }
+  if (operation == "append") {
+    if (hashmap.find(key) != hashmap.end()) {
+      hashmap.at(key.c_str()) += value.c_str();
+    }
+    else {
+      hashmap.insert({key.c_str(),value.c_str()});
+    }
+  }
+
+
+
+
+    // if (hashmap.find(key) == hashmap.end()) {
+    //   Log_info("new commit | Key %s, value %s",key.c_str(), value.c_str());
+     
+    // } else {
+    // if (strcmp(operation, "put") || strcmp())
+    // Log_info("committing old key | Key %s, value %s",key.c_str(), value.c_str());
+    // hashmap.at(key.c_str()) = value.c_str();
+    
+    // auto value = hashmap.find(k);
+    // if (s.c_str() != (value-&gt;second).c_str()) {
+    //   Log_info("entering else | value %s | hashmap value %s", s.c_str(), (value-&gt;second).c_str());
+    //   hashmap.at(k.c_str()) += s.c_str();
+    // }
+  // }
+  auto output = hashmap.find(key);
+  Log_info("Final value for Key %s: %s | Length of hashmap %d",(output-&gt;first).c_str(),(output-&gt;second).c_str(), hashmap.size());
+  // Log_info("oid in onnextcomd: %d %d", oid.c_str(), oid.c_str);
+  // auto h = reinterpret_cast&lt;unsigned int&gt;(oid.c_str());
+  // Log_info("oid in onnextcomd: %d %d", oid.c_str(), h);
+  auto eventval = opidMap.find(opid.c_str());
+  if (eventval == opidMap.end()) {
+    Log_info("already complete");
+  } else {
+    Log_info("value!!!! %s", (eventval-&gt;first).c_str());
+    auto ev = eventval-&gt;second;
+    ev-&gt;Set(1);
+  }
+  // (eventval-&gt;second)-&gt;Set(1);
+  // opidMap.at(to_integer(oid.c_str()))-&gt;Set(1);
+
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

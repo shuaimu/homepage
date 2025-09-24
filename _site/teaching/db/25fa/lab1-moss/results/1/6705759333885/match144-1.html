@@ -1,0 +1,314 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-DanielDeLayo/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-Gillgamesh/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+void RaftServiceImpl::HandleRequestVote(const uint64_t &candidateTerm,
+                                        const siteid_t &candidateId,
+                                        const uint64_t &lastLogIndex,
+                                        const uint64_t &lastLogTerm,
+
+                                        uint64_t *currentTerm,
+                                        bool_t *voteGranted,
+                                        rrr::DeferredReply *defer)
+{
+  // grab lock
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(svr_-&gt;mtx_);
+
+  /* Your code here */
+  *voteGranted = true;
+  *currentTerm = svr_-&gt;currentTerm;
+
+  // if seen term is higher, raise your number and start an elec timer
+  if (svr_-&gt;currentTerm &lt; candidateTerm)
+  {
+    // svr_-&gt;currentTerm = candidateTerm;
+    // upon voting for someone, reset your own timeout
+    svr_-&gt;AssumeFollowership(candidateTerm);
+    svr_-&gt;ScheduleElectionTimeouts();
+    Log_debug("server %d: raised term to %d upon seeing higher in votereq", svr_-&gt;site_id_, svr_-&gt;currentTerm);
+  }
+  /* Reply false if term &lt; currentTerm */
+  // TODO - check that svr_ is initialized properly.
+  // TODO - concurrency checks on types
+  if (candidateTerm &lt; (svr_-&gt;currentTerm) ) {
+    *voteGranted = false; 
+  }
+
+  //only proceed if the candidate has a log AS up to date.
+  // if your log  has a higher term OR the same term but is longer,
+  // do not grant your vote
+  bool moreUpToDate = (svr_-&gt;getLastLogTerm() &gt; lastLogTerm || (svr_-&gt;getLastLogTerm() == lastLogTerm &&
+                                                                svr_-&gt;getLastLogIndex() &gt; lastLogIndex));
+  if (moreUpToDate) {
+    *voteGranted = false;
+    Log_debug("Server %d: refused to vote for %d; term or index outdated (%d,%d vs %d, %d)",
+    svr_-&gt;site_id_,
+    candidateId,
+    lastLogTerm,
+    lastLogIndex,
+    svr_-&gt;getLastLogTerm(),
+    svr_-&gt;getLastLogIndex()
+    );
+  }
+
+
+  /* Else grant the vote if not yet voted or already voted for this candidate*/
+  if ((*voteGranted)){
+    if ((svr_-&gt;votedFor == -1) || (svr_-&gt;votedFor == candidateId))
+    {
+      // *voteGranted = true;
+      svr_-&gt;votedFor = candidateId;
+      svr_-&gt;ScheduleElectionTimeouts();
+      Log_debug("server %d: claims it voted for server %d (and set term=%d)", svr_-&gt;site_id_, svr_-&gt;votedFor, svr_-&gt;currentTerm);
+    }
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match144-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_7.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    else {
+      //if you weren't able to vote, change voteGranted back to false
+      *voteGranted = false;
+    }
+  }
+
+
+  // release lock and return
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleAppendEntries(
+    const uint64_t &leaderTerm,
+    const siteid_t &leaderId,
+    const uint64_t &prevLogIndex,
+    const uint64_t &prevLogTerm,
+    const uint64_t &leaderCommit,
+    const std::vector&lt;MarshallDeputy&gt; &cmds,
+    const std::vector&lt;uint64_t&gt; &cmdTerms,
+    uint64_t *term,
+    bool_t *followerAppendOK,
+    rrr::DeferredReply *defer)
+</FONT>{
+  /* Your code here */
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(svr_-&gt;mtx_);
+  // std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(md_cmd).sp_data_;
+  // Log_debug("Server %d: received event....", svr_-&gt;site_id_);
+
+
+  // REGARDLESS OF ANYTHING ELSE - update the term if you are outdated here
+  if (leaderTerm &gt; svr_-&gt;currentTerm)
+  {
+    // svr_-&gt;currentTerm = leaderTerm;
+    // once again, let the server take care of this! otherwise u need not clear ur vote
+    svr_-&gt;AssumeFollowership(leaderTerm);
+    svr_-&gt;ScheduleElectionTimeouts();
+  }
+
+  *term = svr_-&gt;currentTerm;
+  *followerAppendOK = false;
+
+  if (leaderTerm &lt; svr_-&gt;currentTerm) {
+    *followerAppendOK = false;
+    defer-&gt;reply();
+    return;
+  }
+  // 2) reply false if log doesn't contain an entry at prevLogIndex
+  // whose term matches prevLogTerm
+  // Log_debug("Server %d: HandleAppend(2) %d", svr_-&gt;site_id_, prevLogIndex);
+  // recall that raft specification is 1-indexed
+  if (prevLogIndex != 0) {
+    if (svr_-&gt;log-&gt;size() &lt; prevLogIndex)
+    {
+      Log_debug("Server %d: logsize&lt;prevlogindex (%d vs. %d)", svr_-&gt;site_id_, svr_-&gt;log-&gt;size(), prevLogIndex);
+      *followerAppendOK = false;
+      defer-&gt;reply();
+      return;
+    }
+    else {
+      auto prevLogEntry = svr_-&gt;log-&gt;at(prevLogIndex - 1);
+      if (std::get&lt;0&gt;(prevLogEntry) != prevLogTerm)
+      {
+        Log_debug("Server %d: prevLogTerm mismatch (%d vs. %d)", svr_-&gt;site_id_, prevLogTerm, std::get&lt;0&gt;(prevLogEntry));
+        *followerAppendOK = false;
+        defer-&gt;reply();
+        return;
+      }
+    }
+  }
+
+
+
+  // 3) if an existing entry conflicts with a new one
+  // (same index but dif terms), delete existing entry and all
+  // that follow it
+  // Log_debug("Server %d: HandleAppend(3)", svr_-&gt;site_id_);
+  uint64_t i;
+  for (i = 1; i &lt;= cmds.size() && (prevLogIndex + i) &lt;= svr_-&gt;log-&gt;size(); i++)
+  {
+    // keep in mind that prevLogIndex is 1-indexed already
+    // only keep going until the end of svr_-&gt;log
+    auto currentEntry = svr_-&gt;log-&gt;at(i+prevLogIndex-1);
+    if (std::get&lt;0&gt;(currentEntry) != cmdTerms.at(i-1)) {
+      // at this point, we have found the first entry
+      // that is not consistent with new ones 
+      // due to term issues. only keep the ones UP to this one
+      svr_-&gt;log = svr_-&gt;getLogSlice(0, i+prevLogIndex-1);
+      break;
+    }
+  }
+  // if the loop does not break, i will be in the correct spot+1
+  // which means j loop won't run so nothing bad happens
+
+  // 4) append new entries not already in the log.
+  // the first i terms already agreed, so we need not append them
+  // Log_debug("Server %d: HandleAppend(4)", svr_-&gt;site_id_);
+  for (uint64_t j = i; j &lt;= cmds.size(); j++)
+  {
+    Log_debug("%d", j);
+    std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy &&gt;(
+                                            cmds.at(j - 1))
+                                            .sp_data_;
+    svr_-&gt;log-&gt;push_back(
+        std::tuple&lt;uint64_t, shared_ptr&lt;Marshallable&gt;&gt;(
+            cmdTerms.at(j - 1),
+            cmd));
+  }
+  // Log_debug("5)");
+
+  // 5) if leaderCommit &gt; commitIndex, set commitIndex = 
+  // min(leaderCommit, index of last new entry)
+  // BUT this need not be the lastlogindex?
+  // Log_debug("Server %d: HandleAppend(5)", svr_-&gt;site_id_);
+  if (leaderCommit &gt; svr_-&gt;commitIndex) {
+    svr_-&gt;commitIndex = min(leaderCommit, svr_-&gt;getLastLogIndex());
+    Log_debug("Server %d: moved commitIndex to %d", svr_-&gt;site_id_, svr_-&gt;commitIndex);
+  }
+
+
+  // CHECK if commitIndex is greater than lastApplied, and apply
+  // neccesary messages IF commitIndex &gt; lastApplied
+  Log_debug("Server %d: new log size -- %d", svr_-&gt;site_id_, svr_-&gt;getLastLogIndex());
+  svr_-&gt;ApplyCommitedMessages();
+
+  *followerAppendOK = true;
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_debug("receive an rpc: %s", req.c_str());
+  *res = "world";
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleEmptyAppendEntries(
+    const uint64_t &leaderTerm,
+    const siteid_t &leaderId,
+    const uint64_t &prevLogIndex,
+    const uint64_t &prevLogTerm,
+    const uint64_t &leaderCommit,
+    uint64_t *term,
+    bool_t *success,
+    rrr::DeferredReply* defer
+    )
+{
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(svr_-&gt;mtx_);
+  // return the current term as specified
+  // TODO - see what to return specificall
+  *term = svr_-&gt;currentTerm;
+  // Log_debug("handle %d: %d", svr_-&gt;site_id_, *term);
+  if (*term &gt; 2000)
+    Log_debug("error occured?");
+  *success = true;
+  // reply false if term &lt; currentTerm
+  if (leaderTerm &lt; svr_-&gt;currentTerm) {
+    *success = false;
+  }
+  // 2) reply false if log doesn't contain an entry at prevLogIndex
+  // whose term matches prevLogTerm
+  // Log_debug("Server %d: HandleAppend(2) %d", svr_-&gt;site_id_, prevLogIndex);
+  // recall that raft specification is 1-indexed
+  if (prevLogIndex != 0) {
+    if (svr_-&gt;log-&gt;size() &lt; prevLogIndex)
+    {
+      Log_debug("Server %d: hbeat: logsize&lt;prevlogindex (%d vs. %d)", svr_-&gt;site_id_, svr_-&gt;log-&gt;size(), prevLogIndex);
+      *success = false;
+    }
+    else {
+      auto prevLogEntry = svr_-&gt;log-&gt;at(prevLogIndex - 1);
+      if (std::get&lt;0&gt;(prevLogEntry) != prevLogTerm)
+      {
+        Log_debug("Server %d: hbeat: prevLogTerm mismatch (%d vs. %d)", svr_-&gt;site_id_, prevLogTerm, std::get&lt;0&gt;(prevLogEntry));
+        *success = false;
+        // defer-&gt;reply();
+        // return;
+      }
+    }
+    // TODO - double check this
+  }
+
+
+  if (*success) {
+    // POTENTIAL OPTIMIZATION -- todo maybe remove.
+    // ensure that you are in fact a follower if the leader was valid!
+    svr_-&gt;AssumeFollowership(leaderTerm);
+
+
+    // if possible, see if you should be forwarding your commitIndex
+
+    // 5) if leaderCommit &gt; commitIndex, set commitIndex =
+    // min(leaderCommit, index of last new entry)
+    if (leaderCommit &gt; svr_-&gt;commitIndex)
+    {
+      svr_-&gt;commitIndex = min(leaderCommit, svr_-&gt;getLastLogIndex());
+      Log_debug("Server %d: moved commitIndex to %d", svr_-&gt;site_id_, svr_-&gt;commitIndex);
+      svr_-&gt;ApplyCommitedMessages();
+    }
+
+    // finally, reset the election timer if the leader was considered valid
+    svr_-&gt;ScheduleElectionTimeouts();
+    // Log_debug("Server %d: resetting timer", svr_-&gt;site_id_);
+    // TODO - see if there's other things/performance optimizations
+  }
+  else {
+    // regardless of success, we still need to update the term number need-be
+    // nevermind -- just wait for the machine to misbehave instead
+    // this apparently causes problems TODO - debug later
+    if (leaderTerm &gt; svr_-&gt;currentTerm)
+    {
+      // svr_-&gt;currentTerm = leaderTerm; // let assumefollowership take care of this, otherwise shit case in clearing vbote
+      svr_-&gt;AssumeFollowership(leaderTerm);
+      svr_-&gt;ScheduleElectionTimeouts();
+    }
+  }
+
+  if (*success) {
+    // Log_debug("Server %d: Valid heartbeat from %d", svr_-&gt;site_id_, leaderId);
+  }
+  else {
+    Log_debug("Server %d: Invalid heartbeat from %d", svr_-&gt;site_id_, leaderId);
+  }
+  defer-&gt;reply();
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,590 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-Nitish5499-1/src/deptran/raft/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-y17yeshwanth/src/deptran/raft/server.cc<p><PRE>
+#include "server.h"
+// #include "paxos_worker.h"
+#include "exec.h"
+#include "frame.h"
+#include "coordinator.h"
+#include "../classic/tpc_command.h"
+enum State
+{
+  Leader,
+  Follower,
+  Candidate
+};
+namespace janus
+{
+
+  RaftServer::RaftServer(Frame *frame)
+  {
+    frame_ = frame;
+    /* Your code here for server initialization. Note that this function is
+       called in a different OS thread. Be careful about thread safety if
+       you want to initialize variables here. */
+  }
+
+  RaftServer::~RaftServer()
+  {
+
+    shutdown = false;
+    /* Your code here for server teardown */
+  }
+  // uint64_t timeOut = ((rand() % 301 + 400) * 1000);
+  // enum State { Leader, Follower, Candidate };
+
+  void RaftServer::Setup()
+  {
+    if (logEntries.size() == 0)
+    {
+      // std::cout&lt;&lt; "no logs in server: "&lt;&lt;loc_id_&lt;&lt;std::endl;
+      auto cmdptr = std::make_shared&lt;TpcCommitCommand&gt;();
+      auto vpd_p = std::make_shared&lt;VecPieceData&gt;();
+      cmdptr-&gt;tx_id_ = 1;
+      cmdptr-&gt;cmd_ = vpd_p;
+      auto cmdptr_m = dynamic_pointer_cast&lt;Marshallable&gt;(cmdptr);
+      logRec entry;
+      entry.termReceived = 0;
+      entry.command = cmdptr;
+      logEntries.push_back(entry);
+      // std::cout&lt;&lt; "log size on server: "&lt;&lt;loc_id_&lt;&lt;" is: "&lt;&lt;logEntries.size()&lt;&lt;std::endl;
+    }
+    Coroutine::CreateRun([&]()
+                         {
+    while (true)
+    {
+
+      SetPing(false);
+      Coroutine::Sleep(randomTimeout * 1000);
+      if (DidPingMe() == false && GetServerState() == "follower")
+      {
+        //std::cout &lt;&lt; loc_id_ &lt;&lt; " server timed out at:" &lt;&lt; Time::now() &lt;&lt; std::endl;
+        serverState = "candidate";
+        StartElection();
+        if (votesGathered &gt; 2)
+        {
+          std::cout &lt;&lt; "leader elected: " &lt;&lt; loc_id_ &lt;&lt; " for the term: " &lt;&lt; GetCurrentTerm() &lt;&lt; " at time: " &lt;&lt; Time::now() &lt;&lt; std::endl;
+          SetLeaderTerm(GetCurrentTerm());
+          SetLeaderId((uint64_t)loc_id_);
+          serverState = "leader";
+          Coroutine::CreateRun([this]()
+                              {
+          while (true && GetServerState()=="leader" && !IsDisconnected())
+          { 
+            int lastLogIndex = GetLastLogIndex(logEntries);
+            int lastLogTerm = logEntries[lastLogIndex].termReceived;
+            int prevLogIndex = nextIndex[loc_id_]-1;
+            int prevLogTerm = logEntries[prevLogIndex].termReceived;
+            bool_t* followerAppendOK;
+            uint64_t term = leaderTerm;
+            bool_t success = false;
+            for (int i = 0; i &lt; NSERVERS; i++)
+            {
+              if (i != loc_id_)
+              {
+                if(lastLogIndex &gt;= nextIndex[i])
+                {
+                   //std::cout&lt;&lt;"sending append rpc to: "&lt;&lt;i&lt;&lt;" with command "&lt;&lt;logEntries[lastLogIndex].command&lt;&lt;std::endl;
+                   //std::cout&lt;&lt;"prev log term: "&lt;&lt;prevLogTerm&lt;&lt;" prev log ind: "&lt;&lt;prevLogIndex&lt;&lt;std::endl;
+                   auto ev = commo()-&gt;SendAppendEntries(0,i,leaderTerm, leaderId, prevLogIndex, prevLogTerm,logEntries[lastLogIndex].command,commitIndex[loc_id_],&term,&success);
+                   ev-&gt;Wait(10*1000);
+                   if(ev-&gt;get())
+                   {
+                    if(term&gt;currentTerm)
+                    {
+                      serverState = "follower";
+                      currentTerm = term;
+                      return;
+                    }
+                    if(success){
+                      //std::cout&lt;&lt;"updating next index and match index for follower: "&lt;&lt;i&lt;&lt;std::endl;
+                      matchIndex[i]+=1;
+                      nextIndex[i]=matchIndex[i]+1;
+                      appendMajority+=1;
+                    }
+
+                   }                
+                }
+                else
+                {
+                  //std::cout&lt;&lt;"sending empty rpc"&lt;&lt;std::endl;
+                  //auto ev = commo()-&gt;SendAppendEntries(0,i,leaderTerm, leaderId, prevLogIndex, prevLogTerm,logEntries[lastLogIndex].command,commitIndex[loc_id_],&term,&success);
+                  auto ev = commo()-&gt;SendEmptyAppendEntries(0,i,leaderTerm, leaderId, prevLogIndex, prevLogTerm,commitIndex[loc_id_],&term,&success);
+                  //auto ev = commo()-&gt;SendEmptyAppendEntries(0, i, leaderTerm, leaderId, lastLogTerm, lastLogIndex, followerAppendOK);
+                }
+              }
+            }
+
+            uint64_t n = GetLastLogIndex(logEntries);
+            //std::cout&lt;&lt;"last log ind of leader: "&lt;&lt;n&lt;&lt;std::endl;
+            if(n&gt;=1)
+            {
+              for (uint64_t n = GetLastLogIndex(logEntries); n &gt;= commitIndex[loc_id_]; n--) 
+              {
+                int count = 1;
+                int lastLogIndex = GetLastLogIndex(logEntries);
+                if (logEntries[n].termReceived == currentTerm) {
+                    for (int i = 0; i &lt; NSERVERS; i++) {
+                        if (i != loc_id_ && matchIndex[i] &gt;= n) {
+                            count++;
+                            if(count&gt;1){
+                              //std::cout&lt;&lt;"append majority "&lt;&lt;count&lt;&lt;std::endl;
+                            }
+                        }
+                    }
+                }
+                if (count &gt; 2) {
+                    //std::cout&lt;&lt;"replicated in majority"&lt;&lt;std::endl;
+                    commitIndex[loc_id_] = n;
+                    //lastApplied[loc_id_] += 1;
+                    if(commitIndex[loc_id_]&gt;lastApplied[loc_id_])
+                    {
+                      //std::cout&lt;&lt;"apply log on leader: "&lt;&lt;loc_id_&lt;&lt;std::endl;
+                      lastApplied[loc_id_]+=1;
+                      app_next_(*logEntries[lastLogIndex].command);
+                    }
+                    
+                    break;
+                }
+              }
+            }
+            Coroutine::Sleep(300*1000);
+          }
+          });
+        }
+        else{
+          Coroutine::Sleep(randomTimeout * 1000);
+          StartElection();
+        }
+      }
+    } });
+  }
+  
+  void RaftServer::appNext(uint64_t sid)
+  { 
+    while(commitIndex[sid]&gt;lastApplied[sid])
+    {
+      lastApplied[sid]+=1;
+      //std::cout&lt;&lt;"apply log on follower: "&lt;&lt;sid&lt;&lt;std::endl;
+      app_next_(*logEntries[lastApplied[sid]].command);
+    }
+  }
+
+  void RaftServer::MakeCandidate()
+  {
+    state = candidate;
+    SetState("candidate");
+    votesGathered = 1;
+    currentTerm += 1;
+    votedFor = loc_id_;
+    RequestVoteHandler();
+  }
+  void RaftServer::StartTimerWithTimeout()
+  {
+    int timeout = (rand() % 301 + 400) * 1000; // Calculate a random timeout value.
+    timeOutEv-&gt;Wait(timeout);
+  }
+  void RaftServer::ResetTimerEvent()
+  {
+    int timeout = (rand() % 301 + 400) * 1000; // Calculate a new random timeout.
+    std::cout &lt;&lt; loc_id_ &lt;&lt; " has reset its timeout" &lt;&lt; std::endl;
+    // timeOutEv = Reactor::CreateSpEvent&lt;IntEvent&gt;();; // Recreate the event.
+    timeOutEv-&gt;Wait(timeout);
+  }
+  void RaftServer::ResetElectionTimer(uint64_t reset)
+  {
+    int timeOut = (rand() % 301 + 400) * 1000;
+    std::cout &lt;&lt; loc_id_ &lt;&lt; " server reset with timeout of: " &lt;&lt; timeOut &lt;&lt; std::endl;
+  }
+  void RaftServer::CheckServerTimeout()
+  {
+    while (true)
+    {
+      SetPing(false);
+      Coroutine::Sleep((rand() % 301 + 400) * 1000);
+      if (DidPingMe() == false && GetServerState() == "follower")
+      {
+        StartElection();
+      }
+    }
+  }
+
+  bool RaftServer::Start(shared_ptr&lt;Marshallable&gt; &cmd,
+                         uint64_t *index,
+                         uint64_t *term)
+  {
+    /* Your code here. This function can be called from another OS thread. */
+    *index = 0;
+    *term = 0;
+    if (loc_id_ != leaderId)
+    {
+      return false;
+    }
+    else
+    {
+      appendMajority = 0;
+      logRec entry;
+      entry.command = cmd;
+      entry.termReceived = currentTerm;
+      logEntries.push_back(entry);
+      appendMajority = 1;
+      *index = GetLastLogIndex(logEntries);
+      *term = GetLastLogTerm();
+      //std::cout &lt;&lt; " last log index on leader: " &lt;&lt; *index &lt;&lt; " and term is: " &lt;&lt; *term &lt;&lt; std::endl;
+      return true;
+    }
+  }
+
+  void RaftServer::StartElection()
+  {
+    // UpdateCurrentTerm(GetCurrentTerm() + 1);
+    if(serverState!="candidate")
+    {
+      return;
+    }
+    currentTerm += 1;
+    std::cout &lt;&lt; "Server became candidate " &lt;&lt; loc_id_ &lt;&lt; " updated it's term to: " &lt;&lt; GetCurrentTerm() &lt;&lt; std::endl;
+    votesGathered = 1;
+    selfVote = true;
+    // SetLeaderId(-1);
+    RequestVoteHandler();
+    // std::cout &lt;&lt; "Server: " &lt;&lt; loc_id_ &lt;&lt; " have gathered votes so far: " &lt;&lt; votesGathered &lt;&lt; std::endl;
+  }
+
+  void RaftServer::GetState(bool *is_leader, uint64_t *term)
+  {
+    /* Your code here. This function can be called from another OS thread. */
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    // std::cout &lt;&lt; "server is:" &lt;&lt; loc_id_ &lt;&lt; " its leader is" &lt;&lt; GetLeaderId() &lt;&lt; std::endl;
+    if (loc_id_ == leaderId)
+    {
+      *is_leader = true;
+    }
+    else
+    {
+      *is_leader = false;
+    }
+    *term = currentTerm;
+    // std::cout&lt;&lt;"server is :"&lt;&lt;loc_id_&lt;&lt;" leader status is: "&lt;&lt; *is_leader&lt;&lt;" term is: "&lt;&lt;*term&lt;&lt;std::endl;
+  }
+
+  void RaftServer::SyncRpcExample()
+  {
+    /* This is an example of synchronous RPC using coroutine; feel free to
+       modify this function to dispatch/receive your own messages.
+       You can refer to the other function examples in commo.h/cc on how
+       to send/recv a Marshallable object over RPC. */
+    Coroutine::CreateRun([this]()
+                         {
+    string res;
+    auto event = commo()-&gt;SendString(0, /* partition id is always 0 for lab1 */
+                                     0, loc_id_, "hello", &res);
+    event-&gt;Wait(10*1000); //timeout after 1000000us=1s
+    if (event-&gt;status_ == Event::TIMEOUT) {
+      //Log_info("timeout happens");  
+    } else {
+      //Log_info("rpc response is: %s", res.c_str()); 
+    } });
+  }
+
+  void RaftServer::RequestVoteHandler()
+  {
+    if (GetServerState() != "candidate")
+    {
+      return;
+    }
+    // std::cout &lt;&lt; "Server : " &lt;&lt; loc_id_ &lt;&lt; " started election for the term: " &lt;&lt; GetCurrentTerm() &lt;&lt; " at time: " &lt;&lt; Time::now() &lt;&lt; std::endl;
+    uint64_t candidateTerm_ = GetCurrentTerm();
+    uint64_t candidateId_ = loc_id_;
+    uint64_t candidateLastLogIndex_ = GetLastLogIndex(logEntries);
+    uint64_t candidateLastLogTerm_ = GetLastLogTerm();
+    uint64_t voteCount = votesGathered;
+    Coroutine::CreateRun([this, candidateTerm_, candidateId_, candidateLastLogIndex_, candidateLastLogTerm_, &voteCount]()
+                         {
+    for(int i = 0; i&lt;NSERVERS;i++){
+      if(i!=loc_id_){
+        auto ev = commo()-&gt;SendRequestVote(0, i, candidateTerm_, candidateId_, candidateLastLogIndex_, candidateLastLogTerm_,&voteCount);
+        ev-&gt;Wait((10)*1000);
+        if(ev-&gt;status_ == Event::TIMEOUT){        
+        }
+        else{
+          votesGathered+=ev-&gt;get();
+        }
+      }
+    } });
+
+    auto ev2 = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    ev2-&gt;Wait((50) * 1000);
+  }
+
+  uint64_t RaftServer::GetLastLogIndex(std::vector&lt;logRec&gt; logEntries)
+  {
+    // return logEntries.size()-1;
+    if (logEntries.size() &gt; 0)
+    {
+      return logEntries.size() - 1;
+    }
+    else
+    {
+      return 0;
+    }
+  }
+
+  uint64_t RaftServer::GetLastLogTerm()
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    // return logEntries[GetLastLogIndex(logEntries)].termReceived;
+    if (logEntries.size() &gt; 0)
+    {
+      return logEntries[GetLastLogIndex(logEntries)].termReceived;
+    }
+    else
+    {
+      return 0;
+    }
+  }
+
+  void RaftServer::EmptyRPC(uint64_t leaderTerm, uint64_t leaderId, uint64_t leaderLastLogIndex, uint64_t leaderLastLogTerm)
+  {
+    // uint64_t leaderTerm_ = leaderTerm;
+    // uint64_t leaderId_ = leaderId;
+    // uint64_t leaderLastLogIndex_ = leaderLastLogIndex;
+    // uint64_t leaderLastLogTerm_ = leaderLastLogTerm;
+    // Coroutine::CreateRun([this]()
+    //                      {
+    //       while (true && !IsDisconnected() && GetServerState()=="leader")
+    //       {
+    //         bool_t* followerAppendOK;
+    //         for (int i = 0; i &lt; NSERVERS; i++)
+    //         {
+    //           if (i != loc_id_)
+    //           {
+    //             auto ev = commo()-&gt;SendEmptyAppendEntries(0, i, leaderTerm_, leaderId_, leaderLastLogIndex_, leaderLastLogTerm_, followerAppendOK);
+    //           }
+    //         }
+    //         Coroutine::Sleep(100*1000);
+    //         //std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    //       } });
+  }
+
+  std::chrono::steady_clock::time_point RaftServer::GetLastHeardFromLeader() const
+  {
+    return lastHeardFromLeader;
+  }
+
+  void RaftServer::SetLastHeardFromLeader(std::chrono::steady_clock::time_point lastHeard)
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    lastHeardFromLeader = lastHeard;
+  }
+
+  std::string RaftServer::GetServerState()
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    return serverState;
+  }
+
+  void RaftServer::SetState(string state)
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    serverState = state;
+  }
+
+  bool RaftServer::HasVotedThisTerm(uint64_t currentCandidateTerm)
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    if (GetCurrentTerm() &lt; currentCandidateTerm)
+    {
+      votedThisTerm = false;
+    }
+    else
+    {
+      votedThisTerm = true;
+    }
+    return votedThisTerm;
+  }
+
+  void RaftServer::SetVotedThisTerm(uint64_t serverTerm)
+  {
+    if (GetCurrentTerm() == GetCandidateTerm())
+    {
+      votedThisTerm = true;
+    }
+  }
+
+  bool RaftServer::DidPingMe()
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    return receivePing;
+  }
+
+  void RaftServer::SetPing(bool ping)
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    receivePing = ping;
+  }
+
+  bool RaftServer::IsLeader()
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    if (loc_id_ == GetLeaderId())
+    {
+      return true;
+    }
+    return false;
+  }
+
+  uint64_t RaftServer::SetVotedFor(uint64_t serverId)
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    votedFor = serverId;
+    return votedFor;
+  }
+
+  void RaftServer::SetAsCandidate()
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    // std::cout&lt;&lt;"I am setting myself as candidate: "&lt;&lt;loc_id_&lt;&lt;" for the term: "&lt;&lt;GetCurrentTerm()&lt;&lt;std::endl;
+    votesGathered += 1;
+    SetState("candidate");
+    SetVotedThisTerm(GetCurrentTerm());
+    selfVote = true;
+  }
+
+  uint64_t RaftServer::GetServerId()
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match21-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    return serverId;
+  }
+
+  void RaftServer::SetLeaderId(uint64_t serverId)
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    leaderId = serverId;
+  }
+
+  void RaftServer::SetLeaderTerm(uint64_t term)
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    leaderTerm = term;
+  }
+
+  uint64_t RaftServer::GetLeaderId()
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    return leaderId;
+</FONT>  }
+
+  // void RaftServer::SetLeaderId(uint64_t sid)
+  // {
+  //   std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+  //   leaderId = sid;
+  // }
+
+  uint64_t RaftServer::GetVotesGathered()
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    return votesGathered;
+  }
+
+  uint64_t RaftServer::SetCurrentTerm(uint64_t termToSet)
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    currentTerm = termToSet;
+    return currentTerm;
+  }
+
+  uint64_t RaftServer::GetCandidateTerm()
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    return candidateTerm;
+  }
+
+  uint64_t RaftServer::UpdateCurrentTerm(uint64_t termToUpdate)
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    currentTerm = termToUpdate;
+    candidateTerm = termToUpdate;
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match21-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    return currentTerm;
+  }
+
+  uint64_t RaftServer::GetCurrentTerm()
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    return currentTerm;
+  }
+
+  uint64_t RaftServer::GetLeaderTerm()
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+</FONT><A NAME="2"></A><FONT color = #0000FF><A HREF="match21-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    return leaderTerm;
+  }
+
+  // uint64_t RaftServer::SetLastLogTerm(uint64_t logTermToUpdate)
+  // {
+  //   std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+  //   lastLogTerm = logTermToUpdate;
+  //   return lastLogTerm;
+  // }
+  // uint64_t RaftServer::GetLastLogIndex()
+  // {
+  //   std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+  //   return lastLogIndex;
+  // }
+
+  /* Do not modify any code below here */
+
+  void RaftServer::Disconnect(const bool disconnect)
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    verify(disconnected_ != disconnect);
+    // global map of rpc_par_proxies_ values accessed by partition then by site
+    static map&lt;parid_t, map&lt;siteid_t, map&lt;siteid_t, vector&lt;SiteProxyPair&gt;&gt;&gt;&gt; _proxies{};
+</FONT>    if (_proxies.find(partition_id_) == _proxies.end())
+    {
+      _proxies[partition_id_] = {};
+    }
+    RaftCommo *c = (RaftCommo *)commo();
+    if (disconnect)
+    {
+      verify(_proxies[partition_id_][loc_id_].size() == 0);
+      verify(c-&gt;rpc_par_proxies_.size() &gt; 0);
+      auto sz = c-&gt;rpc_par_proxies_.size();
+      _proxies[partition_id_][loc_id_].insert(c-&gt;rpc_par_proxies_.begin(), c-&gt;rpc_par_proxies_.end());
+      c-&gt;rpc_par_proxies_ = {};
+      verify(_proxies[partition_id_][loc_id_].size() == sz);
+      verify(c-&gt;rpc_par_proxies_.size() == 0);
+    }
+    else
+    {
+      verify(_proxies[partition_id_][loc_id_].size() &gt; 0);
+      auto sz = _proxies[partition_id_][loc_id_].size();
+      c-&gt;rpc_par_proxies_ = {};
+      c-&gt;rpc_par_proxies_.insert(_proxies[partition_id_][loc_id_].begin(), _proxies[partition_id_][loc_id_].end());
+      _proxies[partition_id_][loc_id_] = {};
+      verify(_proxies[partition_id_][loc_id_].size() == 0);
+      verify(c-&gt;rpc_par_proxies_.size() == sz);
+    }
+    disconnected_ = disconnect;
+  }
+
+  bool RaftServer::IsDisconnected()
+  {
+    return disconnected_;
+  }
+
+} // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -7,7 +7,7 @@ title:
   <div class="row">
     <div class="col-sm" >
 <h1>Shuai Mu</h1>
-Assistant Professor <br>
+Associate Professor <br>
 Department of Computer Science <br>
 Stony Brook University <br>
 <br>
@@ -26,7 +26,7 @@ Links:
 
 <hr>
 
-I am an assistant professor of [Computer Science](http://www.cs.stonybrook.edu) at [Stony Brook University](http://www.stonybrook.edu).
+I am an associate professor of [Computer Science](http://www.cs.stonybrook.edu) at [Stony Brook University](http://www.stonybrook.edu).
 My main research interests are in distributed systems and multi-core systems.
 I'm particularly interested in:
   * Building fault-tolerant storage and database systems.
@@ -37,6 +37,8 @@ I'm particularly interested in:
 If you are interested, email me a brief resume.
 
 ## News ([see all](news.html))
+* Sep 2025, AutoMan accepted to SOSP '25!
+* Sep 2025, Tiga accepted to SOSP '25!
 * Jul 2025, Mako appeared at OSDI '25!
 * Dec 2024, Received SBU Research Excellence Award. Thank you Seawolves!
 * Jun 2024, CausalMesh accepted to PVLDB 24 (VLDB '25)!
@@ -52,7 +54,8 @@ If you are interested, email me a brief resume.
 
 
 ## Recent courses ([see all](teaching))
-* [CSE-590, Reliable System Programming, Spring 2025](./teaching/sf/25sp/)
+* [CSE-532, Database Systems, Fall 2025](./teaching/db/25fa/)
+* [CSE-416, Software Engineering, Fall 2025](./teaching/se/25fa/)
 * [CSE-416, Software Engineering, Fall 2024](./teaching/se/24fa/) 
 <!-- * CSE-59X: Building Reliable Distributed Systems with Dafny, Spring 2023 -->
 * CSE-416, Software Engineering, Spring 2024 
@@ -61,7 +64,7 @@ If you are interested, email me a brief resume.
 * Seminar: Distributed Systems Reading Group, Fall 2023 
 * Seminar: Formal Verification with Dafny, Fall 2023
 <!-- * Seminar: Distributed Systems Reading Group, Summer 2023  -->
-* [CSE-535, Distributed Systems, Fall 2022](./teaching/ds/22fa/)
+<!-- * [CSE-535, Distributed Systems, Fall 2022](./teaching/ds/22fa/) -->
 <!-- * [CSE-416, Software Engineering, Spring 2022](./teaching/se/22sp/) -->
 <!-- * [CSE-535, Distributed Systems, Fall 2020](./teaching/ds/20fa/) -->
 <!-- * [CSE-535, Distributed Systems, Fall 2019](./teaching/ds/19fa/) -->
@@ -71,6 +74,31 @@ If you are interested, email me a brief resume.
 ## Recent publications ([see all](pubs.html))
 
   <ul>
+    <li>
+      AutoMan: Facilitating Verified Distributed Systems Development Through Automatic Code Generation and Manual Optimizations
+      <!-- [<a href="#">paper</a>] -->
+      <br>
+      Zihao Zhang, Ti Zhou, Christa Jenkins, Omar Chowdhury, Shuai Mu
+      <br>
+      SOSP 25
+    </li>
+    <li>
+      Tiga: Accelerating Geo-Distributed Transactions with Synchronized Clocks
+      <!-- [<a href="#">paper</a>] -->
+      <br>
+      Jinkun Geng, Shuai Mu, Anirudh Sivaraman, Balaji Prabhakar
+      <br>
+      SOSP 25
+    </li>
+
+    <li>
+      Mako: Speculative Distributed Transactions with Geo-Replication
+      [<a href="https://www.usenix.org/system/files/osdi25-shen-weihai.pdf">paper</a>]
+      <br>
+      Weihai Shen, Yang Cui, Siddhartha Sen, Sebastian Angel, and Shuai Mu
+      <br>
+      OSDI 25
+    </li>
     <li>
       CausalMesh: A Causal Cache for Stateful Serverless Computing
       [<a href="https://www.cis.upenn.edu/~sga001/papers/causalmesh-vldb25.pdf">paper</a>]
@@ -121,70 +149,7 @@ If you are interested, email me a brief resume.
     <br>
     EuroSys 22
     </li>
-    <li>
-    Fail-slow fault tolerance needs programming support
-    [<a href="./pub/depfast-hotos21.pdf">paper</a>]
-    <br>
-    Andrew Yoo, Yuanli Wang, Ritesh Sinha, Shuai Mu, and Tianyin Xu 
-    <br>
-    HotOS 21
-    </li>
-    <li>
-    Fault-Tolerant Replication with Pull-Based Consensus in MongoDB
-    [<a href="./pub/mongodb-nsdi21.pdf">paper</a>]
-    <br>
-    Siyuan Zhou, Shuai Mu
-    <br>
-    NSDI 21
-    </li>
-    <!-- <li>
-    Cobra: Making Transactional Key-Value Stores Verifiably Serializable 
-    [<a href="./pub/cobra-osdi20.pdf">paper</a>]
-    <br>
-    Cheng Tan, Changgeng Zhao, Shuai Mu, Michael Walfish
-    <br>
-    OSDI 20
-    </li> -->
-    <!-- <li>
-On the Parallels of Raft and Paxos [<a href="./pub/raft-paxos.pdf">paper</a>]
-         <br>
-Zhaoguo Wang, Changgeng Zhao, Shuai Mu, Haibo Chen, Jinyang Li <br>
-         PODC 19 
-     </li> 
-     <li>
-Deferred Runtime Pipelining for contentious multicore software transactions
-[<a href="./pub/drp-eurosys19.pdf">paper</a>, <a href="./pub/drp-tr.pdf">tr</a>]
-         <br>
-Shuai Mu, Sebastian Angel, Dennis Shasha <br>
-         EuroSys 19
-     </li>  -->
-     <!-- <li>
-     Giza: Erasure Coding Objects across Global Data Centers
-[<a href="./pub/giza-atc17.pdf">paper</a>]
-     <br>
-     Yu Lin Chen, Shuai Mu, Jinyang Li, Cheng Huang, Jin Li, Aaron Ogus, Douglas Phillips<br>
-     USENIX ATC 17
-     </li> 
-     <li>Consolidating Concurrency Control and Consensus for Commits under Conflicts 
-         [<a href="./pub/janus-osdi16.pdf">paper</a>, 
-          <a href="./pub/janus-tr.pdf">tr</a>,
-          <a href="https://raw.githubusercontent.com/NYU-NEWS/janus/master/tla/Janus.tla">tla+</a>,
-         <a href="https://github.com/nyu-news/janus">code</a>] 
-         <br>
-	  Shuai Mu, Lamont Nelson, Wyatt Lloyd, Jinyang Li <br>
-	  OSDI 16</li>
-     <li>The SNOW Theorem and Latency-Optimal Read-Only Transactions 
-         [<a href="./pub/snow-osdi16.pdf">paper</a>]<br> Haonan Lu, Christopher Hodsdon, Khiem Ngo, Shuai Mu, Wyatt Lloyd <br> OSDI 16</li>
-     <li>Scaling Multicore Databases via Constrained Parallel Execution 
-         [<a href="./pub/ic3-sigmod16.pdf">paper</a>,
-          <a href="http://ic3.news.cs.nyu.edu/techreport16.pdf">tr</a>] 
-         <br> Zhaoguo Wang, Shuai Mu, Yang Cui, Han Yi, Haibo Chen, Jinyang Li <br> SIGMOD 16</li> -->
-	  <!--
-              <li>Extracting More Concurrency from Distributed Transactions 
-                  [<a href="./pub/rococo-osdi14.pdf">paper</a>, 
-                  <a href="./pub/rococo-tr.pdf">tr</a>] <br><strong>Shuai Mu</strong>, Yang Cui, Yang Zhang, Wyatt Lloyd, Jinyang Li<br>OSDI 14</li><br>
-	  -->
-      </ul>
+  </ul>
 
 ## Students ([see alumni](alumni))
 
@@ -195,7 +160,7 @@ Shuai Mu, Sebastian Angel, Dennis Shasha <br>
 * [Santa Shithil](https://sites.google.com/grad.cse.buet.ac.bd/santa-maria-shithil/about) (PhD)
 * Ze Tang (PhD)
 <!-- * Kumar Shivam (PhD) -->
-* Ti Zhou (PhD)
+* [Ti Zhou (PhD)](https://coladog.github.io/)
 <!-- * Sethu Karthikeyan (MS) -->
 <!-- * Chenyu Wang (MS) -->
 <!-- * Saumitra Bose (MS) -->

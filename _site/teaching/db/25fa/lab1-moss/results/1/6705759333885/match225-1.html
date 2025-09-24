@@ -1,0 +1,275 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-PranavDani/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-gkulhare/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+
+void RaftServiceImpl::HandleRequestVote(const uint64_t& currTerm,
+                                        const uint64_t& candidateId,
+                                        const uint64_t& lastLogIndex,
+                                        const uint64_t& lastLogTerm,
+                                        uint64_t *updatedTerm,
+                                        bool_t *vote_granted,
+                                        rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("%d: received a request vote from: %d currTerm is %d and my current term is %d", svr_-&gt;loc_id_ ,candidateId, currTerm,svr_-&gt;currTerm);
+  
+  *vote_granted=false;
+  if(svr_-&gt;currTerm&gt;currTerm){
+    *vote_granted = false;
+    Log_info("%d: I will not grant my vote to %d",svr_-&gt;loc_id_, candidateId);
+  }
+
+  else {
+    if(svr_-&gt;currTerm&lt;currTerm){
+      svr_-&gt;isLeader=false;
+      svr_-&gt;currTerm=currTerm;
+      svr_-&gt;votedFor= -1;
+      //svr_-&gt;electionTimer.reset();
+      //svr_-&gt;electionTimer.start();
+      //Log_info("TIMER RESET");
+      //Log_info("%d :I'VE SET MY VOTED FOR AND RESET MY TIMER",svr_-&gt;loc_id_);
+    }
+    if(svr_-&gt;votedFor==-1 || svr_-&gt;votedFor==candidateId){
+      if(lastLogTerm&gt;=svr_-&gt;logs[svr_-&gt;logs.size()-1].term){
+        if(lastLogTerm!=svr_-&gt;logs[svr_-&gt;logs.size()-1].term || lastLogIndex&gt;=svr_-&gt;logs.size()-1){
+        *vote_granted = true;
+        svr_-&gt;votedFor=candidateId;
+        svr_-&gt;electionTimer.reset();
+        svr_-&gt;electionTimer.start();
+        Log_info("%d: I will grant my vote to %d, my current term is %d", svr_-&gt;loc_id_, candidateId,svr_-&gt;currTerm);
+        }
+        else{
+          *vote_granted=false;
+          Log_info("%d: I will not grant my vote to %d",svr_-&gt;loc_id_, candidateId);
+        }
+      }
+      else{
+        *vote_granted=false;
+        Log_info("%d: I will not grant my vote to %d",svr_-&gt;loc_id_, candidateId);
+      }
+    }
+  }
+  *updatedTerm = svr_-&gt;currTerm;
+  defer-&gt;reply();
+}
+
+// void RaftServiceImpl::HandleHeartbeat(const uint64_t currTerm,
+//                                       const uint64_t candidateId,
+//                                       const uint64_t lastLogIndex,
+//                                       const uint64_t lastLogTerm,
+//                                       uint64_t *updatedTerm,
+//                                       bool_t *heartbeatAck,
+//                                       rrr::DeferredReply* defer){
+
+//   if(svr_-&gt;currTerm&gt;currTerm){
+//     *heartbeatAck=false;
+//   }
+  
+//   if(svr_-&gt;currTerm&lt;=currTerm){
+  
+//     *heartbeatAck=true;
+//     svr_-&gt;isLeader=false;
+//     svr_-&gt;currTerm=currTerm;
+//     Log_info("%d :RECEVIED A HEARTBEAT FROM %d, RESETTING MY TIMER",svr_-&gt;loc_id_,candidateId);
+//     svr_-&gt;electionTimer.reset();
+//     svr_-&gt;electionTimer.start();
+//     Log_info("TIMER RESET");
+//   }
+
+//   *updatedTerm=svr_-&gt;currTerm;
+
+//   defer-&gt;reply();
+// }
+
+void RaftServiceImpl::HandleAppendEntries(const uint64_t& currTerm,
+                                          const uint64_t& candidateId,
+                                          const uint64_t& lastLogIndex,
+                                          const uint64_t& lastLogTerm,
+                                          const uint64_t& leaderIndex,
+                                          const vector&lt;uint64_t&gt;& terms,
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match225-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                          const vector&lt;MarshallDeputy&gt;& md,
+                                          uint64_t* updatedTerm,
+                                          bool_t* success,
+                                          rrr::DeferredReply* defer) {
+  /* Your code here */
+  vector&lt;shared_ptr&lt;Marshallable&gt;&gt; logEntries;
+  for(int i=0;i&lt;md.size();i++){
+</FONT>  logEntries.push_back(const_cast&lt;MarshallDeputy&&gt;(md[i]).sp_data_);
+  }
+
+  if(svr_-&gt;currTerm&gt;currTerm){
+    *success=false;
+    *updatedTerm=svr_-&gt;currTerm;
+    Log_info("%d : replied false to the appendentry because my term is greater = %d", svr_-&gt;loc_id_,svr_-&gt;currTerm);
+  }
+  else{
+    if(svr_-&gt;currTerm&lt;currTerm){
+      svr_-&gt;isLeader=false;
+      svr_-&gt;currTerm = currTerm;
+      svr_-&gt;votedFor= -1;
+      svr_-&gt;electionTimer.reset();
+      svr_-&gt;electionTimer.start();
+      Log_info("TIMER RESET");
+      //Log_info("%d :I'VE SET MY VOTED FOR AND RESET MY TIMER",svr_-&gt;loc_id_);
+    }
+  if(lastLogTerm&gt;svr_-&gt;logs[svr_-&gt;logs.size()-1].term){
+    svr_-&gt;isLeader=false;
+    svr_-&gt;votedFor= candidateId;
+    svr_-&gt;electionTimer.reset();
+    svr_-&gt;electionTimer.start();
+    Log_info("%d :Reset my timer since your log has a higher term number for last log",svr_-&gt;loc_id_);
+  }
+  if(lastLogIndex&lt;=svr_-&gt;logs.size()-1){ 
+    if(lastLogTerm==svr_-&gt;logs[lastLogIndex].term){ 
+      *success=true;
+        Log_info("%d :log size before adding log: %d",svr_-&gt;loc_id_,svr_-&gt;logs.size());
+        svr_-&gt;isLeader=false;
+        svr_-&gt;votedFor= candidateId;
+        svr_-&gt;electionTimer.reset();
+        svr_-&gt;electionTimer.start();
+        Log_info("TIMER RESET");
+        if(lastLogIndex+1==svr_-&gt;logs.size()){
+          //svr_-&gt;mtx_.lock();
+          for(int i=0;i&lt;md.size();i++){
+            svr_-&gt;logs.push_back(log(logEntries[i],terms[i]));
+          }
+          //svr_-&gt;mtx_.unlock();
+        }
+        else{
+          svr_-&gt;logs.erase(svr_-&gt;logs.begin()+lastLogIndex+1,svr_-&gt;logs.end());
+          for(int i=0;i&lt;md.size();i++){
+            svr_-&gt;logs.push_back(log(logEntries[i],terms[i]));
+          }
+        }
+        Log_info("%d :the last last index i received was %d so I set my new log at %d",svr_-&gt;loc_id_,lastLogIndex,lastLogIndex+1);
+        Log_info("%d :log has been added my logs size is %d", svr_-&gt;loc_id_, svr_-&gt;logs.size());
+      if(svr_-&gt;commitIndex&lt;leaderIndex){
+        svr_-&gt;commitIndex=min(leaderIndex,lastLogIndex+1);
+        Log_info("%d :CommitIndex set to %d",svr_-&gt;loc_id_,svr_-&gt;commitIndex);
+      }
+    }
+    else{
+      *success=false;
+      Log_info("%d : replied false to the because log did not match, my log size is %d", svr_-&gt;loc_id_,svr_-&gt;logs.size());
+    }
+  }
+  else{
+    *success=false;
+    Log_info("%d : replied false to the because logindex is too high, my log size is %d", svr_-&gt;loc_id_,svr_-&gt;logs.size());
+  }
+  
+  *updatedTerm=currTerm;
+  }
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleEmptyAppendEntry(const uint64_t& currTerm,
+                                          const uint64_t& candidateId,
+                                          const uint64_t& lastLogIndex,
+                                          const uint64_t& lastLogTerm,
+                                          const uint64_t& leaderIndex,
+                                          uint64_t* updatedTerm,
+                                          bool_t* success,
+                                          rrr::DeferredReply* defer) {
+  /* Your code here */
+
+  if(svr_-&gt;currTerm&gt;currTerm){
+    *success=false;
+    *updatedTerm=svr_-&gt;currTerm;
+    Log_info("% d: don't care about heartbeat, my term is greater", svr_-&gt;loc_id_);
+  }
+  else{
+    if(svr_-&gt;currTerm&lt;currTerm){
+      svr_-&gt;isLeader=false;
+      svr_-&gt;currTerm = currTerm;
+      svr_-&gt;votedFor= -1;
+      svr_-&gt;electionTimer.reset();
+      svr_-&gt;electionTimer.start();
+      Log_info("TIMER RESET");
+      //Log_info("%d :I'VE SET MY VOTED FOR AND RESET MY TIMER",svr_-&gt;loc_id_);
+    }
+  if(lastLogTerm&gt;svr_-&gt;logs[svr_-&gt;logs.size()-1].term){
+    svr_-&gt;isLeader=false;
+    svr_-&gt;votedFor= candidateId;
+    svr_-&gt;electionTimer.reset();
+    svr_-&gt;electionTimer.start();
+  }
+  if(lastLogIndex&lt;=svr_-&gt;logs.size()-1){ 
+    if(lastLogTerm==svr_-&gt;logs[lastLogIndex].term){ 
+      *success=true;
+      Log_info("%d :RECEVIED A HEARTBEAT FROM %d, RESETTING MY TIMER, whose currTerm is %d",svr_-&gt;loc_id_,candidateId,currTerm);
+        svr_-&gt;isLeader=false;
+        svr_-&gt;votedFor= candidateId;
+        svr_-&gt;electionTimer.reset();
+        svr_-&gt;electionTimer.start();
+        Log_info("TIMER RESET");
+      if(svr_-&gt;commitIndex&lt;leaderIndex){
+        svr_-&gt;commitIndex=min(leaderIndex,lastLogIndex+1);
+        Log_info("%d :CommitIndex set to %d",svr_-&gt;loc_id_,svr_-&gt;commitIndex);
+        Log_info("%d :lastApplied is set to %d",svr_-&gt;loc_id_,svr_-&gt;lastApplied);
+      }
+      //if(svr_-&gt;logs.size()-1&gt;lastLogIndex+1){
+      //  svr_-&gt;logs.erase(svr_-&gt;logs.begin()+lastLogIndex+2,svr_-&gt;logs.end());
+      //}
+    }
+    else{
+      *success=false;
+    }
+  }
+  else{
+    *success=false;
+  }
+
+  }
+  //while(svr_-&gt;commitIndex&gt;svr_-&gt;lastApplied){
+  //  Log_info("%d :ENTERED THE LOOP BRUV",svr_-&gt;loc_id_);
+  //  svr_-&gt;lastApplied+=1;
+  //  svr_-&gt;app_next_(*(svr_-&gt;logs[svr_-&gt;lastApplied].logEntry));
+  //  Log_info("%d :Applied the log of entry number %d",svr_-&gt;loc_id_,svr_-&gt;lastApplied);
+  //}
+  if(*success){
+    Log_info("%d : replied true to the heartbeat", svr_-&gt;loc_id_);
+  }
+  else{
+    Log_info("%d : replied false to the heartbeat ", svr_-&gt;loc_id_);
+  }
+  *updatedTerm = svr_-&gt;currTerm;
+  Log_info("%d :my timer says %lf",svr_-&gt;loc_id_,svr_-&gt;electionTimer.elapsed()*1000000);
+  defer-&gt;reply();
+}
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match225-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("receive an rpc: %s", req.c_str());
+  *res = to_string(svr_-&gt;votedFor);
+</FONT>  defer-&gt;reply();
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

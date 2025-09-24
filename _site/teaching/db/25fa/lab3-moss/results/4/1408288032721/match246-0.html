@@ -1,0 +1,307 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-mihirkestur/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-mihirkestur/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+namespace janus {
+
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  /*
+    check if leader,
+    check if no config, if so add 0th
+    get curr conf, 
+    create new conf,
+      assign number as curr+1
+      rebalance shards
+      add new group
+    convert configs to str and then do agreement with raft
+  */
+  if(GetRaftServer().isLeader == 0){
+    Log_info("[Join Pid: %d] I am not the leader %d", GetRaftServer().partition_id_, GetRaftServer().loc_id_);
+    *ret = KV_NOTLEADER;
+  }
+  else{
+    ShardConfig newJoinConfig;
+    // if no configs available. i.e. starting up!
+    if(configs_.size() == 0){
+      ShardConfig firstConfig;
+      // configs_[0] = firstConfig;
+      
+      // do raft agmnt
+      std::lock_guard&lt;std::recursive_mutex&gt; lock(GetRaftServer().mtx_);
+      join_f=false; // reset join var
+      string cmdStr = firstConfig.confToStr();
+      // Log_info("This is serialized %s ", cmdStr.c_str());
+      uint64_t index, term;
+      auto cmd = make_shared&lt;MultiStringMarshallable&gt;();
+      cmd-&gt;data_.push_back("joinbosspls");
+      cmd-&gt;data_.push_back(cmdStr);
+      auto marshallableCmd = std::static_pointer_cast&lt;Marshallable&gt;(cmd);
+      auto resp = GetRaftServer().Start(marshallableCmd, &index, &term);
+      Coroutine::Sleep(400000);
+      if(join_f==true){
+        *ret=KV_SUCCESS;
+      }
+      
+      // Log_info("Inserting config : %d", firstConfig.number);
+    }
+    uint32_t currConfNum = configs_.size()-1;
+    newJoinConfig.number = 1 + currConfNum;
+    ShardConfig currConfig = configs_[currConfNum];
+    uint32_t totalCurrGroups = currConfig.group_servers_map_.size();
+    // init new maps as previous
+    for(auto shTogp: currConfig.shard_group_map_){
+      newJoinConfig.shard_group_map_[shTogp.first] = shTogp.second;
+    }
+    // init new groups as previous
+    for(auto shTogp: currConfig.group_servers_map_){
+      newJoinConfig.group_servers_map_[shTogp.first] = shTogp.second;
+    }
+    // create hash map of gp to shards
+    map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt; groupToShards;
+    for(auto shTogp: currConfig.shard_group_map_){
+      groupToShards[shTogp.second].push_back(shTogp.first);
+    }
+    // rebalance for every new gp
+    for(auto& gid_server: gid_server_map){
+
+      // Check if the group ID already exists in the current configuration
+      if (currConfig.group_servers_map_.find(gid_server.first) != currConfig.group_servers_map_.end()) {
+        // The group ID already exists, ignore and continue with the next iteration
+        Log_info("Group ID %d already exists in the current configuration. Ignoring...", gid_server.first);
+        continue;
+      }
+
+      // add the group
+      newJoinConfig.group_servers_map_[gid_server.first] = gid_server.second;
+      
+      // if no group, then assign all shards to first gp
+      if(totalCurrGroups == 0){
+        for(auto& shard: newJoinConfig.shard_group_map_){
+          shard.second = gid_server.first;
+        }
+      }
+      else{
+        // rebalance every gp to have min num of shards
+        totalCurrGroups = totalCurrGroups + 1;
+        int newGpShardCnt = 0;
+        int newNumShardsPerGp_Min = 10 / (totalCurrGroups);
+        int newNumShardsPerGp_Max = newNumShardsPerGp_Min;
+        if(10 % (totalCurrGroups) &gt; 0){
+          newNumShardsPerGp_Max = 1 + newNumShardsPerGp_Min;
+        }
+        while(newGpShardCnt &lt; newNumShardsPerGp_Min){
+          // Find the gp which has the max shards
+          int maxKey = -1;
+          int maxSize = 0;
+          for (auto& entry : groupToShards) {
+            if (entry.second.size() &gt; maxSize) {
+              maxKey = entry.first;
+              maxSize = entry.second.size();
+            }
+          }
+          int shardValToTransfer = groupToShards[maxKey].back();
+          groupToShards[maxKey].pop_back();
+          newJoinConfig.shard_group_map_[shardValToTransfer] = gid_server.first;
+          ++newGpShardCnt;
+        }
+      }
+      ++totalCurrGroups;
+    }
+    
+    // Log_info("[Join] Inserting config : %d", newJoinConfig.number);
+    // configs_[newJoinConfig.number] = newJoinConfig;
+    
+    // do raft agmnt
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(GetRaftServer().mtx_);
+    join_f=false; // reset join var
+    string cmdStr = newJoinConfig.confToStr();
+    // Log_info("This is serialized %s ", cmdStr.c_str());
+    uint64_t index, term;
+    auto cmd = make_shared&lt;MultiStringMarshallable&gt;();
+    cmd-&gt;data_.push_back("joinbosspls");
+    cmd-&gt;data_.push_back(cmdStr);
+    auto marshallableCmd = std::static_pointer_cast&lt;Marshallable&gt;(cmd);
+    auto resp = GetRaftServer().Start(marshallableCmd, &index, &term);
+    Coroutine::Sleep(400000);
+    if(join_f==true){
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match246-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      *ret=KV_SUCCESS;
+    }
+    else{
+      *ret=KV_TIMEOUT;
+    }
+    
+    // for(auto x: newJoinConfig.shard_group_map_){
+    //   Log_info("%d : %d", x.first, x.second);
+    // }
+    // *ret = KV_SUCCESS;
+  }
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  /*
+    for every gid that has left, 
+      move each of its shard to remaining servers.
+  */
+  if(GetRaftServer().isLeader == 0){
+</FONT>    Log_info("[Leave Pid: %d] I am not the leader %d", GetRaftServer().partition_id_, GetRaftServer().loc_id_);
+    *ret = KV_NOTLEADER;
+  }
+  else{
+    ShardConfig newLeaveConfig;
+    uint32_t currConfNum = configs_.size()-1;
+    newLeaveConfig.number = 1 + currConfNum;
+    ShardConfig currConfig = configs_[currConfNum];
+    uint32_t totalCurrGroups = currConfig.group_servers_map_.size();
+    // init new maps as previous
+    for(auto shTogp: currConfig.shard_group_map_){
+      newLeaveConfig.shard_group_map_[shTogp.first] = shTogp.second;
+    }
+    // init new groups as previous
+    for(auto shTogp: currConfig.group_servers_map_){
+      newLeaveConfig.group_servers_map_[shTogp.first] = shTogp.second;
+    }
+    // create hash map of gp to shards
+    map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt; groupToShards;
+    for(auto shTogp: currConfig.shard_group_map_){
+      groupToShards[shTogp.second].push_back(shTogp.first);
+    }
+    // rebalance for each gpid thats leaving
+    for(int index = 0; index &lt; gids.size(); index++){
+      // first of all, remove the gp from groups
+      newLeaveConfig.group_servers_map_.erase(gids[index]);
+
+      totalCurrGroups = totalCurrGroups - 1;
+      int leavingGpShardCnt = groupToShards[gids[index]].size();
+      // int newNumShardsPerGp_Min = 10 / (totalCurrGroups);
+      // int newNumShardsPerGp_Max = newNumShardsPerGp_Min;
+      // if(10 % (totalCurrGroups) &gt; 0){
+      //   newNumShardsPerGp_Max = 1 + newNumShardsPerGp_Min;
+      // }
+      while(leavingGpShardCnt &gt; 0){
+        for(auto& entry: groupToShards){
+          if(entry.first != gids[index]){
+            int shardValToTransfer = groupToShards[gids[index]].back();
+            groupToShards[gids[index]].pop_back();
+            groupToShards[entry.first].push_back(shardValToTransfer);
+            newLeaveConfig.shard_group_map_[shardValToTransfer] = entry.first;
+            --leavingGpShardCnt;
+            if(leavingGpShardCnt == 0){
+              break;
+            }
+          }
+        }
+      }
+    }
+    // do raft agmnt
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(GetRaftServer().mtx_);
+    leave_f=false; // reset leave var
+    string cmdStr = newLeaveConfig.confToStr();
+    // Log_info("This is serialized %s ", cmdStr.c_str());
+    uint64_t index, term;
+    auto cmd = make_shared&lt;MultiStringMarshallable&gt;();
+    cmd-&gt;data_.push_back("leavebosspls");
+    cmd-&gt;data_.push_back(cmdStr);
+    auto marshallableCmd = std::static_pointer_cast&lt;Marshallable&gt;(cmd);
+    auto resp = GetRaftServer().Start(marshallableCmd, &index, &term);
+    Coroutine::Sleep(400000);
+    if(leave_f==true){
+      *ret=KV_SUCCESS;
+    }
+    else{
+      *ret=KV_TIMEOUT;
+    }
+    // Log_info("[Leave] Inserting config : %d", newLeaveConfig.number);
+    // configs_[newLeaveConfig.number] = newLeaveConfig;
+    // for(auto x: newLeaveConfig.shard_group_map_){
+    //   Log_info("%d : %d", x.first, x.second);
+    // }
+    // *ret = KV_SUCCESS;
+  }
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match246-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  if(GetRaftServer().isLeader == 0){
+</FONT>    Log_info("[Move Pid: %d] I am not the leader %d", GetRaftServer().partition_id_, GetRaftServer().loc_id_);
+    *ret = KV_NOTLEADER;
+  }
+  else{
+
+  }
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+  // your code here
+  if(GetRaftServer().isLeader == 0){
+    Log_info("[Query Pid: %d] I am not the leader %d", GetRaftServer().partition_id_, GetRaftServer().loc_id_);
+    *ret = KV_NOTLEADER;
+  }
+  else{
+    // what to do when there are no configs?
+    Log_info("[Query: %d] Configs Size %d", config_no, configs_.size());
+    if(config_no == -1 || config_no &gt; configs_.size()-1){
+      *config = configs_[configs_.size()-1];
+      // Log_info("Number of groups %d", config-&gt;group_servers_map_.size());
+      // Log_info("Config number sent %d", config-&gt;number);
+    }
+    else{
+      *config = configs_[config_no];
+    }
+    *ret = KV_SUCCESS;
+  }
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  // your code here
+  auto v = (MultiStringMarshallable*)(&m);
+  /* your code here */
+  auto data = v-&gt;data_;
+  if(data[0] == "joinbosspls"){
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(GetRaftServer().mtx_);
+    join_f=true;
+    ShardConfig newJoinConf;
+    newJoinConf.strToConf(data[1]);
+    // Log_info("Join consensus %d [conf num %d]!", GetRaftServer().loc_id_, newJoinConf.number);
+    Log_info("[Join] Inserting config : %d", newJoinConf.number);
+    configs_[newJoinConf.number] = newJoinConf;
+  }
+  else if(data[0] == "leavebosspls"){
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(GetRaftServer().mtx_);
+    leave_f=true;
+    ShardConfig newleaveConf;
+    newleaveConf.strToConf(data[1]);
+    // Log_info("Leave consensus %d [conf num %d]!", GetRaftServer().loc_id_, newleaveConf.number);
+    Log_info("[Leave] Inserting config : %d", newleaveConf.number);
+    configs_[newleaveConf.number] = newleaveConf;
+  }
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  return cli;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

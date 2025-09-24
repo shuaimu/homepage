@@ -1,0 +1,241 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-Dhavall07/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-rads284/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+
+void RaftServiceImpl::HandleRequestVote(const uint64_t& candidate_term,
+                                        const uint64_t& candidate_id,
+                                        const uint64_t& last_log_index,
+                                        const uint64_t& last_log_term,
+                                        uint64_t* term,
+                                        bool_t* vote_granted,
+                                        rrr::DeferredReply* defer) {
+
+  *term = 0;
+  *vote_granted = false;
+  uint64_t svr_last_log_term = svr_-&gt;GetTerm(svr_-&gt;last_log_index);
+
+  if (candidate_id == svr_-&gt;loc_id_) {
+    *term = candidate_term;
+    *vote_granted = true;
+    svr_-&gt;last_reset_timestamp = Time::now(true);
+    svr_-&gt;voted_for = candidate_id;
+  } else {
+
+    if (candidate_term &gt; svr_-&gt;current_term) {
+        svr_-&gt;state = State::follower;
+        svr_-&gt;current_term = candidate_term;
+        svr_-&gt;voted_for = -1;
+        svr_-&gt;last_reset_timestamp = Time::now(true);
+    }
+    if ((candidate_term == svr_-&gt;current_term) && 
+                (svr_-&gt;voted_for == -1 || svr_-&gt;voted_for == candidate_id) &&
+                ((last_log_term &gt; svr_last_log_term) ||
+                ((last_log_term == svr_last_log_term) && (last_log_index &gt;= svr_-&gt;last_log_index))
+                )
+                ) {
+                *term = candidate_term;
+                *vote_granted = true;
+                svr_-&gt;last_reset_timestamp = Time::now(true);
+                svr_-&gt;voted_for = candidate_id;
+                Log_info("Vote Granted Logupto Date : Server id : %lu Candidate id : %lu Server Current Term : %lu", svr_-&gt;loc_id_, candidate_id, svr_-&gt;current_term);
+    } else {
+            *term = svr_-&gt;current_term;
+            *vote_granted = false;
+            Log_info("Vote Reject : Server Log is longer, more upto date : Server id : %lu Server Term %lu TO Candidate : %lu Candidate Term : %lu Ldr Last Log Term %lu My Last Log Term %lu Svr LLI %lu LDR LLI %lu voted for %d", 
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match102-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+            svr_-&gt;loc_id_, svr_-&gt;current_term, candidate_id, candidate_term, last_log_term, svr_last_log_term, svr_-&gt;last_log_index, last_log_index, svr_-&gt;voted_for);
+    }
+  }
+  
+   defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("receive an rpc: %s", req.c_str());
+  *res = "world";
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t& leader_term,
+                                               const uint64_t& leader_id,
+</FONT>                                               const uint64_t& last_log_index,
+                                               const uint64_t& last_log_term,
+                                               const uint64_t& commit_index,
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match102-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                               const std::vector&lt;uint64_t&gt;& log_entries_idx,
+                                               uint64_t* curr_term,
+                                               uint64_t* next_index_val,
+                                               bool_t* is_success,
+                                               rrr::DeferredReply* defer) {
+  /* Your code here */
+  // resets the election timeout so that other servers don’t step forward as leaders when one has already been elected
+  *is_success = false;
+</FONT>  svr_-&gt;last_reset_timestamp = Time::now(true);
+  if (svr_-&gt;loc_id_ != leader_id) {
+    uint64_t svr_last_log_term = svr_-&gt;GetTerm(last_log_index);
+
+    if (svr_-&gt;current_term &gt; leader_term) {
+        // Rcvr impl point 1
+        *is_success = false;
+        Log_info("Heartbeat Rejected :  Leader id : %lu Server Id : %lu  Current term : %lu", leader_id,  svr_-&gt;loc_id_,svr_-&gt;current_term);
+
+    } else if  ((last_log_index == 0) ||
+               ((svr_-&gt;log_entries_idx.size() &gt;= last_log_index) && (last_log_term == svr_last_log_term))) {
+        
+        svr_-&gt;current_term = leader_term;
+        svr_-&gt;state = State::follower;
+        *is_success = true;
+
+        if (commit_index &gt; svr_-&gt;commit_index) {
+            // Rcvr impl point 5
+            if (svr_-&gt;last_log_index &lt; commit_index){
+                svr_-&gt;CommitEntries(svr_-&gt;last_log_index);
+                svr_-&gt;commit_index = svr_-&gt;last_log_index;
+            } else {
+                svr_-&gt;CommitEntries(commit_index);
+                svr_-&gt;commit_index = commit_index;
+            }
+        }
+        Log_info("Heartbeat Rcvd :  Leader id : %lu Server Id : %lu  Current term : %lu", leader_id,  svr_-&gt;loc_id_,svr_-&gt;current_term);
+    
+    } else {
+        *is_success = false;
+        if (last_log_index &gt; 0){
+            *next_index_val = last_log_index - 1;
+        }
+        Log_info("Heartbeat Rejected Reason : Log not up to date  Leader id : %lu Server Id : %lu  \
+        ldr_last_log_term %lu svr_last_log_term : %lu", leader_id,  svr_-&gt;loc_id_, last_log_term,svr_last_log_term);
+        Log_info("last_log_index %lu == svr_-&gt;last_log_index %lu  && last_log_term %lu == svr_last_log_term %lu", \
+        last_log_index, svr_-&gt;last_log_index,last_log_term, svr_last_log_term);
+    }
+
+  } else {
+        *is_success = true;
+  }
+  
+  *curr_term = svr_-&gt;current_term;
+  svr_-&gt;last_reset_timestamp = Time::now(true);
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleAppendEntries(const uint64_t& leader_term,
+                                          const uint64_t& leader_id,
+                                          const uint64_t& last_log_index,
+                                          const uint64_t& last_log_term,
+                                          const uint64_t& commit_index,
+                                          const std::vector&lt;uint64_t&gt;& log_entries_idx,
+                                          const std::unordered_map&lt;uint64_t, MarshallDeputy&gt;& log_entries_str,
+                                          uint64_t* curr_term,
+                                          uint64_t* curr_last_log_index,
+                                          bool_t* is_success,
+                                          rrr::DeferredReply* defer) {
+  /* Your code here */
+  if (svr_-&gt;loc_id_ != leader_id) {
+
+    uint64_t svr_last_log_term = svr_-&gt;GetTerm(last_log_index);
+    *curr_last_log_index = svr_-&gt;last_log_index;
+    *is_success = false;
+    svr_-&gt;last_reset_timestamp = Time::now(true);
+
+    // Log_info("Log Entry Size %d Svr id %lu",svr_-&gt;log_entries_idx.size(), svr_-&gt;loc_id_ );
+    if (svr_-&gt;current_term &gt; leader_term) {
+     
+        // Rcvr impl point 1
+        *curr_term = svr_-&gt;current_term;
+        *is_success = false;
+        Log_info("Append Entry Rejected :  Leader id : %lu Server Id : %lu  Current term : %lu", leader_id,  svr_-&gt;loc_id_,svr_-&gt;current_term);
+    } else if  ((last_log_index == 0) ||
+            ((svr_-&gt;log_entries_idx.size() &gt;= last_log_index) && (last_log_term == svr_last_log_term))) {
+        // Rcvr impl for 3 & 4 here.
+        // Knowing that there is a matching entry
+        *is_success = true;
+        *curr_term = svr_-&gt;current_term;
+        // verify(leader_term == svr_-&gt;current_term);
+        // Write a loop to find point in svr where log needs to be appended
+        // Either the conflict/the end
+        
+        uint64_t idx_to_insert_at = last_log_index + 1;
+        uint64_t leader_log_size = log_entries_idx.size();
+        while (true) {
+            // Have we reached end of either log
+            if (idx_to_insert_at &gt;= svr_-&gt;log_entries_idx.size() || idx_to_insert_at &gt;= leader_log_size)
+                break;
+            // Are the terms mismatching?
+            if (svr_-&gt;log_entries_idx[idx_to_insert_at] != log_entries_idx[idx_to_insert_at])
+                break;
+            idx_to_insert_at++;
+        }
+        // Log_info("idx_to_insert_at %lu leader_log_size %lu", idx_to_insert_at, leader_log_size);
+
+        for (; idx_to_insert_at &lt;= leader_log_size; idx_to_insert_at++){
+            // Get Leader Entry and send stuff
+            auto it = log_entries_str.find(idx_to_insert_at);
+            if (it != log_entries_str.end()) {
+                svr_-&gt;InsertLogEntry(log_entries_idx[idx_to_insert_at-1], idx_to_insert_at, it-&gt;second.sp_data_);
+            }   
+        }
+        svr_-&gt;last_log_index = idx_to_insert_at - 1;
+        *curr_last_log_index = svr_-&gt;last_log_index;
+        // Log_info("curr_last_log_index %lu", *curr_last_log_index);
+        verify(svr_-&gt;last_log_index ==  (svr_-&gt;log_entries_idx.size()));
+
+        if (commit_index &gt; svr_-&gt;commit_index) {
+            // Rcvr impl point 5
+            if (svr_-&gt;last_log_index &lt; commit_index){
+                svr_-&gt;CommitEntries(svr_-&gt;last_log_index);
+                svr_-&gt;commit_index = svr_-&gt;last_log_index;
+            } else {
+                svr_-&gt;CommitEntries(commit_index);
+                svr_-&gt;commit_index = commit_index;
+            }
+        }
+        
+        *is_success = true;
+        svr_-&gt;current_term = leader_term;
+        Log_info("Append Entry : Accept Server Id : %lu Commit Index %lu", svr_-&gt;loc_id_, svr_-&gt;commit_index);
+    
+    } else {
+        *curr_term = svr_-&gt;current_term;
+        Log_info("Append Entry Rejected Leader id : %lu Server Id : %lu  \
+        Current term : %lu", leader_id,  svr_-&gt;loc_id_, *curr_term);
+        Log_info("last_log_index %lu &lt;= svr_-&gt;last_log_index %lu  && svr_-&gt;log_entries_idx[last_log_index - 1].term %lu != last_log_term %lu", \
+        last_log_index, svr_-&gt;last_log_index, svr_last_log_term, last_log_term);
+        
+    }
+  } else {
+    // If its a self call return.
+    *is_success = true;
+    svr_-&gt;current_term = leader_term;
+  }
+  svr_-&gt;last_reset_timestamp = Time::now(true);
+  defer-&gt;reply();
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

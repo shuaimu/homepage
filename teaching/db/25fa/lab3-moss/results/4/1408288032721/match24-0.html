@@ -1,0 +1,174 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-Aditiii/src/shardkv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-Aditiii/src/shardkv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+int64_t ShardKvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+shared_ptr&lt;IntEvent&gt; 
+ShardKvServer::callToStart(shared_ptr&lt;Marshallable&gt; cmdptr_m, uint64_t &ind, uint64_t &term) {
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  RaftServer& rs = GetRaftServer();
+  bool success = rs.Start(cmdptr_m, &ind, &term);
+  return ev;
+}
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match24-1.html#3" TARGET="1"><IMG SRC="../../../bitmaps/tm_3_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+int ShardKvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+    // lab_shard: fill in your code
+    RaftServer& rs = GetRaftServer();
+    if (rs.isLeader) {
+</FONT>    // Log_info("Executing Put Operation for %d with key:value %s:%s", sp_log_svr_-&gt;site_id_, k.c_str(), v.c_str());
+    //auto future = async(launch::async, [oid, k, v, this]() {
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match24-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("put");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);
+    uint64_t ind;
+    uint64_t term;
+    auto cmdptr_m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+</FONT>    auto event = callToStart(cmdptr_m, ind, term);
+    event-&gt;Wait(500000);
+    if (kv_store_[k]==v) {
+        //CheckRaftSize(ind);
+        return KV_SUCCESS;
+    } else {
+      return KV_TIMEOUT;
+    }
+  } else {
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match24-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    return KV_NOTLEADER;
+  }
+    return KV_SUCCESS;
+}
+
+int ShardKvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+    // lab_shard: fill in your code
+  RaftServer& rs = GetRaftServer();
+  if (rs.isLeader) {
+</FONT>    // Log_info("Executing Append Operation for %d with key:value %s:%s", sp_log_svr_-&gt;site_id_, k.c_str(), v.c_str());
+  //auto future = async(launch::async, [oid, k, v, this]() {
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match24-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("append");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);
+    uint64_t ind;
+    uint64_t term;
+    auto cmdptr_m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+</FONT>    string oldValue = kv_store_[k].c_str();
+    auto event = callToStart(cmdptr_m, ind, term);
+    event-&gt;Wait(500000);
+    Log_info("%s, %s - printing appended value", oldValue.append(v).c_str(), kv_store_[k].c_str());
+    if (oldValue.append(v).compare(kv_store_[k])) {
+        return KV_SUCCESS;
+    } else {
+        return KV_NOTLEADER;
+    }
+  } else {
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match24-1.html#4" TARGET="1"><IMG SRC="../../../bitmaps/tm_4_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    return KV_NOTLEADER;
+  }
+}
+
+int ShardKvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+    // lab_shard: fill in your code
+  RaftServer& rs = GetRaftServer();
+  if (rs.isLeader) {
+</FONT>    // Log_info("Executing Get Operation for %d with key %s", sp_log_svr_-&gt;site_id_, k.c_str());  
+  //auto future = async(launch::async, [oid, k, v, this]() {
+    timeout = true;
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("get");
+    s-&gt;data_.push_back(k);
+    RaftServer& rs = GetRaftServer();
+    uint64_t ind;
+    uint64_t term;
+    auto cmdptr_m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+    auto event = callToStart(cmdptr_m, ind, term);
+    event-&gt;Wait(500000);
+    //Log_info("timeout = %d", timeout);
+    if (!timeout && kv_store_.find(k)!=kv_store_.end()) {
+        *v = kv_store_[k];
+        // Log_info("Value returning - %s", v-&gt;c_str());
+        //CheckRaftSize(ind);
+        return KV_SUCCESS;
+    } else {
+        // Log_info("returning timeout");
+        return KV_TIMEOUT;
+    }
+  } else {
+    return KV_NOTLEADER;
+  }
+}
+
+void ShardKvServer::OnNextCommand(Marshallable& m) {
+    // lab_shard: fill in your code
+  Coroutine::CreateRun([&m, this](){
+    RaftServer& rs = GetRaftServer();
+    auto command = (MultiStringMarshallable*)(&m);
+    if (command-&gt;data_.empty()) {
+      return;
+    }
+    string operationType = command-&gt;data_[1];
+    if (operationType == "put") {
+      string key = command-&gt;data_[2];
+      string value = command-&gt;data_[3];
+      kv_store_[key] = value;
+      // Log_info("Applied Put operation for key:value %s:%s for %d", key.c_str(), value.c_str(), rs.site_id_);
+    } else if (operationType == "append") {
+      string key = command-&gt;data_[2];
+      string value = command-&gt;data_[3];
+      kv_store_[key].append(value);
+      // Log_info("Applied Append operation for value %s:%s for %d", key.c_str(), value.c_str(), rs.site_id_);
+    } else {
+      // Log_info("Applied Get operation"); 
+      timeout = false;
+    }
+  });
+}
+
+shared_ptr&lt;ShardKvClient&gt; ShardKvServer::CreateClient(Communicator* comm) {
+  auto cli = make_shared&lt;ShardKvClient&gt;();
+  cli-&gt;commo_ = comm;
+  verify(cli-&gt;commo_ != nullptr);
+  static uint32_t id = 0;
+  id++;
+  cli-&gt;cli_id_ = id; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

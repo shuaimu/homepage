@@ -1,0 +1,132 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-gaurav-aggarwall/src/shardkv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-gaurav-aggarwall/src/shardkv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus
+{
+
+  int64_t ShardKvServer::GetNextOpId()
+  {
+    verify(sp_log_svr_);
+    int64_t ret = sp_log_svr_-&gt;site_id_;
+    ret = ret &lt;&lt; 32;
+    ret = ret + op_id_cnt_++;
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match156-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    return ret;
+  }
+
+  int ShardKvServer::submitCommandToRaft(const uint64_t &operationId, const string &operation, const string &key, const string &value)
+  {
+    MultiStringMarshallable sm;
+</FONT>
+    string opId = to_string(operationId);
+
+    sm.data_.push_back(opId);
+    sm.data_.push_back(operation);
+    sm.data_.push_back(key);
+    sm.data_.push_back(value);
+
+    shared_ptr&lt;Marshallable&gt; s = make_shared&lt;MultiStringMarshallable&gt;(sm);
+
+    RaftServer &raftServer = GetRaftServer();
+    uint64_t index, term;
+
+    bool result = raftServer.Start(s, &index, &term);
+
+    if (!result)
+      return KV_NOTLEADER;
+
+    pendingOpIds.insert(opId);
+
+    struct timeval startTime;
+    gettimeofday(&startTime, nullptr);
+
+    while (true)
+    {
+      struct timeval currentTime;
+      gettimeofday(&currentTime, nullptr);
+      int64_t timeElapsed = (currentTime.tv_sec - startTime.tv_sec) * SECONDS_TO_MICROSECONDS + currentTime.tv_usec - startTime.tv_usec;
+
+      if (timeElapsed &gt;= 10 * SECONDS_TO_MICROSECONDS)
+        return KV_TIMEOUT;
+
+      if (pendingOpIds.find(opId) == pendingOpIds.end())
+        break;
+
+      Coroutine::Sleep(100 * MILLISECONDS_TO_MICROSECONDS);
+    }
+
+    return KV_SUCCESS;
+  }
+
+  int ShardKvServer::Put(const uint64_t &oid, const string &k, const string &v)
+  {
+    Log_info("PUT Command received %s", k.c_str());
+    return submitCommandToRaft(oid, PUT, k, v);
+  }
+
+  int ShardKvServer::Append(const uint64_t &oid, const string &k, const string &v)
+  {
+    Log_info("APPEND Command received %s", k.c_str());
+    return submitCommandToRaft(oid, APPEND, k, v);
+  }
+
+  int ShardKvServer::Get(const uint64_t &oid, const string &k, string *v)
+  {
+    Log_info("Get Command received %s", k.c_str());
+
+    int response = submitCommandToRaft(oid, GET, k, "");
+    *v = kv_store_[k];
+    return response;
+  }
+
+  void ShardKvServer::OnNextCommand(Marshallable &m)
+  {
+    auto v = (MultiStringMarshallable *)(&m);
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match156-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    string oid = v-&gt;data_[0];
+    string op = v-&gt;data_[1];
+    string key = v-&gt;data_[2];
+    string value = v-&gt;data_[3];
+</FONT>
+    pendingOpIds.erase(oid);
+
+    if (op == PUT)
+      kv_store_[key] = value;
+    else if (op == APPEND)
+    {
+      if (kv_store_.find(key) == kv_store_.end())
+        kv_store_[key] = value;
+      else
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match156-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        kv_store_[key] += value;
+    }
+  }
+
+  shared_ptr&lt;ShardKvClient&gt; ShardKvServer::CreateClient(Communicator *comm)
+  {
+    auto cli = make_shared&lt;ShardKvClient&gt;();
+    cli-&gt;commo_ = comm;
+</FONT>    verify(cli-&gt;commo_ != nullptr);
+    static uint32_t id = 0;
+    id++;
+    cli-&gt;cli_id_ = id;
+    return cli;
+  }
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

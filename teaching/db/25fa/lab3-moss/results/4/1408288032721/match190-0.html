@@ -1,0 +1,245 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-coladog/src/shardkv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-coladog/src/shardkv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+int64_t ShardKvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int ShardKvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+    // lab_shard: fill in your code
+
+  if (IsOIDDuplicated(oid)) {
+    // Log_info("[+] KV_SUCCESS");
+    return KV_SUCCESS;
+  }
+  
+  Log_info("[+] PUT %s %s", k.c_str(), v.c_str());
+
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match190-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+
+  bool *signal;
+</FONT>  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lk(mtx_);
+    notifiers[oid] = false;
+    signal = &notifiers[oid];
+  }
+
+  uint64_t index, term;
+  shared_ptr&lt;Marshallable&gt; cmd(s);
+  if (!GetRaftServer().Start(cmd, &index, &term)) {
+    // Log_info("[+] KV_NOTLEADER");
+    return KV_NOTLEADER;
+  } else {
+    termReceived[oid] = term;
+
+    for (int i = 0; i &lt; REQUEST_TIMEOUT_ROUND; i++) {
+      Coroutine::Sleep(BUSY_LOOP_SLEEP_US);
+      if (*signal)
+        break;
+    }
+  }
+
+  if (!*signal) checkEvilSitu();
+    
+  if (!*signal) {
+    // Log_info("[+] KVServer returning KV_TIMEOUT");
+    return KV_TIMEOUT;
+  }
+
+  // Log_info("[+] KV_SUCCESS");
+  return KV_SUCCESS;
+}
+
+int ShardKvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+    // lab_shard: fill in your code
+
+  if (IsOIDDuplicated(oid)) 
+    return KV_SUCCESS;
+
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match190-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("append");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+
+  bool *signal;
+</FONT>  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lk(mtx_);
+    notifiers[oid] = false;
+    signal = &notifiers[oid];
+  }
+
+  uint64_t index, term;
+  shared_ptr&lt;Marshallable&gt; cmd(s);
+  if (!GetRaftServer().Start(cmd, &index, &term)) {
+    // Log_info("[+] KV_NOTLEADER");
+
+    return KV_NOTLEADER;
+  } else {
+    termReceived[oid] = term;
+
+    for (int i = 0; i &lt; REQUEST_TIMEOUT_ROUND; i++) {
+      Coroutine::Sleep(BUSY_LOOP_SLEEP_US);
+      if (*signal)
+        break;
+    }
+  }
+
+  if (!*signal) checkEvilSitu();
+
+  if (!*signal) {
+    Log_info("[+] KV_TIMEOUT");
+    return KV_TIMEOUT;
+  }
+
+  return KV_SUCCESS;
+}
+
+int ShardKvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+    // lab_shard: fill in your code
+
+  if (IsOIDDuplicated(oid)) {
+    std::lock_guard&lt;std::recursive_mutex&gt; lk(mtx_);
+    *v = executedRequests[oid];
+    return KV_SUCCESS;
+  }
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match190-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("get");
+  s-&gt;data_.push_back(k);
+
+  bool *signal;
+</FONT>  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lk(mtx_);
+    notifiers[oid] = false;
+    signal = &notifiers[oid];
+  }
+
+  uint64_t index, term;
+  shared_ptr&lt;Marshallable&gt; cmd(s);
+  if (!GetRaftServer().Start(cmd, &index, &term)) {
+    return KV_NOTLEADER;
+  } else {
+    termReceived[oid] = term;
+
+    for (int i = 0; i &lt; REQUEST_TIMEOUT_ROUND; i++) {
+      Coroutine::Sleep(BUSY_LOOP_SLEEP_US);
+      if (*signal)
+        break;
+    }
+  }
+
+  if (!*signal) checkEvilSitu();
+
+  if (!*signal)
+    return KV_TIMEOUT;
+
+  *v = executedRequests[oid];
+  return KV_SUCCESS;
+}
+
+void ShardKvServer::OnNextCommand(Marshallable& m) {
+    // lab_shard: fill in your code
+  auto deputy = MarshallDeputy(make_shared&lt;Marshallable&gt;(m));
+
+  if (deputy.kind_ == deputy.CMD_SNAPSHOT) {
+    verify(0);
+  } else {
+    verify(deputy.kind_ == deputy.CMD_MULTI_STRING);
+
+    auto v = (MultiStringMarshallable*)(&m);
+
+    uint64_t oid = strToUint64(v-&gt;data_[0]);
+    std::string opType = v-&gt;data_[1];
+
+    if (IsOIDDuplicated(oid)) {
+
+    } else {
+      std::lock_guard&lt;std::recursive_mutex&gt; lk(mtx_);
+      if (opType == "put") {
+        std::string key   = v-&gt;data_[2];
+        std::string value = v-&gt;data_[3];
+        kv[key] = value;
+        executedRequests[oid] = "done";
+      } else if (opType == "append") {
+        std::string key   = v-&gt;data_[2];
+        std::string value = v-&gt;data_[3];
+        kv[key] += value;
+        executedRequests[oid] = "done";
+      } else if (opType == "get") {
+        std::string key   = v-&gt;data_[2];
+        executedRequests[oid] = kv[key];
+      } else {
+        verify(0);
+      }
+    }
+    bool isLeader;
+    uint64_t currentTerm;
+    GetRaftServer().GetState(&isLeader, &currentTerm);
+
+    std::lock_guard&lt;std::recursive_mutex&gt; lk(mtx_);
+
+    /**
+    if (isLeader &&   
+        currentTerm == termReceived[oid]) {
+      verify(notifiers.find(oid) != notifiers.end());
+      notifiers[oid] = true;
+    }
+    */
+
+    if (notifiers.find(oid) != notifiers.end()) {
+      verify(notifiers.find(oid) != notifiers.end());
+      notifiers[oid] = true;
+    }
+  }
+
+  committedCnt ++;
+}
+
+shared_ptr&lt;ShardKvClient&gt; ShardKvServer::CreateClient(Communicator* comm) {
+  auto cli = make_shared&lt;ShardKvClient&gt;();
+  cli-&gt;commo_ = comm;
+  verify(cli-&gt;commo_ != nullptr);
+  static uint32_t id = 0;
+  id++;
+  cli-&gt;cli_id_ = id; 
+  return cli;
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,194 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-BruceWang3077/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-BruceWang3077/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+#include &lt;time.h&gt;
+
+namespace janus
+{
+
+  static int volatile x1 =
+      MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     []() -&gt; Marshallable *
+                                     {
+                                       return new MultiStringMarshallable;
+                                     });
+
+  int64_t KvServer::GetNextOpId()
+  {
+    verify(sp_log_svr_);
+    int64_t ret = sp_log_svr_-&gt;site_id_;
+    ret = ret &lt;&lt; 32;
+    ret = ret + op_id_cnt_++;
+    return ret;
+  }
+
+  int KvServer::Put(const uint64_t &oid,
+                    const string &k,
+                    const string &v)
+  {
+    /*
+    Your are recommended to use MultiStringMarshallable as the format
+    for the log entries. Here is an example how you can use it.
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(op_id));
+    s-&gt;data_.push_back("put");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);
+    */
+    /* your code here */
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match73-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("put");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);
+    uint64_t *index = new uint64_t;
+</FONT>    uint64_t *term = new uint64_t;
+    std::shared_ptr&lt;Marshallable&gt; marshallablePtr = std::static_pointer_cast&lt;Marshallable&gt;(s);
+
+    //-------------------------------------
+    Log_debug("server %d call start() in put(%ld)", GetRaftServer().loc_id_, oid);
+    //-------------------------------------
+    if (!GetRaftServer().Start(marshallablePtr, index, term))
+    {
+      Log_debug("server %d is not leader, return", GetRaftServer().loc_id_);
+      return KV_NOTLEADER;
+    };
+    Log_debug("result from start: index: %ld, term: %ld", *index, *term);
+    int count = 5;
+    while (count-- &gt; 0)
+    {
+      Coroutine::Sleep(500000);
+      Log_debug("put sleep");
+      if (GetRaftServer().commit_index &gt;= *index)
+      {
+        return KV_SUCCESS;
+      }
+    }
+
+    // std::unique_lock&lt;std::mutex&gt; lk(kv_cv_m);
+    // kv_cv.wait_for(lk, std::chrono::milliseconds(1000));
+    Log_debug("it's server ending waiting in put()");
+    return KV_TIMEOUT;
+  }
+
+  int KvServer::Append(const uint64_t &oid,
+                       const string &k,
+                       const string &v)
+  {
+    /* your code here */
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match73-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("append");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);
+    uint64_t *index = new uint64_t;
+</FONT>    uint64_t *term = new uint64_t;
+    std::shared_ptr&lt;Marshallable&gt; marshallablePtr = std::static_pointer_cast&lt;Marshallable&gt;(s);
+    //-------------------------------------
+    printf("server %d call start() in append(%ld) \n", GetRaftServer().loc_id_, oid);
+    //-------------------------------------
+    if (!GetRaftServer().Start(marshallablePtr, index, term))
+    {
+      return KV_NOTLEADER;
+    };
+    int count = 5;
+    while (count-- &gt; 0)
+    {
+      Coroutine::Sleep(500000);
+      Log_debug("append sleep");
+      if (GetRaftServer().commit_index &gt;= *index)
+      {
+        return KV_SUCCESS;
+      }
+    }
+    // database.append(k, v);
+    return KV_SUCCESS;
+  }
+
+  int KvServer::Get(const uint64_t &oid,
+                    const string &k,
+                    string *v)
+  {
+    /* your code here */
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match73-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("get");
+    s-&gt;data_.push_back(k);
+    // s-&gt;data_.push_back(v);
+    uint64_t *index = new uint64_t;
+</FONT>    uint64_t *term = new uint64_t;
+    std::shared_ptr&lt;Marshallable&gt; marshallablePtr = std::static_pointer_cast&lt;Marshallable&gt;(s);
+    //-------------------------------------
+    printf("server %d call start() in append(%ld) \n", GetRaftServer().loc_id_, oid);
+    //-------------------------------------
+    if (!GetRaftServer().Start(marshallablePtr, index, term))
+    {
+      return KV_NOTLEADER;
+    };
+    int count = 5;
+    while (count-- &gt; 0)
+    {
+      Coroutine::Sleep(500000);
+      Log_debug("get sleep");
+      if (GetRaftServer().commit_index &gt;= *index)
+      {
+        *v = database.get(k);
+        return KV_SUCCESS;
+      }
+    }
+    // *v = database.get(k);
+    return KV_TIMEOUT;
+  }
+
+  void KvServer::OnNextCommand(Marshallable &m)
+  {
+    auto v = (MultiStringMarshallable *)(&m);
+    /* your code here */
+    // int size = v-&gt;data_.size();
+    // for (int i = 0; i &lt; size; i++)
+    // {
+    //   printf("info %d: %s \n", i, v-&gt;data_.at(i));
+    // }
+    if (v-&gt;data_.size() &gt; 1)
+    {
+      if (v-&gt;data_.at(1) == "put")
+      {
+        database.put(v-&gt;data_.at(2), v-&gt;data_.at(3));
+      }
+      else if (v-&gt;data_.at(1) == "append")
+      {
+        database.append(v-&gt;data_.at(2), v-&gt;data_.at(3));
+      }
+    }
+  }
+
+  shared_ptr&lt;KvClient&gt; KvServer::CreateClient()
+  {
+    /* don't change this function */
+    auto cli = make_shared&lt;KvClient&gt;();
+    verify(commo_ != nullptr);
+    cli-&gt;commo_ = commo_;
+    uint32_t id = sp_log_svr_-&gt;site_id_;
+    id = id &lt;&lt; 16;
+    cli-&gt;cli_id_ = id + cli_cnt_++;
+    return cli;
+  }
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

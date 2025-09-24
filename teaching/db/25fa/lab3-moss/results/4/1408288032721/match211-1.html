@@ -1,0 +1,192 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-sugamxp-1/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-ManemDhanush/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+namespace janus {
+
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  number = number + 1;
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back("Join");
+  s-&gt;data_.push_back(to_string(number));
+
+  for (auto &x: gid_server_map) {
+    s-&gt;data_.push_back(to_string(x.second.size()));
+    s-&gt;data_.push_back(to_string(x.first));
+    for (auto &t: x.second) {
+      s-&gt;data_.push_back(to_string(t));
+    }
+  }
+
+  RaftServer& raft = GetRaftServer(); 
+
+  uint64_t ret_term = 0;
+  uint64_t ret_index = 0;
+  bool is_leader = false;
+
+  (&raft)-&gt;GetState(&is_leader, &ret_term);
+
+  if(is_leader){
+    shared_ptr&lt;Marshallable&gt; cmd = s;
+    (&raft)-&gt;Start(cmd, &ret_index, &ret_term);
+    Coroutine::Sleep(600000);
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match211-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    *ret = KV_SUCCESS;
+    defer-&gt;reply();
+    return;
+  }
+  *ret = KV_NOTLEADER;
+  defer-&gt;reply();
+  return;
+}
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+</FONT>  // your code here  
+  number = number + 1;
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back("Leave");
+  s-&gt;data_.push_back(to_string(number));
+
+  for (auto &x: gids) {
+    s-&gt;data_.push_back(to_string(x));
+  }
+  
+  RaftServer& raft = GetRaftServer(); 
+
+  uint64_t ret_term = 0;
+  uint64_t ret_index = 0;
+  bool is_leader = false;
+
+  (&raft)-&gt;GetState(&is_leader, &ret_term);
+
+  if(is_leader){
+    shared_ptr&lt;Marshallable&gt; cmd = s;
+    (&raft)-&gt;Start(cmd, &ret_index, &ret_term);
+    Coroutine::Sleep(600000);
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match211-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    *ret = KV_SUCCESS;
+    defer-&gt;reply();
+    return;
+  }
+
+  *ret = KV_NOTLEADER;
+  defer-&gt;reply();
+  return;
+}
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+</FONT>  // your code here
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+  // your code here
+  number = number + 1;
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back("Query");
+  s-&gt;data_.push_back(to_string(number));
+
+  RaftServer& raft = GetRaftServer(); 
+
+  uint64_t ret_term = 0;
+  uint64_t ret_index = 0;
+  bool is_leader = false;
+
+  (&raft)-&gt;GetState(&is_leader, &ret_term);
+
+
+  if(is_leader){
+    shared_ptr&lt;Marshallable&gt; cmd = s;
+    (&raft)-&gt;Start(cmd, &ret_index, &ret_term);
+    Coroutine::Sleep(600000);
+    *ret = KV_SUCCESS;
+    *config = configs_[number];
+    defer-&gt;reply();
+    return;
+  }
+
+  *ret = KV_NOTLEADER;
+  defer-&gt;reply();
+  return;
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  // your code here
+  auto s = (MultiStringMarshallable*)(&m);
+
+  string operation = s-&gt;data_[0];
+  uint64_t command_number = std::stoull(s -&gt; data_[1]);
+    
+  if (operation == "Join") {
+    map&lt;uint32_t, vector&lt;uint32_t&gt;&gt; gid_server_map;
+    uint64_t i = 2;
+    
+    while (i &lt; s-&gt;data_.size()) {
+      uint64_t size = std::stoull(s-&gt;data_[i++]);        
+      uint64_t key = std::stoull(s-&gt;data_[i++]);
+      gid_server_map[key] = {};
+      
+      for (int k = 0; k &lt; size; k++) {
+        gid_server_map[key].push_back(std::stoull(s-&gt;data_[i++]));
+      }
+    }
+
+    *config = configs_[command_number-1];
+    config-&gt;number = command_number;
+
+    for (auto &x: gid_server_map) {
+      config-&gt;group_servers_map_[x.first] = x.second; 
+    }
+
+    config-&gt;update_shard_join();
+    configs_[command_number] = *config;
+  }
+  else
+  if (operation == "Query") {
+    config-&gt;number = command_number;
+    configs_[command_number] =  configs_[command_number-1];
+  }
+  else
+  if (operation == "Leave") {
+    uint64_t i = 2;
+    vector &lt;uint64_t&gt; remove_gid;
+
+    while (i &lt; s-&gt;data_.size()) {
+      remove_gid.push_back(std::stoull(s-&gt;data_[i++]));
+    }
+
+    *config = configs_[command_number-1];
+    config-&gt;number = command_number;
+
+    for (auto &x: remove_gid) {
+      config-&gt;group_servers_map_.erase(x); 
+    }
+    
+    config-&gt;update_shard_leave();
+    configs_[command_number] = *config;
+  }
+
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  return cli;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

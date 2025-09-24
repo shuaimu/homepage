@@ -1,0 +1,213 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-gokuu13/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-gokuu13/src/shardkv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match42-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+namespace janus
+{
+  const int TIMEOUT = 3 * 1000 * 1000;
+  
+  int64_t ShardKvServer::GetNextOpId()
+  {
+    verify(sp_log_svr_);
+    int64_t ret = sp_log_svr_-&gt;site_id_;
+    ret = ret &lt;&lt; 32;
+    ret = ret + op_id_cnt_++;
+</FONT>    return ret;
+  }
+
+  int ShardKvServer::Put(const uint64_t &oid,
+                         const string &k,
+                         const string &v)
+  {
+    // lab_shard: fill in your code
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match42-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    string oidStr = to_string(oid);
+    eventMap[oidStr] = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    uint64_t servIndex, servIerm;
+    RaftServer &raftServ = GetRaftServer();
+</FONT>    Log_info("Initialised event");
+
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("put");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match42-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    shared_ptr&lt;janus::Marshallable&gt; ptr = s;
+    // auto ptr = dynamic_pointer_cast&lt;janus::Marshallable&gt;(s);
+
+    bool retMessage = raftServ.Start(ptr, &servIndex, &servIerm);
+    Log_info("Start called with Put and oid %s", oidStr.c_str());
+
+    if (retMessage == false)
+    {
+      Log_info("KV_NOTLEADER");
+</FONT>      return KV_NOTLEADER;
+    }
+
+    eventMap[oidStr]-&gt;Wait(TIMEOUT);
+
+    Log_info("Wait done");
+
+    if (eventMap[oidStr]-&gt;status_ == Event::TIMEOUT)
+    {
+      Log_info("timeout happens");
+      return KV_NOTLEADER;
+    }
+    else
+    {
+      kvStore[k] = v;
+      Log_info("KV_SUCCESS");
+      return KV_SUCCESS;
+    }
+  }
+
+  int ShardKvServer::Append(const uint64_t &oid,
+                            const string &k,
+                            const string &v)
+  {
+    // lab_shard: fill in your code
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    string oidStr = to_string(oid);
+    eventMap[oidStr] = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    uint64_t servIndex, servIerm;
+    RaftServer &raftServ = GetRaftServer();
+
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("append");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);
+    shared_ptr&lt;janus::Marshallable&gt; ptr = s;
+    // auto ptr = dynamic_pointer_cast&lt;janus::Marshallable&gt;(s);
+
+    bool retMessage = raftServ.Start(ptr, &servIndex, &servIerm);
+    Log_info("Start called with Append and oid %s", oidStr);
+
+    if (retMessage == false)
+    {
+      return KV_NOTLEADER;
+    }
+
+    eventMap[oidStr]-&gt;Wait(TIMEOUT);
+
+    if (eventMap[oidStr]-&gt;status_ == Event::TIMEOUT)
+    {
+      Log_info("timeout happens");
+      return KV_NOTLEADER;
+    }
+    else
+    {
+      return KV_SUCCESS;
+    }
+  }
+
+  int ShardKvServer::Get(const uint64_t &oid,
+                         const string &k,
+                         string *v)
+  {
+    // lab_shard: fill in your code
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    string oidStr = to_string(oid);
+    eventMap[oidStr] = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    uint64_t servIndex, servIerm;
+    RaftServer &raftServ = GetRaftServer();
+
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back("get");
+    s-&gt;data_.push_back(k);
+
+    shared_ptr&lt;janus::Marshallable&gt; ptr = s;
+    // auto ptr = dynamic_pointer_cast&lt;janus::Marshallable&gt;(s);
+    bool retMessage = raftServ.Start(ptr, &servIndex, &servIerm);
+    Log_info("Start called with Get and oid %s", oidStr);
+
+    if (retMessage == false)
+    {
+      return KV_NOTLEADER;
+    }
+
+    eventMap[oidStr]-&gt;Wait(TIMEOUT);
+
+    if (eventMap[oidStr]-&gt;status_ == Event::TIMEOUT)
+    {
+      Log_info("timeout happens");
+      return KV_NOTLEADER;
+    }
+    else
+    {
+      if (kvStore.find(k) == kvStore.end())
+      {
+        *v = "";
+      }
+      else
+      {
+        *v = kvStore[k];
+      }
+      return KV_SUCCESS;
+    }
+  }
+
+  void ShardKvServer::OnNextCommand(Marshallable &m)
+  {
+    // lab_shard: fill in your code
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match42-0.html#3" TARGET="0"><IMG SRC="../../../bitmaps/tm_3_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    auto v = (MultiStringMarshallable *)(&m);
+    string oid = v-&gt;data_[0];
+    string operation = v-&gt;data_[1];
+    Log_info("OnNextCommand operation - %s", operation.c_str());
+</FONT>    if (operation == "put")
+    {
+      string key = v-&gt;data_[2];
+      string value = v-&gt;data_[3];
+      kvStore[key] = value;
+      Log_info("OnNextCommand Put, oid - %s, operation - %s, key - %s", oid.c_str(), operation.c_str(), key.c_str());
+    }
+    else if (operation == "append")
+    {
+      string key = v-&gt;data_[2];
+      string value = v-&gt;data_[3];
+      if (kvStore.find(key) == kvStore.end())
+      {
+        kvStore[key] = value;
+      }
+      else
+      {
+        string oldValue = kvStore[key];
+        kvStore[key] = oldValue + value;
+      }
+      Log_info("OnNextCommand Append, oid - %s, operation - %s, key - %s", oid.c_str(), operation.c_str(), key.c_str());
+    }
+    if (eventMap.find(oid) == eventMap.end())
+      return;
+    eventMap[oid]-&gt;Set(1);
+  }
+
+  shared_ptr&lt;ShardKvClient&gt; ShardKvServer::CreateClient(Communicator *comm)
+  {
+    auto cli = make_shared&lt;ShardKvClient&gt;();
+    cli-&gt;commo_ = comm;
+    verify(cli-&gt;commo_ != nullptr);
+    static uint32_t id = 0;
+    id++;
+    cli-&gt;cli_id_ = id;
+    return cli;
+  }
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

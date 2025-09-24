@@ -1,0 +1,338 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/prasadmajali/src/shardmaster/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/rajatrh/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+import (
+	"labgob"
+	"labrpc"
+	"log"
+	"math"
+	"raft"
+	"sync"
+	"time"
+)
+
+type ShardMaster struct {
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match82-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	mu        sync.Mutex
+	me        int
+	rf        *raft.Raft
+	applyChan chan raft.ApplyMsg
+
+	// Your data here.
+
+	configArr      []Config // indexed by config num
+	indexOpchanMap map[int]chan Op
+	indexSeqnoMap  map[int64]int
+	killChan       chan bool
+}
+
+type Op struct {
+	// Your data here.
+	OpType string      //Join/Leave/Move/Query
+	Args   interface{} // JoinArgs, LeaveArgs, MoveArgs and QueryArgs
+	Cid    int64
+	SeqNo  int
+</FONT>}
+
+// Debugging
+const Debug = 0
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+	// Your code here.
+	newOperation := Op{}
+
+	newOperation.OpType = "Join"
+	newOperation.Args = *args
+	newOperation.Cid = args.Cid
+	newOperation.SeqNo = args.SeqNo
+
+	DPrintf("Join in Server called with args %v", newOperation)
+
+	reply.WrongLeader = sm.sendEntries(newOperation)
+}
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+	// Your code here.
+	newOperation := Op{}
+
+	newOperation.OpType = "Leave"
+	newOperation.Args = *args
+	newOperation.Cid = args.Cid
+	newOperation.SeqNo = args.SeqNo
+
+	DPrintf("Leave in Server called with args %v", newOperation)
+	reply.WrongLeader = sm.sendEntries(newOperation)
+}
+
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+	// Your code here.
+	newOperation := Op{}
+
+	newOperation.OpType = "Move"
+	newOperation.Args = *args
+	newOperation.Cid = args.Cid
+	newOperation.SeqNo = args.SeqNo
+
+	DPrintf("Move in Server called with args %v", newOperation)
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match82-0.html#7" TARGET="0"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	reply.WrongLeader = sm.sendEntries(newOperation)
+}
+
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+	// Your code here.
+	reply.WrongLeader = true
+
+	newOperation := Op{}
+</FONT>	newOperation.OpType = "Query"
+	newOperation.Args = *args
+
+	DPrintf("Query in Server called with args %v", newOperation)
+
+	reply.WrongLeader = sm.sendEntries(newOperation)
+	if !reply.WrongLeader {
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match82-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		sm.mu.Lock()
+		if args.Num &gt;= 0 && args.Num &lt; len(sm.configArr) {
+			reply.Config = sm.configArr[args.Num]
+		} else {
+			reply.Config = sm.configArr[len(sm.configArr)-1]
+</FONT>		}
+		sm.mu.Unlock()
+	}
+}
+
+// Append Entries
+<A NAME="8"></A><FONT color = #00FFFF><A HREF="match82-0.html#8" TARGET="0"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (sm *ShardMaster) sendEntries(operation Op) bool {
+	wrongLeader := true
+	index, _, isLeader := sm.rf.Start(operation)
+	if !isLeader {
+</FONT>		return wrongLeader
+	}
+
+	sm.mu.Lock()
+	if _, ok := sm.indexOpchanMap[index]; !ok {
+		sm.indexOpchanMap[index] = make(chan Op, 1)
+	}
+	ch := sm.indexOpchanMap[index]
+	sm.mu.Unlock()
+
+	select {
+<A NAME="10"></A><FONT color = #FF0000><A HREF="match82-0.html#10" TARGET="0"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	case op := &lt;-ch:
+		close(ch)
+		sm.mu.Lock()
+		delete(sm.indexOpchanMap, index)
+		sm.mu.Unlock()
+</FONT><A NAME="9"></A><FONT color = #FF00FF><A HREF="match82-0.html#9" TARGET="0"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		if op.SeqNo == operation.SeqNo && op.Cid == operation.Cid && op.OpType == operation.OpType {
+			return false
+</FONT>		}
+	case &lt;-time.After(time.Duration(2) * time.Second):
+		return true
+	}
+	return wrongLeader
+}
+
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+	DPrintf("Kill in Server called")
+	sm.killChan &lt;- true
+	// Your code here, if desired.
+}
+
+func (sm *ShardMaster) Raft() *raft.Raft {
+	return sm.rf
+}
+
+func (sm *ShardMaster) operationOnShards(op string, arg interface{}) {
+	DPrintf("Operation Started! %s", op)
+	lastConfig := sm.configArr[len(sm.configArr)-1]
+	newConfig := Config{}
+
+	newConfig.Num = lastConfig.Num + 1
+	newConfig.Shards = lastConfig.Shards
+	newConfig.Groups = make(map[int][]string)
+
+	for gid, servers := range lastConfig.Groups {
+		newConfig.Groups[gid] = append([]string{}, servers...)
+	}
+	switch op {
+	case "Move":
+		{
+			DPrintf("Move - Operation")
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match82-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			moveArg := arg.(MoveArgs)
+			if _, exists := newConfig.Groups[moveArg.GID]; exists {
+				newConfig.Shards[moveArg.Shard] = moveArg.GID
+			} else {
+				return
+			}
+		}
+	case "Join":
+</FONT>		{
+			DPrintf("Join - Operation")
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match82-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			joinArg := arg.(JoinArgs)
+			for gid, servers := range joinArg.Servers {
+				newServers := make([]string, len(servers))
+				copy(newServers, servers)
+				newConfig.Groups[gid] = newServers
+				shardsCountMap := sm.generateShardsCountMap(&newConfig)
+</FONT>
+				avg := NShards / len(newConfig.Groups)
+				for i := 0; i &lt; avg; i++ {
+
+					// Find the Group with maximum shards
+					var maxGroupId int
+					maxShards := -1
+
+					for x, y := range shardsCountMap {
+						if maxShards &lt; len(y) {
+							maxShards = len(y)
+							maxGroupId = x
+						}
+					}
+
+<A NAME="11"></A><FONT color = #00FF00><A HREF="match82-0.html#11" TARGET="0"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+					newConfig.Shards[shardsCountMap[maxGroupId][0]] = gid
+					shardsCountMap[maxGroupId] = shardsCountMap[maxGroupId][1:]
+</FONT>				}
+			}
+		}
+	case "Leave":
+		{
+			DPrintf("Leave - Operation")
+			leaveArg := arg.(LeaveArgs)
+			for _, gid := range leaveArg.GIDs {
+				delete(newConfig.Groups, gid)
+				shardsCountMap := sm.generateShardsCountMap(&newConfig)
+
+				shardsArray, exists := shardsCountMap[gid]
+				if exists {
+					delete(shardsCountMap, gid)
+					if len(newConfig.Groups) == 0 {
+						newConfig.Shards = [NShards]int{}
+					} else {
+						for _, v := range shardsArray {
+							// Find the Group with minimum shards
+							var minGroupId int
+							minShards := math.MaxInt32 // To be on the safer side
+
+							for x, y := range shardsCountMap {
+								if minShards &gt; len(y) {
+									minShards = len(y)
+									minGroupId = x
+								}
+							}
+							newConfig.Shards[v] = minGroupId
+							shardsCountMap[minGroupId] = append(shardsCountMap[minGroupId], v)
+						}
+					}
+				}
+
+			}
+		}
+
+	default:
+		{
+			DPrintf("WTFH")
+		}
+	}
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match82-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	sm.configArr = append(sm.configArr, newConfig)
+}
+
+func (sm *ShardMaster) generateShardsCountMap(config *Config) map[int][]int {
+	// int to int array mapping
+	shardsCountMap := map[int][]int{}
+	for k, _ := range config.Groups {
+		shardsCountMap[k] = []int{}
+	}
+	for k, v := range config.Shards {
+		shardsCountMap[v] = append(shardsCountMap[v], k)
+	}
+	DPrintf("ShardsCountMap %v", shardsCountMap)
+</FONT>	return shardsCountMap
+}
+
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	sm := new(ShardMaster)
+	sm.me = me
+	DPrintf("Shards Master started %d", me)
+	sm.configArr = make([]Config, 1)
+	sm.configArr[0].Groups = map[int][]string{}
+	labgob.Register(Op{})
+	labgob.Register(JoinArgs{})
+	labgob.Register(LeaveArgs{})
+	labgob.Register(MoveArgs{})
+	labgob.Register(QueryArgs{})
+	sm.applyChan = make(chan raft.ApplyMsg)
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match82-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	sm.rf = raft.Make(servers, me, persister, sm.applyChan)
+	// Your code here.
+
+	sm.indexOpchanMap = make(map[int]chan Op)
+	sm.indexSeqnoMap = make(map[int64]int)
+	sm.killChan = make(chan bool, 1)
+
+	go func() {
+		for {
+			select {
+			case &lt;-sm.killChan:
+				return
+			case applyMsg := &lt;-sm.applyChan:
+</FONT>				if applyMsg.CommandValid {
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match82-0.html#6" TARGET="0"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+					op := applyMsg.Command.(Op)
+					sm.mu.Lock()
+					maxSeq, found := sm.indexSeqnoMap[op.Cid]
+					if op.SeqNo &gt;= 0 {
+</FONT>						if !found || op.SeqNo &gt; maxSeq {
+							DPrintf("Lets apply msg!")
+							sm.operationOnShards(op.OpType, op.Args)
+							sm.indexSeqnoMap[op.Cid] = op.SeqNo
+						}
+					}
+					notifyChan, ok := sm.indexOpchanMap[applyMsg.CommandIndex]
+					sm.mu.Unlock()
+					if ok {
+						notifyChan &lt;- op
+					}
+				}
+			}
+		}
+	}()
+
+	return sm
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

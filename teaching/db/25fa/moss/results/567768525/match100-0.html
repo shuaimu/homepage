@@ -1,0 +1,1048 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/jainsat/src/shardkv/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/jainsat/src/shardkv/server.go<p><PRE>
+package shardkv
+
+// import "shardmaster"
+import (
+	"bytes"
+	"fmt"
+	"labgob"
+	"labrpc"
+	"raft"
+	"shardmaster"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+type Op struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+	Operation string
+	Key       string
+	Value     string
+	RequestId string
+	ClientId  int64
+
+	KeyFound   bool
+	WrongGroup bool
+
+	Config              shardmaster.Config
+	Db                  map[string]string
+	RequestTracker      map[int64]string
+	ShardPulled         int
+	ShardsPushed        map[int]bool
+	AllShardsToBePulled map[int]bool
+}
+
+type ShardKV struct {
+	mu           sync.Mutex
+	me           int
+	rf           *raft.Raft
+	applyCh      chan raft.ApplyMsg
+	make_end     func(string) *labrpc.ClientEnd
+	gid          int
+	masters      []*labrpc.ClientEnd
+	maxraftstate int // snapshot if log grows this big
+
+	db                map[string]string // shard to key value store
+	ddebug            bool
+	indexSubscription map[int]chan Op
+	requestTracker    map[int64]string
+	timer             *time.Timer
+	die               bool
+	sm                *shardmaster.Clerk
+
+	maxApplyIndexSeen int
+	myShards          map[int]bool
+
+	config  shardmaster.Config
+	push_on bool
+	pull_on bool
+
+	moveShardCh               chan MoveShardArgs
+	shardsAffectedByMigration map[int]bool
+	completedMigration        map[int]bool
+
+	// Your definitions here.
+}
+
+func (kv *ShardKV) getDie() bool {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	return kv.die
+}
+
+func (kv *ShardKV) getPullOn() bool {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	return kv.pull_on
+}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match100-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *ShardKV) getPushOn() bool {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	return kv.push_on
+}
+
+func (kv *ShardKV) listenOnChannel() {
+	recvMsg := false
+	var msg raft.ApplyMsg
+	for !kv.getDie() {
+		select {
+		case msg = &lt;-kv.applyCh:
+			recvMsg = true
+			if !kv.timer.Stop() {
+				&lt;-kv.timer.C
+			}
+			kv.timer.Reset(1 * time.Second)
+		case &lt;-kv.timer.C:
+			recvMsg = false
+			kv.debug(true, "No-op\n")
+			kv.rf.Start(Op{Operation: "No-Op", RequestId: "-1"})
+			kv.timer.Reset(1 * time.Second)
+		}
+
+		if recvMsg {
+			kv.debug(true, "Received msg on channel %v\n", msg)
+			kv.executeOp(msg)
+		}
+	}
+}
+
+func (kv *ShardKV) executeOp(msg raft.ApplyMsg) {
+</FONT>	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	if !msg.CommandValid {
+		// snapshot
+		if msg.SnapshotIndex &gt; kv.maxApplyIndexSeen {
+			kv.readPersist(msg.Snapshot)
+			kv.maxApplyIndexSeen = msg.SnapshotIndex
+			// Free everyone waiting before this index.
+			for i, ch := range kv.indexSubscription {
+				if i &lt;= kv.maxApplyIndexSeen {
+					select {
+					case ch &lt;- Op{RequestId: "-1"}:
+					default:
+
+					}
+				}
+			}
+		}
+		return
+	}
+	kv.maxApplyIndexSeen = msg.CommandIndex
+	op := msg.Command.(Op)
+	ch := kv.indexSubscription[msg.CommandIndex]
+
+	if op.Operation == "Put" || op.Operation == "Append" || op.Operation == "Get" {
+		if !kv.validServe(key2shard(op.Key), false) {
+			op.WrongGroup = true
+			kv.debug(false, "Not a valid serve put|append\n")
+			if ch != nil {
+				ch &lt;- op
+				kv.debug(false, "release %v\n", kv.me)
+			}
+			return
+		}
+	}
+
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match100-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	if op.Operation != "No-Op" {
+		lastClientReq, ok := kv.requestTracker[op.ClientId]
+
+		kv.debug(false, "lastclient req = %v\n", lastClientReq)
+		if ok {
+</FONT>			// this is a duplicate
+			rq, _ := strconv.Atoi(strings.Split(op.RequestId, "-")[1])
+			lc, _ := strconv.Atoi(strings.Split(lastClientReq, "-")[1])
+			if rq &lt;= lc {
+				if ch != nil {
+					op.KeyFound = true
+					op.WrongGroup = false
+					ch &lt;- op
+				}
+
+				return
+
+			}
+		}
+		if op.Operation != "Pull" && op.Operation != "PushBegin" && op.Operation != "PushEnd" && op.Operation != "PullBegin" {
+			kv.requestTracker[op.ClientId] = op.RequestId
+
+		}
+	}
+
+	if op.Operation == "Put" {
+
+		if kv.validServe(key2shard(op.Key), false) {
+			kv.db[op.Key] = op.Value
+			op.WrongGroup = false
+			kv.debug(false, "put %v\n", kv.db)
+		} else {
+			op.WrongGroup = true
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match100-1.html#7" TARGET="1"><IMG SRC="../../bitmaps/tm_2_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			kv.debug(false, "Not a valid serve put\n")
+		}
+		if ch != nil {
+			ch &lt;- op
+			kv.debug(false, "release %v\n", kv.me)
+
+		}
+
+	} else if op.Operation == "Append" {
+</FONT>		if kv.validServe(key2shard(op.Key), false) {
+			kv.db[op.Key] = kv.db[op.Key] + op.Value
+			kv.debug(false, "append %v\n", kv.db)
+			op.WrongGroup = false
+
+		} else {
+			op.WrongGroup = true
+			kv.debug(false, "Not a valid serve app\n")
+		}
+		if ch != nil {
+			op.Value = kv.db[op.Key]
+			ch &lt;- op
+			kv.debug(false, "release %v\n", kv.me)
+		}
+
+	} else if op.Operation == "get" {
+		if kv.validServe(key2shard(op.Key), false) {
+			kv.debug(false, "Get db = %v\n", kv.db)
+			op.WrongGroup = false
+		} else {
+			kv.debug(false, "Not a valid serve get\n")
+			op.WrongGroup = true
+		}
+		if ch != nil {
+			var ok bool
+			op.Value, ok = kv.db[op.Key]
+			if ok {
+				op.KeyFound = true
+			}
+<A NAME="8"></A><FONT color = #00FFFF><A HREF="match100-1.html#8" TARGET="1"><IMG SRC="../../bitmaps/tm_3_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			ch &lt;- op
+			kv.debug(false, "release %v\n", kv.me)
+
+		}
+
+	} else if op.Operation == "PushBegin" {
+		//if op.Config.Num &gt; kv.config.Num {
+		//kv.config = op.Config
+		//kv.deleteShards(op.ShardsPushed)
+		kv.debug(false, "Received push begin. Shards to push=%v\n", op.ShardsPushed)
+</FONT>		kv.push_on = true
+		kv.shardsAffectedByMigration = make(map[int]bool)
+		for k, v := range op.ShardsPushed {
+			kv.shardsAffectedByMigration[k] = v
+		}
+		if ch != nil {
+			kv.debug(false, "serving push on channel\n")
+			ch &lt;- op
+		}
+
+	} else if op.Operation == "PushEnd" {
+		//if op.Config.Num &gt; kv.config.Num {
+		kv.debug(false, "Received push end. Shards pushed=%v\n", op.ShardsPushed)
+		kv.config = op.Config
+		kv.deleteShards(op.ShardsPushed)
+		if ch != nil {
+			kv.debug(false, "serving push on channel\n")
+			ch &lt;- op
+		}
+		kv.push_on = false
+		kv.shardsAffectedByMigration = make(map[int]bool)
+		// } else {
+		// 	kv.debug(false, "warning duplicate push %v\n", op.Config.Num)
+		// 	kv.deleteShards(op.ShardsPushed)
+		// }
+	} else if op.Operation == "PullBegin" {
+		//if op.Config.Num &gt; kv.config.Num {
+		//kv.config = op.Config
+		//kv.deleteShards(op.ShardsPushed)
+		kv.debug(false, "Received pull begin. Shards to push=%v\n", op.ShardsPushed)
+		kv.pull_on = true
+		kv.completedMigration = make(map[int]bool)
+		if ch != nil {
+			kv.debug(false, "serving pullbegin on channel\n")
+			ch &lt;- op
+		}
+
+	} else if op.Operation == "Pull" {
+		//if op.Config.Num &gt;= kv.config.Num {
+		// copy kv
+		// copy request tracker
+		// affected reduce
+		// completed increase
+
+		if !kv.completedMigration[op.ShardPulled] {
+			// Only update when not a duplicate
+			kv.copyKV(op.Db)
+			kv.updateRequestTracker(op.RequestTracker)
+		}
+
+		kv.completedMigration[op.ShardPulled] = true
+		if op.Config.Num &gt; 0 {
+			kv.config = op.Config
+		}
+		kv.debug(false, "config no =%v, completed=%v\n", kv.config.Num, kv.completedMigration)
+		if ch != nil {
+			kv.debug(false, "serving pull on channel\n")
+			ch &lt;- op
+		}
+
+		if len(kv.completedMigration) == len(op.AllShardsToBePulled) {
+			kv.debug(false, "All shards have been pulled, to pull=%v, pulled=%v\n", op.AllShardsToBePulled, kv.completedMigration)
+			kv.completedMigration = make(map[int]bool)
+			kv.pull_on = false
+		}
+
+		// } else {
+		// 	kv.debug(false, "warning duplicate pull %v\n", op.Config.Num)
+		// 	kv.copyKV(op.Db)
+		// 	kv.updateRequestTracker(op.RequestTracker)
+		// }
+
+	} else {
+		if ch != nil {
+			ch &lt;- op
+		}
+	}
+	kv.checkRaftState()
+}
+
+func (kv *ShardKV) copyKV(db map[string]string) {
+	kv.debug(false, "Copying kv=%v\n", db)
+	for k, v := range db {
+		kv.db[k] = v
+	}
+}
+
+func (kv *ShardKV) updateRequestTracker(rt map[int64]string) {
+	kv.debug(false, "input rt=%v, already rt=%v\n", rt, kv.requestTracker)
+	for cid, rid := range rt {
+		r, ok := kv.requestTracker[cid]
+		if !ok {
+			kv.requestTracker[cid] = rid
+			continue
+		}
+		rq, _ := strconv.Atoi(strings.Split(r, "-")[1])
+		lc, _ := strconv.Atoi(strings.Split(rid, "-")[1])
+		if rq &lt; lc {
+			kv.requestTracker[cid] = rid
+		}
+	}
+	kv.debug(false, "Copying rt=%v\n", kv.requestTracker)
+}
+
+func (kv *ShardKV) deleteShards(shards map[int]bool) {
+	for k := range kv.db {
+		if shards[key2shard(k)] {
+			delete(kv.db, k)
+		}
+	}
+}
+func (kv *ShardKV) checkRaftState() {
+	if kv.maxraftstate == -1 {
+		return
+	}
+	if (kv.maxraftstate - kv.rf.GetRaftStateSize()) &lt;= 40 {
+		kv.debug(false, "Raft state approaching max %v\n", kv.rf.GetRaftStateSize())
+		w := new(bytes.Buffer)
+		e := labgob.NewEncoder(w)
+		e.Encode(kv.db)
+		e.Encode(kv.requestTracker)
+		e.Encode(kv.config)
+		e.Encode(kv.push_on)
+		e.Encode(kv.pull_on)
+		e.Encode(kv.shardsAffectedByMigration)
+		e.Encode(kv.completedMigration)
+
+		kv.rf.PersistStateAndSnapshot(w.Bytes(), kv.maxApplyIndexSeen)
+	}
+}
+
+func (kv *ShardKV) MoveShard(args *MoveShardArgs, reply *MoveShardReply) {
+	_, isLeader := kv.rf.GetState()
+	if !isLeader {
+		reply.WrongLeader = true
+		return
+	}
+	kv.debug(true, "Move shard request from %v, %v\n", args.SenderGid, args)
+	reply.WrongLeader = false
+	reply.Err = OK
+	kv.mu.Lock()
+	if args.ConfigNum &lt;= kv.config.Num {
+		// Duplicate
+		kv.debug(false, "Duplicate. My config num=%v\n", kv.config.Num)
+		kv.mu.Unlock()
+		return
+	}
+	kv.mu.Unlock()
+
+	args.Opch = make(chan Op)
+
+	select {
+	case kv.moveShardCh &lt;- *args:
+	// If this guy is not a leader any more
+	case &lt;-time.After(550 * time.Millisecond):
+		reply.WrongLeader = true
+		reply.Err = ErrTimeout
+		kv.debug(true, "time out, returning\n")
+		return
+
+	}
+
+	kv.debug(true, "Move request from %v got submitted to channel\n", args.SenderGid, args)
+
+	// Wait for it to get submitted
+	// var index int
+	// select {
+	// case index = &lt;-args.CommandIndex:
+	// case &lt;-time.After(1 * time.Second):
+	// 	reply.WrongLeader = true
+	// 	reply.Err = ErrTimeout
+	// 	kv.debug(true, "time out, returning\n")
+	// 	return
+
+	// }
+
+	// kv.debug(true, "Move request on op log now\n")
+
+	// if index == -1 {
+	// 	reply.WrongLeader = true
+	// 	return
+	// }
+
+	// kv.mu.Lock()
+	// ch := make(chan Op)
+	// kv.debug(false, "Putted it on channel\n")
+	// kv.indexSubscription[index] = ch
+	// kv.mu.Unlock()
+
+	// Wait for agreement
+	var res Op
+	select {
+	case res = &lt;-args.Opch:
+	case &lt;-time.After(2 * time.Second):
+		reply.WrongLeader = true
+		reply.Err = ErrTimeout
+		kv.debug(true, "time out, returning\n")
+		return
+
+	}
+	if res.RequestId == args.RequestId {
+		reply.WrongLeader = false
+		reply.Err = OK
+	} else {
+		reply.WrongLeader = true
+	}
+
+}
+
+func (kv *ShardKV) validServe(shard int, lock bool) bool {
+	if lock {
+		kv.mu.Lock()
+		defer kv.mu.Unlock()
+	}
+	// Pull
+	if kv.pull_on && kv.completedMigration[shard] {
+		kv.debug(false, "checkIfValidServe for shard %v, pull is on and shard has been retrieved\n", shard)
+		return true
+	}
+	if kv.config.Shards[shard] != kv.gid {
+		kv.debug(false, "checkIfValidServe for shard %v, shard is not in config %v for gid\n", shard, kv.config.Num)
+		return false
+	}
+	// Push
+	if kv.push_on && kv.shardsAffectedByMigration[shard] {
+		kv.debug(false, "checkIfValidServe for shard %v, push is on\n", shard)
+		return false
+	}
+	kv.debug(false, "checkIfValidServe for shard %v, returning true\n", shard)
+
+	return true
+}
+
+func copyRT(m map[int64]string) map[int64]string {
+	r := make(map[int64]string)
+	for k, v := range m {
+		r[k] = v
+	}
+	return r
+}
+
+func pullOrPush(old, new shardmaster.Config, kvgid int) bool {
+	isPush := false
+	isPull := false
+	if new.Num == old.Num {
+		return true
+	}
+	for shard, gid := range old.Shards {
+		if gid == kvgid && new.Shards[shard] != gid {
+			isPush = true
+			break
+		}
+	}
+	for shard, gid := range new.Shards {
+		if gid == kvgid && old.Shards[shard] != gid {
+			isPull = true
+			break
+		}
+	}
+	return isPull || isPush
+}
+
+func (kv *ShardKV) pollShardMaster() {
+	firstTime := 0
+	for !kv.getDie() {
+		time.Sleep(10 * time.Millisecond)
+		kv.mu.Lock()
+		if kv.config.Num == 0 {
+			// first config
+			// no need of shard transfer
+			config := kv.sm.Query(1)
+			kv.config = config
+			kv.debug(false, "My Config no=%v, config=%v\n", kv.config.Num, kv.config.Shards)
+			kv.mu.Unlock()
+			continue
+		}
+		oldConfigNum := kv.config.Num
+		kv.mu.Unlock()
+
+		config := kv.sm.Query(oldConfigNum + 1)
+
+		if config.Num &lt;= oldConfigNum {
+			continue
+		}
+		kv.mu.Lock()
+
+		if !pullOrPush(kv.config, config, kv.gid) {
+			// Change kv config to this new one
+			kv.config = config
+			kv.mu.Unlock()
+
+			continue
+		}
+		kv.mu.Unlock()
+
+		_, isLeader := kv.rf.GetState()
+		if !isLeader {
+			firstTime = 0
+			continue
+		}
+
+		firstTime++
+		if firstTime == 1 {
+			// Becoming leader for first time after a while
+			op := Op{Operation: "No-Op", RequestId: "-1"}
+			index, _, _ := kv.rf.Start(op)
+			cha := make(chan Op)
+			if index != -1 {
+				kv.mu.Lock()
+				kv.indexSubscription[index] = cha
+				kv.mu.Unlock()
+				res := &lt;-cha // wait for no op to get commited.
+				if res.RequestId == op.RequestId {
+					// done building state
+					kv.debug(true, "done building state index=%v, confignum=%v\n", index, kv.config.Num)
+					continue
+
+				} else {
+					// Not a leader any more
+					continue
+				}
+			} else {
+				// Not a leader any more
+				continue
+			}
+		}
+
+		kv.debug(true, "Poll latest config=%v\n", config.Num)
+
+		if config.Num &gt; oldConfigNum {
+			kv.debug(true, "Config change detected, new config num=%v, shards=%v\n", config.Num, config.Shards)
+			isPush := false
+			shardsToBePushed := make(map[int]bool)
+			for shard, gid := range kv.config.Shards {
+				if gid == kv.gid && config.Shards[shard] != gid {
+					isPush = true
+					shardsToBePushed[shard] = true
+				}
+			}
+
+			if isPush {
+				// Turn it on so that no requests appearing on applyCh and RPC will
+				// be entertained.
+				kv.debug(true, "Push detected for config no=%v\n", config.Num)
+				kv.debug(true, "Shard to push = %v\n", shardsToBePushed)
+
+				// mark the beginning of shard push
+
+				ope := Op{Operation: "PushBegin", ShardsPushed: shardsToBePushed, RequestId: fmt.Sprintf("%v-%v", kv.gid, nrand())}
+				i, _, _ := kv.rf.Start(ope)
+				cha := make(chan Op)
+				if i != -1 {
+					kv.mu.Lock()
+					kv.indexSubscription[i] = cha
+					kv.mu.Unlock()
+					res := &lt;-cha // wait for no op to get commited.
+					if res.RequestId == ope.RequestId {
+						// done building state
+						kv.debug(true, "marked the beginning of push=%v\n", i)
+					} else {
+						// Not a leader any more
+						continue
+					}
+				} else {
+					// Not a leader any more
+					continue
+				}
+
+				// Find which shards to transfer
+				count := 0
+				for shard, gid := range kv.config.Shards {
+					if gid == kv.gid && config.Shards[shard] != gid {
+						count++
+						kv.debug(true, "Starting pushing %v to gid=%v\n", shard, config.Shards[shard])
+						kvsToPush := make(map[string]string)
+
+						// Collect all KVs which belong to the shard that need to be pushed
+						kv.mu.Lock()
+						for k, v := range kv.db {
+							if shard == key2shard(k) {
+								kvsToPush[k] = v
+							}
+						}
+						// Find servers of group to which this needs to be sent
+						new_gid := config.Shards[shard]
+						servers := config.Groups[new_gid]
+
+						// Make request
+						args := MoveShardArgs{}
+						args.ConfigNum = config.Num
+						args.Kv = kvsToPush
+						args.RequestTracker = copyRT(kv.requestTracker)
+						args.Shard = shard
+						args.RequestId = fmt.Sprintf("%v-%v", kv.gid, count)
+						kv.mu.Unlock()
+
+						args.SenderGid = gid
+
+						for !kv.getDie() {
+							done := false
+							for si := 0; si &lt; len(servers) && !kv.getDie(); si++ {
+								kv.debug(true, "Trying server = %v by me = %v, request=%v\n", si, args)
+								srv := kv.make_end(servers[si])
+								var reply MoveShardReply
+								ok := srv.Call("ShardKV.MoveShard", &args, &reply)
+								kv.debug(true, "Got reply from server = %v response=%v\n", si, reply)
+								if ok && !reply.WrongLeader && reply.Err == OK {
+									kv.debug(true, "I am done")
+									done = true
+									break
+								}
+							}
+							if done {
+								break
+							}
+						}
+					}
+				}
+				rid := fmt.Sprintf("%v-%v", kv.gid, nrand())
+				op := Op{Config: config, Operation: "PushEnd", RequestId: rid, ShardsPushed: kv.shardsAffectedByMigration}
+				index, _, _ := kv.rf.Start(op)
+				ch := make(chan Op)
+				if index != -1 {
+					kv.mu.Lock()
+					kv.indexSubscription[index] = ch
+					kv.mu.Unlock()
+					kv.debug(true, "Pushed push message on log for %v, rid=%v\n", config.Num, rid)
+					res := &lt;-ch
+					if res.RequestId == rid {
+						kv.debug(true, "Committed the push with config=%v, rid=%v\n", config.Num, rid)
+					} else {
+						kv.debug(true, "Could not commit with config=%v, rid=%v, dont know what to do\n", config.Num, rid)
+					}
+
+				}
+				continue
+
+			} //isPush block
+
+			///////////////// Now it's time to wait for push if any //////////////////////
+			shardsToPull := make(map[int]bool)
+			copyshardsToPull := make(map[int]bool)
+
+			isPull := false
+			kv.mu.Lock()
+			for shard, gid := range config.Shards {
+				if gid == kv.gid && kv.config.Shards[shard] != gid {
+					shardsToPull[shard] = true
+					copyshardsToPull[shard] = true
+					//kv.shardsAffectedByMigration[shard] = true
+					isPull = true
+				}
+			}
+			kv.mu.Unlock()
+
+			if isPull {
+				if !kv.pull_on {
+					rid := fmt.Sprintf("%v-%v", kv.gid, nrand())
+					op := Op{Config: config, Operation: "PullBegin", RequestId: rid}
+					index, _, _ := kv.rf.Start(op)
+					ch := make(chan Op)
+					if index != -1 {
+						kv.mu.Lock()
+						kv.indexSubscription[index] = ch
+						kv.mu.Unlock()
+						kv.debug(true, "Pushed pullbegin message on log for %v, rid=%v\n", config.Num, rid)
+						res := &lt;-ch
+						if res.RequestId == rid {
+							kv.debug(true, "Committed the pullbegin with config=%v, rid=%v\n", config.Num, rid)
+						} else {
+							kv.debug(true, "Could not commit with config=%v, rid=%v, dont know what to do\n", config.Num, rid)
+							continue
+						}
+					} else {
+						continue
+					}
+
+				}
+
+				// Wait until all shards have been received.
+				for len(shardsToPull) &gt; 0 && !kv.getDie() {
+					mvs := &lt;-kv.moveShardCh
+					op := Op{Operation: "Pull"}
+
+					if mvs.ConfigNum &gt; config.Num {
+						// Put it back for future use.
+						go func() {
+							kv.moveShardCh &lt;- mvs
+						}()
+					} else {
+						// Equal
+						op.Db = mvs.Kv
+						op.RequestId = mvs.RequestId
+						op.RequestTracker = mvs.RequestTracker
+						op.ShardPulled = mvs.Shard
+						op.AllShardsToBePulled = copyshardsToPull
+						delete(shardsToPull, mvs.Shard)
+						if len(shardsToPull) == 0 {
+							kv.mu.Lock()
+							op.Config = config
+							kv.mu.Unlock()
+
+						} else {
+							kv.mu.Lock()
+							op.Config = kv.config
+							kv.mu.Unlock()
+						}
+						kv.debug(true, "Received shard %v from %v\n", mvs.Shard, mvs.SenderGid)
+						index, _, _ := kv.rf.Start(op)
+						if index != -1 {
+							kv.mu.Lock()
+							kv.indexSubscription[index] = mvs.Opch
+							kv.mu.Unlock()
+						} else {
+							// Not a leader anymore
+							kv.debug(true, "Pull not a leader anymore, warning\n")
+							break
+						}
+					}
+
+				}
+
+				for kv.getPullOn() && !kv.getDie() {
+					time.Sleep(10 * time.Millisecond)
+				}
+				kv.debug(true, "Done pulling everything\n")
+
+			}
+
+			// kv.mu.Lock()
+			// kv.pull_on = false
+			// kv.mu.Unlock()
+
+		}
+
+	}
+
+}
+
+func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
+
+	// Your code here.
+
+	_, isL := kv.rf.GetState()
+	if !isL {
+		reply.WrongLeader = true
+		return
+	}
+
+	if !kv.validServe(key2shard(args.Key), true) {
+		reply.Err = ErrWrongGroup
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match100-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		return
+	}
+
+	ch := make(chan Op)
+	op := Op{Operation: "get", Key: args.Key, RequestId: args.RequestId, ClientId: args.ClientId}
+</FONT>	kv.mu.Lock()
+	index, _, isLeader := kv.rf.Start(op)
+	kv.indexSubscription[index] = ch
+	kv.mu.Unlock()
+	if !isLeader {
+		reply.WrongLeader = true
+		return
+	} else {
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match100-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		kv.debug(true, "request %v got accepted at %v.\n", op, index)
+		res := &lt;-ch // wait for result to come.
+
+		if res.RequestId == op.RequestId {
+			reply.WrongLeader = false
+			reply.Value = res.Value
+</FONT>			if res.WrongGroup {
+				reply.Err = ErrWrongGroup
+			} else if !res.KeyFound {
+				reply.Err = ErrNoKey
+			} else {
+				reply.Err = OK
+			}
+
+		} else {
+			reply.Err = ErrNotCommitted
+			reply.WrongLeader = false
+		}
+	}
+}
+
+func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	// Your code here.
+
+	_, isL := kv.rf.GetState()
+	if !isL {
+		reply.WrongLeader = true
+		return
+	}
+	if !kv.validServe(key2shard(args.Key), true) {
+		reply.Err = ErrWrongGroup
+		return
+	}
+
+	ch := make(chan Op)
+	op := Op{Operation: args.Op, Key: args.Key, RequestId: args.RequestId, Value: args.Value, ClientId: args.ClientId}
+	kv.mu.Lock()
+	index, _, isLeader := kv.rf.Start(op)
+	kv.indexSubscription[index] = ch
+	kv.mu.Unlock()
+
+	if !isLeader {
+		reply.WrongLeader = true
+		return
+	} else {
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match100-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		kv.debug(true, "request %v got accepted at %v.\n", op, index)
+
+		res := &lt;-ch // wait for result to come.
+
+		if res.RequestId == op.RequestId {
+			reply.WrongLeader = false
+			reply.Value = res.Value
+</FONT>			if res.WrongGroup {
+				reply.Err = ErrWrongGroup
+			} else {
+				reply.Err = OK
+			}
+		} else {
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match100-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			reply.Err = ErrNotCommitted
+			reply.WrongLeader = false
+		}
+	}
+}
+
+//
+// the tester calls Kill() when a ShardKV instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *ShardKV) Kill() {
+	kv.debug(true, "Killing server\n")
+	kv.rf.Kill()
+	kv.mu.Lock()
+	kv.ddebug = false
+	kv.die = true
+	kv.mu.Unlock()
+	// Your code here, if desired.
+}
+
+func (kv *ShardKV) readPersist(data []byte) {
+</FONT>	if data == nil || len(data) &lt; 1 { // bootstrap without any state?
+		return
+	}
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var db map[string]string
+	var ret map[int64]string
+	var config shardmaster.Config
+	var push_on, pull_on bool
+	var sa, cm map[int]bool
+
+	if d.Decode(&db) != nil ||
+		d.Decode(&ret) != nil ||
+		d.Decode(&config) != nil ||
+		d.Decode(&push_on) != nil ||
+		d.Decode(&pull_on) != nil ||
+		d.Decode(&sa) != nil ||
+		d.Decode(&cm) != nil {
+		kv.debug(false, "Not able to read persistent state..\n")
+
+	} else {
+		kv.db = db
+		kv.requestTracker = ret
+		kv.debug(false, "done reading snapshot\n")
+		kv.config = config
+		kv.push_on = push_on
+		kv.pull_on = pull_on
+		kv.shardsAffectedByMigration = sa
+		kv.completedMigration = cm
+	}
+}
+
+// func (kv *ShardKV) persist() {
+// 	kv.mu.Lock()
+// 	defer kv.mu.Unlock()
+// 	w := new(bytes.Buffer)
+// 	e := labgob.NewEncoder(w)
+// 	e.Encode(kv.db)
+// 	e.Encode(kv.requestTracker)
+// 	e.Encode(kv.config)
+// 	e.Encode(kv.configNumToMoveShardArgs)
+// 	data := w.Bytes()
+// 	kv.rf.
+
+// }
+
+// func (kv *ShardKV) detectConfigChange() {
+// 	config := kv.sm.Query(-1)
+// 	for {
+// 		if config.Num &gt; kv.currentConfigNum {
+// 			kv.currentConfigNum = config.Num
+// 			kv.debug(false, "config=%v\n", config)
+// 			for shard, gid := range config.Shards {
+// 				if gid == kv.gid {
+// 					kv.myShards[shard] = true
+// 					kv.sdb[shard] = make(map[string]string)
+// 				}
+// 			}
+// 			kv.debug(true, "my shards=%v\n", kv.myShards)
+// 		}
+// 		time.Sleep(80 * time.Millisecond)
+// 		config = kv.sm.Query(-1)
+// 	}
+// }
+
+//
+// servers[] contains the ports of the servers in this group.
+//
+// me is the index of the current server in servers[].
+//
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+//
+// the k/v server should snapshot when Raft's saved state exceeds
+// maxraftstate bytes, in order to allow Raft to garbage-collect its
+// log. if maxraftstate is -1, you don't need to snapshot.
+//
+// gid is this group's GID, for interacting with the shardmaster.
+//
+// pass masters[] to shardmaster.MakeClerk() so you can send
+// RPCs to the shardmaster.
+//
+// make_end(servername) turns a server name from a
+// Config.Groups[gid][i] into a labrpc.ClientEnd on which you can
+// send RPCs. You'll need this to send RPCs to other groups.
+//
+// look at client.go for examples of how to use masters[]
+// and make_end() to send RPCs to the group owning a specific shard.
+//
+// StartServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int, gid int, masters []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *ShardKV {
+	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+
+	kv := new(ShardKV)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+	kv.make_end = make_end
+	kv.gid = gid
+	kv.masters = masters
+	kv.timer = time.NewTimer(1 * time.Second)
+	kv.moveShardCh = make(chan MoveShardArgs)
+
+	// Your initialization code here.
+
+	// Use something like this to talk to the shardmaster:
+	// kv.mck = shardmaster.MakeClerk(kv.masters)
+
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+
+	kv.ddebug = false
+	kv.db = make(map[string]string)
+	kv.indexSubscription = make(map[int]chan Op)
+	kv.requestTracker = make(map[int64]string)
+	kv.myShards = make(map[int]bool)
+	kv.sm = shardmaster.MakeClerk(masters)
+
+	kv.die = false
+	//kv.config = kv.sm.Query(-1)
+
+	kv.readPersist(persister.ReadSnapshot())
+
+	go kv.pollShardMaster()
+	go kv.listenOnChannel()
+	kv.debug(true, "Restarting me %v, raft max = %v, current config=%v\n", me, maxraftstate, kv.config.Num)
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match100-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	return kv
+}
+
+func (kv *ShardKV) debug(lock bool, format string, a ...interface{}) {
+	if lock {
+		kv.mu.Lock()
+		defer kv.mu.Unlock()
+	}
+	if kv.ddebug {
+		m := fmt.Sprintf("%v,%v", kv.me, kv.gid)
+</FONT>		fmt.Printf("[service "+m+" ] "+format, a...)
+	}
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

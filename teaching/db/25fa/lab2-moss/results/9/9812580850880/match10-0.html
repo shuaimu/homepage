@@ -1,0 +1,205 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-law-lin/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-law-lin/src/kv/server.cc<p><PRE>
+#include "server.h"
+
+#include "../deptran/__dep__.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                   []() -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                   });
+
+int64_t KvServer::GetNextOpId() {
+    verify(sp_log_svr_);
+    int64_t ret = sp_log_svr_-&gt;site_id_;
+    ret = ret &lt;&lt; 32;
+    ret = ret + op_id_cnt_++;
+    return ret;
+}
+
+int KvServer::Put(const uint64_t& oid,
+                  const string& k,
+                  const string& v) {
+    /*
+    Your are recommended to use MultiStringMarshallable as the format
+    for the log entries. Here is an example how you can use it.
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(op_id));
+    s-&gt;data_.push_back("put");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);   
+    
+    */
+    mtx_.lock();
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match10-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    uint64_t op_id = next_op_id++;
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back(to_string(op_id));
+    s-&gt;data_.push_back("put");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);
+</FONT>    auto cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+
+    RaftServer& svr = GetRaftServer();
+    uint64_t index, term;
+    bool isLeader = svr.Start(cmd, &index, &term);
+    if (!isLeader) {
+        mtx_.unlock();
+        return KV_NOTLEADER;
+    }
+
+    // Wait for op to be applied
+    op_responses[op_id] = "";  // when this contains a non-empty value, we received a response
+    mtx_.unlock();
+    Coroutine::Sleep(200000);
+    // Is there a result?
+    if (op_responses[op_id] != "") {
+        return KV_SUCCESS;
+    } else {
+        return KV_TIMEOUT;
+    }
+}
+
+int KvServer::Append(const uint64_t& oid,
+                     const string& k,
+                     const string& v) {
+    /* your code here */
+    mtx_.lock();
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match10-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    uint64_t op_id = next_op_id++;
+    // Make Op object
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back(to_string(op_id));
+    s-&gt;data_.push_back("append");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);
+</FONT>    auto cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+
+    RaftServer& svr = GetRaftServer();
+    uint64_t index, term;
+    bool isLeader = svr.Start(cmd, &index, &term);
+    if (!isLeader) {
+        mtx_.unlock();
+        return KV_NOTLEADER;
+    }
+    // Wait for op to be applied
+    op_responses[op_id] = "";  // when this contains a non-empty value, we received a response
+    mtx_.unlock();
+    Coroutine::Sleep(200000);
+    if (op_responses[op_id] != "") {
+        return KV_SUCCESS;
+    } else {
+        return KV_TIMEOUT;
+    }
+}
+
+int KvServer::Get(const uint64_t& oid,
+                  const string& k,
+                  string* v) {
+    /* your code here */
+    mtx_.lock();
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match10-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    uint64_t op_id = next_op_id++;
+    // Make Op object
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(oid));
+    s-&gt;data_.push_back(to_string(op_id));
+    s-&gt;data_.push_back("get");
+    s-&gt;data_.push_back(k);
+    auto cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+</FONT>
+    RaftServer& svr = GetRaftServer();
+    uint64_t index, term;
+    bool isLeader = svr.Start(cmd, &index, &term);
+    if (!isLeader) {
+        mtx_.unlock();
+        return KV_NOTLEADER;
+    }
+    // Wait for op to be applied
+    op_responses[op_id] = "";  // when this contains a non-empty value, we received a response
+    mtx_.unlock();
+    Coroutine::Sleep(200000);
+    if (op_responses[op_id] != "") {
+        *v = op_responses[op_id];
+        return KV_SUCCESS;
+    } else {
+        return KV_TIMEOUT;
+    }
+    return KV_SUCCESS;
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+    auto v = (MultiStringMarshallable*)(&m);
+    mtx_.lock();
+    RaftServer& svr = GetRaftServer();
+
+    if (v-&gt;data_.size() &lt; 4) {
+        Log_info("Error: payload mismatch %d", v-&gt;data_.size());
+        return;
+    }
+
+    string oid = v-&gt;data_[0];
+    string op_id = v-&gt;data_[1];
+    string op = v-&gt;data_[2];
+    string key = v-&gt;data_[3];
+
+    int64_t this_op_id = std::stoi(op_id);
+
+    if (op == "put") {
+        string value = v-&gt;data_[4];  // TODO: validate size here
+        kv_store_[key] = value;
+        op_responses[this_op_id] = "put";
+    } else if (op == "append") {
+        string value = v-&gt;data_[4];
+        if (kv_store_.count(key) == 1) {
+            // Key exists, append
+            kv_store_[key] += value;
+        } else {
+            // Key doesn't exist, do "put"
+            kv_store_[key] = value;
+        }
+        op_responses[this_op_id] = "append";
+    } else if (op == "get") {
+        op_responses[this_op_id] = kv_store_[key];
+    } else {
+        Log_info("Error: Unknown operation - %s", op);
+        mtx_.unlock();
+        return;
+    }
+    mtx_.unlock();
+    return;
+    /* your code here */
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+    /* don't change this function */
+    auto cli = make_shared&lt;KvClient&gt;();
+    verify(commo_ != nullptr);
+    cli-&gt;commo_ = commo_;
+    uint32_t id = sp_log_svr_-&gt;site_id_;
+    id = id &lt;&lt; 16;
+    cli-&gt;cli_id_ = id + cli_cnt_++;
+    return cli;
+}
+
+}  // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

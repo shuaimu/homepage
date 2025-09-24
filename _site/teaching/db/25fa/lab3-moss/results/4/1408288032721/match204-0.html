@@ -1,0 +1,167 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-akashpatil-219/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-akashpatil-219/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+namespace janus {
+
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  
+  uint32_t newGroupId = gid_server_map.begin()-&gt;first;
+  Log_info("New group joined with ID: %d", newGroupId);
+  uint32_t configSize = configs_.size();
+  map&lt;uint32_t, vector&lt;uint32_t&gt; &gt; groupToListOfServers;
+  map&lt;uint32_t, uint32_t&gt; shardToGroups;
+
+  if(configSize == 0){
+    for(int i=1;i&lt;=10;i++){
+      shardToGroups[i] = 1;
+    }
+    groupToListOfServers = gid_server_map;
+  }
+  else{
+    shardToGroups = configs_[configSize].shard_group_map_;
+    groupToListOfServers = configs_[configSize].group_servers_map_;
+
+    if(groupToListOfServers.find(newGroupId) != groupToListOfServers.end()){
+      *ret = KV_SUCCESS;
+      defer-&gt;reply();
+      return;
+    }
+
+    for(auto gid: gid_server_map){
+      groupToListOfServers[gid.first] = gid.second;
+    }
+
+    map&lt;uint32_t, vector&lt;uint32_t&gt; &gt; groupToShards;
+    for(auto i: shardToGroups){
+      groupToShards[i.second].push_back(i.first);
+    }
+    
+    uint32_t n = groupToListOfServers.size();
+    uint32_t quotient = (uint32_t)(10)/(n);
+    uint32_t remainder = (uint32_t)(10)%(n);
+    
+    for(auto i: groupToShards){
+      int currCount = i.second.size();
+      int required = quotient;
+      if(remainder){
+        required++;
+        remainder--;
+      }
+      int difference = currCount-required;
+      // Remove difference number of elements from the back
+      for(int j=0;j&lt;difference;j++){
+        uint32_t shard = i.second[i.second.size()-1];
+        shardToGroups[shard] = newGroupId;
+        i.second.pop_back();
+      }
+    }
+  }
+
+    ShardConfig shardConfig;
+    shardConfig.number = configSize+1;
+    shardConfig.shard_group_map_ = shardToGroups;
+    shardConfig.group_servers_map_ = groupToListOfServers;
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match204-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    configs_[shardConfig.number] = shardConfig;
+
+    *ret = KV_SUCCESS;
+     defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  uint32_t configSize = configs_.size();
+</FONT>  uint32_t latestConfigNum = configs_[configSize].number;
+
+  map&lt;uint32_t, uint32_t&gt; shardToGroups = configs_[configSize].shard_group_map_;
+  map&lt;uint32_t, vector&lt;uint32_t&gt;&gt; groupToListOfServers = configs_[configSize].group_servers_map_;
+  
+  map&lt;uint32_t, vector&lt;uint32_t&gt; &gt; groupToShards;
+  for(auto i: shardToGroups){
+    groupToShards[i.second].push_back(i.first);
+  }
+
+  vector&lt;uint32_t&gt;allocateShards;
+  for(auto groupID: gids){
+    allocateShards.insert(allocateShards.end(),groupToShards[groupID].begin(),groupToShards[groupID].end());
+    groupToShards.erase(groupID);
+    groupToListOfServers.erase(groupID);
+  }
+
+  int groupCount = groupToShards.size();
+  uint32_t quotient = (uint32_t)(10)/(groupCount);
+  uint32_t remainder = (uint32_t)(10)%(groupCount);
+
+  for(auto gts: groupToShards){
+    int grp = gts.first;
+    int currCount = gts.second.size();
+    int required = quotient;
+    if(remainder){
+      required++;
+      remainder--;
+    }
+    int difference = required - currCount; 
+    for(int j=0; j &lt; difference; j++){
+      int shard = allocateShards.back();
+      shardToGroups[shard] = grp;
+      allocateShards.pop_back();
+    }
+  }
+
+  ShardConfig shardConfig;
+  shardConfig.number = configSize+1;
+  shardConfig.group_servers_map_ = groupToListOfServers;
+  shardConfig.shard_group_map_ = shardToGroups;
+  configs_[shardConfig.number] = shardConfig;
+
+  *ret = KV_SUCCESS;
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+  // your code here
+  int lastestConfigNumber = configs_.size();
+  if(config_no == -1 || lastestConfigNumber &lt; config_no){
+    *config = configs_[lastestConfigNumber];
+  }
+  else{
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match204-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    *config = configs_[config_no];
+  }
+  *ret = KV_SUCCESS;
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  // your code here
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+</FONT>  uint32_t id = sp_log_svr_-&gt;site_id_;
+  return cli;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

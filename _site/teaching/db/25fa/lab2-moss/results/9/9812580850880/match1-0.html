@@ -1,0 +1,202 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-aadarsh0301/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-aadarsh0301/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+
+#include &lt;future&gt;
+
+
+namespace janus {
+
+
+static int volatile x1 =
+   MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                    [] () -&gt; Marshallable* {
+                                      return new MultiStringMarshallable;
+                                    });
+
+
+int64_t KvServer::GetNextOpId() {
+ verify(sp_log_svr_);
+ int64_t ret = sp_log_svr_-&gt;site_id_;
+ ret = ret &lt;&lt; 32;
+ ret = ret + op_id_cnt_++;
+ return ret;
+}
+
+
+
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match1-1.html#3" TARGET="1"><IMG SRC="../../../bitmaps/tm_3_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+int KvServer::Append(const uint64_t& oid,
+                    const string& k,
+                    const string& v) {
+
+
+   RaftServer& site = GetRaftServer();
+   if(site.isLeader){
+</FONT>         auto s = make_shared&lt;MultiStringMarshallable&gt;();
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match1-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      s-&gt;data_.push_back(to_string(oid));
+      s-&gt;data_.push_back("append");
+      s-&gt;data_.push_back(k);
+      s-&gt;data_.push_back(v);
+         
+      uint64_t index;
+      uint64_t term;
+      auto cmdPointer = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+</FONT>       Log_info("Sleeping main Thread Append");
+       auto ev = temp(cmdPointer,index,term,site);
+       ev-&gt;Wait(500000);
+       Log_info("Waking main Thread Append");
+
+
+       if (data.find(k) != data.end() &&
+           data[k].compare(data[k].length() - v.length(), data[k].length(), v) == 0) {
+               Log_info("Returning from Append 1");
+               return KV_SUCCESS;
+           }else{
+           return KV_TIMEOUT;
+       }
+
+   }
+   Log_info("Returning from Append 2");
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match1-1.html#4" TARGET="1"><IMG SRC="../../../bitmaps/tm_4_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+   return KV_NOTLEADER;                   
+ }
+
+
+int KvServer::Get(const uint64_t& oid,
+                 const string& k,
+                 string* v) {
+ /* your code here */
+   RaftServer& site = GetRaftServer();
+   if(site.isLeader){
+</FONT>       isMajority = false;
+       Log_info("Trying to get for key %s", k.c_str());
+       auto s = make_shared&lt;MultiStringMarshallable&gt;();
+       s-&gt;data_.push_back(to_string(oid));
+       s-&gt;data_.push_back("get");
+       s-&gt;data_.push_back(k);
+
+      uint64_t index;
+      uint64_t term;
+      auto cmdPointer = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+       // Log_info("Sleeping main Thread GET");
+       auto ev = temp(cmdPointer,index,term,site);
+       ev-&gt;Wait(500000);
+       // Log_info("Waking main Thread GET");
+
+       if(isMajority && data.find(k)!=data.end()){
+           *v=data[k];
+           Log_info("Here returning");
+           return KV_SUCCESS;              
+       } else {
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match1-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+           return KV_TIMEOUT;
+       }
+   }
+   return KV_NOTLEADER;
+
+
+}
+
+
+
+
+int KvServer::Put(const uint64_t& oid, const string& k, const string& v) {
+    RaftServer& site = GetRaftServer();
+   if(site.isLeader){
+</FONT>      auto s = make_shared&lt;MultiStringMarshallable&gt;();
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match1-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      s-&gt;data_.push_back(to_string(oid));
+      s-&gt;data_.push_back("put");
+      s-&gt;data_.push_back(k);
+      s-&gt;data_.push_back(v);
+        
+      uint64_t index;
+      uint64_t term;
+      auto cmdPointer = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+</FONT>       Log_info("Sleeping main Thread Put");
+       auto ev = temp(cmdPointer,index,term,site);
+       ev-&gt;Wait(500000);
+       Log_info("Waking main Thread Put");
+
+
+       if (data.find(k) != data.end() && data[k] == v) {
+           Log_info("Returning from PUT 1");
+               return KV_SUCCESS;
+       }else{
+           return KV_TIMEOUT;
+       }
+   }
+   Log_info("Returning from PUT 2");
+   return KV_NOTLEADER;  
+}
+
+
+shared_ptr&lt;IntEvent&gt; KvServer::temp(shared_ptr&lt;Marshallable&gt; cmdPointer, uint64_t index,uint64_t term, RaftServer& site ){ 
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  site.Start(cmdPointer, &index, &term);
+  return ev;
+}
+
+
+void KvServer::OnNextCommand(Marshallable& m) {
+
+
+       RaftServer& site = GetRaftServer();
+       auto v = dynamic_cast&lt;MultiStringMarshallable*&gt;(&m);
+       if (v-&gt;data_.empty()) {
+           Log_error("Received an empty command.");
+           return;
+       }
+       const string& command = v-&gt;data_[1];
+       if (command == "put") {
+           Log_info("In OnNext PUT for site %d for key:value %s:%s", site.site_id_,v-&gt;data_[2].c_str(),v-&gt;data_[3].c_str());
+           data[v-&gt;data_[2]] = v-&gt;data_[3];
+       } else if (command == "append") {
+           Log_info("In OnNext APPEND for site %d for key:value %s:%s", site.site_id_,v-&gt;data_[2].c_str(),v-&gt;data_[3].c_str());
+           if(data.find(v-&gt;data_[2])!=data.end()){
+                data[v-&gt;data_[2]] = data[v-&gt;data_[2]].append(v-&gt;data_[3]);
+           }
+           else{
+            data[v-&gt;data_[2]] = v-&gt;data_[3];
+           }
+           
+       } else if (command == "get") {
+           Log_info("In OnNext GET for site %d for key %s", site.site_id_,v-&gt;data_[2].c_str());
+           isMajority = true;
+       }
+}
+
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+ /* don't change this function */
+ auto cli = make_shared&lt;KvClient&gt;();
+ verify(commo_ != nullptr);
+ cli-&gt;commo_ = commo_;
+ uint32_t id = sp_log_svr_-&gt;site_id_;
+ id = id &lt;&lt; 16;
+ cli-&gt;cli_id_ = id+cli_cnt_++;
+ return cli;
+}
+
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,215 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-Aditiii/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-aadarsh0301/src/deptran/raft/service.cc<p><PRE>
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus
+{
+
+  RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+      : svr_((RaftServer *)sched)
+  {
+    struct timespec curr_time;
+    clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+    srand(curr_time.tv_nsec);
+  }
+
+  void RaftServiceImpl::HandleAskForVote(const uint64_t &candidateId,
+                                         const uint64_t &candidateTerm,
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match22-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                         const uint64_t &clog_length,
+                                         const uint64_t &clast_logged_term,
+                                         string *vote_granted,
+                                         uint64_t *returnTerm,
+                                         rrr::DeferredReply *defer)
+  {
+ //   svr_-&gt;mtx_.lock();
+    if (!svr_-&gt;IsDisconnected())
+    {
+      if (candidateTerm &gt; svr_-&gt;current_term)
+      {
+        svr_-&gt;current_term = candidateTerm;
+        svr_-&gt;currentRole = "FOLLOWER";
+        svr_-&gt;votedFor = 50;
+      }
+
+      int myLastTerm = 0;
+</FONT>      if (svr_-&gt;logs.size()+myLastTerm &gt; 0)
+        myLastTerm = svr_-&gt;logs[svr_-&gt;logs.size() - 1].term;
+
+      if (candidateTerm == svr_-&gt;current_term &&
+       ((clast_logged_term &gt; myLastTerm) || (clast_logged_term == myLastTerm && clog_length &gt;= svr_-&gt;logs.size())) && 
+       (svr_-&gt;votedFor == 50 || svr_-&gt;votedFor == candidateId))
+      {
+        svr_-&gt;isLeader = 0;
+        svr_-&gt;votedFor = candidateId;
+        *vote_granted = "YES";
+        *returnTerm = svr_-&gt;current_term;
+      }
+      else
+      {
+        *vote_granted = "NO";
+        *returnTerm = svr_-&gt;current_term;
+      }
+    }
+  //  svr_-&gt;mtx_.unlock();
+    defer-&gt;reply();
+  }
+
+  void RaftServiceImpl::HandleEntries(const uint64_t &leaderTerm,
+                                      const uint64_t &leaderId,
+                                      const uint64_t &prefixLen,
+                                      const uint64_t &commitLength,
+                                      const vector&lt;MarshallDeputy&gt; &leaderLogs,
+                                      const vector&lt;uint64_t&gt; &leaderTerms,
+                                      uint64_t *term,
+                                      string *success,
+                                      uint64_t *ackLen,
+                                      uint64_t *returnLogSize,
+                                      rrr::DeferredReply *defer)
+  {
+    vector&lt;int&gt; checks{-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};
+   // svr_-&gt;mtx_.lock();
+    svr_-&gt;serverTimer.start();
+    if (!svr_-&gt;IsDisconnected())
+    { 
+      vector&lt;shared_ptr&lt;Marshallable&gt;&gt; suffixLogs;
+      vector&lt;uint64_t&gt; suffixTerm;
+      if(!leaderLogs.empty()){
+        for(int i=prefixLen;i&lt;leaderLogs.size();i++){
+          shared_ptr&lt;Marshallable&gt; cmdTemp = const_cast&lt;MarshallDeputy &&gt;(leaderLogs[i]).sp_data_;
+          suffixLogs.push_back(cmdTemp);
+          suffixTerm.push_back(leaderTerms[i]);
+        }
+      }
+      uint64_t prefixTerm = 0;
+      if(prefixLen&gt;0){
+          prefixTerm=leaderTerms[prefixLen-1];
+      }
+       
+      int potentialNewLogSize = prefixLen+suffixTerm.size();
+      checks[0]=0;//check 0
+      if (leaderTerm &gt; svr_-&gt;current_term + checks[0])
+      {
+        checks[1]=1;//check 1
+        svr_-&gt;current_term = leaderTerm;
+        svr_-&gt;votedFor = 50;
+      }
+
+      if (leaderTerm == svr_-&gt;current_term)
+      {
+        checks[2]=2;//check 2
+        svr_-&gt;currentRole = "FOLLOWER";
+        svr_-&gt;isLeader = 0;
+      }
+
+      if (leaderTerm == svr_-&gt;current_term && (svr_-&gt;logs.size() &gt;= prefixLen) 
+              && (prefixLen == 0 || svr_-&gt;logs[prefixLen - 1].term == prefixTerm))     
+      {    
+        checks[3]=3;//check 3
+        if (!suffixLogs.empty() && svr_-&gt;logs.size() &gt; prefixLen)
+        {
+          checks[4]=4;//check 4
+          int index;
+          if(svr_-&gt;logs.size()&lt;potentialNewLogSize){
+            index=svr_-&gt;logs.size()-1;
+          }
+          else{
+            index=potentialNewLogSize-1;
+          }
+          if (svr_-&gt;logs[index].term != suffixTerm[index - prefixLen])
+          {
+            checks[5]=5;//check 5
+            vector&lt;Server_logs&gt; correctLogs(svr_-&gt;logs.begin(), svr_-&gt;logs.begin() + prefixLen);
+            svr_-&gt;logs = correctLogs;
+          }
+        }
+
+        if (potentialNewLogSize &gt; svr_-&gt;logs.size())
+        {
+          checks[6]=6;//check 6
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match22-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+          for (int i = svr_-&gt;logs.size() - prefixLen; i &lt; suffixTerm.size(); i++)
+          {
+           // shared_ptr&lt;Marshallable&gt; cmdTemp = const_cast&lt;MarshallDeputy &&gt;(suffixLogs[i]).sp_data_;
+            svr_-&gt;logs.push_back({suffixTerm[i], suffixLogs[i]});
+</FONT>          }
+        }
+
+        if (commitLength &gt; svr_-&gt;commitIndex)
+        {
+          checks[7]=7;//check 7
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match22-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+          for (int i = svr_-&gt;commitIndex; i &lt; commitLength; i++)
+          {
+            svr_-&gt;app_next_(*svr_-&gt;logs[i].cmd);
+          }
+          svr_-&gt;commitIndex = commitLength;
+        }
+        *term = svr_-&gt;current_term;
+        *ackLen = potentialNewLogSize;
+</FONT>        *success = "YES";
+        *returnLogSize = svr_-&gt;logs.size();
+      }
+      else
+      {
+        checks[9]=9;//check 9
+        *success = "NO";
+        *ackLen = 0;
+        *term = svr_-&gt;current_term;
+        *returnLogSize = svr_-&gt;logs.size();
+      }
+    //  Log_info("Site %d , Site Log size %d , prefixLen %d",svr_-&gt;site_id_,svr_-&gt;logs.size(),prefixLen);
+    //   Log_info("Site %d ,site log prefTerm %d , prefixTerm %d",svr_-&gt;site_id_,svr_-&gt;logs[prefixLen - 1].term,prefixTerm);  
+    }
+    svr_-&gt;serverTimer.start();
+    
+  //  Log_info("Site %d, checks %d %d %d %d %d %d %d %d %d %d",svr_-&gt;site_id_,checks[0],checks[1],checks[2],checks[3],checks[4],checks[5],checks[6],checks[7],checks[8],checks[9]);
+    
+  //  svr_-&gt;mtx_.unlock();
+    defer-&gt;reply();
+  }
+
+  void RaftServiceImpl::HandleRequestVote(const uint64_t &arg1,
+                                          const uint64_t &arg2,
+                                          uint64_t *ret1,
+                                          uint64_t *vote_granted,
+                                          rrr::DeferredReply *defer)
+  {
+    *ret1 = 0;
+    *vote_granted = false;
+    defer-&gt;reply();
+  }
+
+  void RaftServiceImpl::HandleAppendEntries(const MarshallDeputy &md_cmd,
+                                            bool_t *followerAppendOK,
+                                            rrr::DeferredReply *defer)
+  {
+    std::shared_ptr &lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy &&gt;(md_cmd).sp_data_;
+    *followerAppendOK = false;
+    defer-&gt;reply();
+  }
+
+  void RaftServiceImpl::HandleHelloRpc(const string &req,
+                                       string *res,
+                                       rrr::DeferredReply *defer)
+  {
+    Log_info("receive an rpc: %s", req.c_str());
+    *res = "world";
+    defer-&gt;reply();
+  }
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

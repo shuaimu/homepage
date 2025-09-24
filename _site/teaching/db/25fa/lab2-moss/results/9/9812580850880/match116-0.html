@@ -1,0 +1,212 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-iGN5117/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-iGN5117/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match116-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  /* 
+  Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  */
+  /* your code here */
+  auto logObject = makeLogObject(oid, k, v, "put");
+</FONT>  shared_ptr&lt;Marshallable&gt; marshalledLogObject = logObject;
+  uint64_t currentTerm, index;
+  mtx_.lock();
+  bool isLeader = this-&gt;GetRaftServer().Start(marshalledLogObject, &index, &currentTerm);
+  mtx_.unlock();
+  if (isLeader) {
+    int retValue = handleKvOperation(logObject);
+    return retValue;
+  }else {
+    return KV_NOTLEADER;
+  }
+  return KV_SUCCESS;
+}
+
+shared_ptr&lt;MultiStringMarshallable&gt; KvServer::makeLogObject(uint64_t oid, string key, string value, string opType) {
+    mtx_.lock();
+    auto logObject = make_shared&lt;MultiStringMarshallable&gt;();
+    logObject-&gt;data_.push_back(to_string(oid));
+    logObject-&gt;data_.push_back(opType);
+    logObject-&gt;data_.push_back(key);
+    if (opType != "get") {
+        logObject-&gt;data_.push_back(value);
+    }
+    logObject-&gt;event = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+    logObject-&gt;isCompleted = false;
+    mtx_.unlock();
+    return logObject;
+}
+
+int KvServer::handleKvOperation(shared_ptr&lt;MultiStringMarshallable&gt; logObject) {
+    //bool isCompleted = logObject-&gt;isCompleted;
+    uint64_t oid = stoull(logObject-&gt;data_.at(0));
+    //usleep(agreeTime * pow(10,3));
+    Timer timer = Timer();
+    timer.start();
+    while ((timer.elapsed() * pow(10, 3) &lt; agreeTime) && (committedIds.find(oid) == committedIds.end())) {
+        Coroutine::Sleep(agreeTime * pow(10,2));
+    }
+    //Coroutine::Sleep(agreeTime * pow(10, 3));
+    timer.reset();
+    if ((committedIds.find(oid) != committedIds.end()) && committedIds[oid] == true) {
+        return KV_SUCCESS;
+    }else {
+        return KV_TIMEOUT;
+    }
+}
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+    mtx_.lock();
+    auto logObject = makeLogObject(oid, k, v, "append");
+    shared_ptr&lt;Marshallable&gt; marshalledLogObject = logObject;
+    uint64_t currentTerm, index;
+    bool isLeader = this-&gt;GetRaftServer().Start(marshalledLogObject, &index, &currentTerm);
+    mtx_.unlock();
+    if (isLeader) {
+    int retValue = handleKvOperation(logObject);
+    return retValue;
+    }else {
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match116-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    return KV_NOTLEADER;
+    }
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+  /* your code here */
+  auto logObject = makeLogObject(oid, k, "", "get");
+  shared_ptr&lt;Marshallable&gt; marshalledLogObject = logObject;
+</FONT>  uint64_t currentTerm; 
+  uint64_t index;
+  mtx_.lock();
+  bool isLeader = this-&gt;GetRaftServer().Start(marshalledLogObject, &index, &currentTerm);
+  mtx_.unlock();
+  if (isLeader) {
+    int retValue = handleKvOperation(logObject);
+    if (retValue == KV_SUCCESS) {
+        if (contains(k)) {
+            *v = kvStore[k];
+        }
+    }
+    return retValue;
+  }else {
+    return KV_NOTLEADER;
+  }
+}
+
+bool KvServer::contains(string key) {
+    mtx_.lock();
+    if (kvStore.find(key) == kvStore.end()) {
+        mtx_.unlock();
+        return false;
+    }
+    mtx_.unlock();
+    return true;
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+    //this-&gt;GetRaftServer().mtx_.lock();
+    auto logObject = (MultiStringMarshallable*)(&m);
+    //Coroutine::CreateRun([this, logObject](){
+        //mtx_.lock();
+        cout&lt;&lt;"Length of data is " &lt;&lt; logObject-&gt;data_.size()&lt;&lt; " first object is " &lt;&lt; logObject-&gt;data_.at(0) &lt;&lt; endl;
+        uint64_t oid = stoull(logObject-&gt;data_.at(0));
+        string opType = logObject-&gt;data_.at(1);
+        string key = logObject-&gt;data_.at(2);
+        string value;
+        //event-&gt;Set(1);
+        ///logObject-&gt;isCompleted = true;
+        committedIds[oid] = true; 
+        //mtx_.unlock();
+        cout&lt;&lt;"Command committed for optype " &lt;&lt; opType &lt;&lt; " for key " &lt;&lt; key &lt;&lt; endl;
+        if (opType != "get") {
+            value = logObject-&gt;data_.at(3);
+        }
+        if (opType == "put") {
+            handleCommittedPut(key, value);
+        }else if (opType == "get") {
+            handleCommittedGet(key);
+        }else {
+            handleCommittedAppend(key, value);
+        }
+    //}); 
+
+ // this-&gt;GetRaftServer().mtx_.unlock();
+  /* your code here */
+}
+
+void KvServer::handleCommittedPut(string key, string value) {
+    mtx_.lock();
+    kvStore[key] = value;
+    mtx_.unlock();
+}
+
+void KvServer::handleCommittedAppend(string key, string value) {
+    if (contains(key)) {
+        mtx_.lock();
+        string oldValue = kvStore[key];
+        kvStore[key] = oldValue + value;
+        mtx_.unlock();
+    }else {
+        handleCommittedPut(key, value);
+    }
+}
+
+void KvServer::handleCommittedGet(string key) {
+
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

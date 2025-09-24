@@ -1,0 +1,269 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-mihirkestur/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-mihirkestur/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+void RaftServiceImpl::HandleRequestVote(const uint64_t& candidateTerm,
+                                        const uint64_t& candidateId,
+                                        const uint64_t& lastLogIndex,
+                                        const uint64_t& lastLogTerm,
+                                        uint64_t *voterTermResp,
+                                        bool_t *vote_granted,
+                                        rrr::DeferredReply* defer) {
+  /* Your code here */
+  
+  // count requestvote rpc also as heartbeat
+  svr_-&gt;lastHeartbeatTimestamp_ = std::chrono::system_clock::now();
+
+  Log_info("Candidate %d wants my %d vote", candidateId, svr_-&gt;loc_id_);
+
+  uint64_t voterTerm = svr_-&gt;currentTerm;
+  uint64_t voterLastLogIndex = svr_-&gt;lastLogIndex;
+  uint64_t voterLastLogTerm = svr_-&gt;lastLogTerm;
+  
+  // Reject vote if term mismatch
+  if (candidateTerm &lt; voterTerm) {
+    *voterTermResp = voterTerm;
+    *vote_granted = false;
+    Log_info("Rejecting vote for %d by %d : Term Mismatch", candidateId, svr_-&gt;loc_id_);
+  } 
+  else if(candidateTerm &gt; voterTerm){
+    svr_-&gt;setServerState(0,0,1);
+    svr_-&gt;votedFor = candidateId;
+    svr_-&gt;currentTerm = candidateTerm;
+    *voterTermResp = candidateTerm;
+    // *vote_granted = true;
+    if ((lastLogIndex &gt;= voterLastLogIndex && lastLogTerm == voterLastLogTerm) || (lastLogIndex == voterLastLogIndex && lastLogTerm &gt;= voterLastLogTerm)) {
+      // if (lastLogTerm &gt; voterLastLogTerm || (lastLogTerm == voterLastLogTerm && lastLogTerm &gt;= voterLastLogTerm && lastLogIndex &gt;= voterLastLogIndex)) {
+        // Grant the vote
+        // Log_info("\nVoter (%d)\nvoterlogterm %d\ncandlogterm %d\nvoterindex %d\ncandindex %d", svr_-&gt;loc_id_, voterLastLogTerm, lastLogTerm, voterLastLogIndex, lastLogIndex);
+        svr_-&gt;currentTerm = candidateTerm;
+
+        *voterTermResp = candidateTerm;
+        *vote_granted = true;
+        svr_-&gt;votedFor = candidateId;
+      } else {
+        // Candidate's log is not up-to-date, reject the vote
+        *voterTermResp = voterTerm;
+        *vote_granted = false;
+        Log_info("Rejecting vote for %d by %d : Candidate's Log not upto date", candidateId, svr_-&gt;loc_id_);
+      }
+  }
+  else{
+    if(svr_-&gt;votedFor == -1 || svr_-&gt;votedFor == candidateId){
+      // uint64_t voterLastLogIndex = svr_-&gt;lastLogIndex;
+      // uint64_t voterLastLogTerm = svr_-&gt;lastLogTerm;
+      Log_info("Checking if logs are same");
+      // Compare the logs of candidate and voter
+      if ((lastLogIndex &gt;= voterLastLogIndex && lastLogTerm == voterLastLogTerm) || (lastLogIndex == voterLastLogIndex && lastLogTerm &gt;= voterLastLogTerm)) {
+      // if (lastLogTerm &gt; voterLastLogTerm || (lastLogTerm == voterLastLogTerm && lastLogTerm &gt;= voterLastLogTerm && lastLogIndex &gt;= voterLastLogIndex)) {
+        // Grant the vote
+        // Log_info("\nVoter (%d)\nvoterlogterm %d\ncandlogterm %d\nvoterindex %d\ncandindex %d", svr_-&gt;loc_id_, voterLastLogTerm, lastLogTerm, voterLastLogIndex, lastLogIndex);
+        svr_-&gt;currentTerm = candidateTerm;
+
+        *voterTermResp = candidateTerm;
+        *vote_granted = true;
+        svr_-&gt;votedFor = candidateId;
+      } else {
+        // Candidate's log is not up-to-date, reject the vote
+        *voterTermResp = voterTerm;
+        *vote_granted = false;
+        Log_info("Rejecting vote for %d by %d : Candidate's Log not upto date", candidateId, svr_-&gt;loc_id_);
+      }
+    } 
+    else {
+      *voterTermResp = voterTerm;
+      *vote_granted = false;
+      Log_info("Rejecting vote for %d by %d : I have voted in this term", candidateId, svr_-&gt;loc_id_);
+    }
+  }
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleAppendEntries(const uint64_t& leaderTerm,
+                                              const uint64_t& leaderId,
+                                              const uint64_t& ldrLastlogindex,
+                                              const uint64_t& prevLogIndex,
+                                              const uint64_t& prevLogTerm,
+                                              const uint64_t& leaderCommit,
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match196-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                              const std::vector&lt;uint64_t&gt;& logTerms,
+                                              const std::vector&lt;uint64_t&gt;& logIndex,
+                                              const std::vector&lt;MarshallDeputy&gt;& cmds_d,
+                                              bool_t *followerAppendOK,
+                                              uint64_t *serverTerm,
+                                              uint64_t *svrCommitIndex,
+</FONT>                                              rrr::DeferredReply* defer) {
+  
+  svr_-&gt;lastHeartbeatTimestamp_ = std::chrono::system_clock::now();
+  bool_t logOK = false;
+  // Log_info("[\nI am %d,\nmy log size is %d,\ngot heartbeat from %d\nmy commit index : %d\nleader commit : %d\nmyterm : %d\nleaderterm : %d\n]", svr_-&gt;loc_id_, svr_-&gt;logEntries.size(), leaderId, svr_-&gt;commitIndex, leaderCommit, svr_-&gt;currentTerm, leaderTerm);
+  if(leaderTerm &lt; svr_-&gt;currentTerm){
+    *followerAppendOK = false;
+    logOK = false;
+    Log_info("%d [My term better]", svr_-&gt;loc_id_);
+  } 
+  else if(leaderTerm &gt; svr_-&gt;currentTerm){
+    logOK = false;
+    svr_-&gt;votedFor = -1;
+    if(svr_-&gt;isCandidate || svr_-&gt;isLeader){
+      svr_-&gt;setServerState(0,0,1);
+      svr_-&gt;currentTerm = leaderTerm;
+      Log_info("%d i was a candidate / leader, now i'm stepping down to follower", svr_-&gt;loc_id_);
+    }
+    else{
+      svr_-&gt;currentTerm = leaderTerm;
+      Log_info("%d i was a follower; updated my term", svr_-&gt;loc_id_);
+    }
+  } 
+  else if(leaderTerm == svr_-&gt;currentTerm){
+    if(svr_-&gt;isLeader){
+      logOK = false;
+      *followerAppendOK = false;
+      Log_info("%d [THIS SHOULD NEVER HAPPEN]", svr_-&gt;loc_id_);
+    }
+    else if(svr_-&gt;isCandidate){
+      logOK = false;
+      *followerAppendOK = false;
+      svr_-&gt;setServerState(0,0,1);
+      Log_info("%d i was a candidate, now i'm stepping down to follower", svr_-&gt;loc_id_);
+    }
+    else if(svr_-&gt;isFollower){
+      if(svr_-&gt;commitIndex &gt; leaderCommit){
+        logOK = false;
+        *followerAppendOK = false;
+        // svr_-&gt;setServerState(0,1,0);
+        Log_info("My %d commit index greater", svr_-&gt;loc_id_);
+        // svr_-&gt;TriggerElection();
+      }
+      else{
+        logOK = true;
+      }
+    } 
+  } 
+  else{
+    Log_info("Some edge case not handled in handleAppendEntries");
+  }
+
+  if(svr_-&gt;isFollower && logOK){
+    // Check if the log contains an entry at prevLogIndex whose term matches prevLogTerm
+    bool_t indexTermMatch = false;
+    if(svr_-&gt;lastLogIndex == prevLogIndex && svr_-&gt;lastLogTerm == prevLogTerm){
+      indexTermMatch = true;
+    }
+    // for(auto l: svr_-&gt;logEntries){
+    //   if(get&lt;1&gt;(l) == prevLogIndex && get&lt;0&gt;(l) == prevLogTerm){
+    //     indexTermMatch = true;
+    //   }
+    // }
+    if(prevLogIndex == 0 || indexTermMatch){
+      // Log_info("I am %d, log append i got from %d is %d\tcurrent log size: %d", svr_-&gt;loc_id_, leaderId, logTerms.size(), svr_-&gt;logEntries.size());
+      *followerAppendOK = true;
+      // COnflicts + new appends
+      uint64_t logIndexToStartFrom = -1;
+      bool_t conflict = false;
+      for (uint64_t f = 0; f &lt; logIndex.size(); f++) {
+        conflict = false;
+        for (uint64_t i = 0; i &lt; svr_-&gt;logEntries.size(); i++) {
+          if (svr_-&gt;logEntries.size() &gt; 0 && 
+              get&lt;1&gt;(svr_-&gt;logEntries[i]) == logIndex[f] && 
+              get&lt;0&gt;(svr_-&gt;logEntries[i]) != logTerms[f]) {
+              svr_-&gt;logEntries.erase(svr_-&gt;logEntries.begin() + i, svr_-&gt;logEntries.end());
+              conflict = true;
+              logIndexToStartFrom = f;
+              break;
+          }
+        }
+        if(conflict == false){
+          std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(cmds_d[f]).sp_data_;
+          svr_-&gt;logEntries.emplace_back(logTerms[f], logIndex[f], cmd);
+          svr_-&gt;lastLogIndex = logIndex[f];
+          svr_-&gt;lastLogTerm = logTerms[f];
+        }
+        if(conflict == true){
+          break;
+        }
+      }  
+
+      if(conflict == true){
+        // Log_info("I saw a conflict in server %d at logindex : %d", svr_-&gt;loc_id_, logIndexToStartFrom);
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match196-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        for(uint64_t f = logIndexToStartFrom; f &lt; logIndex.size(); f++){
+          std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(cmds_d[f]).sp_data_;
+</FONT>          svr_-&gt;logEntries.emplace_back(logTerms[f], logIndex[f], cmd);
+          svr_-&gt;lastLogIndex = logIndex[f];
+          svr_-&gt;lastLogTerm = logTerms[f];
+        }
+      }
+
+      // Set commitIndex if leaderCommit &gt; commitIndex
+      if (leaderCommit &gt; svr_-&gt;commitIndex) {
+        *followerAppendOK = true;
+        // Commit for followers here
+        // Log_info("I am %d, my log size = %d\n",svr_-&gt;loc_id_, svr_-&gt;logEntries.size());
+        for (uint64_t i = svr_-&gt;commitIndex + 1; i &lt;= std::min(leaderCommit, svr_-&gt;lastLogIndex); i++) {
+          for(auto l: svr_-&gt;logEntries){
+            // Log_info("Found commit mismatch %d", svr_-&gt;loc_id_);
+            if(get&lt;1&gt;(l) == i){
+              svr_-&gt;app_next_(*get&lt;2&gt;(l));
+              svr_-&gt;commitIndex = i;
+              shared_ptr&lt;TpcCommitCommand&gt; tpcCmd = std::dynamic_pointer_cast&lt;TpcCommitCommand&gt;(get&lt;2&gt;(l));
+              auto txId = tpcCmd-&gt;tx_id_;
+              Log_info("[FLR %d] THIS CMD IS = %d", svr_-&gt;loc_id_, txId);
+              // Log_info("I'm committing from %d; \n ldr commit index %d \n flr commit index %d \n flr log size %d", svr_-&gt;loc_id_, leaderCommit, svr_-&gt;commitIndex, svr_-&gt;logEntries.size());
+            }
+          }
+        }
+      }
+      else if(leaderCommit == svr_-&gt;commitIndex){
+        *followerAppendOK = true;
+        logOK = true;
+      }
+      else{
+        Log_info("Same term edge case not handled in handleAppendEntries");
+      }   
+
+
+      svr_-&gt;currentTerm = leaderTerm;
+    }
+    else{
+      *followerAppendOK = false;
+      // Log_info("ID: %d \nIndex/Term Mismatch Size got: %d \n prevlogind %d\n prevlogterm %d \n logsize %d\n", svr_-&gt;loc_id_, logTerms.size(), prevLogIndex, prevLogTerm, svr_-&gt;logEntries.size());
+    }
+  } 
+  *serverTerm = svr_-&gt;currentTerm;
+  *svrCommitIndex = svr_-&gt;commitIndex;
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("receive an rpc: %s", req.c_str());
+  *res = "world";
+  defer-&gt;reply();
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

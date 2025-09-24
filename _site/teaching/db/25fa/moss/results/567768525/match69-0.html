@@ -1,0 +1,373 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/RSinghSBU2019/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/RSinghSBU2019/src/kvraft/server.go<p><PRE>
+package raftkv
+
+import (
+	"labgob"
+	"labrpc"
+	"log"
+	"raft"
+	"sync"
+	"time"
+)
+
+const Debug = 0
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+type Operation int
+
+const (
+<A NAME="9"></A><FONT color = #FF00FF><A HREF="match69-1.html#9" TARGET="1"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	GetOp    Operation = 0
+	PutOp    Operation = 1
+	AppendOp Operation = 2
+)
+
+type Op struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+	ClientID    int64
+	RequestID   int64
+	KVOperation Operation
+	Key         string
+	Value       string
+}
+
+type KVServer struct {
+</FONT>	mu sync.Mutex
+	me int
+	rf *raft.Raft
+	//applyCh chan raft.ApplyMsg
+	killed       bool
+	maxraftstate int // snapshot if log grows this big
+
+	// Your definitions here.
+	dataStore             map[string]string //Stores the Data as a Key-Value Store
+	currentTerm           int               //Stores the current term of the Raft Instance that will be used in Snapshotting
+	clientRequests        map[int64]map[int64]Op
+	clientChannelNotif    map[int64]chan bool
+	lastClientCommitIndex map[int64]int
+}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match69-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_10.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *KVServer) requestServed(ClientId int64, RequestID int64) (bool, Op) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	ret_val := false
+	ret_command := Op{}
+	if _, ok := kv.clientRequests[ClientId]; ok {
+		if command, ok := kv.clientRequests[ClientId][RequestID]; ok {
+			ret_val = true
+			ret_command = command
+		}
+	}
+	return ret_val, ret_command
+}
+
+func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
+	// Your code here.
+	kv.mu.Lock()
+	processId := kv.me
+	kv.mu.Unlock()
+	_, isLeader := kv.rf.GetState()
+
+	if !isLeader {
+		reply.WrongLeader = True
+		return
+	}
+
+	if ok, command := kv.requestServed(args.ClientID, args.RequestID); ok {
+		if command.KVOperation == GetOp {
+</FONT>			kv.mu.Lock()
+			reply.Err = OK
+			reply.WrongLeader = False
+			reply.Value = kv.dataStore[command.Key]
+			kv.mu.Unlock()
+			return
+		}
+	}
+	DPrintf("Server %d: Received GET Request from %d", processId, args.ClientID)
+	command := Op{ClientID: args.ClientID, RequestID: args.RequestID, KVOperation: GetOp, Key: args.Key, Value: ""}
+	kv.rf.Start(command)
+	DPrintf("Server %d: Get Request Sent", processId)
+	notifyChan := make(chan bool)
+	kv.mu.Lock()
+	kv.clientChannelNotif[args.RequestID] = notifyChan
+	kv.mu.Unlock()
+	reply.WrongLeader = False
+	flag := false
+	var count uint64
+	count = 0
+	for {
+		select {
+		case returnValue := &lt;-notifyChan:
+			DPrintf("Server %d: Get Return Value %t", processId, returnValue)
+			if returnValue {
+				kv.mu.Lock()
+				if val, ok := kv.dataStore[args.Key]; ok {
+					reply.Value = val
+					reply.Err = OK
+				}
+				kv.mu.Unlock()
+			} else {
+				reply.Err = ErrNoKey
+				reply.Value = ""
+			}
+			kv.mu.Lock()
+			DPrintf("Server %d : KV - %v", kv.me, kv.dataStore)
+			delete(kv.clientChannelNotif, args.RequestID)
+			kv.mu.Unlock()
+			flag = true
+		case &lt;-time.After(100 * time.Millisecond):
+			count++
+		}
+		if flag {
+			break
+		}
+		if count &gt; 10 {
+			reply.Err = TimeOut
+			break
+		}
+	}
+	DPrintf("Server %d: Get process complete %d", processId, args.ClientID)
+}
+
+func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	// Your code here.
+	kv.mu.Lock()
+	processId := kv.me
+	kv.mu.Unlock()
+	DPrintf("Server %d: Received PA Request from %d", processId, args.ClientID)
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match69-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	_, isLeader := kv.rf.GetState()
+
+	if !isLeader {
+		reply.WrongLeader = True
+		return
+	}
+
+	if ok, command := kv.requestServed(args.ClientID, args.RequestID); ok {
+		if command.KVOperation == PutOp || command.KVOperation == AppendOp {
+</FONT>			kv.mu.Lock()
+			reply.Err = OK
+			reply.WrongLeader = False
+			kv.mu.Unlock()
+			return
+		}
+	}
+
+	var operationType Operation
+	if args.Op == "Put" {
+		operationType = PutOp
+	} else {
+		operationType = AppendOp
+	}
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match69-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	command := Op{ClientID: args.ClientID, RequestID: args.RequestID, KVOperation: operationType, Key: args.Key, Value: args.Value}
+
+	kv.rf.Start(command)
+	DPrintf("Server %d: PA Request Sent Command Sent %v", processId, command)
+	kv.mu.Lock()
+	notifyChan := make(chan bool)
+	kv.clientChannelNotif[args.RequestID] = notifyChan
+	kv.mu.Unlock()
+	reply.WrongLeader = False
+	flag := false
+</FONT>	var count uint64
+	count = 0
+	for {
+		select {
+		case returnValue := &lt;-notifyChan:
+			DPrintf("Server %d: PA Return Value %t", processId, returnValue)
+			if returnValue {
+				kv.mu.Lock()
+				DPrintf("Server %d: Value Inserted in %s as %s", processId, args.Key, kv.dataStore[args.Key])
+				kv.mu.Unlock()
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match69-1.html#7" TARGET="1"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				reply.Err = OK
+			} else {
+				reply.Err = ServerErr
+			}
+			kv.mu.Lock()
+			delete(kv.clientChannelNotif, args.RequestID)
+			kv.mu.Unlock()
+			flag = true
+</FONT>			DPrintf("Server %d: Value of ERR: %d and flag : %t", processId, reply.Err, flag)
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match69-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		case &lt;-time.After(100 * time.Millisecond):
+			count++
+		}
+		if flag {
+			DPrintf("Server %d: Breaking from Waiting loop", processId)
+			break
+		}
+		if count &gt;= 10 {
+			DPrintf("Server %d: Time out reached", processId)
+			reply.Err = TimeOut
+			break
+		}
+	}
+	DPrintf("Server %d: Put Append process complete %d", processId, args.ClientID)
+}
+
+//
+// the tester calls Kill() when a KVServer instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *KVServer) Kill() {
+</FONT>	kv.rf.Kill()
+	// Your code here, if desired.
+	kv.mu.Lock()
+	DPrintf("Server %d: Kill method Invoked", kv.me)
+	kv.killed = true
+	kv.mu.Unlock()
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Raft to
+// form the fault-tolerant key/value service.
+// me is the index of the current server in servers[].
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+// the k/v server should snapshot when Raft's saved state exceeds maxraftstate bytes,
+// in order to allow Raft to garbage-collect its log. if maxraftstate is -1,
+// you don't need to snapshot.
+// StartKVServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
+	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+
+	kv := new(KVServer)
+	kv.mu.Lock()
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+	kv.killed = false
+	// You may need initialization code here.
+
+	applyCh := make(chan raft.ApplyMsg)
+	kv.rf = raft.Make(servers, me, persister, applyCh)
+	kv.dataStore = make(map[string]string)
+	kv.currentTerm = 0
+	kv.lastClientCommitIndex = make(map[int64]int)
+	kv.clientChannelNotif = make(map[int64](chan bool))
+	kv.mu.Unlock()
+	kv.clientRequests = make(map[int64]map[int64]Op)
+	// You may need initialization code here.
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match69-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	go kv.checkApplyChannel(me, applyCh)
+	return kv
+}
+
+/*func (kv *KVServer) applyChannelHandler() {
+	for {
+		go kv.checkApplyChannel()
+		time.Sleep(1 * time.Microsecond)
+	}
+}*/
+
+func (kv *KVServer) checkApplyChannel(processId int, applyCh chan raft.ApplyMsg) {
+	for {
+		select {
+		case reply := &lt;-applyCh:
+			DPrintf("Server %d: %t and Index: %d", processId, reply.CommandValid, reply.CommandIndex)
+			//_, isLeader := kv.rf.GetState()
+			if reply.CommandValid {
+				command, ok := reply.Command.(Op)
+</FONT><A NAME="6"></A><FONT color = #00FF00><A HREF="match69-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				if ok {
+					kv.handleApplyChannelResponse(command)
+				}
+			}
+		}
+		kv.mu.Lock()
+		if kv.killed {
+			kv.mu.Unlock()
+			break
+		}
+		kv.mu.Unlock()
+		//time.Sleep(1 * time.Microsecond)
+	}
+}
+
+func (kv *KVServer) handleApplyChannelResponse(command Op) {
+	kv.mu.Lock()
+</FONT><A NAME="1"></A><FONT color = #00FF00><A HREF="match69-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	defer kv.mu.Unlock()
+	processId := kv.me
+	if _, ok := kv.clientRequests[command.ClientID]; !ok {
+		kv.clientRequests[command.ClientID] = make(map[int64]Op)
+	}
+	if _, ok := kv.clientRequests[command.ClientID][command.RequestID]; ok {
+		//kv.mu.Unlock()
+		DPrintf("Server %d: Request already served", processId)
+</FONT>		return
+	}
+	kv.clientRequests[command.ClientID][command.RequestID] = command
+	//kv.mu.Unlock()
+	DPrintf("Server %d: Checking Apply Channel Commit Response", processId)
+	DPrintf("Server %d: Parameters %d : %s : %s", processId, command.KVOperation, command.Key, command.Value)
+	status := false
+	if command.KVOperation == PutOp {
+		DPrintf("Server %d: Put Response Received", processId)
+		kv.dataStore[command.Key] = command.Value
+		DPrintf("Server %d: Value of Index %s : %s", processId, command.Key, kv.dataStore[command.Key])
+		status = true
+	} else if command.KVOperation == AppendOp {
+		DPrintf("Server %d: Append Response Received", processId)
+		kv.dataStore[command.Key] = kv.dataStore[command.Key] + command.Value
+		DPrintf("Server %d: Value of Index %s : %s", processId, command.Key, kv.dataStore[command.Key])
+		status = true
+	} else {
+		DPrintf("Server %d: Get Response Received", processId)
+		if _, ok := kv.dataStore[command.Key]; ok {
+<A NAME="8"></A><FONT color = #00FFFF><A HREF="match69-1.html#8" TARGET="1"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			status = true
+		}
+	}
+	DPrintf("Server %d: Checking if Client lodged a request", processId)
+	/*if _, ok := kv.clientChannelNotif[command.ClientID]; ok {
+		kv.clientChannelNotif[command.ClientID] &lt;- status
+		DPrintf("Server %d: Sent the respones back to caller", processId)
+	}*/
+	select {
+	case kv.clientChannelNotif[command.RequestID] &lt;- status:
+		DPrintf("Server %d: Sent the respones back to caller", processId)
+	default:
+		DPrintf("Server %d: No respose", processId)
+</FONT>	}
+	DPrintf("Server %d: Completed with/without sending response", processId)
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

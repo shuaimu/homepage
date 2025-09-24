@@ -1,0 +1,394 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-omkar-decode/src/deptran/raft/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-omkar-decode/src/deptran/raft/server.cc<p><PRE>
+
+
+#include "server.h"
+// #include "paxos_worker.h"
+#include "exec.h"
+#include "frame.h"
+#include "coordinator.h"
+#include "../classic/tpc_command.h"
+
+
+namespace janus {
+
+RaftServer::RaftServer(Frame * frame) {
+  frame_ = frame ;
+  /* Your code here for server initialization. Note that this function is 
+     called in a different OS thread. Be careful about thread safety if 
+     you want to initialize variables here. */
+
+    mtx_.lock();
+    nservers = 5;
+    currentTerm = 0;
+    votedFor = -1;
+    state = ServerState::Follower;
+    receivedHeartbeat = false;
+
+    commitIndex = 0;
+    lastApplied = 0;
+    nextIndex.resize(nservers, 1);
+    matchIndex.resize(nservers, 0);
+
+    logEntries.push_back(new LogEntry(nullptr, 0));
+    mtx_.unlock();
+}
+
+RaftServer::~RaftServer() {
+  /* Your code here for server teardown */
+
+}
+
+void RaftServer::Setup() {
+  /* Your code here for server setup. Due to the asynchronous nature of the 
+     framework, this function could be called after a RPC handler is triggered. 
+     Your code should be aware of that. This function is always called in the 
+     same OS thread as the RPC handlers. */
+
+    Coroutine::CreateRun([this]() {
+      while (true) {
+        if (this-&gt;state == ServerState::Leader) {
+          Leader_SendAppendEntries();
+          Leader_UpdateCommitIndex();
+        } else if (this-&gt;state == ServerState::Follower) {
+          Follower_RunElectionTimer();
+        }
+        Coroutine::Sleep(HEARTBEAT_INTERVAL);
+      }
+    });
+
+    Server_CommitLog();
+}
+
+void RaftServer::Leader_SendAppendEntries() {
+  Coroutine::CreateRun([this]() {
+    for (int i=0; i&lt;this-&gt;nservers; i++) {
+      uint64_t followerTerm;
+      uint64_t followerAppendOK;
+      if (i == this-&gt;loc_id_) {
+        continue;
+      }
+
+      if (this-&gt;state != ServerState::Leader) {
+        break;
+      }
+
+      // send heartbeat
+      if (this-&gt;logEntries.size() == 1) {
+        // Log_info("leader %d sending heartbeat to server %d", this-&gt;loc_id_, i);
+        commo()-&gt;SendEmptyAppendEntries(0, i, "", this-&gt;currentTerm, this-&gt;commitIndex);
+        continue;
+      }
+      
+      // send append entries
+      bool logsSmaller = (int)this-&gt;logEntries.size() &lt;= this-&gt;nextIndex[i];
+      uint64_t prevLogIndex;
+      if (logsSmaller) {
+        prevLogIndex = this-&gt;logEntries.size() - 2;
+      } else {
+        prevLogIndex = this-&gt;nextIndex[i] - 1;
+      }
+
+      uint64_t prevLogTerm = this-&gt;logEntries[prevLogIndex]-&gt;term;
+      uint64_t currLogIndex = prevLogIndex + 1;
+      uint64_t currLogTerm = this-&gt;logEntries[currLogIndex]-&gt;term;
+      shared_ptr&lt;Marshallable&gt; cmd = this-&gt;logEntries[currLogIndex]-&gt;cmd;
+      // Log_info("leader %d sending append entries to server %d with cmd %d", this-&gt;loc_id_, i, dynamic_pointer_cast&lt;TpcCommitCommand&gt;(cmd)-&gt;tx_id_);
+      auto appendEntriesEvent = commo()-&gt;SendAppendEntries(0, i, this-&gt;currentTerm, this-&gt;loc_id_, prevLogIndex, prevLogTerm, cmd, currLogTerm, this-&gt;commitIndex, &followerTerm, &followerAppendOK);
+      appendEntriesEvent-&gt;Wait(50000);
+      if (appendEntriesEvent-&gt;status_ == Event::DONE) {
+        if (followerTerm &gt; this-&gt;currentTerm) {
+          // Log_info("leader %d with term %d stepping down, server %d has higher term %d", this-&gt;loc_id_, this-&gt;currentTerm, i, followerTerm);
+          this-&gt;currentTerm = followerTerm;
+          this-&gt;state = ServerState::Follower;
+          break;
+        }
+        if (!logsSmaller && followerAppendOK == 1) {
+          this-&gt;nextIndex[i] += 1;
+          this-&gt;matchIndex[i] = this-&gt;nextIndex[i] - 1;
+
+          while ((int)this-&gt;logEntries.size() &gt; this-&gt;nextIndex[i]) {
+            prevLogIndex += 1;
+            prevLogTerm = this-&gt;logEntries[prevLogIndex]-&gt;term;
+            currLogIndex = prevLogIndex + 1;
+            currLogTerm = this-&gt;logEntries[currLogIndex]-&gt;term;
+            cmd = this-&gt;logEntries[currLogIndex]-&gt;cmd;
+            // Log_info("leader %d sending append entries to server %d with cmd %d", this-&gt;loc_id_, i, dynamic_pointer_cast&lt;TpcCommitCommand&gt;(cmd)-&gt;tx_id_);
+            auto nextAppendEntriesEvent = commo()-&gt;SendAppendEntries(0, i, this-&gt;currentTerm, this-&gt;loc_id_, prevLogIndex, prevLogTerm, cmd, currLogTerm, this-&gt;commitIndex, &followerTerm, &followerAppendOK);
+            nextAppendEntriesEvent-&gt;Wait(50000);
+            if (nextAppendEntriesEvent-&gt;status_ == Event::DONE) {
+              if (followerTerm &gt; this-&gt;currentTerm) {
+                // Log_info("leader %d with term %d stepping down, server %d has higher term %d", this-&gt;loc_id_, this-&gt;currentTerm, i, followerTerm);
+                this-&gt;currentTerm = followerTerm;
+                this-&gt;state = ServerState::Follower;
+                break;
+              }
+              if (followerAppendOK == 1) {
+                this-&gt;nextIndex[i] += 1;
+                this-&gt;matchIndex[i] = this-&gt;nextIndex[i] - 1;
+              } else {
+                break;
+              }
+            }
+          }
+
+        } else if (followerAppendOK == 2) {
+          this-&gt;nextIndex[i] -= 1;
+          this-&gt;matchIndex[i] = this-&gt;nextIndex[i] - 1;
+
+          while (nextIndex[i] &gt; 1) {
+            prevLogIndex -= 1;
+            prevLogTerm = this-&gt;logEntries[prevLogIndex]-&gt;term;
+            currLogIndex = prevLogIndex + 1;
+            currLogTerm = this-&gt;logEntries[currLogIndex]-&gt;term;
+            cmd = this-&gt;logEntries[currLogIndex]-&gt;cmd;
+            // Log_info("leader %d sending append entries to server %d with cmd %d", this-&gt;loc_id_, i, dynamic_pointer_cast&lt;TpcCommitCommand&gt;(cmd)-&gt;tx_id_);
+            auto nextAppendEntriesEvent = commo()-&gt;SendAppendEntries(0, i, this-&gt;currentTerm, this-&gt;loc_id_, prevLogIndex, prevLogTerm, cmd, currLogTerm, this-&gt;commitIndex, &followerTerm, &followerAppendOK);
+            nextAppendEntriesEvent-&gt;Wait(50000);
+            if (nextAppendEntriesEvent-&gt;status_ == Event::DONE) {
+              if (followerTerm &gt; this-&gt;currentTerm) {
+                // Log_info("leader %d with term %d stepping down, server %d has higher term %d", this-&gt;loc_id_, this-&gt;currentTerm, i, followerTerm);
+                this-&gt;currentTerm = followerTerm;
+                this-&gt;state = ServerState::Follower;
+                break;
+              }
+              if (followerAppendOK == 2) {
+                this-&gt;nextIndex[i] -= 1;
+                this-&gt;matchIndex[i] = this-&gt;nextIndex[i] - 1;
+              } else {
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+}
+
+void RaftServer::Leader_ReinitializeNextAndMatchIndex() {
+  this-&gt;mtx_.lock();
+  for (int i=0; i&lt;this-&gt;nservers; i++) {
+    this-&gt;nextIndex[i] = this-&gt;logEntries.size();
+    this-&gt;matchIndex[i] = this-&gt;nextIndex[i] - 1;
+  }
+  this-&gt;mtx_.unlock();
+}
+
+void RaftServer::Leader_UpdateCommitIndex() {
+  this-&gt;mtx_.lock();
+  int nextCommitIndex = this-&gt;commitIndex + 1;
+  int lastIndex = (int)this-&gt;logEntries.size() - 1;
+  for (int N=nextCommitIndex; N&lt;=lastIndex; N++) {
+    if (this-&gt;logEntries[N]-&gt;term != this-&gt;currentTerm) {
+      while (N &lt; this-&gt;logEntries.size() && this-&gt;logEntries[N]-&gt;term != this-&gt;currentTerm) {
+        this-&gt;logEntries.erase(this-&gt;logEntries.begin() + N);
+      }
+      Leader_ReinitializeNextAndMatchIndex();
+      break;
+    }
+    int replicationCount = 0;
+    for (int j=0; j&lt;this-&gt;nservers; j++) {
+      if (this-&gt;matchIndex[j] &gt;= N) {
+        replicationCount += 1;
+      }
+    }
+    if (replicationCount &gt; this-&gt;nservers / 2) {
+      this-&gt;commitIndex = N;
+    }
+  }
+  this-&gt;mtx_.unlock();
+}
+
+void RaftServer::Candidate_StartElection() {
+  // Log_info("election started by server %d in term %d", this-&gt;loc_id_, this-&gt;currentTerm);
+  Coroutine::CreateRun([this]() {
+    int voteCount = 1;
+    for (int i=0; i&lt;this-&gt;nservers; i++) {
+      if (i == this-&gt;loc_id_) {
+        this-&gt;votedFor = this-&gt;loc_id_;
+        continue;
+      }
+      uint64_t term = 0;
+      bool_t voteGranted;
+      uint64_t lastLogIndex = this-&gt;logEntries.size() - 1;
+      uint64_t lastLogTerm = this-&gt;logEntries.size() == 1 ? 0 : this-&gt;logEntries[lastLogIndex]-&gt;term;
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match195-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      auto requestVoteEvent = commo()-&gt;SendRequestVote(0, 
+                                            i, 
+                                            this-&gt;currentTerm, 
+                                            this-&gt;loc_id_,
+                                            lastLogIndex,
+                                            lastLogTerm,
+                                            &term,
+                                            &voteGranted);
+      requestVoteEvent-&gt;Wait(50000);
+</FONT>      if (requestVoteEvent-&gt;status_ == Event::DONE) {
+        if (voteGranted) {
+          voteCount += 1;
+          // Log_info("Server %d got a vote from server %d. Total votes: %d", this-&gt;loc_id_, i, voteCount);
+        } else if (term &gt; this-&gt;currentTerm) {
+          // Log_info("server %d stepping down as candidate, server %d has higher term %d", this-&gt;loc_id_, i, term);
+          this-&gt;state = ServerState::Follower;
+          this-&gt;currentTerm = term;
+          break;
+        }
+      }
+    }
+    if (this-&gt;state == ServerState::Candidate && voteCount &gt; this-&gt;nservers / 2) {
+      this-&gt;state = ServerState::Leader;
+      // Log_info("%d becomes leader in term %d", this-&gt;loc_id_, this-&gt;currentTerm);
+      this-&gt;Leader_ReinitializeNextAndMatchIndex();
+    } else {
+      this-&gt;state = ServerState::Follower;
+    }
+  });
+}
+
+void RaftServer::Follower_RunElectionTimer() {
+  this-&gt;receivedHeartbeat = false;
+  int r = this-&gt;loc_id_ * 100000;
+  auto electionTimeoutEvent = Reactor::CreateSpEvent&lt;TimeoutEvent&gt;(ELECTION_TIMEOUT + r);
+  electionTimeoutEvent-&gt;Wait();
+  if (this-&gt;receivedHeartbeat == false) {
+    this-&gt;votedFor = -1;
+    this-&gt;state = ServerState::Candidate;
+    this-&gt;currentTerm += 1;
+    // this-&gt;receivedHeartbeat = true;
+    Candidate_StartElection();
+  }
+}
+
+void RaftServer::Follower_ReplicateLog(shared_ptr&lt;Marshallable&gt; &cmd, uint64_t currLogTerm, uint64_t prevLogIndex, uint64_t leaderCommitIndex) {
+  // Log_info("INITIAL: follower %d log size: %d, commit index: %d. Leader commit index: %d", this-&gt;loc_id_, this-&gt;logEntries.size() - 1, this-&gt;commitIndex, leaderCommitIndex);
+  uint64_t currLogIndex = prevLogIndex + 1;
+  LogEntry *nextEntry = new LogEntry(cmd, currLogTerm);
+  this-&gt;mtx_.lock();
+  if (this-&gt;logEntries.size() == currLogIndex) {
+    this-&gt;logEntries.push_back(nextEntry);
+  } else if (this-&gt;logEntries[currLogIndex]-&gt;term != currLogTerm) {
+    this-&gt;logEntries.resize(currLogIndex);
+    this-&gt;logEntries.push_back(nextEntry);
+  }
+  
+  if (leaderCommitIndex &gt; this-&gt;commitIndex) {
+    if (currLogIndex &lt; leaderCommitIndex) {
+      this-&gt;commitIndex = currLogIndex;
+    } else {
+      this-&gt;commitIndex = leaderCommitIndex;
+    }
+  }
+  this-&gt;mtx_.unlock();
+  // Log_info("FINAL: follower %d log size: %d, currLogTerm: %d, commit index: %d. Leader commit index: %d", this-&gt;loc_id_, this-&gt;logEntries.size() - 1, currLogTerm, this-&gt;commitIndex, leaderCommitIndex);
+}
+
+void RaftServer::Server_CommitLog() {
+  Coroutine::CreateRun([this]() {
+    while (true) {
+      this-&gt;mtx_.lock();
+      for (int index=this-&gt;lastApplied+1; index&lt;=(int)this-&gt;commitIndex; index++) {
+        // Log_info("server %d committed cmd index %d with term %d. Commit index %d, log size %d", 
+          // this-&gt;loc_id_, index, this-&gt;logEntries[index]-&gt;term, this-&gt;commitIndex, this-&gt;logEntries.size() - 1);
+        this-&gt;app_next_(*(this-&gt;logEntries[index]-&gt;cmd));
+      }
+      this-&gt;lastApplied = this-&gt;commitIndex;
+      this-&gt;mtx_.unlock();
+      Coroutine::Sleep(50000);
+    }
+  });
+}
+
+bool RaftServer::Start(shared_ptr&lt;Marshallable&gt; &cmd,
+                       uint64_t *index,
+                       uint64_t *term) {
+  /* Your code here. This function can be called from another OS thread. */
+
+  if (this-&gt;state != ServerState::Leader) {
+    return false;
+  }
+
+  LogEntry* entry = new LogEntry(cmd, this-&gt;currentTerm);
+  this-&gt;mtx_.lock();
+  this-&gt;logEntries.push_back(entry);
+  this-&gt;nextIndex[this-&gt;loc_id_] += 1;
+  this-&gt;matchIndex[this-&gt;loc_id_] = this-&gt;nextIndex[this-&gt;loc_id_] - 1;
+  this-&gt;mtx_.unlock();
+  
+  *index = this-&gt;logEntries.size() - 1;
+  *term = this-&gt;currentTerm;
+  return true;
+}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match195-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void RaftServer::GetState(bool *is_leader, uint64_t *term) {
+  /* Your code here. This function can be called from another OS thread. */
+
+  *is_leader = (this-&gt;state == ServerState::Leader);
+  *term = this-&gt;currentTerm;
+}
+
+void RaftServer::SyncRpcExample() {
+  /* This is an example of synchronous RPC using coroutine; feel free to 
+     modify this function to dispatch/receive your own messages. 
+     You can refer to the other function examples in commo.h/cc on how 
+     to send/recv a Marshallable object over RPC. */
+  Coroutine::CreateRun([this](){
+    string res;
+    auto event = commo()-&gt;SendString(0, /* partition id is always 0 for lab1 */
+</FONT>                                     0, "hello", &res);
+    event-&gt;Wait(1000000); //timeout after 1000000us=1s
+    if (event-&gt;status_ == Event::TIMEOUT) {
+      Log_info("timeout happens");
+    } else {
+      Log_info("rpc response is: %s", res.c_str()); 
+    }
+  });
+}
+
+/* Do not modify any code below here */
+
+void RaftServer::Disconnect(const bool disconnect) {
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+  verify(disconnected_ != disconnect);
+  // global map of rpc_par_proxies_ values accessed by partition then by site
+  static map&lt;parid_t, map&lt;siteid_t, map&lt;siteid_t, vector&lt;SiteProxyPair&gt;&gt;&gt;&gt; _proxies{};
+  if (_proxies.find(partition_id_) == _proxies.end()) {
+    _proxies[partition_id_] = {};
+  }
+  RaftCommo *c = (RaftCommo*) commo();
+  if (disconnect) {
+    verify(_proxies[partition_id_][loc_id_].size() == 0);
+    verify(c-&gt;rpc_par_proxies_.size() &gt; 0);
+    auto sz = c-&gt;rpc_par_proxies_.size();
+    _proxies[partition_id_][loc_id_].insert(c-&gt;rpc_par_proxies_.begin(), c-&gt;rpc_par_proxies_.end());
+    c-&gt;rpc_par_proxies_ = {};
+    verify(_proxies[partition_id_][loc_id_].size() == sz);
+    verify(c-&gt;rpc_par_proxies_.size() == 0);
+  } else {
+    verify(_proxies[partition_id_][loc_id_].size() &gt; 0);
+    auto sz = _proxies[partition_id_][loc_id_].size();
+    c-&gt;rpc_par_proxies_ = {};
+    c-&gt;rpc_par_proxies_.insert(_proxies[partition_id_][loc_id_].begin(), _proxies[partition_id_][loc_id_].end());
+    _proxies[partition_id_][loc_id_] = {};
+    verify(_proxies[partition_id_][loc_id_].size() == 0);
+    verify(c-&gt;rpc_par_proxies_.size() == sz);
+  }
+  disconnected_ = disconnect;
+}
+
+bool RaftServer::IsDisconnected() {
+  return disconnected_;
+}
+
+} // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

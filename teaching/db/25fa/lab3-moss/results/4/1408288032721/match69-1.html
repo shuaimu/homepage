@@ -1,0 +1,324 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-Apeksha115908828/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-nitingss11/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+namespace janus {
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match69-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+  // Log_info("Join called in shardmaster");
+
+  RaftServer& raftServer = GetRaftServer();
+</FONT>
+  // Log_info("current tagged raft server %d, isLeader %d", raftServer.loc_id_, raftServer.isLeader==true);
+  
+  if(!raftServer.isLeader) {
+    *ret = KV_NOTLEADER;
+  } else {
+
+    ShardConfig prevConfig;
+    if(configs_.empty()) {
+      configs_.insert(make_pair(0, prevConfig));
+    }
+
+    int prevConfigNo = configs_.size()-1;
+    // Log_info("prev config no. %d", prevConfigNo);
+
+    if(prevConfigNo &gt; 0) {
+      prevConfig = configs_.at(prevConfigNo);
+    }
+
+    int newConfigNo = prevConfigNo + 1;
+    // Log_info("new config No %d", newConfigNo);
+
+    ShardConfig newConfig;
+    newConfig.number = newConfigNo;
+
+
+    map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt; groupServerMap = gid_server_map;
+    std::set&lt;int&gt; currentGroups;
+    // Log_info("Group-server mapping");
+    //Take from previous
+    for (const auto& pair : prevConfig.group_servers_map_) {
+      currentGroups.insert(pair.first);
+      newConfig.group_servers_map_.insert(make_pair(pair.first, pair.second));
+    }
+
+    //Take from new
+    for (const auto& pair : gid_server_map) {
+      newConfig.group_servers_map_.insert(make_pair(pair.first, pair.second));
+      if(currentGroups.count(pair.first) &gt; 0) {
+        // Log_info("This group already exists %d", pair.first);
+        groupServerMap.erase((int)pair.first);
+        // Log_info("Removed %d from group server map", pair.first);
+      }
+    }
+
+    vector&lt;int&gt; newGroups;
+    for(auto& entry2 : groupServerMap) {
+      newGroups.push_back(entry2.first);
+    }
+
+    // Print the current group configuration
+    /*Log_info("newConfig groups size %d", newConfig.group_servers_map_.size());
+    for (const auto& pair : newConfig.group_servers_map_) {
+      Log_info("GID %d", pair.first);
+      vector&lt;uint32_t&gt; listOfServers = pair.second;
+      for(int i=0; i&lt;listOfServers.size(); i++) {
+        Log_info("server id %d", listOfServers.at(i));
+      }
+    }*/
+
+    if(groupServerMap.size() == 0) {
+      newConfig.shard_group_map_ = prevConfig.shard_group_map_;
+    } else {
+      int totalNumOfShards = prevConfig.shard_group_map_.size();
+      int totalNumOfGroups = prevConfig.group_servers_map_.size() + groupServerMap.size();
+
+      // Log_info("Total num of shards %d", totalNumOfShards);
+      // Log_info("Total num of groups now %d", totalNumOfGroups);
+
+      int numShardsPerGroup = totalNumOfShards/totalNumOfGroups;
+
+      // Log_info("min num of shards per group %d", numShardsPerGroup);
+
+      if (totalNumOfGroups == 1) {
+        for (auto& entry : newConfig.shard_group_map_) {
+          for(auto& entry2 : groupServerMap) {
+            entry.second = entry2.first;
+          }
+        }
+      } else {
+
+        newConfig.shard_group_map_ = prevConfig.shard_group_map_;
+
+        int numOfReplacements = totalNumOfShards / totalNumOfGroups;
+
+        // Log_info("groupServerMap size %d", groupServerMap.size());
+        for(auto& entry2 : newGroups) {
+          int temp = numOfReplacements/newGroups.size();
+          while (temp-- &gt; 0) {
+            // Log_info("replacement %d", temp);
+            int shardToReplace = getMaxOccurringGroupShard(newConfig.shard_group_map_);
+            newConfig.shard_group_map_[shardToReplace] = entry2;
+            // Log_info("shard to replace %d, group id %d", shardToReplace, entry2);
+          }
+        }
+        
+      }
+    }
+
+    /*for (const auto& pair : newConfig.shard_group_map_) {
+      Log_info("shard %d =&gt; group %d", pair.first, pair.second);
+    }*/
+
+    configs_.insert(make_pair(newConfigNo, newConfig));
+    *ret = KV_SUCCESS;
+  }
+
+  // Log_info("Join complete");
+  defer-&gt;reply();
+}
+
+int ShardMasterServiceImpl::getMaxOccurringGroupShard(const map&lt;uint32_t, uint32_t&gt;& shardToGroupMap) {
+  std::map&lt;int, std::vector&lt;int&gt;&gt; groupCountMap;
+
+  for (const auto& entry : shardToGroupMap) {
+    int currShard = entry.first;
+    int currGroup = entry.second;
+
+    if (groupCountMap.find(currGroup) != groupCountMap.end()) {
+      int currCount = groupCountMap[currGroup][0];
+      groupCountMap[currGroup] = {currCount + 1, currShard};
+    } else {
+      groupCountMap[currGroup] = {1, currShard};
+    }
+  }
+
+  int shardToReplace = 1;
+  int max = 0;
+
+  for (const auto& entry : groupCountMap) {
+    int groupCount = entry.second[0];
+
+    if (groupCount &gt; max) {
+      max = groupCount;
+      shardToReplace = entry.second[1];
+    }
+  }
+
+  return shardToReplace;
+}
+
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  // std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+  // Log_info("leave called");
+  
+  RaftServer& raftServer = GetRaftServer();
+
+  // Log_info("current tagged raft server %d, isLeader %d", raftServer.loc_id_, raftServer.isLeader==true);
+  
+  if(!raftServer.isLeader) {
+    *ret = KV_NOTLEADER;
+  } else {
+
+    ShardConfig prevConfig;
+
+    int prevConfigNo = configs_.size()-1;
+    // Log_info("prev config no. %d", prevConfigNo);
+
+    if(prevConfigNo &gt; 0) {
+      prevConfig = configs_.at(prevConfigNo);
+    }
+
+    int newConfigNo = prevConfigNo + 1;
+    // Log_info("new config No %d", newConfigNo);
+
+    ShardConfig newConfig;
+    newConfig.number = newConfigNo;
+
+    std::unordered_set&lt;int&gt; set(gids.begin(), gids.end());
+    // Log_info("To remove groups size %d", set.size());
+
+    newConfig.shard_group_map_ = prevConfig.shard_group_map_;
+
+    // Log_info("getting unassigned shards");
+    std::vector&lt;int&gt; unassignedShards;
+    for (auto& entry : newConfig.shard_group_map_) {
+      int group = entry.second;
+      if (set.count(group) &gt; 0) {
+        entry.second = 0;
+        unassignedShards.push_back(entry.first);
+      }
+    }
+
+    // Log_info("start assigning unassigned");
+    for (int unassignedShard : unassignedShards) {
+      int minOccurringGroup = getMinOccurringGroupShard(newConfig.shard_group_map_);
+      newConfig.shard_group_map_[unassignedShard] = minOccurringGroup;
+    }
+
+
+    // Log_info("Update Group-server mapping, %d", prevConfig.group_servers_map_.size());
+    for (const auto& pair : prevConfig.group_servers_map_) {
+      int group = pair.first;
+      if(set.count(group) == 0) {
+        newConfig.group_servers_map_.insert(make_pair(pair.first, pair.second));
+      }
+    }
+
+    // for (const auto& pair : newConfig.group_servers_map_) {
+      // Log_info("GID %d", pair.first);
+      // vector&lt;uint32_t&gt; listOfServers = pair.second;
+      // for(int i=0; i&lt;listOfServers.size(); i++) {
+      //   Log_info("server id %d", listOfServers.at(i));
+      // }
+    // }
+
+    configs_.insert(make_pair(newConfigNo, newConfig));
+    *ret = KV_SUCCESS;
+  }
+
+  // Log_info("Leave complete");
+  defer-&gt;reply();
+}
+
+int ShardMasterServiceImpl::getMinOccurringGroupShard(const std::map&lt;uint32_t, uint32_t&gt;& shardToGroupMap) {
+  std::map&lt;int, int&gt; groupCountMap;
+
+  for (const auto& entry : shardToGroupMap) {
+    int currGroup = entry.second;
+
+    if (currGroup == 0) {
+      continue;
+    }
+
+    groupCountMap[currGroup] = groupCountMap[currGroup] + 1;
+  }
+
+  int minOccurringGroup = 0;
+  int min = 11;
+
+  for (const auto& entry : groupCountMap) {
+    int groupCount = entry.second;
+    if (groupCount &lt; min) {
+      min = groupCount;
+      minOccurringGroup = entry.first;
+    }
+  }
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match69-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  return minOccurringGroup;
+}
+
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+  Log_info("move called");
+</FONT><A NAME="2"></A><FONT color = #0000FF><A HREF="match69-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+  // your code here
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+  // Log_info("Query called in shardmaster");
+
+  RaftServer& raftServer = GetRaftServer();
+</FONT>  
+  if(!raftServer.isLeader) {
+    *ret = KV_NOTLEADER;
+  } else {
+    int askedConfigNo = config_no;
+    // Log_info("asking config no. %d", askedConfigNo);
+    int existingBiggesConfigNo = configs_.size()-1;
+    // Log_info("existing biggest config no. %d", existingBiggesConfigNo);
+
+    if(askedConfigNo==-1 || existingBiggesConfigNo &lt; askedConfigNo) {
+      askedConfigNo = existingBiggesConfigNo;
+    }
+
+    ShardConfig askedConfig = configs_.at(askedConfigNo);
+    // for(auto& entry : askedConfig.shard_group_map_) {
+    //   Log_info("shard %d =&gt; group %d", entry.first, entry.second);
+    // }
+
+    *config = askedConfig;
+    *ret = KV_SUCCESS;
+  }
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  // your code here
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+  Log_info("on next command called");
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  return cli;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

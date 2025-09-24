@@ -1,0 +1,437 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-smeshah/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-smeshah/src/shardmaster/service.cc<p><PRE>
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+
+
+// Boost serialization reference: https://www.boost.org/doc/libs/1_83_0/libs/serialization/doc/tutorial.html
+
+
+
+namespace janus {
+
+// static int volatile x15 =
+//     MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+//                                      [] () -&gt; Marshallable* {
+//                                        return new MultiStringMarshallable1;
+//                                      });
+
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+      // Log_info("Join method called");
+      std::map&lt;uint32_t, ShardConfig&gt; newConfigs = configs_;
+      ShardConfig shardConfig;
+      RaftServer &rs = GetRaftServer();
+      
+      if (rs.currentState!="leader"){
+        *ret =  KV_NOTLEADER;
+        defer -&gt; reply();
+        return;
+      }
+
+
+      if (configs_.size()&gt;0){
+        shardConfig = configs_[configs_.size()-1];
+      }
+      shardConfig.number = shardConfig.number + 1;
+
+      for (const auto& entry : gid_server_map) {
+        uint32_t gid = entry.first;
+        shardConfig.group_servers_map_[gid] = entry.second;
+        // Log_info("Added ShardConfig for Group ID %d:", gid);
+        // Log_info("ShardConfig Number: %d", shardConfig.number);
+        // Log_info("Servers Assigned to Group %d:", gid);
+        for (const auto& server : shardConfig.group_servers_map_[gid]) {
+            // Log_info("Server: %d", server);
+        }
+      }
+
+
+      vector&lt;int&gt; groups;
+
+      int maxValue = 0;
+      int totalGroups = 0;
+      for (const auto& entry : shardConfig.shard_group_map_) {
+        if (entry.second &gt; maxValue){
+          maxValue = entry.second;
+        }
+      }
+      for (const auto& entry : shardConfig.group_servers_map_) {
+        if (entry.first &gt; maxValue){
+          maxValue = entry.first;
+        }
+      }
+
+      // Log_info("Maximum value in server map is %d", maxValue);
+      groups.resize(maxValue, 0);
+
+
+      totalGroups = shardConfig.group_servers_map_.size();
+      int numberOfShardsPerGroup = shardConfig.shard_group_map_.size() / totalGroups;
+      int remainderShards = shardConfig.shard_group_map_.size() % totalGroups;
+
+      // Log_info("numberOfShardsPerGroup %d remainderShards %d", numberOfShardsPerGroup, remainderShards);
+
+      for (int i = 0; i&lt;groups.size();i++){
+        if(gid_server_map.find(i+1)!=gid_server_map.end()){
+          // Log_info("Assigning numberOfShardsPerGroup to group %d",(i+1));
+          groups[i]=numberOfShardsPerGroup;
+        }
+      }
+      for (auto& entry : shardConfig.shard_group_map_){
+        int groupId = entry.second;
+        int shardId = entry.first;
+
+        if (groupId&gt;0){
+          groups[groupId-1]=numberOfShardsPerGroup;
+        }
+
+      }
+      for(int i=0;i&lt;groups.size();i++){
+        if(groups[i]&gt;0 && remainderShards&gt;0){
+          groups[i]++;
+          remainderShards--;
+        }
+      }
+
+    for (auto& entry : shardConfig.shard_group_map_){
+        int groupId = entry.second;
+        int shardId = entry.first;
+
+        if (groupId&gt;0){
+            if (groups[groupId-1]&gt;0){
+              groups[groupId-1]--;
+            }
+            else if(groups[groupId-1]==0){
+              shardConfig.shard_group_map_[shardId] = 0;
+            }
+        }
+      }
+
+    for (auto& entry : shardConfig.shard_group_map_){
+        int groupId = entry.second;
+        int shardId = entry.first;
+
+        if (groupId==0){
+          for(int i=0;i&lt;groups.size();i++){
+            
+            if (groups[i]&gt;0){
+              // Log_info("Assinging shards to groupid 0 %d  groups[i] %d", (i+1), groups[i]);
+              shardConfig.shard_group_map_[shardId] = i+1;
+              groups[i]--;
+              break;
+            }
+          }
+        }
+      }
+
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match43-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      std::stringstream ss;
+      boost::archive::text_oarchive oa(ss);
+      oa &lt;&lt; shardConfig;
+      string serializedData = ss.str();
+  
+      auto s = make_shared&lt;MultiStringMarshallable&gt;();
+      s-&gt;data_.push_back(serializedData);
+</FONT>
+      shared_ptr&lt;Marshallable&gt; cmd(s);
+      
+      
+      uint64_t index = -1;
+      uint64_t term = -1;
+
+
+      rs.Start(cmd,&index, &term);
+
+    Coroutine::Sleep(500000);
+
+    // Log_info("executing join");
+    //  configs_[configs_.size()] = shardConfig;
+      *ret = KV_SUCCESS;
+      defer-&gt;reply();
+}
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match43-1.html#3" TARGET="1"><IMG SRC="../../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+
+    // Log_info("Leave method called");
+    
+    
+      RaftServer &rs = GetRaftServer();
+</FONT>      
+      if (rs.currentState!="leader"){
+        *ret =  KV_NOTLEADER;
+        defer -&gt; reply();
+        return;
+      }
+    
+    
+    
+    
+    std::map&lt;uint32_t, ShardConfig&gt; newConfigs = configs_;
+
+
+    ShardConfig shardConfig;
+    if (!configs_.empty()) {
+        shardConfig = configs_[configs_.size()-1];
+    }
+    shardConfig.number = shardConfig.number + 1;
+
+
+    vector&lt;int&gt; groups;
+
+    int maxValue = 0;
+
+    for (const auto& entry : shardConfig.shard_group_map_) {
+       if (entry.second &gt; maxValue){
+        maxValue = entry.second;
+       }
+    }
+    // Log_info("Max value of groups at the time of leaving is %d", maxValue);
+    groups.resize(maxValue, 0); 
+
+    for (const auto& entry : shardConfig.shard_group_map_) {
+      if (entry.second&gt;0)
+      groups[entry.second-1]++;
+
+    }
+
+    int deleteShardsNumber = 0;
+    for(int i = 0; i&lt;groups.size();i++){
+      // Log_info("%d group %d size", (i+1), groups[i-1]);
+    }
+    for(int i = 0; i&lt;gids.size(); i++){
+      deleteShardsNumber+=groups[gids[i]-1];
+      groups[gids[i]-1]=0;
+    }
+
+    int nonZeroGroups = 0;
+
+    for (int i = 0; i &lt; groups.size(); i++){
+      if (groups[i]&gt;0){
+        nonZeroGroups++;
+      }
+    }
+    // Log_info("Number of non zero groups are %d Delete total shards are %d", nonZeroGroups, deleteShardsNumber);
+    if (nonZeroGroups&gt;0){
+      int newShardsperGroups = deleteShardsNumber/nonZeroGroups;
+      int remainderShards = deleteShardsNumber%nonZeroGroups;
+      // Log_info("newShardsperGroups %d remainderShards %d",newShardsperGroups,remainderShards);
+      for (int i=0; i&lt; groups.size(); i++){
+        if (groups[i]&gt;0){
+          groups[i] += newShardsperGroups; 
+        }
+      }
+
+      for (int i=0; i&lt; groups.size(); i++){
+        if (groups[i]&gt;0 && remainderShards&gt;0){
+          groups[i] += 1; 
+          remainderShards--;
+        }
+      }
+    }
+
+
+
+
+    for (const auto& gid : gids) {
+        if (shardConfig.group_servers_map_.find(gid) != shardConfig.group_servers_map_.end()) {
+            shardConfig.group_servers_map_.erase(gid);
+            // Log_info("Removed ShardConfig for Group ID %d:", gid);
+            // Log_info("ShardConfig Number: %d", shardConfig.number);
+        }
+    }
+
+    for(int i = 0; i&lt;groups.size();i++){
+      // Log_info("%d group %d size", (i+1), groups[i]);
+    }
+
+    for (const auto& entry : shardConfig.shard_group_map_) {
+        int index = entry.second;
+        if (entry.second != 0) {
+            if (groups[index-1] &gt; 0) {
+                groups[index-1]--;
+            }
+            
+            else if (groups[index-1] == 0) {
+                shardConfig.shard_group_map_[entry.first] = 0;
+            }
+        }
+    }
+
+    for (auto& entry : shardConfig.shard_group_map_) {
+          if (entry.second == 0) {
+              for (int i = 0; i &lt; groups.size(); ++i) {
+                  if (groups[i] &gt; 0) {
+                      shardConfig.shard_group_map_[entry.first] = i+1;
+                      groups[i]--;
+                      break;
+                  }
+              }
+          }
+      }
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match43-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      std::stringstream ss;
+      boost::archive::text_oarchive oa(ss);
+      oa &lt;&lt; shardConfig;
+      string serializedData = ss.str();
+  
+      auto s = make_shared&lt;MultiStringMarshallable&gt;();
+      s-&gt;data_.push_back(serializedData);
+</FONT>
+      shared_ptr&lt;Marshallable&gt; cmd(s);
+      
+      
+      uint64_t index = -1;
+      uint64_t term = -1;
+
+
+      rs.Start(cmd,&index, &term);
+
+
+    Coroutine::Sleep(500000);
+    // Log_info("executing leave");
+//    configs_[configs_.size()]=shardConfig;
+    *ret = KV_SUCCESS;
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match43-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    defer-&gt;reply();
+
+}
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+      RaftServer &rs = GetRaftServer();
+</FONT>      
+      if (rs.currentState!="leader"){
+        *ret =  KV_NOTLEADER;
+        defer -&gt; reply();
+        return;
+      }
+    
+ // Log_info("Move method called");
+    std::map&lt;uint32_t, ShardConfig&gt; newConfigs = configs_;
+    ShardConfig shardConfig;
+    if (!configs_.empty()) {
+        shardConfig = configs_[configs_.size()-1];
+    }
+    shardConfig.number = shardConfig.number + 1;
+
+    if (shardConfig.group_servers_map_.find(gid) != shardConfig.group_servers_map_.end()) {
+        if (shard &gt;= 1 && shard &lt;= 10) {
+            shardConfig.shard_group_map_[shard] = gid;
+            // Log_info("Moved Shard %d to Group ID %d:", shard, gid);
+            // Log_info("ShardConfig Number: %d", shardConfig.number);
+        } else {
+
+        }
+    } else {
+        // Log_info("Group ID %d does not exist in the current ShardConfig.", gid);
+    }
+      std::stringstream ss;
+      boost::archive::text_oarchive oa(ss);
+      oa &lt;&lt; shardConfig;
+      string serializedData = ss.str();
+  
+      auto s = make_shared&lt;MultiStringMarshallable&gt;();
+      s-&gt;data_.push_back(serializedData);
+
+      shared_ptr&lt;Marshallable&gt; cmd(s);
+      
+      
+      uint64_t index = -1;
+      uint64_t term = -1;
+
+
+      rs.Start(cmd,&index, &term);
+
+
+    Coroutine::Sleep(500000);
+    // Log_info("executing move");
+    // configs_[configs_.size()]= shardConfig;
+    *ret = KV_SUCCESS;
+    defer-&gt;reply();
+
+}
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+  // your code here
+
+
+  // Log_info("Query method called");
+    if (config_no &gt; static_cast&lt;int32_t&gt;(configs_.size())) {
+        *ret = KV_TIMEOUT;
+        defer-&gt;reply();
+        return;
+    }
+   //  Log_info("Config no recieved %d configs_ size %d", config_no, configs_.size());
+    uint32_t index = 0;
+    uint32_t find_index = 0;
+    if (config_no==-1){
+      find_index = configs_.size()-1;
+    }
+    else{
+      find_index = config_no;
+    }
+   for (const auto& entry : configs_) {
+   
+
+    if (index == static_cast&lt;uint32_t&gt;(find_index)) {
+        *config = entry.second;
+        *ret = KV_SUCCESS;
+        defer-&gt;reply();
+            // Log_info("Configuration for Shard Number %d:", entry.second.number);
+            // Log_info("Shard Group Mapping:");
+            for (const auto& shardGroupPair : entry.second.shard_group_map_) {
+                // Log_info("Shard %d: Group %d", shardGroupPair.first, shardGroupPair.second);
+            }
+
+            // Log_info("Group Servers:");
+            for (const auto& groupServersPair : entry.second.group_servers_map_) {
+                // Log_info("Group %d Servers:", groupServersPair.first);
+                for (const auto& server : groupServersPair.second) {
+                    // Log_info("Server: %d", server);
+                }
+            }
+        return;
+    }
+    index++;
+  }
+
+
+    *ret = KV_TIMEOUT;
+    defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  // your code here
+  // Log_info("On next command called at Shard Master");
+  auto v = (MultiStringMarshallable*)(&m);
+  std::stringstream ss(v-&gt;data_[0]);
+  ShardConfig shardConfig;
+  boost::archive::text_iarchive ia(ss);
+  ia &gt;&gt; shardConfig;
+  configs_[configs_.size()]= shardConfig;
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  return cli;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

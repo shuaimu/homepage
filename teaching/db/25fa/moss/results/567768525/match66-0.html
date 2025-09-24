@@ -1,0 +1,321 @@
+<HTML>
+<HEAD>
+<TITLE>./spring19/srkaysh/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./spring19/srkaysh/src/kvraft/server.go<p><PRE>
+package raftkv
+
+import (
+	"bytes"
+	"labgob"
+	"labrpc"
+	"log"
+	"raft"
+	"sync"
+)
+
+const Debug = 0
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+type Op struct {
+	Key      string
+	Value    string
+	Op       string
+	ClientId int64
+	SeqId    int64
+}
+
+type LatestReply struct {
+	SeqId int64    // Last request
+	Reply GetReply // Last reply
+}
+
+type KVServer struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	maxraftstate int // snapshot if log grows this big
+
+	db            map[string]string
+	notifyChs     map[int]chan struct{}
+	persist       *raft.Persister
+	snapshotIndex int
+	shutdownCh    chan struct{}
+	duplicate     map[int64]*LatestReply
+}
+
+func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
+	if _, isLeader := kv.rf.GetState(); !isLeader {
+		reply.WrongLeader = true
+		reply.Err = ""
+		return
+	}
+
+	DPrintf("[%d]: leader [%d] receive rpc: Get(%q).\n", kv.me, kv.me, args.Key)
+
+	kv.mu.Lock()
+	if dup, ok := kv.duplicate[args.ClientId]; ok {
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match66-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		if args.SeqId &lt;= dup.SeqId {
+			kv.mu.Unlock()
+			reply.WrongLeader = false
+			reply.Err = OK
+			reply.Value = dup.Reply.Value
+			return
+		}
+	}
+
+	cmd := Op{Key: args.Key, Op: "Get", ClientId: args.ClientId, SeqId: args.SeqId}
+	index, term, _ := kv.rf.Start(cmd)
+	ch := make(chan struct{})
+</FONT>	kv.notifyChs[index] = ch
+	kv.mu.Unlock()
+
+	reply.WrongLeader = false
+	reply.Err = OK
+
+	select {
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match66-1.html#7" TARGET="1"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	case &lt;-ch:
+		curTerm, isLeader := kv.rf.GetState()
+		if !isLeader || term != curTerm {
+			reply.WrongLeader = true
+			reply.Err = ""
+</FONT>			return
+		}
+
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match66-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		kv.mu.Lock()
+		if value, ok := kv.db[args.Key]; ok {
+			reply.Value = value
+		} else {
+			reply.Err = ErrNoKey
+		}
+		kv.mu.Unlock()
+	case &lt;-kv.shutdownCh:
+</FONT>	}
+}
+
+func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	if _, isLeader := kv.rf.GetState(); !isLeader {
+		reply.WrongLeader = true
+		reply.Err = ""
+		return
+	}
+
+	DPrintf("[%d]: leader [%d] receive rpc: PutAppend([%q] =&gt; (%q,%q), (%d-%d).\n", kv.me, kv.me,
+		args.Op, args.Key, args.Value, args.ClientId, args.SeqId)
+
+<A NAME="9"></A><FONT color = #FF00FF><A HREF="match66-1.html#9" TARGET="1"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.mu.Lock()
+	if dup, ok := kv.duplicate[args.ClientId]; ok {
+		if args.SeqId &lt;= dup.SeqId {
+			kv.mu.Unlock()
+</FONT>			reply.WrongLeader = false
+			reply.Err = OK
+			return
+		}
+	}
+
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match66-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	cmd := Op{Key: args.Key, Value: args.Value, Op: args.Op, ClientId: args.ClientId, SeqId: args.SeqId}
+	index, term, _ := kv.rf.Start(cmd)
+	ch := make(chan struct{})
+</FONT>	kv.notifyChs[index] = ch
+	kv.mu.Unlock()
+
+	reply.WrongLeader = false
+	reply.Err = OK
+
+	select {
+<A NAME="8"></A><FONT color = #00FFFF><A HREF="match66-1.html#8" TARGET="1"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	case &lt;-ch:
+		curTerm, isLeader := kv.rf.GetState()
+		if !isLeader || term != curTerm {
+			reply.WrongLeader = true
+			reply.Err = ""
+</FONT>			return
+		}
+	case &lt;-kv.shutdownCh:
+		return
+	}
+}
+
+// applyDaemon receive applyMsg from Raft layer, apply to Key-Value state machine
+// then notify related client if is leader
+func (kv *KVServer) applyDaemon() {
+	for {
+		select {
+		case &lt;-kv.shutdownCh:
+			DPrintf("[%d]: server [%d] is shutting down.\n", kv.me, kv.me)
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match66-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			return
+		case msg, ok := &lt;-kv.applyCh:
+			if ok {
+				if msg.UseSnapshot {
+					kv.mu.Lock()
+					kv.readSnapshot(msg.Snapshot)
+					kv.generateSnapshot(msg.CommandIndex)
+					kv.mu.Unlock()
+					continue
+				}
+				if msg.Command != nil && msg.CommandIndex &gt; kv.snapshotIndex {
+</FONT>					cmd := msg.Command.(Op)
+					kv.mu.Lock()
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match66-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_9.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+					if dup, ok := kv.duplicate[cmd.ClientId]; !ok || dup.SeqId &lt; cmd.SeqId {
+						switch cmd.Op {
+						case "Get":
+							kv.duplicate[cmd.ClientId] = &LatestReply{SeqId: cmd.SeqId,
+								Reply: GetReply{Value: kv.db[cmd.Key]}}
+						case "Put":
+							kv.db[cmd.Key] = cmd.Value
+							kv.duplicate[cmd.ClientId] = &LatestReply{SeqId: cmd.SeqId}
+						case "Append":
+							kv.db[cmd.Key] += cmd.Value
+							kv.duplicate[cmd.ClientId] = &LatestReply{SeqId: cmd.SeqId}
+						default:
+</FONT>							DPrintf("[%d]: server [%d] receive invalid cmd: [%v]\n", kv.me, kv.me, cmd)
+							panic("invalid command operation")
+						}
+						if ok {
+							DPrintf("[%d]: server [%d] apply index: [%d], cmd: [%v] (clientid: [%d], dup seqid: [%d] &lt; [%d])\n",
+								kv.me, kv.me, msg.CommandIndex, cmd, cmd.ClientId, dup.SeqId, cmd.SeqId)
+						}
+					}
+
+					if needSnapshot(kv) {
+						DPrintf("[%d]: server %d need generate snapshot @ %d (%d vs %d), client: %d.\n",
+							kv.me, kv.me, msg.CommandIndex, kv.maxraftstate, kv.persist.RaftStateSize(), cmd.ClientId)
+						kv.generateSnapshot(msg.CommandIndex)
+					}
+
+					if notifyCh, ok := kv.notifyChs[msg.CommandIndex]; ok && notifyCh != nil {
+						close(notifyCh)
+						delete(kv.notifyChs, msg.CommandIndex)
+					}
+					kv.mu.Unlock()
+				}
+			}
+		}
+	}
+}
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match66-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func needSnapshot(kv *KVServer) bool {
+	if kv.maxraftstate &lt; 0 {
+		return false
+	}
+	if kv.maxraftstate &lt; kv.persist.RaftStateSize() {
+		return true
+	}
+	var abs = kv.maxraftstate - kv.persist.RaftStateSize()
+	var threshold = kv.maxraftstate / 10
+	if abs &lt; threshold {
+		return true
+	}
+	return false
+}
+
+func (kv *KVServer) generateSnapshot(index int) {
+</FONT><A NAME="6"></A><FONT color = #00FF00><A HREF="match66-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+
+	kv.snapshotIndex = index
+
+	e.Encode(kv.db)
+	e.Encode(kv.snapshotIndex)
+	e.Encode(kv.duplicate)
+</FONT>
+	data := w.Bytes()
+	kv.rf.PersistAndSaveSnapshot(index, data)
+}
+
+func (kv *KVServer) readSnapshot(data []byte) {
+<A NAME="10"></A><FONT color = #FF0000><A HREF="match66-1.html#10" TARGET="1"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	if data == nil || len(data) &lt; 1 { // bootstrap without any state?
+		return
+	}
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+
+	kv.db = make(map[string]string)
+</FONT>	kv.duplicate = make(map[int64]*LatestReply)
+
+	d.Decode(&kv.db)
+	d.Decode(&kv.snapshotIndex)
+	d.Decode(&kv.duplicate)
+}
+
+//
+// the tester calls Kill() when a KVServer instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *KVServer) Kill() {
+	close(kv.shutdownCh)
+	kv.rf.Kill()
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Raft to
+// form the fault-tolerant key/value service.
+// me is the index of the current server in servers[].
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+// the k/v server should snapshot when Raft's saved state exceeds maxraftstate bytes,
+// in order to allow Raft to garbage-collect its log. if maxraftstate is -1,
+// you don't need to snapshot.
+// StartKVServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
+	labgob.Register(Op{})
+
+	kv := new(KVServer)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+
+	kv.applyCh = make(chan raft.ApplyMsg)
+
+	kv.db = make(map[string]string)
+	kv.notifyChs = make(map[int]chan struct{})
+	kv.persist = persister
+
+	kv.shutdownCh = make(chan struct{})
+
+	kv.duplicate = make(map[int64]*LatestReply)
+	kv.readSnapshot(kv.persist.ReadSnapshot())
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+	go kv.applyDaemon()
+	return kv
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,312 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-Aditiii/src/deptran/raft/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-Aditiii/src/deptran/raft/server.cc<p><PRE>
+
+
+#include "server.h"
+// #include "paxos_worker.h"
+#include "exec.h"
+#include "frame.h"
+#include "coordinator.h"
+#include "../classic/tpc_command.h"
+
+
+namespace janus {
+
+  RaftServer::RaftServer(Frame * frame) {
+    frame_ = frame ;
+    /* Your code here for server initialization. Note that this function is
+       called in a different OS thread. Be careful about thread safety if
+       you want to initialize variables here. */
+    candidateId = site_id_;
+    isLeader = 0;
+    currentTerm = 0;
+    state = "FOLLOWER";
+    lastHeartbeatTime = std::chrono::steady_clock::now();
+    votedFor = 100;
+    logs.clear();
+    commitLength = 0;
+    timer.start();
+  }
+
+  RaftServer::~RaftServer() {
+    /* Your code here for server teardown */
+    isLeader = 0;
+    state = "FOLLOWER";
+    votedFor = 100;
+    logs.clear();
+  }
+
+  void RaftServer::Setup() {
+    /* Your code here for server setup. Due to the asynchronous nature of the
+       framework, this function could be called after a RPC handler is triggered.
+       Your code should be aware of that. This function is always called in the
+       same OS thread as the RPC handlers. */
+
+    StartLeaderElectionThread();
+    //SyncRpcExample();
+  }
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match91-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  bool RaftServer::Start(shared_ptr&lt;Marshallable&gt; &cmd,
+                         uint64_t *index,
+                         uint64_t *term) {
+    /* Your code here. This function can be called from another OS thread. */
+    // If server is not the leader, return false
+    if (isLeader==1) {
+      //Log_info("about to start start for leader - %d",site_id_);
+      mtx_.lock();
+      logs.push_back({currentTerm, cmd});
+</FONT>      ackedLength[site_id_] = logs.size();
+      sentLength[site_id_] = logs.size();
+      matchIndex[site_id_] = logs.size();
+      nextIndex[site_id_] = logs.size();
+      *index = logs.size();
+      *term = currentTerm;
+      mtx_.unlock();
+      //Log_info("about to end start for leader - %d",site_id_);
+      return true;
+    }
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match91-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    *index = 0;
+    *term = 0;
+    return false;
+  }
+
+  void RaftServer::GetState(bool *is_leader, uint64_t *term) {
+    /* Your code here. This function can be called from another OS thread. */
+    if(isLeader == 0)
+      *is_leader = false;
+</FONT>    else
+      *is_leader = true;
+    //Log_info("In GetState - isLeader - %d, term - %d, for %d",isLeader, currentTerm, site_id_);
+    *term = currentTerm;
+  }
+
+  
+void RaftServer::SyncRpcExample() {
+    /* This is an example of synchronous RPC using coroutine; feel free to
+       modify this function to dispatch/receive your own messages.
+       You can refer to the other function examples in commo.h/cc on how
+       to send/recv a Marshallable object over RPC. */
+    Coroutine::CreateRun([this](){
+    string res;
+    auto event = commo()-&gt;SendString(0, /* partition id is always 0 for lab1 */
+                                     0, "hello", &res);
+    event-&gt;Wait(1000000); //timeout after 1000000us=1s
+    if (event-&gt;status_ == Event::TIMEOUT) {
+      Log_info("timeout happens");
+    } else {
+      Log_info("rpc response is: %s", res.c_str()); 
+    }
+    StartLeaderElectionThread();
+  });
+  }
+
+  void RaftServer::SendHeartbeats()
+  {
+    for (long i = 0; i &lt; 5; i++)
+    {
+      // if (i != site_id_) {
+      matchIndex[i] = logs.size();
+      sentLength[i] = logs.size();
+      ackedLength[i] = 0;
+      nextIndex[i] = 0;
+      // }
+    }
+    
+    Coroutine::CreateRun([this](){
+    while(isLeader==1) {
+     // Log_info("Hello");
+      long long newTimeout = HEARTBEAT_INTERVAL;
+      uint64_t term = 0;
+      bool_t success = 0;
+      uint64_t ack = 0;
+      for (long serverId=0; serverId&lt;5; serverId++) {
+        if(site_id_ != serverId) {
+          vector&lt;uint64_t&gt; logTerms;
+          vector&lt;shared_ptr&lt;Marshallable&gt;&gt; logCmd;
+          uint64_t prevLogIndex = sentLength[serverId];
+          uint64_t prevLogTerm;
+          if (prevLogIndex &gt; 0) {
+            prevLogTerm = logs[prevLogIndex-1].term;
+          } else {
+            prevLogTerm = 0;
+          }
+          for (long i = sentLength[serverId]; i&lt;logs.size(); i++) {
+            logTerms.push_back(logs[i].term);
+            logCmd.push_back(logs[i].command);
+          }
+          if(logTerms.size()==0)
+          newTimeout = 0.7 * HEARTBEAT_INTERVAL;
+          auto event = commo()-&gt;SendAppendEntriesMy(0, currentTerm, site_id_, commitLength, logTerms, 
+          logCmd, prevLogIndex, prevLogTerm, serverId, &term,&success, &ack);
+          event-&gt;Wait(1000);
+
+          if (term == currentTerm && isLeader==1) {
+            if (success == 1 && ack &gt;= ackedLength[serverId]) {
+              // sentLength[serverId] = ack;
+              ackedLength[serverId] = ack;
+              matchIndex[serverId] = ack;
+              // committing log entries
+              committingLogEntries();
+
+            } else if (sentLength[serverId] &gt; 0) {
+              sentLength[serverId]--;
+            }
+          } else if (term &gt; currentTerm) {
+              currentTerm = term;
+              state = "FOLLOWER";
+              votedFor = 100;
+              isLeader = 0;
+              timer.start();
+              lastHeartbeatTime = std::chrono::steady_clock::now();
+          }
+        }
+      }
+      Coroutine::Sleep(70000);
+      } });
+  }
+
+  void RaftServer::committingLogEntries()
+  {
+    while (commitLength &lt; logs.size())
+    {
+      long replicated = 0;
+      for (long j = 0; j &lt; 5; j++)
+      {
+        if (ackedLength[j] &gt; commitLength)
+        {
+          replicated++;
+        }
+        if (replicated &gt; 2)
+        {
+          break;
+        }
+      }
+      if (replicated &gt; 2)
+      {
+        app_next_(*logs[commitLength].command);
+        //Log_info("server %d committed", site_id_);
+        commitLength++;
+      }
+      else
+      {
+        break;
+      }
+    }
+  }
+
+  void RaftServer::StartLeaderElectionThread() {
+    Coroutine::CreateRun([this](){
+    while (true)
+    { 
+      bool_t vote_granted;
+      uint64_t term;
+      // Log_info("site id - %d isDisconnected - %d",site_id_,IsDisconnected());
+      // std::this_thread::sleep_for(std::chrono::milliseconds(electionTimeout));
+      Coroutine::Sleep(700*(site_id_+1)*1000);
+      if(!isLeader && chrono::steady_clock::now()-lastHeartbeatTime&gt;chrono::milliseconds(700*(site_id_+1)) && !IsDisconnected()) {  
+      long long elapsed = timer.elapsed()*1000000;
+      // if(elapsed&gt;HEARTBEAT_INTERVAL && !IsDisconnected() && !isLeader){
+      //   timer.start();
+      //   long long timeout=450*(site_id_+1)*1000;
+      //   Coroutine::Sleep(timeout);
+      //   elapsed = timer.elapsed()*1000000;
+      // if(elapsed&gt;=timeout && !IsDisconnected()){
+        state = "CANDIDATE"; 
+        // if(!isLeader && state=="CANDIDATE"){
+        votedFor = site_id_;
+        uint64_t votesReceived = 1;  
+        currentTerm++;
+        uint64_t lastLogTerm = 0;
+        uint64_t lastLogIndex = -1;
+        uint64_t logSize = 0;
+        if (logs.size()&gt;0) {
+          lastLogTerm =  logs[logs.size()-1].term;
+          lastLogIndex = logs.size()-1;
+          logSize = logs.size();
+
+        }
+       Log_info("Sending request vote for : %d with term %d", site_id_, currentTerm);
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match91-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        for (long serverId = 0; serverId &lt; 5; serverId++) {
+          // bool_t vote_granted;
+          if(serverId != site_id_) {
+            // currentTerm++;
+            auto event = commo()-&gt;SendRequestVoteSynchronously(0, site_id_, currentTerm, lastLogIndex,lastLogTerm, logSize ,serverId, &vote_granted, &term);
+</FONT>            // std::this_thread::sleep_for(std::chrono::milliseconds(10000));
+            event-&gt;Wait(1000); //timeout after 1000000us=1s
+            if(vote_granted == 1) {
+              votesReceived++;
+            } 
+            else if (vote_granted==0) {
+              state = "FOLLOWER";
+              currentTerm = term;
+              votedFor = 100;
+              lastHeartbeatTime = std::chrono::steady_clock::now();
+              //votesReceived = 1;
+            }
+            if(votesReceived&gt;2 && state=="CANDIDATE") {
+              state="LEADER";
+              // currentTerm++;
+              isLeader = 1;
+              Log_info("Leader is elected - %d for term %d",site_id_, currentTerm);
+
+              SendHeartbeats();
+            }
+          }
+        }
+        // }     
+    }
+    // }
+    Coroutine::Sleep(20000);   
+    } });
+  }
+  /* Do not modify any code below here */
+
+  void RaftServer::Disconnect(const bool disconnect) {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    verify(disconnected_ != disconnect);
+    // global map of rpc_par_proxies_ values accessed by partition then by site
+    static map&lt;parid_t, map&lt;siteid_t, map&lt;siteid_t, vector&lt;SiteProxyPair&gt;&gt;&gt;&gt; _proxies{};
+    if (_proxies.find(partition_id_) == _proxies.end()) {
+      _proxies[partition_id_] = {};
+    }
+    RaftCommo *c = (RaftCommo*) commo();
+    if (disconnect) {
+      verify(_proxies[partition_id_][loc_id_].size() == 0);
+      verify(c-&gt;rpc_par_proxies_.size() &gt; 0);
+      auto sz = c-&gt;rpc_par_proxies_.size();
+      _proxies[partition_id_][loc_id_].insert(c-&gt;rpc_par_proxies_.begin(), c-&gt;rpc_par_proxies_.end());
+      c-&gt;rpc_par_proxies_ = {};
+      verify(_proxies[partition_id_][loc_id_].size() == sz);
+      verify(c-&gt;rpc_par_proxies_.size() == 0);
+    } else {
+      verify(_proxies[partition_id_][loc_id_].size() &gt; 0);
+      auto sz = _proxies[partition_id_][loc_id_].size();
+      c-&gt;rpc_par_proxies_ = {};
+      c-&gt;rpc_par_proxies_.insert(_proxies[partition_id_][loc_id_].begin(), _proxies[partition_id_][loc_id_].end());
+      _proxies[partition_id_][loc_id_] = {};
+      verify(_proxies[partition_id_][loc_id_].size() == 0);
+      verify(c-&gt;rpc_par_proxies_.size() == sz);
+    }
+    disconnected_ = disconnect;
+  }
+
+  bool RaftServer::IsDisconnected() {
+    return disconnected_;
+  }
+
+} // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -31,7 +31,8 @@ Reliable System Programming (SBU CSE-590)
   
 Software Engineering (SBU CSE-416)
  * [22 Spring](se/22sp)
- * [24 Fall](se/24fa/) 
+ * [24 Fall](se/24fa/)
+ * [25 Fall](se/25fa/) 
 
 Computer Systems Organization (NYU CSCI-UA.0201)
  * [18 Spring](cso18spring/index.html)

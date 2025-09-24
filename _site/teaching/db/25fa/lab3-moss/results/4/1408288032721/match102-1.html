@@ -1,0 +1,346 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-coladog/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-ksp20/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+namespace janus {
+
+std::recursive_mutex mtxa1_{};
+
+  static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_SNAPSHOT,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallableShardM;
+                                     });
+
+int64_t ShardMasterServiceImpl::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match102-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  std::lock_guard&lt;std::recursive_mutex&gt; lock123(mtxa1_);
+</FONT>  rrr::Coroutine::Sleep(1500*1000);
+  opid++;
+  int id=GetNextOpId();
+  
+  Log_info("command join %d",id);
+  auto s = make_shared&lt;MultiStringMarshallableShardM&gt;();
+  s-&gt;id=id;
+  s-&gt;type="join";
+  bool a=false;
+  uint64_t index=0; 
+  uint64_t term=0;
+  ShardConfig sc;
+  for(auto i : gid_server_map){
+    //s-&gt;db[i.first]=i.second.size();
+    s-&gt;data_.push_back(i.first);
+    s-&gt;data_.push_back(i.second.size());
+    for(int j=0;j&lt;i.second.size();j++){
+      s-&gt;data_.push_back(i.second[j]);
+    }
+    
+  }
+  shared_ptr&lt;Marshallable&gt; cmd=s;
+  
+  RaftServer &ser= GetRaftServer();
+  Coroutine::CreateRun([&](){
+   a=ser.Start(cmd,&index,&term);
+  });
+   
+  int timeout=1000*1000;
+  while(timeout&gt;0){
+    rrr::Coroutine::Sleep(10000);
+    timeout-=10000;
+    if(ack.find(id) != ack.end()){
+      break;
+    }
+  }
+   if(!a){
+    *ret= KV_NOTLEADER;
+  }
+  else if(ack.find(id) != ack.end()){
+    sc.group_servers_map_=gid_server_map;
+    *ret=KV_SUCCESS;
+  }
+  else{
+     ack[id]=1;
+    *ret=KV_TIMEOUT;
+  }
+  defer-&gt;reply();
+}
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match102-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  std::lock_guard&lt;std::recursive_mutex&gt; lock13(mtxa1_);
+</FONT>  rrr::Coroutine::Sleep(1500*1000);
+  opid++;
+  int id=GetNextOpId();
+  Log_info("command leave %d",id);
+  auto s = make_shared&lt;MultiStringMarshallableShardM&gt;();
+  s-&gt;id=id;
+  s-&gt;type="leave";
+  bool a=false;
+  uint64_t index=0; 
+  uint64_t term=0;
+  for(int i=0;i&lt;gids.size();i++){
+    s-&gt;data_.push_back(gids[i]);
+  }
+  shared_ptr&lt;Marshallable&gt; cmd=s;
+  RaftServer &ser= GetRaftServer();
+  Coroutine::CreateRun([&](){
+   a=ser.Start(cmd,&index,&term);
+  });
+   
+  int timeout=1000*1000;
+  while(timeout&gt;0){
+    rrr::Coroutine::Sleep(10000);
+    timeout-=10000;
+    if(ack.find(id) != ack.end()){
+      break;
+    }
+  }
+   if(!a){
+    *ret= KV_NOTLEADER;
+  }
+  else if(ack.find(id) != ack.end()){
+    *ret=KV_SUCCESS;
+  }
+  else{
+     ack[id]=1;
+    *ret=KV_TIMEOUT;
+  }
+
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  std::lock_guard&lt;std::recursive_mutex&gt; lock12(mtxa1_);
+  //rrr::Coroutine::Sleep(1000000);
+  opid++;
+  int id=GetNextOpId();
+  auto s = make_shared&lt;MultiStringMarshallableShardM&gt;();
+  s-&gt;id=id;
+  s-&gt;type="move";
+  bool a=false;
+  uint64_t index=0; 
+  uint64_t term=0;
+  s-&gt;d1=shard;
+  s-&gt;d2=gid;
+  shared_ptr&lt;Marshallable&gt; cmd=s;
+  RaftServer &ser= GetRaftServer();
+  Coroutine::CreateRun([&](){
+   a=ser.Start(cmd,&index,&term);
+  });
+   
+  int timeout=5000*1000;
+  while(timeout&gt;0){
+    rrr::Coroutine::Sleep(10000);
+    timeout-=10000;
+    if(ack.find(id) != ack.end()){
+      break;
+    }
+    if(!a){
+      *ret =KV_NOTLEADER;
+    }
+  }
+   if(!a){
+    *ret= KV_NOTLEADER;
+  }
+  else if(ack.find(id) != ack.end()){
+    *ret=KV_SUCCESS;
+  }
+  else{
+     ack[id]=1;
+    *ret=KV_TIMEOUT;
+  }
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match102-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+  // your code here
+  std::lock_guard&lt;std::recursive_mutex&gt; lock23(mtxa1_);
+</FONT>  Log_info("query index %d",config_no);
+  opid++;
+  int id=GetNextOpId();
+  auto s = make_shared&lt;MultiStringMarshallableShardM&gt;();
+  s-&gt;id=id;
+  s-&gt;type="query";
+  bool a=false;
+  uint64_t index=0; 
+  uint64_t term=0;
+  s-&gt;d1=config_no;
+  shared_ptr&lt;Marshallable&gt; cmd=s;
+  RaftServer &ser= GetRaftServer();
+  Coroutine::CreateRun([&](){
+   a=ser.Start(cmd,&index,&term);
+  });
+   
+  int timeout=1000*1000;
+  while(timeout&gt;0){
+    rrr::Coroutine::Sleep(10000);
+    timeout-=10000;
+    if(ack.find(id) != ack.end()){
+      break;
+    }
+  }
+   if(!a){
+    *ret= KV_NOTLEADER;
+  }
+  else if(ack.find(id) != ack.end()){
+    if(config_no==-1 || config_no &gt; configs_.size()-1){
+      *config=configs_[configs_.size()-1];
+    }else{
+      *config=configs_[config_no];
+    }
+    *ret=KV_SUCCESS;
+    //int ssd=config-&gt;shard_group_map_[config_no];
+    Log_info("query index success %d and value ",config_no); 
+  }
+  else{
+     ack[id]=1;
+    *ret=KV_TIMEOUT;
+  }
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  // your code here
+ 
+  auto v = (MultiStringMarshallableShardM*)(&m);
+  int id=v-&gt;id;
+  if(ack.find(opid) != ack.end()){
+    return ;
+  }
+  Log_info("command entered %d",id);
+  string type=v-&gt;type;
+  ack[id]=1;
+  if(type=="query"){
+    return;
+  }
+  ShardConfig *sc=new ShardConfig();
+  int sz=configs_.size();
+  if(sz==0){
+    ShardConfig *sg=new ShardConfig();
+    sg-&gt;sh_map[0]=10;
+    configs_[0]=*sg;
+    sz++;
+  }
+  *sc=configs_[sz-1];
+  vector&lt;int&gt; gid;
+  sc-&gt;number=sz;
+  if(type=="join"){
+    int in_sz=sc-&gt;group_servers_map_.size();
+    for(int i=0;i&lt;v-&gt;data_.size();i++){
+      int k=v-&gt;data_[i];
+      int gsize=v-&gt;data_[i+1];
+      gid.push_back(k);
+      sc-&gt;group.push_back(k);
+      i=i+2;
+      for(int j=0;j&lt;gsize;j++){
+        sc-&gt;group_servers_map_[k].push_back(v-&gt;data_[i]);
+       // Log_info("%d",v-&gt;data_[j]);
+        i++;
+      } 
+      i--;
+    }
+    int c_sz=sc-&gt;group_servers_map_.size();
+    for(int i=0;i&lt;gid.size();i++){
+      for(int j=1;j&lt;=10;j++){
+        if(sc-&gt;sh_map[gid[i]]==(10/c_sz)){
+          i++;
+        }
+        if(i==gid.size()){
+          break;
+        }
+        int re=sc-&gt;shard_group_map_[j];
+        if(re==0 || sc-&gt;sh_map[re] &gt;  (10/c_sz)){
+          sc-&gt;shard_group_map_[j]=gid[i];
+          sc-&gt;sh_map[re]--;
+          sc-&gt;sh_map[gid[i]]++;
+        }
+      }
+    }
+    for(int i=0;i&lt;gid.size();i++){
+      Log_info("%d",gid[i]);
+    }
+    Log_info("qqq join");
+    for(auto i:sc-&gt;shard_group_map_){
+      Log_info("%d %d",i.first,i.second);
+    }
+  }else if(type=="leave"){
+    for(int i=0;i&lt;v-&gt;data_.size();i++){
+       for(int j=1;j&lt;=10;j++){
+        if(sc-&gt;shard_group_map_[j]==v-&gt;data_[i]){
+          sc-&gt;shard_group_map_[j]=0;
+          sc-&gt;sh_map[0]++;
+          sc-&gt;sh_map[v-&gt;data_[i]]--;
+        }
+       }
+       sc-&gt;group_servers_map_.erase(v-&gt;data_[i]);
+    }
+    int c_sz=sc-&gt;group_servers_map_.size();
+    gid.clear();
+    for(auto gn:sc-&gt;group_servers_map_){
+      gid.push_back(gn.first);
+    }
+    for(int i=0;i&lt;gid.size();i++){
+      for(int j=1;j&lt;=10;j++){
+        if(sc-&gt;sh_map[gid[i]]==(10/c_sz)+1){
+          i++;
+        }
+        if(i==gid.size()){
+          break;
+        }
+        int re=sc-&gt;shard_group_map_[j];
+        if(re==0 || sc-&gt;sh_map[re] &gt;  (10/c_sz)){
+          sc-&gt;shard_group_map_[j]=gid[i];
+          sc-&gt;sh_map[re]--;
+          sc-&gt;sh_map[gid[i]]++;
+        }
+      }
+    }
+    Log_info("qqq leave");
+    for(auto i:sc-&gt;shard_group_map_){
+      Log_info("%d %d",i.first,i.second);
+    }
+  }else{
+    int re=sc-&gt;shard_group_map_[v-&gt;d1];
+    sc-&gt;sh_map[re]--;
+    sc-&gt;sh_map[v-&gt;d2]++;
+    sc-&gt;shard_group_map_[v-&gt;d1]=v-&gt;d2;
+  }
+  configs_[sz]=*sc;
+
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  return cli;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

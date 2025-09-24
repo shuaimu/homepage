@@ -1,0 +1,283 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-digaru19/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-Sirneij/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus
+{
+
+  static int volatile x1 =
+      MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     []() -&gt; Marshallable *
+                                     {
+                                       return new MultiStringMarshallable;
+                                     });
+
+  int64_t KvServer::GetNextOpId()
+  {
+    verify(sp_log_svr_);
+    int64_t ret = sp_log_svr_-&gt;site_id_;
+    ret = ret &lt;&lt; 32;
+    ret = ret + op_id_cnt_++;
+    return ret;
+  }
+
+  /**
+   * @brief Put a key-value pair into the map.
+   * 
+   * @param oid The operation ID.
+   * @param k The key.
+   * @param v The value.
+   * @return int KV_SUCCESS if the operation is successful, KV_NOTLEADER if the server is not the leader, KV_TIMEOUT if the operation times out.
+   * 
+   * @pre The key must not exist in the map.
+   * @post The key-value pair will be added to the map.
+   * 
+   * @note The key-value pair will be added to the map.
+  */
+  int KvServer::Put(const uint64_t &oid,
+                    const string &k,
+                    const string &v)
+  {
+    /*
+    Your are recommended to use MultiStringMarshallable as the format
+    for the log entries. Here is an example how you can use it.
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(to_string(op_id));
+    s-&gt;data_.push_back("put");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);
+    */
+    /* your code here */
+    RaftServer &rs = GetRaftServer();
+
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(rs.mtx_);
+
+    std::string oid_str = to_string(oid);
+
+    uint64_t index;
+    uint64_t term;
+    bool is_leader;
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match184-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(oid_str);
+    s-&gt;data_.push_back("put");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);
+</FONT>
+    std::shared_ptr&lt;Marshallable&gt; ret = s;
+    is_leader = rs.Start(ret, &index, &term);
+    if (is_leader)
+    {
+      auto startTime = std::chrono::high_resolution_clock::now();
+      while (true)
+      {
+        // Check if the timeout has elapsed
+        if ((std::chrono::high_resolution_clock::now() - startTime) &gt; timeoutDuration)
+        {
+          // Handle the timeout scenario
+          // Log_info("KvServer::Put -&gt; Timeout {ID: %d, Value: %s}", oid, v.c_str());
+          return KV_TIMEOUT;
+        }
+
+        if (getStore().count(oid_str) != 0)
+        {
+          getStore()[k] = v;
+          // Log_info("KvServer::Put -&gt; Success {Key: %s, Value: %s}", k.c_str(), v.c_str());
+          return KV_SUCCESS;
+        }
+        // Sleep for a short interval to avoid busy-waiting
+        Coroutine::Sleep(1000);
+      }
+    }
+    // Log_info("KvServer::Put -&gt; Not leader");
+    return KV_NOTLEADER;
+  }
+
+  /**
+   * @brief Append a value to the value of a key.
+   *
+   * @param oid The operation ID.
+   * @param k The key of the operation.
+   * @param v The value to append.
+   * @return int KV_SUCCESS if the operation is successful, KV_NOTLEADER if the server is not the leader, KV_TIMEOUT if the operation times out.
+   *
+   * @pre The key must exist in the map. If it doesn't, it will be added.
+   * @post The value of the key will be appended with the new value or the new value will be added to the map.
+   *
+   */
+  int KvServer::Append(const uint64_t &oid,
+                       const string &k,
+                       const string &v)
+  {
+    /* your code here */
+    RaftServer &rs = GetRaftServer();
+
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(rs.mtx_);
+
+    std::string oid_str = to_string(oid);
+
+    uint64_t index;
+    uint64_t term;
+    bool is_leader;
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match184-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(oid_str);
+    s-&gt;data_.push_back("append");
+    s-&gt;data_.push_back(k);
+    s-&gt;data_.push_back(v);
+</FONT>
+    std::shared_ptr&lt;Marshallable&gt; ret = s;
+    is_leader = rs.Start(ret, &index, &term);
+    if (is_leader)
+    {
+      auto startTime = std::chrono::high_resolution_clock::now();
+      while (true)
+      {
+        // Check if the timeout has elapsed
+        if ((std::chrono::high_resolution_clock::now() - startTime) &gt; timeoutDuration)
+        {
+          // Handle the timeout scenario
+          return KV_TIMEOUT;
+        }
+        if (getStore().count(oid_str) != 0)
+        {
+          if (getStore().count(k) == 0)
+          {
+            // Key doesn't exist, so add it to the map with the new value.
+            getStore()[k] = v;
+            // Log_info("KvServer::Append -&gt; Doesn't exist before! Success {Key: %s, Value: %s}", k.c_str(), v.c_str());
+          }
+          else
+          {
+            // Key exists in the map, so append the new value to the existing value.
+            getStore()[k] += v;
+            // Log_info("KvServer::Append -&gt; Exists before! Success {Key: %s, Value: %s}", k.c_str(), v.c_str());
+          }
+          return KV_SUCCESS;
+        }
+        // Sleep for a short interval to avoid busy-waiting
+        Coroutine::Sleep(1000);
+      }
+    }
+    // Log_info("KvServer::Append -&gt; Not leader");
+    return KV_NOTLEADER;
+  }
+
+  /**
+   * @brief Get the value of a key.
+   *
+   * @param oid The operation ID.
+   * @param k The key.
+   * @param v A reference to the value.
+   * @return int KV_SUCCESS if the operation is successful, KV_NOTLEADER if the server is not the leader, KV_TIMEOUT if the operation times out.
+   *
+   * @pre The key must exist in the map.
+   * @post The value of the key will be returned.
+   *
+   */
+  int KvServer::Get(const uint64_t &oid,
+                    const string &k,
+                    string *v)
+  {
+    /* your code here */
+    RaftServer &rs = GetRaftServer();
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(rs.mtx_);
+
+    std::string oid_str = to_string(oid);
+
+    uint64_t index;
+    uint64_t term;
+    bool is_leader;
+
+    auto s = make_shared&lt;MultiStringMarshallable&gt;();
+    s-&gt;data_.push_back(oid_str);
+    s-&gt;data_.push_back("get");
+    s-&gt;data_.push_back(k);
+
+    std::shared_ptr&lt;Marshallable&gt; ret = s;
+
+    is_leader = rs.Start(ret, &index, &term);
+    if (is_leader)
+    {
+      auto startTime = std::chrono::high_resolution_clock::now();
+      while (true)
+      {
+        // Check if the timeout has elapsed
+        if ((std::chrono::high_resolution_clock::now() - startTime) &gt; timeoutDuration)
+        {
+          // Handle the timeout scenario
+          // Log_info("KvServer::Get -&gt; Timeout {ID: %s}", opID);
+          return KV_TIMEOUT;
+        }
+
+        if (getStore().count(oid_str) != 0)
+        {
+          if (getStore().count(k) != 0)
+          {
+            // Key exists in the map, so retrieve its value.
+            *v = getStore()[k];
+            // Log_info("KvServer::Get -&gt; Success {Key: %s, Value: %s}", k.c_str(), v-&gt;c_str());
+            return KV_SUCCESS; // Return true to indicate success.
+          }
+          return KV_TIMEOUT;
+        }
+        // Sleep for a short interval to avoid busy-waiting
+        Coroutine::Sleep(1000);
+      }
+    }
+    // Log_info("KvServer::Get -&gt; Not leader");
+    return KV_NOTLEADER;
+  }
+
+  /**
+   * @brief This function is called when a new command is committed by raft.
+   *
+   * @param m The command.
+   *
+   * @pre The command must be a Marshallable.
+   * @post The command will be executed.
+   *
+   * @note Pranav Dani is acknowledged for providing me with the idea of storing committed  operation IDs in a map to increase the efficiency of the implementation.
+   */
+  void KvServer::OnNextCommand(Marshallable &m)
+  {
+    RaftServer &rs = GetRaftServer();
+    auto v = static_cast&lt;MultiStringMarshallable *&gt;(&m);
+    auto lambda = [this, &v, &rs]()
+    {
+      std::lock_guard&lt;std::recursive_mutex&gt; lock(rs.mtx_);
+      std::string oid_str = v-&gt;data_[0];
+
+      getStore()[oid_str] = true;
+    };
+    Coroutine::CreateRun(lambda);
+  }
+
+  shared_ptr&lt;KvClient&gt; KvServer::CreateClient()
+  {
+    /* don't change this function */
+    auto cli = make_shared&lt;KvClient&gt;();
+    verify(commo_ != nullptr);
+    cli-&gt;commo_ = commo_;
+    uint32_t id = sp_log_svr_-&gt;site_id_;
+    id = id &lt;&lt; 16;
+    cli-&gt;cli_id_ = id + cli_cnt_++;
+    return cli;
+  }
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

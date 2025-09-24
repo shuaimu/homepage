@@ -1,0 +1,160 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-Sagor054/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-Sagor054/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  /* 
+  Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  */
+  /* your code here */
+  shared_ptr&lt;MultiStringMarshallable&gt; data = make_shared&lt;MultiStringMarshallable&gt;();
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match38-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  data-&gt;data_.push_back(to_string(oid));
+  data-&gt;data_.push_back("put");
+  data-&gt;data_.push_back(k);
+  data-&gt;data_.push_back(v);
+
+  auto event = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+</FONT>  eventStorage[to_string(oid)] = event;
+
+  uint64_t index, term;
+
+  auto cmd = std::static_pointer_cast&lt;Marshallable&gt;(data);
+  
+  if (!GetRaftServer().Start(cmd, &index, &term)) {
+    return KV_NOTLEADER;
+  }
+  
+  event-&gt;Wait(30000000);
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match38-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  if (event-&gt;status_ == Event::TIMEOUT) {
+    return KV_TIMEOUT;
+  } 
+
+  return KV_SUCCESS;
+}
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+  shared_ptr&lt;MultiStringMarshallable&gt; data = make_shared&lt;MultiStringMarshallable&gt;();
+</FONT><A NAME="1"></A><FONT color = #00FF00><A HREF="match38-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  data-&gt;data_.push_back(to_string(oid));
+  data-&gt;data_.push_back("append");
+  data-&gt;data_.push_back(k);
+  data-&gt;data_.push_back(v);
+
+  auto event = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+</FONT>  eventStorage[to_string(oid)] = event;
+
+  uint64_t index, term;
+
+  auto cmd = std::dynamic_pointer_cast&lt;Marshallable&gt;(data);
+  if (!GetRaftServer().Start(cmd, &index, &term)) {
+    return KV_NOTLEADER;
+  }
+
+  event-&gt;Wait(30000000);
+  if (event-&gt;status_ == Event::TIMEOUT) {
+    std::cout &lt;&lt; "[Append Timeout] Key: " &lt;&lt; k &lt;&lt; ", Value: " &lt;&lt; v &lt;&lt; ", database: " &lt;&lt; database[k] &lt;&lt; std::endl;
+    return KV_TIMEOUT;
+  } 
+  
+  return KV_SUCCESS;
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+  /* your code here */
+  auto data = make_shared&lt;MultiStringMarshallable&gt;();
+  data-&gt;data_.push_back(to_string(oid));
+  data-&gt;data_.push_back("get");
+  data-&gt;data_.push_back(k);
+  auto event = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  eventStorage[to_string(oid)] = event;
+
+
+  uint64_t index, term;
+
+  auto cmd = std::dynamic_pointer_cast&lt;Marshallable&gt;(data);
+  if (!GetRaftServer().Start(cmd, &index, &term)) {
+    return KV_NOTLEADER;
+  }
+
+  event-&gt;Wait(30000000);
+  if (event-&gt;status_ == Event::TIMEOUT) {
+    return KV_TIMEOUT;
+  } 
+  
+  *v=database[k];
+  return KV_SUCCESS;
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  auto v = (MultiStringMarshallable*)(&m);
+  /* your code here */
+  std::string temp = v-&gt;data_[0];
+  if(eventStorage.find(temp) != eventStorage.end() && eventStorage[temp]-&gt;status_ != Event::TIMEOUT){
+    eventStorage[temp]-&gt;Set(1);
+  }
+
+  if (v-&gt;data_[1][0] == 'p') {
+    database[v-&gt;data_[2]] = v-&gt;data_[3];
+  }
+  else if (v-&gt;data_[1][0] == 'a') {
+    database[v-&gt;data_[2]].append(v-&gt;data_[3]);
+  }
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

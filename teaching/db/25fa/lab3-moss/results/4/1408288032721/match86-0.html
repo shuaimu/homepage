@@ -1,0 +1,187 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-priyanshisinha99/src/shardkv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-priyanshisinha99/src/shardkv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+int64_t ShardKvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int ShardKvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  // lab_shard: fill in your code
+  Log_info("Entering put");
+  auto evPut = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  opidMap.insert({to_string(oid), evPut});
+  uint64_t idx = 0;
+  uint64_t term = 0;
+  Log_info("put working for oid %llu", oid);
+
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+
+  auto sendCMD = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  if (!(GetRaftServer().Start(sendCMD, &idx, &term))) {
+    // Log_info("not the leader!");
+    return KV_NOTLEADER;
+  }
+  evPut-&gt;Wait(900000);
+  if (evPut-&gt;status_ == Event::TIMEOUT) {
+    Log_info("PUT ShardKV | Returning timeout");
+    return KV_TIMEOUT;
+  }
+  else {
+    // opidMap.at(oid) = ev;
+    Log_info("PUT ShardKv | Returning success");
+    opidMap.erase(to_string(oid));
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match86-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    return KV_SUCCESS;
+  }
+  return KV_TIMEOUT;
+}
+
+int ShardKvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+    // lab_shard: fill in your code
+  auto evApp = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+</FONT>  opidMap.insert({to_string(oid), evApp});
+  string findkey = "";
+  uint64_t idx = 0;
+  uint64_t term = 0;
+  Log_info("Append working for oid %llu", oid);
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("append");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  auto appCMD = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  if (!(GetRaftServer().Start(appCMD, &idx, &term))) {
+    return KV_NOTLEADER;
+  }
+  evApp-&gt;Wait(900000);
+  if (evApp-&gt;status_ == Event::TIMEOUT) {
+    Log_info("Append | Returning timeout");
+    return KV_TIMEOUT;
+  }
+  else {
+    // opidMap.at(oid) = ev;
+    Log_info("Append | Returning success");
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match86-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    opidMap.erase(to_string(oid));
+
+    return KV_SUCCESS;
+  }
+  return KV_TIMEOUT;
+}
+
+int ShardKvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+    // lab_shard: fill in your code
+  auto evGet = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+</FONT>  opidMap.insert({to_string(oid), evGet});
+  uint64_t idx = 0;
+  uint64_t term = 0;
+  Log_info("Get working for oid %d", oid);
+  Log_info("Len of hashmap %d", hashmap.size());
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("get");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back("GET_DUMMY_VALUE");
+  auto sendCMD = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  Log_info("GET: value for given key %s", k.c_str());
+  if (!(GetRaftServer().Start(sendCMD, &idx, &term))) {
+    Log_info("not the leader!");
+    return KV_NOTLEADER;
+  }
+  evGet-&gt;Wait(900000);
+  if (evGet-&gt;status_ == Event::TIMEOUT) {
+    Log_info("GET | returning Timeout");
+    return KV_TIMEOUT;
+  }
+  else {
+    Log_info("GET | Returning success");
+    auto value = hashmap.find(k); 
+    *v = value-&gt;second;
+    opidMap.erase(to_string(oid));
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match86-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    return KV_SUCCESS;
+  }
+  return KV_TIMEOUT;
+}
+
+void ShardKvServer::OnNextCommand(Marshallable& m) {
+    // lab_shard: fill in your code
+  auto v = (MultiStringMarshallable*)(&m);
+  string value = v-&gt;data_[3];
+  string key = v-&gt;data_[2];
+  string operation = v-&gt;data_[1];
+  string opid = v-&gt;data_[0];
+</FONT>  Log_info("opid %s", opid.c_str());
+  if (operation=="get") {
+    Log_info("getting get");
+    
+  }
+  if (operation=="put") {
+    if (hashmap.find(key) != hashmap.end()) {
+      hashmap[key.c_str()] = value.c_str();
+    } else {
+      hashmap.insert({key.c_str(),value.c_str()});
+    }
+  }
+  if (operation == "append") {
+    if (hashmap.find(key) != hashmap.end()) {
+      hashmap.at(key.c_str()) += value.c_str();
+    }
+    else {
+      hashmap.insert({key.c_str(),value.c_str()});
+    }
+  }auto output = hashmap.find(key);
+  Log_info("Final value for Key %s: %s | Length of hashmap %d",(output-&gt;first).c_str(),(output-&gt;second).c_str(), hashmap.size());
+  auto eventval = opidMap.find(opid.c_str());
+  if (eventval == opidMap.end()) {
+    Log_info("already complete");
+  } else {
+    Log_info("value!!!! %s", (eventval-&gt;first).c_str());
+    auto ev = eventval-&gt;second;
+    ev-&gt;Set(1);
+  }
+  
+}
+
+shared_ptr&lt;ShardKvClient&gt; ShardKvServer::CreateClient(Communicator* comm) {
+  auto cli = make_shared&lt;ShardKvClient&gt;();
+  cli-&gt;commo_ = comm;
+  verify(cli-&gt;commo_ != nullptr);
+  static uint32_t id = 0;
+  id++;
+  cli-&gt;cli_id_ = id; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,680 @@
+<HTML>
+<HEAD>
+<TITLE>./spring19/sahsagarstonybrook/src/shardkv/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./spring19/sahsagarstonybrook/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+import (
+	"fmt"
+	"raft"
+	"strconv"
+	"strings"
+	"time"
+)
+import "labrpc"
+import "sync"
+import "labgob"
+
+
+type ShardMaster struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	waitingChannel map[string]chan Op
+	clientIdSeqNum map[int64]string
+
+	allGroups	map[int]bool
+
+	configs []Config // indexed by config num
+}
+
+const (
+	QUERY_OP = 0
+	JOIN_OP = 1
+	MOVE_OP = 2
+	LEAVE_OP = 3
+)
+
+type Op struct {
+	Operation 	int
+	Servers 	map[int][]string // new GID -&gt; servers mappings // For Join
+	GIDs 		[]int			 // For leave
+	Shard 		int				 // For Move
+	GID   		int				 // For Move
+	Num 		int // desired config number	// For Query
+	Clientid	int64		// The client id
+	Seqnum		int			// The sequence number of the call
+
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match84-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	Config		Config		// FOR Query return
+}
+
+
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+	// Your code here.
+	//fmt.Print("Join operation\n")
+	sm.mu.Lock()
+	OP := Op{
+		Operation: JOIN_OP,
+		Clientid:  args.ClientId,
+		Seqnum:    args.SeqNum,
+		Servers:	args.Servers,
+</FONT>	}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match84-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	index, term, isLeader := sm.rf.Start(OP)
+
+	if isLeader == false {
+		reply.Leader = 2
+		sm.mu.Unlock()
+		return
+	}
+
+	reply.Leader = 1
+
+	_, ok := sm.waitingChannel[strconv.Itoa(index)+strconv.Itoa(term)]
+	if !ok {
+		// Source Reference: RAFT Guide
+		sm.waitingChannel[strconv.Itoa(index)+strconv.Itoa(term)] = make(chan Op, 100)
+	}
+	sm.mu.Unlock()
+
+	select {
+	case op := &lt;-sm.waitingChannel[strconv.Itoa(index)+strconv.Itoa(term)]:
+		if op.Seqnum != OP.Seqnum || op.Clientid != OP.Clientid {
+			reply.Leader = 2
+</FONT>		}
+		// if dies or stops being leader
+	case &lt;-time.After(500 * time.Millisecond):
+		reply.Leader = 2
+	}
+}
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+	sm.mu.Lock()
+	//fmt.Print("Leave operation\n")
+	OP := Op{
+		Operation: LEAVE_OP,
+		Clientid:  args.ClientId,
+		Seqnum:    args.SeqNum,
+		GIDs:		args.GIDs,
+	}
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match84-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	index, term, isLeader := sm.rf.Start(OP)
+
+	if isLeader == false {
+		reply.Leader = 2
+		sm.mu.Unlock()
+		return
+	}
+
+	reply.Leader = 1
+
+	_, ok := sm.waitingChannel[strconv.Itoa(index)+strconv.Itoa(term)]
+	if !ok {
+		// Source Reference: RAFT Guide
+		sm.waitingChannel[strconv.Itoa(index)+strconv.Itoa(term)] = make(chan Op, 100)
+	}
+	sm.mu.Unlock()
+
+	select {
+	case op := &lt;-sm.waitingChannel[strconv.Itoa(index)+strconv.Itoa(term)]:
+		if op.Seqnum != OP.Seqnum || op.Clientid != OP.Clientid {
+			reply.Leader = 2
+</FONT>		}
+		// if dies or stops being leader
+	case &lt;-time.After(500 * time.Millisecond):
+		reply.Leader = 2
+	}
+}
+
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+	//fmt.Print("Move operation\n")
+	sm.mu.Lock()
+	OP := Op{
+		Operation: MOVE_OP,
+		Clientid:  args.ClientId,
+		Seqnum:    args.SeqNum,
+		GID:	args.GID,
+		Shard:  args.Shard,
+	}
+
+	index, term, isLeader := sm.rf.Start(OP)
+
+	if isLeader == false {
+		reply.Leader = 2
+		sm.mu.Unlock()
+		return
+	}
+
+	reply.Leader = 1
+
+	_, ok := sm.waitingChannel[strconv.Itoa(index)+strconv.Itoa(term)]
+	if !ok {
+		// Source Reference: RAFT Guide
+		sm.waitingChannel[strconv.Itoa(index)+strconv.Itoa(term)] = make(chan Op, 100)
+	}
+	sm.mu.Unlock()
+
+	select {
+	case op := &lt;-sm.waitingChannel[strconv.Itoa(index)+strconv.Itoa(term)]:
+		if op.Seqnum != OP.Seqnum || op.Clientid != OP.Clientid {
+			reply.Leader = 2
+		}
+		// if dies or stops being leader
+	case &lt;-time.After(500 * time.Millisecond):
+		reply.Leader = 2
+	}
+}
+
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+	sm.mu.Lock()
+	OP := Op{
+		Operation: QUERY_OP,
+		Clientid:  args.ClientId,
+		Seqnum:    args.SeqNum,
+		Num:	   args.Num,
+	}
+
+	index, term, isLeader := sm.rf.Start(OP)
+
+	if isLeader == false {
+		reply.Leader = 2
+		sm.mu.Unlock()
+		return
+	}
+
+	reply.Leader = 1
+
+	_, ok := sm.waitingChannel[strconv.Itoa(index)+strconv.Itoa(term)]
+	if !ok {
+		// Source Reference: RAFT Guide
+		sm.waitingChannel[strconv.Itoa(index)+strconv.Itoa(term)] = make(chan Op, 100)
+	}
+	sm.mu.Unlock()
+
+	select {
+	case op := &lt;-sm.waitingChannel[strconv.Itoa(index)+strconv.Itoa(term)]:
+		//fmt.Printf("\nQuery has returned %v\n", op.Config)
+		if op.Seqnum != OP.Seqnum || op.Clientid != OP.Clientid {
+			reply.Leader = 2
+		} else {
+			reply.Config = op.Config
+		}
+
+		// if dies or stops being leader
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match84-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	case &lt;-time.After(500 * time.Millisecond):
+		reply.Leader = 2
+	}
+}
+
+
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+	// Your code here, if desired.
+}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+</FONT>	return sm.rf
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	sm := new(ShardMaster)
+	sm.me = me
+
+	sm.configs = make([]Config, 1)
+	sm.configs[0].Groups = map[int][]string{}
+
+	// Keep all groups that have been a part of this shard configuration
+	sm.allGroups = map[int]bool{}
+
+	labgob.Register(Op{})
+	sm.applyCh = make(chan raft.ApplyMsg)
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+
+	sm.waitingChannel = make(map[string]chan Op)
+	sm.clientIdSeqNum = make(map[int64]string)
+
+	go sm.apply()
+
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match84-0.html#6" TARGET="0"><IMG SRC="../../bitmaps/tm_1_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	return sm
+}
+
+
+// Continuous apply loop (Source reference: RAFT Guide).
+// keeps running endlessly to check if command has passed.
+func (sm *ShardMaster) apply() {
+	for {
+		applyMsg := &lt;-sm.applyCh
+		sm.mu.Lock()
+
+		op := applyMsg.Command.(Op)
+</FONT>
+		// QUERY OPERATION
+		if op.Operation == QUERY_OP {
+			var index int
+			if op.Num == -1 || op.Num &gt;= len(sm.configs) {
+				index = len(sm.configs) - 1
+			} else {
+				index = op.Num
+			}
+
+			op.Config.Num = sm.configs[index].Num
+
+			op.Config.Groups = make(map[int][]string, 0)
+			for g, s:=range sm.configs[index].Groups {
+				op.Config.Groups[g] = s
+			}
+
+			for i, s:=range sm.configs[index].Shards {
+				op.Config.Shards[i] = s
+			}
+
+			//fmt.Printf("\nQuery returning :%v\n", op.Config)
+		}
+
+		// check in the string map if the seq. num has already been executed.
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match84-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		if !strings.Contains(sm.clientIdSeqNum[op.Clientid], "-"+strconv.Itoa(op.Seqnum)+"-") {
+			sm.clientIdSeqNum[op.Clientid] += "-" + strconv.Itoa(op.Seqnum) + "-"
+
+			// JOIN OPERATION
+			if op.Operation == JOIN_OP {
+</FONT>				//fmt.Printf("Join")
+				if len(sm.configs) == 1 {
+					newConfig:=Config{
+						Num:len(sm.configs),
+					}
+
+					newConfig.Groups = make(map[int][]string, 0)
+
+					for g, s := range op.Servers {
+						newConfig.Groups[g] = s
+					}
+
+					// get all groups from the servers argument in an array
+					groups:=[]int{}
+					for gid, _:=range op.Servers {
+						groups = append(groups, gid)
+					}
+
+					for i, _:=range newConfig.Shards {
+						newConfig.Shards[i] = groups[i % len(groups)]
+						i++
+					}
+
+					sm.configs = append(sm.configs, newConfig)
+					//fmt.Printf("Here you go groups : %v\n", sm.configs[1].Groups)
+				} else {
+					latestConfig := sm.configs[len(sm.configs)-1]
+
+					// create a deep copy of the latest config to make changes on it.
+					newConfig := Config{}
+					newConfig.Num = len(sm.configs) // Could also be latestConfig.Num + 1
+					for i, gid := range latestConfig.Shards {
+						newConfig.Shards[i] = gid
+					}
+					// add old groups to the new configuration.
+					newConfig.Groups = make(map[int][]string, 0)
+					for g, s := range latestConfig.Groups {
+						newConfig.Groups[g] = s
+					}
+
+					oldGroups := make(map[int]int, 0)
+
+					for _, gid := range latestConfig.Shards {
+						// if it is a valid group id, since 0 is all default empty groupd id.
+						if gid != 0 {
+							oldGroups[gid] = 0
+						}
+					}
+
+
+					newGroups := []int{}
+					for gid, _ := range op.Servers {
+						newGroups = append(newGroups, gid)
+					}
+
+					//
+					//newGroups := make(map[int]int, 0)
+					//for gid, _ := range op.Servers {
+					//	newGroups[gid] = 0
+					//}
+
+					numOfGroups := len(oldGroups) + len(newGroups)
+
+					maxNumberOfShardsPerGroup := NShards / numOfGroups
+					residualNumber := NShards - (maxNumberOfShardsPerGroup * numOfGroups)
+
+					// The groups with more than the above number. The length of this group should not be greater than residual Number.
+					groupsWithMoreThanMaxShards := make(map[int]bool, 0)
+
+					newGIDIndex := 0
+
+					for i, gid := range newConfig.Shards {
+						// first max number of shards per group will be assigned to every old group
+						_, oldGroupsValidOK := oldGroups[gid]
+						if oldGroupsValidOK && oldGroups[gid] &lt; maxNumberOfShardsPerGroup {
+							oldGroups[gid] ++
+							continue
+						}
+						// then few older groups will get residual number of shards
+						_, ok := groupsWithMoreThanMaxShards[gid]
+
+						if oldGroupsValidOK && oldGroups[gid] == maxNumberOfShardsPerGroup && residualNumber &gt; 0 && !ok {
+							groupsWithMoreThanMaxShards[gid] = true
+							oldGroups[gid] ++
+							residualNumber --
+							continue
+						}
+						// finally, we give out shards to new groups in a round robin manner
+						newConfig.Shards[i] = newGroups[newGIDIndex%len(newGroups)]
+						newGIDIndex ++
+					}
+
+					// add new groups to the configurations
+					for key, value := range op.Servers {
+						newConfig.Groups[key] = value
+					}
+					// append the new config to the configs already there
+					sm.configs = append(sm.configs, newConfig)
+
+					////////// Just for checking operation : Sourced from test_test.go
+					// more or less balanced sharding?
+					counts := map[int]int{}
+					for _, g := range newConfig.Shards {
+						counts[g] += 1
+					}
+					min := 257
+					max := 0
+					for g, _ := range newConfig.Groups {
+						if counts[g] &gt; max {
+							max = counts[g]
+						}
+						if counts[g] &lt; min {
+							min = counts[g]
+						}
+					}
+					if max &gt; min+1 {
+						fmt.Printf("max %v too much larger than min %v", max, min)
+					}
+				}
+			}
+
+			// LEAVE OPERATION
+			if op.Operation == LEAVE_OP {
+				//fmt.Printf("Leave")
+
+				// converting GIDs array to map
+				GIDsToRemove:= make(map[int]bool, 0)
+				GIDsToKeep:= make(map[int]bool, 0)
+
+				for _, elem:=range op.GIDs {
+					GIDsToRemove[elem] = true
+				}
+
+				latestConfig:=sm.configs[len(sm.configs) - 1]
+
+				// create a deep copy of the latest config to make changes on it.
+				newConfig:=Config{}
+				newConfig.Num = len(sm.configs) // Could also be latestConfig.Num + 1
+
+				newConfig.Groups = make(map[int][]string, 0)
+				for g, s:= range latestConfig.Groups {
+					_, ok:= GIDsToRemove[g]
+					if !ok {
+						GIDsToKeep[g] = true
+						newConfig.Groups[g] = s
+					}
+				}
+
+				// Map to array
+				GIDsToKeepArray:=[]int{}
+
+				for gid, _:=range GIDsToKeep {
+					GIDsToKeepArray = append(GIDsToKeepArray, gid)
+				}
+
+				if len(GIDsToKeepArray) == 0 {
+					for i, _:= range latestConfig.Shards {
+						newConfig.Shards[i] = 0
+					}
+				} else {
+					// add the max number of shards group-wise logic here
+					numOfGroups:=len(GIDsToKeepArray)
+
+					for i, gid:= range latestConfig.Shards {
+						newConfig.Shards[i] = gid
+					}
+
+					GIDsCount:=map[int]int{}
+					for _, gid:= range GIDsToKeepArray {
+						GIDsCount[gid] = 0
+					}
+
+					//GIDsWithMoreThanMaxNumberOfShards:=map[int]bool{}
+					maxNumberOfShardsPerGroup := 1
+					if NShards/numOfGroups &gt; 1 {
+						maxNumberOfShardsPerGroup = NShards / numOfGroups
+					}
+
+					for _, gid:= range latestConfig.Shards {
+						GIDsCount[gid]++
+					}
+
+					for i, gid:= range latestConfig.Shards {
+						_, REMOVEOK := GIDsToRemove[gid]
+
+						if REMOVEOK {
+							// change
+							newConfig.Shards[i] = sm.nextMinimumGID(GIDsCount, GIDsToKeep)
+							GIDsCount[gid]--
+							GIDsCount[newConfig.Shards[i]] ++
+							continue
+						}
+
+						if GIDsCount[gid] &gt; maxNumberOfShardsPerGroup {
+							// change
+							newConfig.Shards[i] = sm.nextMinimumGID(GIDsCount, GIDsToKeep)
+							GIDsCount[newConfig.Shards[i]] ++
+							GIDsCount[gid]--
+							continue
+						}
+
+						// if it doesn't have to be changed, just copy the earlier value
+						newConfig.Shards[i] = gid
+						//GIDsCount[newConfig.Shards[i]]++
+					}
+				}
+
+				sm.configs = append(sm.configs, newConfig)
+
+				////////// Just for checking operation : Sourced from test_test.go
+				// more or less balanced sharding?
+				counts := map[int]int{}
+				for _, g := range newConfig.Shards {
+					counts[g] += 1
+				}
+				min := 257
+				max := 0
+				for g, _ := range newConfig.Groups {
+					if counts[g] &gt; max {
+						max = counts[g]
+					}
+					if counts[g] &lt; min {
+						min = counts[g]
+					}
+				}
+				if max &gt; min+1 {
+					fmt.Printf("max %v too much larger than min %v", max, min)
+				}
+			}
+
+			// MOVE OPERATION
+			if op.Operation == MOVE_OP {
+				//fmt.Printf("Move")
+
+				latestConfig:=sm.configs[len(sm.configs) - 1]
+
+				// create a deep copy of the latest config to make changes on it.
+				newConfig:=Config{}
+				newConfig.Num = len(sm.configs) // Could also be latestConfig.Num + 1
+				for i, gid:=range latestConfig.Shards {
+					newConfig.Shards[i] = gid
+				}
+				newConfig.Groups = make(map[int][]string, 0)
+				for g, s:= range latestConfig.Groups {
+					newConfig.Groups[g] = s
+				}
+
+				newConfig.Shards[op.Shard] = op.GID
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match84-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				sm.configs = append(sm.configs, newConfig)
+			}
+		}
+
+		_, ok := sm.waitingChannel[strconv.Itoa(applyMsg.CommandIndex)+strconv.Itoa(applyMsg.CommandTerm)]
+
+		if ok {
+			// inform anyone who's waiting on this index
+			sm.waitingChannel[strconv.Itoa(applyMsg.CommandIndex)+strconv.Itoa(applyMsg.CommandTerm)] &lt;- op
+		}
+
+		sm.mu.Unlock()
+	}
+}
+
+func (sm *ShardMaster) nextMinimumGID(GIDsCount map[int]int, GIDsToKeep map[int]bool) int {
+</FONT>	minElement:=9999999
+	minElementGID:=0
+	// getting the first element of the GIDs count for Keep GID.
+	for gid, _:=range GIDsToKeep {
+		minElement = GIDsCount[gid]
+		minElementGID = gid
+		break
+	}
+
+	for gid, _:=range GIDsToKeep {
+		if minElement &gt; GIDsCount[gid] {
+			minElement = GIDsCount[gid]
+			minElementGID = gid
+		}
+	}
+
+	return minElementGID
+}
+
+
+func (sm *ShardMaster) nextValidGID(newConfig *Config, GIDsToRemove map[int]bool, GIDsToKeep map[int]bool, GIDsCount map[int]int, GIDsWithMoreThanMaxShards map[int]bool, shards [NShards]int, currentIndex int , maxNumberOfShardsPerGroup int, residualNumber *int) int {
+	// Either this GID needs to be removed or this GID count has reached max.
+	_, GIDsToRemoveOK := GIDsToRemove[shards[currentIndex]]
+	_, GIDsWithMoreThanMaxShardsOK := GIDsWithMoreThanMaxShards[shards[currentIndex]]
+
+	if *residualNumber == 0 {
+		//fmt.Printf("Receiving 0\n")
+	}
+
+	if !GIDsToRemoveOK && (GIDsCount[shards[currentIndex]] &lt; maxNumberOfShardsPerGroup || (!GIDsWithMoreThanMaxShardsOK && *residualNumber &gt; 0)) {
+		GIDsCount[shards[currentIndex]] ++
+		if GIDsCount[shards[currentIndex]] &gt; maxNumberOfShardsPerGroup {
+			GIDsWithMoreThanMaxShards[shards[currentIndex]] = true
+			*residualNumber --
+		}
+
+		return shards[currentIndex]
+	}
+
+	countTimes:=0
+
+	// if current index doesn't work, then get first valid from GIDs to Keep map.
+	for gid, _:=range GIDsToKeep {
+		if countTimes &gt; 100 {
+			fmt.Printf("Infinite loop\n")
+		}
+
+		_, GIDsToBeRemovedOK := GIDsToRemove[gid]
+		_, GIDsWithMoreThanMaxShardsOK := GIDsWithMoreThanMaxShards[gid]
+
+		if !GIDsToBeRemovedOK && (GIDsCount[gid] &lt; maxNumberOfShardsPerGroup || (!GIDsWithMoreThanMaxShardsOK && *residualNumber &gt; 0)) {
+			GIDsCount[gid] ++
+			if GIDsCount[gid] &gt; maxNumberOfShardsPerGroup {
+				GIDsWithMoreThanMaxShards[gid] = true
+				*residualNumber --
+			}
+
+			return gid
+		}
+	}
+/*
+	fmt.Printf("\n\n\n..................  New test case\n")
+	fmt.Printf("Current index%v\n", currentIndex)
+	fmt.Printf("The gid of current shard = %v\n", shards[currentIndex])
+	fmt.Printf("residual number %v\n", *residualNumber)
+	fmt.Printf("maxNumberOfShardsPerGroup %v\n", maxNumberOfShardsPerGroup)
+
+	fmt.Printf("The GIDs to keep array is %v\n", GIDsToKeep)
+	fmt.Printf("Length : %v\n", len(GIDsToKeep))
+
+	fmt.Printf("The GIDs to remove array is %v\n", GIDsToRemove)
+	fmt.Printf("Length : %v\n", len(GIDsToRemove))
+
+	fmt.Printf("The GIDsWithMoreThanMaxShards array is %v\n", GIDsWithMoreThanMaxShards)
+	fmt.Printf("Length : %v\n", len(GIDsWithMoreThanMaxShards))
+
+	fmt.Printf("The array of shards is %v\n", shards)
+	fmt.Printf("Length : %v\n", len(shards))
+
+	fmt.Printf("New config is : %v\n", *newConfig)
+
+
+*/
+
+	// Supposed to be Unreachable code.
+	return -1
+}
+
+/*func GiveMeFirstUnassignedGroup(groups map[int]bool) int {
+	for gid, assign:= range groups {
+		if assign == false{
+			return gid
+		}
+	}
+
+	// if all are assigned, then return the first one.
+	for gid, _:= range groups {
+		return gid
+	}
+
+	return -1
+}*/</PRE>
+</PRE>
+</BODY>
+</HTML>

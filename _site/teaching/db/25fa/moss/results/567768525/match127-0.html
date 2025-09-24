@@ -1,0 +1,398 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/swsekar/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/swsekar/src/kvraft/server.go<p><PRE>
+package raftkv
+
+import (
+	"bytes"
+	"labgob"
+	"labrpc"
+	"log"
+	"raft"
+	"sync"
+	"time"
+)
+
+const Debug = 0
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+type PersistentState struct {
+	LastIncludedIndex		int
+	LastIncludedTerm		int
+	KVMap					map[string]string
+	IndexOpIdMap			map[int][]int
+	LastClientReq			map[int]ApplyResult
+}
+
+type ApplyResult struct {
+	Err Err
+	Value string
+}
+
+type Op struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+	Op string
+	Key string
+	Value string
+	Id int
+}
+
+type KVServer struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	maxraftstate int // snapshot if log grows this big
+
+	// Your definitions here.
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match127-1.html#7" TARGET="1"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kvmap		map[string]string
+	applyMap	map[int](chan ApplyResult)
+	IndexOpIdMap	map[int][]int
+	lastClientReq	map[int]ApplyResult
+	currentTerm		int
+	dead			bool
+</FONT>	persister		*raft.Persister
+	lastAppliedIndex	int
+	lastAppliedTerm		int
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match127-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	overflowCh			chan int
+}
+
+func (kv *KVServer) ApplyLog() {
+	for {
+		applyMsg := &lt;-kv.applyCh
+		kv.mu.Lock()
+		if (kv.dead) {
+			kv.mu.Unlock()
+			return
+		}
+		kv.mu.Unlock()
+		if (!applyMsg.CommandValid && kv.lastAppliedIndex &gt;= applyMsg.LastIncludedIndex) {
+</FONT>			// stale snapshot
+			continue
+		} else if (!applyMsg.CommandValid && kv.lastAppliedIndex &lt; applyMsg.LastIncludedIndex) {
+			kv.mu.Lock()
+			kv.readPersist(applyMsg.Snapshot)
+			kv.lastAppliedIndex = applyMsg.LastIncludedIndex
+			kv.lastAppliedTerm = applyMsg.LastIncludedTerm
+			//log.Printf("server %d: logs up to %d\n", kv.me, kv.lastAppliedIndex)
+			kv.mu.Unlock()
+			continue
+		}
+		kv.mu.Lock()
+		op,ok := applyMsg.Command.(Op)
+		if (!ok) {
+			log.Fatalf("server %d: invalid command\n", kv.me)
+		}
+		if (applyMsg.CommandIndex &lt; kv.lastAppliedIndex || applyMsg.CommandIndex &gt; kv.lastAppliedIndex + 1) {
+			log.Printf("server %d: logs cam out of order %d-&gt;%d\n", kv.me, kv.lastAppliedIndex, applyMsg.CommandIndex)
+		}
+		kv.lastAppliedIndex = applyMsg.CommandIndex
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match127-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		kv.lastAppliedTerm = applyMsg.CommandTerm
+		if _, ok := kv.lastClientReq[op.Id]; ok {
+			//log.Printf("server %d: already applied op %d\n", kv.me, op.Id)
+			kv.mu.Unlock()
+			continue
+		}
+		//log.Printf("server %d: applying index %d, opId %d\n", kv.me, applyMsg.CommandIndex, op.Id)
+		appRes := &ApplyResult{}
+		appRes.Err = OK
+</FONT>		appRes.Value = ""
+		if (op.Op == "Put") {
+			kv.kvmap[op.Key] = op.Value
+		} else if (op.Op == "Append") {
+			kv.kvmap[op.Key] = kv.kvmap[op.Key] + op.Value
+		} else if (op.Op == "Get") {
+			if _, ok := kv.kvmap[op.Key]; ok {
+				appRes.Value = kv.kvmap[op.Key]
+			} else {
+				appRes.Err = ErrNoKey
+			}
+		}
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match127-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		delete(kv.lastClientReq, op.Id-1)
+		kv.lastClientReq[op.Id] = *appRes
+		if _, ok := kv.applyMap[op.Id]; ok {
+			kv.applyMap[op.Id]&lt;-*appRes
+		}
+		failedAgreementAppRes := &ApplyResult{}
+		failedAgreementAppRes.Err = ErrFailedAgree
+</FONT>		failedAgreementAppRes.Value = ""
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match127-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		for _, opId := range kv.IndexOpIdMap[applyMsg.CommandIndex] {
+			if (opId != op.Id) {
+				kv.applyMap[opId]&lt;-*failedAgreementAppRes
+			}
+		}
+		delete(kv.IndexOpIdMap, applyMsg.CommandIndex)
+		kv.mu.Unlock()
+	}
+}
+
+func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
+</FONT>	// Your code here.
+	_, isleader := kv.rf.GetState()
+	if (!isleader) {
+		reply.WrongLeader = true
+		return
+	}
+
+	kv.mu.Lock()
+	opId := args.RequestId
+	if _, ok := kv.lastClientReq[opId]; ok && kv.lastClientReq[opId].Err != ErrFailedAgree {
+		reply.Err = kv.lastClientReq[opId].Err
+		reply.Value = kv.lastClientReq[opId].Value
+		kv.mu.Unlock()
+		return
+	}
+	op := &Op{}
+	op.Op = "Get"
+	op.Key = args.Key
+	op.Value = ""
+	op.Id = opId
+	if _, ok := kv.applyMap[opId]; ok {
+		// make stale request stop listening to channel
+		log.Fatalf("server %d: already waiting for reqId %d \n", kv.me, args.RequestId)
+	}
+	kv.applyMap[opId] = make(chan ApplyResult)
+	index, term, isLeader := kv.rf.Start(*op)
+	if (!isLeader) {
+		reply.WrongLeader = true
+		close(kv.applyMap[opId])
+		delete(kv.applyMap, opId)
+		kv.mu.Unlock()
+		return
+	}
+	kv.currentTerm = term
+	kv.IndexOpIdMap[index] = append(kv.IndexOpIdMap[index], opId)
+	//log.Printf("server %d: get index %d, opId %d\n", kv.me, index, opId)
+	reply.WrongLeader = false
+	applyDoneCh := kv.applyMap[opId]
+	kv.mu.Unlock()
+	applyRes :=&lt;-applyDoneCh
+
+	kv.mu.Lock()
+	close(kv.applyMap[opId])
+	delete(kv.applyMap, opId)
+	reply.Err = applyRes.Err
+	reply.Value = applyRes.Value
+	kv.mu.Unlock()
+}
+
+func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	_, isleader := kv.rf.GetState()
+	if (!isleader) {
+		reply.WrongLeader = true
+		return
+	}
+	// Your code here.
+	kv.mu.Lock()
+	opId := args.RequestId
+	if _, ok := kv.lastClientReq[opId]; ok && kv.lastClientReq[opId].Err != ErrFailedAgree {
+		reply.Err = kv.lastClientReq[opId].Err
+		kv.mu.Unlock()
+		return
+	}
+	op := &Op{}
+	op.Op = args.Op
+	op.Key = args.Key
+	op.Value = args.Value
+	op.Id = opId
+	if _, ok := kv.applyMap[opId]; ok {
+		// make stale request stop listening to channel
+		log.Fatalf("server %d: already waiting for reqId %d \n", kv.me, args.RequestId)
+	}
+	kv.applyMap[opId] = make(chan ApplyResult)
+	index, term, isLeader := kv.rf.Start(*op)
+	if (!isLeader) {
+		reply.WrongLeader = true
+		close(kv.applyMap[opId])
+		delete(kv.applyMap, opId)
+		kv.mu.Unlock()
+		return
+	}
+	kv.currentTerm = term
+	kv.IndexOpIdMap[index] = append(kv.IndexOpIdMap[index], opId)
+	//log.Printf("server %d: %s index %d, opId %d\n", kv.me, args.Op, index, opId)
+	reply.WrongLeader = false
+	applyDoneCh := kv.applyMap[opId]
+	kv.mu.Unlock()
+	applyRes := &lt;-applyDoneCh
+	kv.mu.Lock()
+	close(kv.applyMap[opId])
+	delete(kv.applyMap, opId)
+	reply.Err = applyRes.Err
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match127-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.mu.Unlock()
+}
+
+func (kv *KVServer) detectTermChange() {
+	for {
+		kv.mu.Lock()
+		if (kv.dead) {
+			kv.mu.Unlock()
+			return
+		}
+		kv.mu.Unlock()
+		term,_ := kv.rf.GetState()
+		kv.mu.Lock()
+		if (kv.currentTerm != term) {
+			failedAgreementAppRes := &ApplyResult{}
+			failedAgreementAppRes.Err = ErrFailedAgree
+</FONT>			failedAgreementAppRes.Value = ""
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match127-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			for opId := range kv.applyMap {
+				kv.applyMap[opId]&lt;-*failedAgreementAppRes
+			}
+			kv.currentTerm = term
+		}
+		kv.mu.Unlock()
+		time.Sleep(10000 * time.Millisecond)
+	}
+}
+
+func (kv *KVServer) readPersist(data []byte) {
+</FONT>	if data == nil || len(data) &lt; 1 { // bootstrap without any state?
+		return
+	}
+	//log.Printf("server %d: readPersist\n", kv.me)
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var persistentState PersistentState
+	err := d.Decode(&persistentState)
+	if (err != nil) {
+		log.Fatal("decode error:", err)
+	} else {
+		kv.lastAppliedIndex = persistentState.LastIncludedIndex
+		kv.lastAppliedTerm = persistentState.LastIncludedTerm
+		kv.kvmap = persistentState.KVMap
+		kv.IndexOpIdMap = persistentState.IndexOpIdMap
+		kv.lastClientReq = persistentState.LastClientReq
+	}
+}
+
+func (kv *KVServer) detectRaftLogOverflow() {
+	for {
+		kv.mu.Lock()
+		if (kv.dead) {
+			kv.mu.Unlock()
+			// kill all goroutines waiting to send apply
+			for {
+				select {
+					case &lt;-kv.overflowCh:
+						continue
+					default:
+						return
+				}
+			}
+		}
+		kv.mu.Unlock()
+		&lt;-kv.overflowCh
+		kv.mu.Lock()
+		//log.Printf("server %d: raft size is %d, max = %d\n", kv.me, kv.persister.RaftStateSize(), kv.maxraftstate)
+		w := new(bytes.Buffer)
+		e := labgob.NewEncoder(w)
+		persistentState := &PersistentState{}
+		persistentState.LastIncludedIndex = kv.lastAppliedIndex
+		persistentState.LastIncludedTerm = kv.lastAppliedTerm
+		persistentState.KVMap = kv.kvmap
+		persistentState.IndexOpIdMap = kv.IndexOpIdMap
+		persistentState.LastClientReq = kv.lastClientReq
+		err := e.Encode(persistentState)
+		if err != nil {
+			log.Fatal("encode error:", err)
+		}
+		kv_data := w.Bytes()
+		kv.rf.Snapshot(kv.lastAppliedIndex, kv.lastAppliedTerm, kv_data)
+		kv.mu.Unlock()
+	}
+}
+
+//
+// the tester calls Kill() when a KVServer instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *KVServer) Kill() {
+	kv.rf.Kill()
+	// Your code here, if desired.
+	kv.mu.Lock()
+	kv.dead = true
+	kv.mu.Unlock()
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Raft to
+// form the fault-tolerant key/value service.
+// me is the index of the current server in servers[].
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+// the k/v server should snapshot when Raft's saved state exceeds maxraftstate bytes,
+// in order to allow Raft to garbage-collect its log. if maxraftstate is -1,
+// you don't need to snapshot.
+// StartKVServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
+	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+
+	kv := new(KVServer)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+
+	// You may need initialization code here.
+	kv.kvmap = make(map[string]string)
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match127-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.applyMap = make(map[int](chan ApplyResult))
+	kv.IndexOpIdMap = make(map[int][]int)
+	kv.lastClientReq = make(map[int]ApplyResult)
+</FONT>	kv.dead = false
+	kv.currentTerm = 0
+	kv.persister = persister
+
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.overflowCh = make(chan int)
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+	kv.rf.SetMaxRaft(maxraftstate, kv.overflowCh)
+	kv.readPersist(persister.ReadSnapshot())
+
+	// You may need initialization code here.
+	go kv.ApplyLog()
+	go kv.detectTermChange()
+	if (maxraftstate != -1) {
+		go kv.detectRaftLogOverflow()
+	}
+	return kv
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

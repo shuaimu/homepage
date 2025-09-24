@@ -1,0 +1,545 @@
+<HTML>
+<HEAD>
+<TITLE>./github/Wusjn/MIT-6.824/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github/Wusjn/MIT-6.824/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+
+import "raft"
+import "labrpc"
+import "sync"
+import "labgob"
+import "time"
+import "strconv"
+import "bytes"
+import "log"
+
+const (
+	Debug 	= 1
+
+<A NAME="8"></A><FONT color = #00FFFF><A HREF="match43-0.html#8" TARGET="0"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	JOIN	= 0
+	LEAVE 	= 1
+	MOVE 	= 2
+	QUERY 	= 3
+
+	TIMEOUT = 500
+)
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+</FONT>		log.Printf(format, a...)
+	}
+	return
+}
+
+type Op struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+	OpType	int
+	Servers map[int][]string
+	GIDs []int
+	Shard int
+	GID   int
+	Num int
+
+	Id 		string
+<A NAME="9"></A><FONT color = #FF00FF><A HREF="match43-0.html#9" TARGET="0"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	ClientId int
+	SeqNum 	int
+}
+
+
+type ShardMaster struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	// Your data here.
+	maxraftstate int
+
+	persister *raft.Persister
+</FONT><A NAME="5"></A><FONT color = #FF0000><A HREF="match43-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	configs []Config // indexed by config num
+	done map[string]chan int
+	result map[string]Config
+	maxSeqNum map[int]int
+	doneCh chan int
+}
+
+</FONT>func rpcRequestId(client int, seqNum int) string {
+	return strconv.Itoa(client) + "," + strconv.Itoa(seqNum)
+}
+
+type ModifyReply struct{
+	WrongLeader bool
+	Err         Err
+}
+
+func (sm *ShardMaster) modify(op *Op) (reply ModifyReply) {
+	sm.mu.Lock()
+
+	reply = ModifyReply{}
+
+	_, _, isLeader := sm.rf.Start(*op)
+	if !isLeader {
+		reply.WrongLeader = true
+		sm.mu.Unlock()
+		return
+	}
+	reply.WrongLeader = false
+
+	maxSeqNum , ok := sm.maxSeqNum[op.ClientId]
+	if !ok {
+		sm.maxSeqNum[op.ClientId] = 0
+		maxSeqNum = 0
+	}
+	if maxSeqNum &gt;= op.SeqNum {
+		reply.Err = OK
+		sm.mu.Unlock()
+		return
+	}
+
+
+	doneCh := make(chan int)
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match43-0.html#7" TARGET="0"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	sm.done[op.Id] = doneCh
+
+	sm.mu.Unlock()
+	done := false
+	select{
+	case &lt;- doneCh:
+		done = true
+	case &lt;-time.After(time.Millisecond * TIMEOUT):
+	}
+	sm.mu.Lock()
+</FONT>
+	reply.Err = OK
+	if !done {
+		reply.Err = ErrTimeOut
+	}
+	sm.mu.Unlock()
+	return
+} 
+
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+	// Your code here.
+	op := Op{
+		OpType 	: JOIN,
+		Servers : args.Servers,
+		Id : rpcRequestId(args.ClientId,args.SeqNum),
+		ClientId : args.ClientId,
+		SeqNum : args.SeqNum,
+	}
+
+	modifyReply := sm.modify(&op)
+
+	reply.Err = modifyReply.Err
+	reply.WrongLeader = modifyReply.WrongLeader
+}
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+	// Your code here.
+	op := Op{
+		OpType 	: LEAVE,
+		GIDs : args.GIDs,
+		Id : rpcRequestId(args.ClientId,args.SeqNum),
+		ClientId : args.ClientId,
+		SeqNum : args.SeqNum,
+	}
+
+	modifyReply := sm.modify(&op)
+
+	reply.Err = modifyReply.Err
+	reply.WrongLeader = modifyReply.WrongLeader
+}
+
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+	// Your code here.
+	op := Op{
+		OpType 	: MOVE,
+		Shard : args.Shard,
+		GID : args.GID,
+		Id : rpcRequestId(args.ClientId,args.SeqNum),
+		ClientId : args.ClientId,
+		SeqNum : args.SeqNum,
+	}
+
+	modifyReply := sm.modify(&op)
+
+	reply.Err = modifyReply.Err
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match43-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	reply.WrongLeader = modifyReply.WrongLeader
+}
+
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+	// Your code here.
+	sm.mu.Lock()
+
+	opId := rpcRequestId(args.ClientId,args.SeqNum)
+
+	op := Op{
+		OpType : QUERY,
+		Num : args.Num,
+		Id : opId,
+		ClientId : args.ClientId,
+		SeqNum : args.SeqNum,
+	}
+	_, _, isLeader := sm.rf.Start(op)
+	if !isLeader {
+		reply.WrongLeader = true
+		sm.mu.Unlock()
+		return
+	}
+	reply.WrongLeader = false
+
+	maxSeqNum , ok := sm.maxSeqNum[op.ClientId]
+</FONT>	if !ok {
+		sm.maxSeqNum[op.ClientId] = 0
+		maxSeqNum = 0
+	}
+	if maxSeqNum &gt;= op.SeqNum {
+		if op.Num==-1 || op.Num&gt;=len(sm.configs) {
+			reply.Err = OK
+			reply.Config = sm.configs[len(sm.configs)-1]
+		}else{
+			if op.Num &lt; -1 {
+				reply.Err = ErrNoKey
+			}else{
+				reply.Config = sm.configs[op.Num]
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match43-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				reply.Err = OK
+			}
+		}
+		sm.mu.Unlock()
+		return
+	}
+
+	doneCh := make(chan int)
+	sm.done[opId] = doneCh
+
+	sm.mu.Unlock()
+	done := false
+	select{
+	case &lt;- doneCh:
+		done = true
+	case &lt;-time.After(time.Millisecond * TIMEOUT):
+	}
+	sm.mu.Lock()
+</FONT>
+	if _,ok := sm.result[opId]; !ok {
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match43-0.html#6" TARGET="0"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		reply.Err = ErrNoKey
+	}else{
+		reply.Err = OK
+	}
+	if !done {
+		reply.Err = ErrTimeOut
+	}
+	reply.Config = sm.result[opId]
+
+	delete(sm.result, opId)
+	sm.mu.Unlock()
+}
+
+
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (sm *ShardMaster) Kill() {
+</FONT>	sm.rf.Kill()
+	// Your code here, if desired.
+	sm.mu.Lock()
+	close(sm.doneCh)
+	sm.mu.Unlock()
+}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+	return sm.rf
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	labgob.Register(Op{})
+
+	sm := new(ShardMaster)
+	sm.me = me
+	sm.maxraftstate = -1
+
+	sm.applyCh = make(chan raft.ApplyMsg)
+
+	sm.configs = make([]Config, 1)
+
+	sm.configs[0].Groups = map[int][]string{}
+	sm.configs[0].Num = 0
+	for i := 0; i &lt; NShards; i++ {
+		sm.configs[0].Shards[i] = 0
+	}
+
+	// Your code here.
+	sm.persister = persister
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match43-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	sm.done = make(map[string]chan int)
+	sm.result = make(map[string]Config)
+	sm.maxSeqNum = make(map[int]int)
+	sm.doneCh = make(chan int)
+
+	sm.readSnapshot(persister.ReadSnapshot())
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+
+	go sm.applyOps()
+</FONT>
+	return sm
+}
+
+func (sm *ShardMaster) applyOps(){
+	for msg := range sm.applyCh{
+		sm.applyOp(msg)
+	}
+}
+
+func copyConfig(origin Config) Config{
+	newConfig := Config{
+		Num : origin.Num,
+		Shards : origin.Shards,
+	}
+	newConfig.Groups = make(map[int][]string)
+	for k,v := range origin.Groups{
+		newConfig.Groups[k] = v
+	}
+	return newConfig
+}
+
+func redistribute(config *Config){
+	if len(config.Groups) == 0 {
+		for i := 0; i &lt; NShards; i++ {
+			config.Shards[i] = 0
+		}
+		return
+	}
+	aboveUpper :=make([]int,0)
+	belowLower :=make([]int,0)
+	reachUpper :=make([]int,0)
+	reachLower :=make([]int,0)
+	upper := (NShards + len(config.Groups) - 1) / len(config.Groups)
+	lower := NShards/len(config.Groups)
+	ownerMap := make(map[int][]int)
+	for k,_ := range config.Groups{
+		ownerMap[k] = make([]int,0)
+	}
+	for i := 0; i &lt; len(config.Shards); i++ {
+		_,ok := ownerMap[config.Shards[i]]
+		if ok {
+			ownerMap[config.Shards[i]] = append(ownerMap[config.Shards[i]],i)
+		}else{
+			aboveUpper = append(aboveUpper,i)
+		}
+	}
+
+	for k,v := range ownerMap{
+		switch{
+		case len(v) == upper:
+			reachUpper = append(reachUpper,v[0])
+		case len(v) == lower:
+			reachLower = append(reachLower,k)
+		case len(v)&gt;upper:
+			for i := 0; i &lt; len(v) - upper; i++ {
+				aboveUpper = append(aboveUpper,v[i])
+			}
+			reachUpper = append(reachUpper,v[len(v) - upper])
+		case len(v)&lt;lower:
+			for i := 0; i &lt; lower - len(v); i++ {
+				belowLower = append(belowLower,k)
+			}
+			reachLower = append(reachLower,k)
+		}
+	}
+	switch{
+	case len(aboveUpper) &gt;= len(belowLower):
+		for i := 0; i &lt; len(belowLower); i++ {
+			config.Shards[aboveUpper[i]] = belowLower[i]
+		}
+		for i := len(belowLower); i &lt; len(aboveUpper); i++ {
+			config.Shards[aboveUpper[i]] = reachLower[i - len(belowLower)]
+		}
+	default:
+		for i := 0; i &lt; len(aboveUpper); i++ {
+			config.Shards[aboveUpper[i]] = belowLower[i]
+		}
+		for i := len(aboveUpper); i &lt; len(belowLower); i++ {
+			config.Shards[reachUpper[i - len(aboveUpper)]] = belowLower[i]
+		}
+	}
+}
+
+func opJoin(config *Config, servers map[int][]string) {
+	config.Num += 1
+	for k,v := range servers{
+		config.Groups[k] = v
+	}
+	redistribute(config)
+}
+
+func opLeave(config *Config, GIDs []int) {
+	config.Num += 1
+	for _,GID := range GIDs{
+		delete(config.Groups,GID)
+	}
+	redistribute(config)
+}
+
+func opMove(config *Config, shard int, GID int) {
+	config.Num += 1
+	config.Shards[shard] = GID
+}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match43-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_8.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (sm *ShardMaster) applyOp(msg raft.ApplyMsg){
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	if !msg.CommandValid {
+		//snapshot
+		cmd,ok := msg.Command.([]byte)
+		if !ok {
+			log.Printf("sm server %d get wrong msg command type %T\n",sm.me,msg.Command)
+			//log.Fatal("program exist\n")
+		}else{
+			sm.readSnapshot(cmd)
+		}
+		return
+	}
+
+	op,ok := msg.Command.(Op)
+	if !ok {
+		log.Printf("sm server %d get wrong msg command type %T\n",sm.me,msg.Command)
+		//log.Fatal("program exist\n")
+		return
+	}
+
+	maxSeqNum , ok := sm.maxSeqNum[op.ClientId]
+	if !ok {
+		sm.maxSeqNum[op.ClientId] = 0
+		maxSeqNum = 0
+	}
+
+	duplicated := true
+	switch {
+	case maxSeqNum == op.SeqNum:
+		duplicated = true
+	case maxSeqNum == op.SeqNum - 1:
+		duplicated = false
+		sm.maxSeqNum[op.ClientId] = op.SeqNum
+	default:
+		log.Printf("client %d has applied %d but get %d afterwards\n",op.ClientId,maxSeqNum,op.SeqNum)
+		log.Fatal("program exist\n")
+	}
+
+	_, hasChannel := sm.done[op.Id]
+
+	switch op.OpType{
+	case QUERY:
+</FONT>		var config Config
+		validConfig := true
+		if op.Num==-1 || op.Num&gt;=len(sm.configs) {
+			config = sm.configs[len(sm.configs)-1]
+		}else{
+			if op.Num &lt; -1 {
+				validConfig = false
+			}else{
+				config = sm.configs[op.Num]
+			}
+		}
+		if hasChannel {
+			if !validConfig {
+				delete(sm.result,op.Id)
+			}else{
+				sm.result[op.Id] = copyConfig(config)
+			}
+		}
+	case JOIN:
+		if !duplicated {
+			config := copyConfig(sm.configs[len(sm.configs)-1])
+			opJoin(&config,op.Servers)
+			sm.configs = append(sm.configs,config)
+		}
+	case LEAVE:
+		if !duplicated {
+			config := copyConfig(sm.configs[len(sm.configs)-1])
+			opLeave(&config,op.GIDs)
+			sm.configs = append(sm.configs,config)
+		}
+	case MOVE:
+		if !duplicated {
+			config := copyConfig(sm.configs[len(sm.configs)-1])
+			opMove(&config,op.Shard,op.GID)
+			sm.configs = append(sm.configs,config)
+		}
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match43-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_7.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	default:
+		log.Printf("sm server %d get wrong op type %d\n",sm.me,op.OpType)
+		//log.Fatal("program exist\n")
+	}
+	if hasChannel {
+		close(sm.done[op.Id])
+		delete(sm.done, op.Id)
+	}
+	sm.snapshotIfNeeded(msg.CommandIndex)
+}
+
+func (sm *ShardMaster) snapshotIfNeeded(lastCommandIdx int){
+	if sm.maxraftstate!=-1 &&
+		sm.persister.RaftStateSize() &gt; sm.maxraftstate &&
+		lastCommandIdx - sm.rf.GetBasicIdx() &gt; 10 {
+		sm.snapshot(lastCommandIdx)
+	}
+}
+
+func (sm *ShardMaster) snapshot(lastCommandIdx int){
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(sm.configs)
+	e.Encode(sm.maxSeqNum)
+	snapshot := w.Bytes()
+	sm.rf.PersistAndSaveSnapshot(lastCommandIdx,snapshot)
+}
+
+func (sm *ShardMaster) readSnapshot(snapshot []byte){
+	if snapshot == nil || len(snapshot) &lt; 1 {
+		return
+	}
+
+	d := labgob.NewDecoder(bytes.NewBuffer(snapshot))
+	if d.Decode(&sm.configs) != nil ||
+		d.Decode(&sm.maxSeqNum) != nil {
+		log.Fatal("Error in reading snapshot")
+</FONT>	}
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

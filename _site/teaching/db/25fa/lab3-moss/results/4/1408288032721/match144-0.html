@@ -1,0 +1,124 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-yskot1999/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-yskot1999/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+namespace janus {
+
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  Log_info("server id :: %d",sp_log_svr_-&gt;loc_id_);
+  ShardConfig shardConfig;
+  configNum+=1;
+  shardConfig.number = configNum;
+  int size = 0;
+
+  if (configs_.size() != 0) { 
+    // Log_info("config size seems to be more !! %d", );
+    shardConfig.shard_group_map_ = configs_.rbegin()-&gt;second.shard_group_map_;
+    //shardConfig.shard_group_map_ = fetchResultantShardGroupMap(configs_.rbegin()-&gt;second.shard_group_map_, true);
+    shardConfig.group_servers_map_ = configs_.rbegin()-&gt;second.group_servers_map_;
+    size = shardConfig.group_servers_map_.size();
+  }
+  vector&lt;uint32_t&gt; gids;
+  map&lt;uint32_t, vector&lt;uint32_t&gt;&gt; gid_server_map1 = gid_server_map;
+  for (auto v : gid_server_map1) gids.push_back(v.first); 
+  for (auto val : gids) {
+    if (shardConfig.group_servers_map_.count(val) &gt; 0) gid_server_map1.erase(val);
+    else shardConfig.group_servers_map_[val] = gid_server_map1[val];
+  }
+  //shardConfig.group_servers_map_.insert(gid_server_map.begin(), gid_server_map.end());
+  for (auto it : gid_server_map1) {
+    int gidToJoin = it.first;
+    //Log_info(" group Id to Join %d", gidToJoin);
+    int newSizeAfterJoin = size + 1;
+    int count = newSizeAfterJoin == 5 ? newSizeAfterJoin - 1 : 0;
+    for (auto &v : shardConfig.shard_group_map_) {
+      count+=1;
+      if (count == newSizeAfterJoin) {
+        v.second = gidToJoin;
+        count = 0;
+      }
+    }
+  }
+  for (auto it : shardConfig.shard_group_map_) Log_info(" JOIN shard %d group %d", it.first, it.second);
+  for (auto it : shardConfig.group_servers_map_) Log_info("Groupp sersver %d", it.first);
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match144-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  configs_[configNum] = shardConfig;
+  *ret = KV_SUCCESS;
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+</FONT>  // your code here
+  //Log_info("in leave");
+  ShardConfig shardConfig;
+  configNum+=1;
+  shardConfig.number = configNum;
+  shardConfig.group_servers_map_ = configs_.rbegin()-&gt;second.group_servers_map_;
+  for (auto gid : gids) {shardConfig.group_servers_map_.erase(gid);}
+  shardConfig.shard_group_map_ = configs_.rbegin()-&gt;second.shard_group_map_;
+  auto gid_it = shardConfig.group_servers_map_.begin();
+  //Log_info("size %d",shardConfig.shard_group_map_.size());
+  for (auto it : shardConfig.shard_group_map_) Log_info("BEFORE LEAVE shard %d group %d", it.first, it.second);
+  for (auto &it : shardConfig.shard_group_map_) {
+    if (binary_search(gids.begin(), gids.end(), it.second) == true) {
+      it.second = gid_it-&gt;first;
+      gid_it++;
+      if (gid_it == shardConfig.group_servers_map_.end()) {
+        gid_it = shardConfig.group_servers_map_.begin();
+      }
+    }
+  }
+  for (auto it : shardConfig.shard_group_map_) Log_info("LEAVE shard %d group %d", it.first, it.second);
+  configs_[configNum] = shardConfig;
+  *ret = KV_SUCCESS;
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match144-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+  // your code here
+  if (config_no == -1) {
+</FONT>    Log_info("printing config number : %d", configs_.rbegin()-&gt;second.number);
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match144-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    *config = configs_.rbegin()-&gt;second;
+  }  
+  else {
+    *config = configs_[config_no];
+  }
+  *ret = KV_SUCCESS; 
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  // your code here
+  Log_info("in on next command !!!");
+</FONT>}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  return cli;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

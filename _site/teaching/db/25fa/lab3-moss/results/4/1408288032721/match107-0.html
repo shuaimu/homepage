@@ -1,0 +1,272 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-kanavtalwar/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-kanavtalwar/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+namespace janus {
+
+  static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_SNAPSHOT,
+                                     [] () -&gt; Marshallable* {
+                                       return new ShardMasterMarshallable;
+                                     });
+
+  int64_t ShardMasterServiceImpl::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  Log_info("IN JOIN");
+  uint64_t opid = this-&gt;GetNextOpId();
+  operationToStatusMapping[to_string(opid)] = KV_TIMEOUT;
+  bool isLeader = false;
+  uint64_t term = 0;
+  *ret = KV_TIMEOUT;
+  this-&gt;GetRaftServer().GetState(&isLeader, &term);
+  if(!isLeader) {
+    cout&lt;&lt;"NOT A LEADER"&lt;&lt;endl;
+    *ret = KV_NOTLEADER;
+  } else {
+    this-&gt;configCount = this-&gt;configCount + 1;
+    auto s = make_shared&lt;ShardMasterMarshallable&gt;();
+    s-&gt;opid = to_string(opid);
+    s-&gt;operation = "join";
+    s-&gt;mapOfGid = gid_server_map;
+    s-&gt;configCount = this-&gt;configCount;
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match107-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    uint64_t index = 0;
+    shared_ptr&lt;Marshallable&gt; marshallableObject = s;
+    this-&gt;GetRaftServer().Start(marshallableObject, &index ,&term);
+    Coroutine::Sleep(1000000);
+    if (operationToStatusMapping[to_string(opid)] == KV_SUCCESS) {
+</FONT>      *ret = KV_SUCCESS;
+    }
+  }
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  Log_info("IN LEAVE");
+  uint64_t opid = this-&gt;GetNextOpId();
+  operationToStatusMapping[to_string(opid)] = KV_TIMEOUT;
+  bool isLeader = false;
+  uint64_t term = 0;
+  *ret = KV_TIMEOUT;
+  this-&gt;GetRaftServer().GetState(&isLeader, &term);
+  if(!isLeader) {
+    cout&lt;&lt;"NOT A LEADER"&lt;&lt;endl;
+    *ret = KV_NOTLEADER;
+  } else {
+    this-&gt;configCount = this-&gt;configCount + 1;
+    auto s = make_shared&lt;ShardMasterMarshallable&gt;();
+    s-&gt;opid = to_string(opid);
+    s-&gt;operation = "leave";
+    s-&gt;gids = gids;
+    s-&gt;configCount = this-&gt;configCount;
+    Log_info("Config count in leave%d",configCount);
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match107-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    uint64_t index = 0;
+    shared_ptr&lt;Marshallable&gt; marshallableObject = s;
+    this-&gt;GetRaftServer().Start(marshallableObject, &index ,&term);
+    Coroutine::Sleep(1000000);
+    if (operationToStatusMapping[to_string(opid)] == KV_SUCCESS) {
+</FONT>      *ret = KV_SUCCESS;
+    }
+  }
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  Log_info("IN MOVE");
+  uint64_t opid = this-&gt;GetNextOpId();
+  operationToStatusMapping[to_string(opid)] = KV_TIMEOUT;
+  bool isLeader = false;
+  uint64_t term = 0;
+  *ret = KV_TIMEOUT;
+  this-&gt;GetRaftServer().GetState(&isLeader, &term);
+  if(!isLeader) {
+    cout&lt;&lt;"NOT A LEADER"&lt;&lt;endl;
+    *ret = KV_NOTLEADER;
+  } else {
+    this-&gt;configCount = this-&gt;configCount + 1;
+    auto s = make_shared&lt;ShardMasterMarshallable&gt;();
+    s-&gt;opid = to_string(opid);
+    s-&gt;operation = "move";
+    s-&gt;shard = shard;
+    s-&gt;gid = gid;
+    s-&gt;configCount = this-&gt;configCount;
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match107-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    uint64_t index = 0;
+    shared_ptr&lt;Marshallable&gt; marshallableObject = s;
+    this-&gt;GetRaftServer().Start(marshallableObject, &index ,&term);
+    Coroutine::Sleep(1000000);
+    if (operationToStatusMapping[to_string(opid)] == KV_SUCCESS) {
+</FONT>      *ret = KV_SUCCESS;
+    }
+  }
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+  // your code here
+  Log_info("IN QUERY with config number %lu", config_no);
+  Log_info("COnfig_no for query IN START OF QUERY%d",this-&gt;configCount);
+  uint64_t opid = this-&gt;GetNextOpId();
+  operationToStatusMapping[to_string(opid)] = KV_TIMEOUT;
+  bool isLeader = false;
+  uint64_t term = 0;
+  *ret = KV_TIMEOUT;
+  this-&gt;GetRaftServer().GetState(&isLeader, &term);
+  if(!isLeader) {
+    cout&lt;&lt;"NOT A LEADER"&lt;&lt;endl;
+    *ret = KV_NOTLEADER;
+  } else {
+    auto s = make_shared&lt;ShardMasterMarshallable&gt;();
+    s-&gt;opid = to_string(opid);
+    s-&gt;operation = "query";
+    
+    s-&gt;configCount = this-&gt;configCount;
+    uint64_t index = 0;
+    shared_ptr&lt;Marshallable&gt; marshallableObject = s;
+    this-&gt;GetRaftServer().Start(marshallableObject, &index ,&term);
+    Coroutine::Sleep(1000000);
+    if (operationToStatusMapping[to_string(opid)] == KV_SUCCESS) {
+      cout&lt;&lt;"QUERY Successfull"&lt;&lt;endl;
+      Log_info("COnfig_no for query%d",configCount);
+      Log_info("Config number for latest confog is:%d",this-&gt;configs_[configCount].number);
+      *ret = KV_SUCCESS;
+      *config = this-&gt;configs_[configCount];
+    }
+  }
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  // your code here
+  Log_info("IN ON NEXT");
+  auto v = (ShardMasterMarshallable*)(&m);
+  string oid = v-&gt;opid;
+  string operation = v-&gt;operation;
+  int64_t myConfigCount = v-&gt;configCount;
+  int32_t shard = v-&gt;shard;
+  uint32_t gid = v-&gt;gid;
+  map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt; myGidServersMap = v-&gt;mapOfGid;
+  vector&lt;uint32_t&gt; leaveGids = v-&gt;gids;
+  this-&gt;printMap(myGidServersMap);
+  operationToStatusMapping[oid] = KV_SUCCESS;
+  ShardConfig latestShardConfig;
+  if (this-&gt;configs_.size() != 0) {
+    cout&lt;&lt;"GotLatestShardConfig"&lt;&lt;endl;
+    int32_t myVar = myConfigCount - 1;
+    latestShardConfig = this-&gt;configs_[myVar];
+  }
+  if (operation.compare("join") == 0) {
+    for (const auto& pair : myGidServersMap) {
+      latestShardConfig.group_servers_map_[pair.first] = pair.second;
+    }
+    latestShardConfig.number = myConfigCount;
+    latestShardConfig.shard_group_map_ = this-&gt;BalanceMap(latestShardConfig.group_servers_map_, this-&gt;configs_[myConfigCount].shard_group_map_);
+    this-&gt;configs_[myConfigCount] = latestShardConfig;
+    //Log_info("COnfig_no for join%d",myConfigCount);
+  } else if (operation.compare("move") == 0) {
+    this-&gt;configs_[myConfigCount].shard_group_map_[shard] = gid;
+  } else if (operation.compare("leave") == 0) {
+    cout&lt;&lt;"SIZZE BEFORE"&lt;&lt;latestShardConfig.group_servers_map_.size()&lt;&lt;endl;
+    for(int i =0;i&lt;leaveGids.size();i++) {
+      latestShardConfig.group_servers_map_.erase(leaveGids.at(i));
+    }
+    latestShardConfig.shard_group_map_ = this-&gt;BalanceMap(latestShardConfig.group_servers_map_, this-&gt;configs_[myConfigCount].shard_group_map_);
+    latestShardConfig.number = myConfigCount;
+    this-&gt;configs_[myConfigCount] = latestShardConfig;
+     Log_info("COnfig_no for leave ON NEXT COMMAND%d",myConfigCount);
+    cout&lt;&lt;"SIZZE AFTER"&lt;&lt;latestShardConfig.group_servers_map_.size()&lt;&lt;endl;
+  }
+  else if(operation.compare("query") == 0){
+    Log_info("Config_no for query in ON NEXT COMMAND%d",myConfigCount);
+    for(auto p : this-&gt;configs_[myConfigCount].shard_group_map_) {
+      Log_info("server - shard server %d gid %d", p.first,p.second);
+    }
+  }
+}
+
+std::map&lt;uint32_t, uint32_t&gt; ShardMasterServiceImpl::BalanceMap(std::map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& myMap, std::map&lt;uint32_t, uint32_t&gt;& shardGroupMap) {
+    cout&lt;&lt;"BALANCING MAP"&lt;&lt;endl;
+    std::vector&lt;int&gt; keysToCountMapping(10, -1);
+    //std::map&lt;uint32_t, uint32_t&gt; keysToCountMapping;
+    for (const auto& entry : myMap) {
+        keysToCountMapping[entry.first] = 0;
+    }
+    for (const auto& entry2 : shardGroupMap) {
+      keysToCountMapping[entry2.second] = keysToCountMapping[entry2.second]+1;
+    }
+    //uint32_t numberOfEntriesInMyMap = keysToCountMapping.size();
+    uint32_t numberOfEntriesInMyMap = 0;
+    for (int m =0;m&lt;keysToCountMapping.size();m++) {
+      if (keysToCountMapping[m]&gt;=0) {
+        numberOfEntriesInMyMap++;
+      }
+    }
+    uint32_t numberOfValuesAllowed = 10/numberOfEntriesInMyMap;
+    map&lt;uint32_t, uint32_t&gt; newMap;
+    for(auto p : shardGroupMap) {
+      if (myMap.find(p.second) == myMap.end() || keysToCountMapping[p.second] &gt; numberOfValuesAllowed) {
+        for(int b =0;b&lt;keysToCountMapping.size();b++) {
+          if (keysToCountMapping[b] &gt;= numberOfValuesAllowed || keysToCountMapping[b]&lt;0) {
+            continue;
+          } else {
+            newMap[p.first] = b;
+            keysToCountMapping[b] = keysToCountMapping[b] + 1;
+            if (myMap.find(p.second) != myMap.end()) {
+              keysToCountMapping[p.second] = keysToCountMapping[p.second] - 1;
+            }
+          }
+        }
+      }
+    }
+    for(auto p : newMap) {
+      Log_info("Map after rebalancing is %d - %d", p.first,p.second);
+    }
+    return newMap;
+}
+
+void ShardMasterServiceImpl::printMap(map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt; myGidServersMap) {
+  cout&lt;&lt;myGidServersMap.size()&lt;&lt;endl;
+  for (const auto& entry : myGidServersMap) {
+        int key = entry.first;
+        const std::vector&lt;uint32_t&gt; values = entry.second;
+        std::cout &lt;&lt; "Key: " &lt;&lt; key &lt;&lt; ", Values: ";
+        for (const int& value : values) {
+            std::cout &lt;&lt; value &lt;&lt; " ";
+        }
+        std::cout &lt;&lt; std::endl;
+  }
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  return cli;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

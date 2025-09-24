@@ -1,0 +1,403 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-Apeksha115908828/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-Apeksha115908828/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+#include &lt;boost/serialization/map.hpp&gt;
+#include &lt;boost/serialization/vector.hpp&gt;
+namespace janus {
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match28-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  std::unique_lock&lt;std::recursive_mutex&gt; lck(mtx_);
+  RaftServer& raftSvr = this-&gt;GetRaftServer();
+</FONT>  uint64_t term, index;
+  bool is_leader;
+
+  raftSvr.GetState(&is_leader, &term);
+  Log_info("After GetState isleader = %d loc_id_=%d", is_leader, raftSvr.loc_id_);
+  if(!is_leader) {
+    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+    return;
+  }
+
+  string op_id = to_string(++id_count);
+  auto it1 = events.find(op_id);
+  if (it1 == events.end()) {
+    events.insert({op_id, Reactor::CreateSpEvent&lt;IntEvent&gt;()});
+  }
+
+  std::ostringstream oss;
+  {
+    boost::archive::text_oarchive oa(oss);
+    oa &lt;&lt; gid_server_map;
+  }
+  std::string sgids = oss.str();
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(op_id);
+  s-&gt;data_.push_back("Join");
+  s-&gt;data_.push_back(sgids);
+  shared_ptr&lt;Marshallable&gt; s1 = s;
+  Log_info("Calling start on op_id=%s, Join loc_id_=%d", op_id.c_str(), raftSvr.loc_id_);
+  raftSvr.Start(s1, &index, &term);
+  events[op_id]-&gt;Wait(1000000); // 1 sec wait
+  Log_info("Waiting on event of op_id=%s loc_id_=%d", op_id.c_str(), raftSvr.loc_id_);
+  auto cond1 = events[op_id]-&gt;status_ != Event::TIMEOUT;
+  if (cond1) {
+    *ret = KV_SUCCESS;
+    defer-&gt;reply();
+    return;
+  }
+  Log_info("REturning with KV_TIMEOUT..........");
+  *ret = KV_TIMEOUT;
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::ApplyJoin(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map) {
+  std::unique_lock&lt;std::recursive_mutex&gt; lck(mtx_);
+  num_configs++;
+  auto config = configs_[num_configs - 1];
+  // Log_info("config group_server_map config number=%d num_configs=%d configs.size()=%d", config.number, num_configs, configs_.size());
+  // for(auto& entry: config.group_servers_map_) {
+  //   Log_info("entry.first=%d entry.second.size=%d", entry.first, entry.second.size());
+  // }
+  // for(auto& entry: config.shard_group_map_) {
+  //   Log_info("entry.first=%d, entry.second=%d", entry.first, entry.second);
+  // }
+  for (auto& entry: gid_server_map) {
+    config.group_servers_map_[entry.first] = entry.second;
+  }
+  uint32_t n_shard = config.shard_group_map_.size();
+  uint32_t n_group = config.group_servers_map_.size();
+  uint32_t max_shard_per_group = (n_shard + n_group - 1) / n_group; 
+
+  uint32_t shard_per_group = n_shard / n_group;
+  // count for each gid and assign zero for reassignment
+  vector&lt;uint32_t&gt; count{0};
+  for(auto& entry: config.group_servers_map_) {
+    Log_info("entry.first=%d", entry.first);
+    count[entry.first] = 0;
+  }
+  for(auto& pair : config.shard_group_map_) {
+    count[pair.second]++;
+    if(count[pair.second] &gt; shard_per_group) {
+      pair.second = 0;
+      count[pair.second]--;
+    }
+  }
+
+  // reassigning of the shards 
+  uint64_t shardsLeft = n_shard % n_group;
+  uint32_t i = 0;
+  for (auto& pair : config.shard_group_map_) {
+    if(pair.second == 0) {
+      bool_t shard_assigned = false;
+      // Log_info("Shards per group %d", shard_per_group);
+      while(!shard_assigned) {
+        auto it = config.group_servers_map_.begin();
+        std::advance(it, i % n_group);
+        uint32_t gid = it-&gt;first;
+        // Log_info("gid=%d and count[gid]=%d", gid, count[gid]);
+        if(count[gid] &lt; shard_per_group) {
+          pair.second = gid;
+          shard_assigned = true;
+        } else if (count[gid] &lt; max_shard_per_group && shardsLeft &gt; 0) {
+          pair.second = gid;
+          shard_assigned = true;
+          shardsLeft--;
+        }
+        // pair.first = it-&gt;second;
+        i++;
+      }
+    }
+  }
+  config.number = num_configs;
+  configs_[num_configs] = config;
+}
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match28-1.html#3" TARGET="1"><IMG SRC="../../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  std::unique_lock&lt;std::recursive_mutex&gt; lck(mtx_);
+</FONT>  RaftServer& raftSvr = this-&gt;GetRaftServer();
+  uint64_t term, index;
+  bool is_leader;
+
+  raftSvr.GetState(&is_leader, &term);
+  if(!is_leader) {
+    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+    return;
+  }
+
+  string op_id = to_string(++id_count);
+  auto it1 = events.find(op_id);
+  if (it1 == events.end()) {
+    events.insert({op_id, Reactor::CreateSpEvent&lt;IntEvent&gt;()});
+  }
+
+  std::ostringstream oss;
+  {
+    boost::archive::text_oarchive oa(oss);
+    oa &lt;&lt; gids;
+  }
+  std::string sgids = oss.str();
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(op_id);
+  s-&gt;data_.push_back("Leave");
+  s-&gt;data_.push_back(sgids);
+  shared_ptr&lt;Marshallable&gt; s1 = s;
+
+  raftSvr.Start(s1, &index, &term);
+  events[op_id]-&gt;Wait(1000000); // 1 sec wait
+  auto cond1 = events[op_id]-&gt;status_ != Event::TIMEOUT;
+  if (cond1) {
+    *ret = KV_SUCCESS;
+    defer-&gt;reply();
+    return;
+  }
+  *ret = KV_TIMEOUT;
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::ApplyLeave(const std::vector&lt;uint32_t&gt;& gids) {
+  num_configs++;
+  auto config = configs_[num_configs - 1];
+  for (uint32_t gid: gids) {
+    const auto it = config.group_servers_map_.find(gid);
+    if (it != config.group_servers_map_.end()) {
+      config.group_servers_map_.erase(it);
+    }
+  }
+  uint32_t n_shard = config.shard_group_map_.size();
+  uint32_t n_group = config.group_servers_map_.size();
+  uint32_t max_shard_per_group = (n_shard + n_group - 1) / n_group; 
+
+  uint32_t shard_per_group = n_shard / n_group;
+  uint32_t i = 0;
+  vector&lt;uint32_t&gt; count{0};
+  for(auto& entry: config.group_servers_map_) {
+    count[entry.first] = 0;
+  }
+  // remove mapping to the removed gids
+  for(auto& pair : config.shard_group_map_) {
+    for (uint32_t gid: gids) {
+      if (pair.second == gid) {
+        pair.second = 0;
+        // config.shard_group_map_[pair.first] = 0;
+        break;
+      }
+    }
+  }
+
+  // count for each gid
+  
+  for(auto& pair : config.shard_group_map_) {
+    count[pair.second]++;
+  }
+  // rebalance the servers
+  uint64_t shardsLeft = n_shard % n_group;
+  for (auto& pair : config.shard_group_map_) {
+    if(pair.second == 0) {
+      bool_t shard_assigned = false;
+      while(!shard_assigned) {
+        auto it = config.group_servers_map_.begin();
+        std::advance(it, i % n_group);
+        uint32_t gid = it-&gt;first;
+        if(count[gid] &lt; shard_per_group) {
+          pair.second = gid;
+          shard_assigned = true;
+        } else if (count[gid] &lt; max_shard_per_group && shardsLeft &gt; 0) {
+          pair.second = gid;
+          shard_assigned = true;
+          shardsLeft--;
+        }
+        // pair.first = it-&gt;second;
+        i++;
+      }
+    }    
+  }
+  config.number = num_configs;
+  configs_[num_configs] = config;
+  // Log_info("config leaving gid = %d group_server_map config number=%d num_configs=%d configs.size()=%d", gids[0], config.number, num_configs, configs_.size());
+  // for(auto& entry: config.group_servers_map_) {
+  //   Log_info("entry.first=%d entry.second.size=%d", entry.first, entry.second.size());
+  // }
+  // for(auto& entry: config.shard_group_map_) {
+  //   Log_info("entry.first=%d, entry.second=%d", entry.first, entry.second);
+  // }
+}
+
+void ShardMasterServiceImpl::ApplyMove(const int32_t& shard, const uint32_t& gid) {
+  num_configs++;
+  auto config = configs_[num_configs - 1];
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match28-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  config.shard_group_map_[shard] = gid;
+}
+
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  std::unique_lock&lt;std::recursive_mutex&gt; lck(mtx_);
+  RaftServer& raftSvr = this-&gt;GetRaftServer();
+</FONT>  uint64_t term, index;
+  bool is_leader;
+
+  raftSvr.GetState(&is_leader, &term);
+  if(!is_leader) {
+    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+    return;
+  }
+
+  string op_id = to_string(++id_count);
+  auto it1 = events.find(op_id);
+  if (it1 == events.end()) {
+    events.insert({op_id, Reactor::CreateSpEvent&lt;IntEvent&gt;()});
+  }
+
+  std::ostringstream oss;
+  {
+    boost::archive::text_oarchive oa(oss);
+    oa &lt;&lt; shard &lt;&lt; gid;
+  }
+  std::string sshardgid = oss.str();
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(op_id);
+  s-&gt;data_.push_back("Move");
+  s-&gt;data_.push_back(sshardgid);
+  shared_ptr&lt;Marshallable&gt; s1 = s;
+
+  raftSvr.Start(s1, &index, &term);
+  events[op_id]-&gt;Wait(1000000); // 1 sec wait
+  auto cond1 = events[op_id]-&gt;status_ != Event::TIMEOUT;
+  if (cond1) {
+    *ret = KV_SUCCESS;
+    defer-&gt;reply();
+    return;
+  }
+  *ret = KV_TIMEOUT;
+  // TODO: Should perform shard migration as gid to this shard is changing, we should move the shard data from older gid to new gid but HOW!
+  // should not rebalance here as per the documentation
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match28-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+  // your code here
+  std::unique_lock&lt;std::recursive_mutex&gt; lck(mtx_);
+  RaftServer& raftSvr = this-&gt;GetRaftServer();
+</FONT>  uint64_t term, index;
+  bool is_leader;
+
+  raftSvr.GetState(&is_leader, &term);
+  if(!is_leader) {
+    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+    return;
+  }
+
+  string op_id = to_string(++id_count);
+  auto it1 = events.find(op_id);
+  if (it1 == events.end()) {
+    events.insert({op_id, Reactor::CreateSpEvent&lt;IntEvent&gt;()});
+  }
+
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(op_id);
+  s-&gt;data_.push_back("Query");
+  // s-&gt;data_.push_back(config_no);
+  shared_ptr&lt;Marshallable&gt; s1 = s;
+
+  raftSvr.Start(s1, &index, &term);
+  events[op_id]-&gt;Wait(1000000); // 1 sec wait
+  auto cond1 = events[op_id]-&gt;status_ != Event::TIMEOUT;
+  if (cond1) {
+    if(config_no == -1) {
+      *config = configs_[num_configs];
+      Log_info("Returing config at num_config=%d number=%d", num_configs, configs_[num_configs].number);
+    } else {
+      *config = configs_[num_configs];
+    }
+    // *config = configs_[config_no];
+    *ret = KV_SUCCESS;
+    defer-&gt;reply();
+    return;
+  }
+  *ret = KV_TIMEOUT;
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  // your code here
+  auto v = (MultiStringMarshallable*)(&m);
+  RaftServer& raftSvr = this-&gt;GetRaftServer();
+  Log_info("Came to OnNextCommand type=%s loc_id_=%d", v-&gt;data_[1].c_str(), raftSvr.loc_id_);
+  string op = v-&gt;data_[0];
+  string op_type = v-&gt;data_[1];
+  if (op_type == "Join") {
+    // Log_info("Started join");
+    auto sgids = v-&gt;data_[2];
+    map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt; gids;
+    std::istringstream iss(sgids);
+    {
+      boost::archive::text_iarchive ia(iss);
+      ia &gt;&gt; gids;
+    }
+    Log_info("Calling Apply Join......");
+    ApplyJoin(gids);
+    Log_info("Calling Set on events[op]=%s", op.c_str());
+    // events[op]-&gt;Set(1);
+  } else if (op_type == "Leave") {
+    auto sgids = v-&gt;data_[2];
+    std::vector&lt;uint32_t&gt; gids;
+    std::istringstream iss(sgids);
+    {
+        boost::archive::text_iarchive ia(iss);
+        ia &gt;&gt; gids;
+    }
+    ApplyLeave(gids);
+    // events[op]-&gt;Set(1);
+  } else if (op_type == "Move") {
+    // auto params = v-&gt;data_[2];
+    // int32_t shard, gid;
+    // std::istringstream iss(params);
+    // {
+    //     boost::archive::text_iarchive ia(iss);
+    //     ia &gt;&gt; shard &gt;&gt; gid;
+    // }
+    ApplyMove(1, 1);
+    // events[op]-&gt;Set(1);
+  } else if (op_type == "Query") {
+    // events[op]-&gt;Set(1);
+  }
+  auto it1 = events.find(op);
+  if (it1 != events.end()) {
+    events[op]-&gt;Set(1);
+  }
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  return cli;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,540 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/alok123t/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/alok123t/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+import (
+	"labgob"
+	"labrpc"
+	"raft"
+	"reflect"
+	"sort"
+	"sync"
+	"time"
+)
+
+type ShardMaster struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	// Your data here.
+	latestRequest map[int64]int
+	agreeChan     map[int]chan Op
+	killChan      chan struct{}
+	configs       []Config // indexed by config num
+}
+
+type Op struct {
+	// Your data here.
+	Args        interface{}
+	ClientId    int64
+	RequestId   int
+	RequestType string
+}
+
+type kv struct {
+	key   int
+	value []int
+}
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match96-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+const AgreeTimeout int = 300
+
+func GetAgreeTimeout() time.Duration {
+	return time.Duration(AgreeTimeout) * time.Millisecond
+}
+
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+	// Your code here.
+	cmd := Op{
+		Args:        *args,
+</FONT><A NAME="0"></A><FONT color = #FF0000><A HREF="match96-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		ClientId:    args.ClientId,
+		RequestId:   args.RequestId,
+		RequestType: "Join",
+	}
+
+	index, _, isLeader := sm.rf.Start(cmd)
+	if !isLeader {
+		reply.WrongLeader = true
+		return
+	}
+
+	sm.mu.Lock()
+	_, chanExists := sm.agreeChan[index]
+	if !chanExists {
+		sm.agreeChan[index] = make(chan Op, 100)
+	}
+	agreeChan := sm.agreeChan[index]
+	sm.mu.Unlock()
+
+	select {
+	case &lt;-time.After(GetAgreeTimeout()):
+		reply.WrongLeader = true
+		return
+	case op := &lt;-agreeChan:
+		sm.mu.Lock()
+		defer sm.mu.Unlock()
+		if reflect.DeepEqual(args.Servers, op.Args.(JoinArgs).Servers) && args.ClientId == op.ClientId && args.RequestId == op.RequestId {
+</FONT>		} else {
+			reply.WrongLeader = true
+		}
+	}
+}
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+	// Your code here.
+	cmd := Op{
+		Args:        *args,
+		ClientId:    args.ClientId,
+		RequestId:   args.RequestId,
+		RequestType: "Leave",
+	}
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match96-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	index, _, isLeader := sm.rf.Start(cmd)
+	if !isLeader {
+		reply.WrongLeader = true
+		return
+	}
+
+	sm.mu.Lock()
+	_, chanExists := sm.agreeChan[index]
+	if !chanExists {
+		sm.agreeChan[index] = make(chan Op, 100)
+	}
+	agreeChan := sm.agreeChan[index]
+	sm.mu.Unlock()
+
+	select {
+	case &lt;-time.After(GetAgreeTimeout()):
+		reply.WrongLeader = true
+		return
+	case op := &lt;-agreeChan:
+		sm.mu.Lock()
+		defer sm.mu.Unlock()
+		if reflect.DeepEqual(args.GIDs, op.Args.(LeaveArgs).GIDs) && args.ClientId == op.ClientId && args.RequestId == op.RequestId {
+</FONT>		} else {
+			reply.WrongLeader = true
+		}
+	}
+}
+
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+	// Your code here.
+	cmd := Op{
+		Args:        *args,
+		ClientId:    args.ClientId,
+		RequestId:   args.RequestId,
+		RequestType: "Move",
+	}
+
+	index, _, isLeader := sm.rf.Start(cmd)
+	if !isLeader {
+		reply.WrongLeader = true
+		return
+	}
+
+	sm.mu.Lock()
+	_, chanExists := sm.agreeChan[index]
+	if !chanExists {
+		sm.agreeChan[index] = make(chan Op, 100)
+	}
+	agreeChan := sm.agreeChan[index]
+	sm.mu.Unlock()
+
+	select {
+	case &lt;-time.After(GetAgreeTimeout()):
+		reply.WrongLeader = true
+		return
+	case op := &lt;-agreeChan:
+		sm.mu.Lock()
+		defer sm.mu.Unlock()
+		if args.Shard == op.Args.(MoveArgs).Shard && args.GID == op.Args.(MoveArgs).GID && args.ClientId == op.ClientId && args.RequestId == op.RequestId {
+		} else {
+			reply.WrongLeader = true
+		}
+	}
+}
+
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+	// Your code here.
+	cmd := Op{
+		Args:        *args,
+		ClientId:    args.ClientId,
+		RequestId:   args.RequestId,
+		RequestType: "Query",
+	}
+
+	index, _, isLeader := sm.rf.Start(cmd)
+	if !isLeader {
+		reply.WrongLeader = true
+		return
+	}
+
+	sm.mu.Lock()
+	_, chanExists := sm.agreeChan[index]
+	if !chanExists {
+		sm.agreeChan[index] = make(chan Op, 100)
+	}
+	agreeChan := sm.agreeChan[index]
+	sm.mu.Unlock()
+
+	select {
+	case &lt;-time.After(GetAgreeTimeout()):
+		reply.WrongLeader = true
+		return
+	case op := &lt;-agreeChan:
+		sm.mu.Lock()
+		defer sm.mu.Unlock()
+		if args.Num == op.Args.(QueryArgs).Num && args.ClientId == op.ClientId && args.RequestId == op.RequestId {
+			if args.Num == -1 || args.Num &gt;= len(sm.configs) {
+				reply.WrongLeader = false
+				reply.Config = sm.configs[len(sm.configs)-1]
+			} else {
+				reply.WrongLeader = false
+				reply.Config = sm.configs[args.Num]
+			}
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match96-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		} else {
+			reply.WrongLeader = true
+		}
+	}
+}
+
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+	// Your code here, if desired.
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	close(sm.killChan)
+}
+
+// needed by shardkv tester
+</FONT>func (sm *ShardMaster) Raft() *raft.Raft {
+	return sm.rf
+}
+
+func (sm *ShardMaster) LeaveShards(c Config, r []int) Config {
+	ret := Config{
+		Num:    c.Num,
+		Shards: [10]int{0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		Groups: make(map[int][]string),
+	}
+	ret.Groups = c.Groups
+	toAdd := make([]int, 0)
+	freq := make(map[int][]int)
+	for i := 0; i &lt; NShards; i++ {
+		toRemove := false
+		for j := 0; j &lt; len(r); j++ {
+			if c.Shards[i] == r[j] {
+				toRemove = true
+				break
+			}
+		}
+		if toRemove {
+			toAdd = append(toAdd, i)
+		} else {
+			freq[c.Shards[i]] = append(freq[c.Shards[i]], i)
+		}
+	}
+	olds := make([]kv, 0)
+	for k, v := range freq {
+		olds = append(olds, kv{key: k, value: v})
+	}
+	// fmt.Println(olds, toAdd)
+	if len(olds) == 0 {
+		for i := 0; i &lt; NShards; i++ {
+			ret.Shards[i] = -1
+		}
+	} else {
+		for {
+			if len(toAdd) == 0 {
+				break
+			}
+			sort.Slice(olds, func(i, j int) bool { return len(olds[i].value) &lt; len(olds[j].value) })
+			firstRemove := toAdd[0]
+			toAdd = toAdd[1:]
+			olds[0].value = append(olds[0].value, firstRemove)
+			// fmt.Println("not same", olds, toAdd, len(toAdd))
+		}
+		for _, v := range olds {
+			for _, s := range v.value {
+				ret.Shards[s] = v.key
+			}
+		}
+		// fmt.Println(ret)
+	}
+	return ret
+}
+
+func (sm *ShardMaster) JoinShards(c Config) Config {
+	ret := Config{
+		Num:    c.Num,
+		Shards: [10]int{0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		Groups: make(map[int][]string),
+	}
+	ret.Groups = c.Groups
+
+	freq := make(map[int][]int)
+	for i := 0; i &lt; 10; i++ {
+		freq[c.Shards[i]] = append(freq[c.Shards[i]], i)
+	}
+	l := len(c.Groups)
+	exp := make([]int, l)
+	n := NShards / l
+	rem := NShards
+	for i := 0; i &lt; l; i++ {
+		exp[i] = n
+		rem -= n
+	}
+	idx := 0
+	for rem != 0 {
+		exp[idx] += 1
+		idx = (idx + 1) % l
+		rem -= 1
+	}
+	servers := make([]int, 0)
+	for k, _ := range c.Groups {
+		servers = append(servers, k)
+		_, fkExists := freq[k]
+		if !fkExists {
+			freq[k] = make([]int, 0)
+		}
+	}
+	// fmt.Println(freq, exp, servers)
+	if len(freq[0]) == NShards {
+		// fmt.Println("0")
+		olds := make([]kv, 1)
+		olds[0].key = 0
+		olds[0].value = freq[0]
+		news := make([]kv, len(exp))
+		gi := 0
+		for k, _ := range c.Groups {
+			news[gi].key = k
+			gi += 1
+		}
+
+		eIdx := 0
+		for {
+			// fmt.Println(news, exp)
+			isSame := true
+			for i := 0; i &lt; len(exp); i++ {
+				if len(news[i].value) != exp[i] {
+					isSame = false
+					break
+				}
+			}
+			if isSame {
+				break
+			} else {
+				lastRemove := olds[0].value[len(olds[0].value)-1]
+				olds[0].value = olds[0].value[:len(olds[0].value)-1]
+				news[eIdx].value = append(news[eIdx].value, lastRemove)
+				eIdx = (eIdx + 1) % len(exp)
+			}
+		}
+		for _, v := range news {
+			for _, s := range v.value {
+				ret.Shards[s] = v.key
+			}
+		}
+		// fmt.Println(ret)
+	} else {
+		// fmt.Println("1", "FREQ:", freq)
+		olds := make([]kv, 0)
+		news := make([]kv, 0)
+		for k, v := range freq {
+			if len(v) &gt; 0 {
+				olds = append(olds, kv{key: k, value: v})
+			} else {
+				news = append(news, kv{key: k})
+			}
+		}
+		for {
+			sort.Slice(olds, func(i, j int) bool { return len(olds[i].value) &gt; len(olds[j].value) })
+			sort.Slice(news, func(i, j int) bool { return len(news[i].value) &lt; len(news[j].value) })
+			// fmt.Println("OLDS:", olds, "NEWS:", news)
+			merg := make([]int, 0)
+			for _, v := range olds {
+				merg = append(merg, len(v.value))
+			}
+			for _, v := range news {
+				merg = append(merg, len(v.value))
+			}
+			sort.Sort(sort.Reverse(sort.IntSlice(merg)))
+			isSame := true
+			for i := 0; i &lt; len(exp); i++ {
+				if exp[i] != merg[i] {
+					isSame = false
+					break
+				}
+			}
+			if isSame {
+				break
+			} else {
+				firstRemove := olds[0].value[0]
+				olds[0].value = olds[0].value[1:]
+				news[0].value = append(news[0].value, firstRemove)
+				// fmt.Println("not same")
+				// break
+			}
+		}
+		for _, v := range olds {
+			for _, s := range v.value {
+				ret.Shards[s] = v.key
+			}
+		}
+		for _, v := range news {
+			for _, s := range v.value {
+				ret.Shards[s] = v.key
+			}
+		}
+	}
+	return ret
+}
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match96-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (sm *ShardMaster) Process() {
+	for {
+		select {
+		case &lt;-sm.killChan:
+			return
+		case applyMsg := &lt;-sm.applyCh:
+			sm.mu.Lock()
+			op := applyMsg.Command.(Op)
+			latestRequestId, ok := sm.latestRequest[op.ClientId]
+			if !ok || op.RequestId &gt; latestRequestId {
+</FONT>				if op.RequestType == "Join" {
+					args := op.Args.(JoinArgs)
+					nextConfig := Config{
+						Num:    sm.configs[len(sm.configs)-1].Num + 1,
+						Shards: [10]int{0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+						Groups: make(map[int][]string),
+					}
+					for k, v := range sm.configs[len(sm.configs)-1].Groups {
+						nextConfig.Groups[k] = v
+					}
+					for i := 0; i &lt; 10; i++ {
+						nextConfig.Shards[i] = sm.configs[len(sm.configs)-1].Shards[i]
+					}
+
+					for k, v := range args.Servers {
+						nextConfig.Groups[k] = v
+					}
+					newConfig := sm.JoinShards(nextConfig)
+					// fmt.Println(sm.me, op.RequestId, "Join", nextConfig, newConfig)
+					sm.configs = append(sm.configs, newConfig)
+				} else if op.RequestType == "Leave" {
+					// fmt.Println(op.RequestId, "Leave")
+					args := op.Args.(LeaveArgs)
+					nextConfig := Config{
+						Num:    sm.configs[len(sm.configs)-1].Num + 1,
+						Shards: [10]int{0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+						Groups: make(map[int][]string),
+					}
+					for k, v := range sm.configs[len(sm.configs)-1].Groups {
+						nextConfig.Groups[k] = v
+					}
+					for i := 0; i &lt; 10; i++ {
+						nextConfig.Shards[i] = sm.configs[len(sm.configs)-1].Shards[i]
+					}
+
+					for i := 0; i &lt; len(args.GIDs); i++ {
+						delete(nextConfig.Groups, args.GIDs[i])
+					}
+					newConfig := sm.LeaveShards(nextConfig, args.GIDs)
+
+					sm.configs = append(sm.configs, newConfig)
+				} else if op.RequestType == "Move" {
+					// fmt.Println(op.RequestId, "Move")
+					args := op.Args.(MoveArgs)
+					nextConfig := Config{
+						Num:    sm.configs[len(sm.configs)-1].Num + 1,
+						Shards: [10]int{0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+						Groups: make(map[int][]string),
+					}
+					for k, v := range sm.configs[len(sm.configs)-1].Groups {
+						nextConfig.Groups[k] = v
+					}
+					for i := 0; i &lt; 10; i++ {
+						nextConfig.Shards[i] = sm.configs[len(sm.configs)-1].Shards[i]
+					}
+
+					_, gidExists := nextConfig.Groups[args.GID]
+					if gidExists {
+						nextConfig.Shards[args.Shard] = args.GID
+					}
+					sm.configs = append(sm.configs, nextConfig)
+				} else if op.RequestType == "Query" {
+					// fmt.Println(sm.me, op.RequestId, "Query")
+				}
+				sm.latestRequest[op.ClientId] = op.RequestId
+			}
+			// sm.agreeChan[applyMsg.CommandIndex] &lt;- op
+			_, chanExists := sm.agreeChan[applyMsg.CommandIndex]
+			if chanExists {
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match96-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				sm.agreeChan[applyMsg.CommandIndex] &lt;- op
+			}
+			sm.mu.Unlock()
+		}
+	}
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+</FONT>	sm := new(ShardMaster)
+	sm.me = me
+
+	sm.configs = make([]Config, 1)
+	sm.configs[0].Groups = map[int][]string{}
+
+	labgob.Register(Op{})
+	sm.applyCh = make(chan raft.ApplyMsg)
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+
+	// Your code here.
+	labgob.Register(JoinArgs{})
+	labgob.Register(LeaveArgs{})
+	labgob.Register(MoveArgs{})
+	labgob.Register(QueryArgs{})
+
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match96-0.html#6" TARGET="0"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	sm.latestRequest = make(map[int64]int)
+	sm.agreeChan = make(map[int]chan Op)
+
+	sm.killChan = make(chan struct{})
+
+	go sm.Process()
+
+	return sm
+</FONT>}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

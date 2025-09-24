@@ -1,0 +1,339 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-Rajas-Mateti/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-Rajas-Mateti/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+namespace janus {
+
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+  //Log_info("Joining......................");
+  ShardConfig latestConfig;
+
+  if(!configs_.empty())
+    latestConfig = (--configs_.end())-&gt;second;
+  
+  ShardConfig newConfig;
+  newConfig.number = latestConfig.number + 1;
+  newConfig.group_servers_map_ = latestConfig.group_servers_map_;
+  newConfig.shard_group_map_ = latestConfig.shard_group_map_;
+
+  //Insert new Groups in group_servers_map_
+  for (auto conf : gid_server_map){
+    newConfig.group_servers_map_.insert({conf.first, conf.second});
+  }
+
+  //Distribute Shards
+  for(auto gid:gid_server_map){
+    map&lt;int,int&gt; cnt;
+    int groups = newConfig.group_servers_map_.size();
+    int max_s = (10%groups!=0) ? ((10/groups)+1) : 10/groups;
+    int max_to = (10%groups==0) ? (10/groups) : 10%groups;
+    map&lt;int,bool&gt; maxed;
+    for(auto k:newConfig.shard_group_map_){
+        if(k.second!=0) {
+            if(max_to&lt;=0){
+                cnt[k.second] = max((10/groups),cnt[k.second]);
+            }
+            else{
+                if(maxed[k.second]){
+                      cnt[k.second] = max((10/groups),cnt[k.second]);
+                }
+                else{
+                    cnt[k.second] = max_s;
+                    maxed[k.second] = true;
+                    max_to-=1;   
+                }
+            }
+        }
+    }
+    
+    for(auto i:newConfig.shard_group_map_){
+        if(i.second==0) {
+            newConfig.shard_group_map_[i.first] = gid.first;
+        }
+        else{
+            if(i.second != gid.first){
+                cnt[i.second]--;
+                //cout&lt;&lt;"gid = "&lt;&lt;i.second&lt;&lt;" "&lt;&lt;cnt[i.second]&lt;&lt;endl;
+                if(cnt[i.second]&lt;0){
+                    newConfig.shard_group_map_[i.first] = gid.first;
+                }
+            }
+        }
+    }
+  }
+
+
+  //print
+  for(auto k:newConfig.group_servers_map_){
+    string s = "Grp : ";
+    s += to_string(k.first);
+    s += " Servers : ";
+    for (auto j : k.second)
+    {
+      s += to_string(j);
+      s += " ";
+    }
+    Log_info("Groups = %s", s.c_str());
+  }
+  
+  for(auto k:newConfig.shard_group_map_){
+    Log_info("Shard = %d, group = %d", k.first, k.second);
+  }
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match153-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  configs_.insert({newConfig.number, newConfig});
+  *ret = KV_SUCCESS;
+
+  //serialise
+  // auto s = make_shared&lt;ConfigMarshallable&gt;();
+  // s-&gt;config = newConfig;
+  // s-&gt;operation = "join";
+  // auto cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  // uint64_t index;
+  // uint64_t term;
+  // bool_t agreement = GetRaftServer().Start(cmd, &index, &term);
+  // auto event = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+
+  // if (agreement)
+  // {
+  //   event-&gt;Wait(600000);
+  //     *ret = KV_SUCCESS;
+  // }
+  // else if(!agreement)
+  //   *ret = KV_NOTLEADER;
+  // else
+  //   *ret = KV_TIMEOUT;
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+</FONT>  // your code here
+  ShardConfig latestConfig;
+
+  if(!configs_.empty())
+    latestConfig = (--configs_.end())-&gt;second;
+
+  
+  ShardConfig newConfig;
+  newConfig.number = latestConfig.number + 1;
+  newConfig.group_servers_map_ = latestConfig.group_servers_map_;
+  newConfig.shard_group_map_ = latestConfig.shard_group_map_;
+
+  //remove gids
+  for(auto gid:gids){
+    newConfig.group_servers_map_.erase(gid);
+  }
+
+
+  //Distribute Shards
+  for(auto gid:gids){
+    vector&lt;int&gt; shards_to_distr;
+      
+    for(auto j:newConfig.shard_group_map_){
+        if(j.second==gid){
+            shards_to_distr.push_back(j.first);
+        }
+    }
+
+    map&lt;int,int&gt; cnt;
+    int groups = newConfig.group_servers_map_.size();
+    int max_s = (10%groups!=0) ? ((10/groups)+1) : 10/groups;
+    int max_to = (10%groups==0) ? (10/groups) : 10%groups;
+    map&lt;int,bool&gt; maxed;
+    for(auto k:newConfig.shard_group_map_){
+        if(k.second!=0  && k.second!=gid) {
+            if(max_to&lt;=0){
+                cnt[k.second] = max((10/groups),cnt[k.second]);
+            }
+            else{
+                if(maxed[k.second]){
+                      cnt[k.second] = max((10/groups),cnt[k.second]);
+                }
+                else{
+                    cnt[k.second] = max_s;
+                    maxed[k.second] = true;
+                    max_to-=1;   
+                }
+            }
+        }
+    }
+    
+    for(auto k:newConfig.shard_group_map_){
+        if(k.second!=gid) cnt[k.second]--;
+    }
+    
+    for(auto i:cnt){
+        vector&lt;int&gt; allocated;
+        for(auto j:shards_to_distr){
+            if(i.second&lt;=0) break;
+            newConfig.shard_group_map_[j] = i.first;
+            i.second--;
+            allocated.push_back(j);
+        }
+        for(auto m:allocated){
+            shards_to_distr.erase(std::remove(shards_to_distr.begin(),shards_to_distr.end(),m),shards_to_distr.end());
+        }
+    }
+  }
+
+  for(auto k:newConfig.group_servers_map_){
+    string s = "Grp : ";
+    s += to_string(k.first);
+    s += " Servers : ";
+    for (auto j : k.second)
+    {
+      s += to_string(j);
+      s += " ";
+    }
+    Log_info("Groups = %s", s.c_str());
+  }
+  for(auto k:newConfig.shard_group_map_){
+    Log_info("Shard = %d, group = %d", k.first, k.second);
+  }
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match153-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  configs_.insert({newConfig.number, newConfig});
+  *ret = KV_SUCCESS;
+  //serialise and send to Raft for consensus
+  // auto s = make_shared&lt;ConfigMarshallable&gt;();
+  // s-&gt;config = newConfig;
+  // s-&gt;operation = "leave";
+  // auto cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+
+  // uint64_t index;
+  // uint64_t term;
+  // bool_t agreement = GetRaftServer().Start(cmd, &index, &term);
+  // auto event = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+
+  // if (agreement)
+  // {
+  //   event-&gt;Wait(600000);
+  //     *ret = KV_SUCCESS;
+  // }
+  // else if(!agreement)
+  //   *ret = KV_NOTLEADER;
+  // else
+  //   *ret = KV_TIMEOUT;
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+</FONT>  // your code here
+  ShardConfig latestConfig;
+
+  if(!configs_.empty())
+    latestConfig = (--configs_.end())-&gt;second;
+
+  Log_info("Move.......................");
+  ShardConfig newConfig;
+  newConfig.number = latestConfig.number + 1;
+  newConfig.group_servers_map_ = latestConfig.group_servers_map_;
+  newConfig.shard_group_map_ = latestConfig.shard_group_map_;
+
+  for(auto k:newConfig.group_servers_map_){
+    string s = "Grp : ";
+    s += to_string(k.first);
+    s += " Servers : ";
+    for (auto j : k.second)
+    {
+      s += to_string(j);
+      s += " ";
+    }
+    Log_info("Groups = %s", s.c_str());
+  }
+  for(auto k:newConfig.shard_group_map_){
+    Log_info("Shard = %d, group = %d", k.first, k.second);
+  }
+  newConfig.shard_group_map_.at(shard) = gid;
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match153-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  configs_.insert({newConfig.number, newConfig});
+  *ret = KV_SUCCESS;
+  //serialise and send to Raft for consensus
+  // auto s = make_shared&lt;ConfigMarshallable&gt;();
+  // s-&gt;config = newConfig;
+  // s-&gt;operation = "move";
+  // auto cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+
+  // uint64_t index;
+  // uint64_t term;
+  // bool_t agreement = GetRaftServer().Start(cmd, &index, &term);
+  // auto event = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+
+  // if (agreement)
+  // {
+  //   event-&gt;Wait(600000);
+  //     *ret = KV_SUCCESS;
+  // }
+  // else if(!agreement)
+  //   *ret = KV_NOTLEADER;
+  // else
+  //   *ret = KV_TIMEOUT;
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+</FONT>  // your code here
+  ShardConfig emptyConfig;
+  auto s = make_shared&lt;ConfigMarshallable&gt;();
+  s-&gt;config = emptyConfig;
+  s-&gt;operation = "query";
+  auto cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  Log_info("Query.............%d", config_no);
+  ShardConfig latestConfig = (--configs_.end())-&gt;second;;
+  if (config_no == -1 || config_no &gt;= latestConfig.number)
+    *config = latestConfig;
+  else
+    *config = configs_.at(config_no);
+  // uint64_t index;
+  // uint64_t term;
+  // bool_t agreement = GetRaftServer().Start(cmd, &index, &term);
+  // auto event = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  // //wait like Get and return with config
+  // event-&gt;Wait(600000);
+
+  // if (agreement)
+  // {
+  //   if(configs_.find(config_no) != configs_.end()){
+  //     *config = configs_.at(config_no);
+  //     *ret = KV_SUCCESS;
+  //   }
+  //   else{
+  //     *ret = KV_NOTLEADER;
+  //   }
+  // }
+  // else if(!agreement)
+  //   *ret = KV_NOTLEADER;
+  // else
+  //   *ret = KV_TIMEOUT;
+  *ret = KV_SUCCESS;
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  // your code here
+  auto conf = (ConfigMarshallable*)(&m);
+  // Log_info("Consensus Reached, server = %d, operation = %s", sp_log_svr_-&gt;site_id_, conf-&gt;operation.c_str());
+  // Log_info("Config Number = %d", conf-&gt;config.number);
+  // configs_.insert({conf-&gt;config.number, conf-&gt;config});
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  return cli;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

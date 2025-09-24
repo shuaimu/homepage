@@ -1,0 +1,126 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-msiddhu/src/deptran/raft/commo.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-msiddhu/src/deptran/raft/commo.cc<p><PRE>
+
+#include "commo.h"
+#include "../rcc/graph.h"
+#include "../rcc/graph_marshaler.h"
+#include "../command.h"
+#include "../procedure.h"
+#include "../command_marshaler.h"
+#include "raft_rpc.h"
+#include "macros.h"
+
+namespace janus {
+
+    RaftCommo::RaftCommo(PollMgr *poll) : Communicator(poll) {
+    }
+
+    shared_ptr&lt;IntEvent&gt; RaftCommo::SendRequestVote(parid_t par_id,
+                                                    siteid_t site_id,
+                                                    uint64_t term,
+                                                    uint64_t serverId,
+                                                    uint64_t lastLogIndex,
+                                                    uint64_t lastLogTerm,
+                                                    uint64_t *currentTerm,
+                                                    bool_t *vote_granted
+    ) {
+        /*
+         * Example code for sending a single RPC to server at site_id
+         * You may modify and use this function or just use it as a reference
+         */
+        auto proxies = rpc_par_proxies_[par_id];
+        auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+        for (auto &p: proxies) {
+            if (p.first == site_id) {
+                RaftProxy *proxy = (RaftProxy *) p.second;
+                FutureAttr fuattr;
+                fuattr.callback = [vote_granted, currentTerm, ev](Future *fu) {
+                    /* this is a handler that will be invoked when the RPC returns */
+                    /* retrieve RPC return values in order */
+                    fu-&gt;get_reply() &gt;&gt; *currentTerm;
+                    fu-&gt;get_reply() &gt;&gt; *vote_granted ;
+
+                    ev-&gt;Set(1);
+                    /* process the RPC response here */
+                };
+                /* Always use Call_Async(proxy, RPC name, RPC args..., fuattr)
+                * to asynchronously invoke RPCs */
+                Call_Async(proxy,  RequestVote,  term, serverId,  lastLogIndex, lastLogTerm, fuattr);
+            }
+        }
+        return ev;
+    }
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match176-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_7.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    shared_ptr&lt;IntEvent&gt; RaftCommo::SendAppendEntries(parid_t par_id,
+                                                      siteid_t site_id,
+                                                      uint64_t term,
+                                                      uint64_t leaderId,
+                                                      uint64_t prevLogIndex,
+                                                      uint64_t prevLogTerm,
+                                                      uint64_t leaderCommit,
+                                                      vector&lt;shared_ptr&lt;Marshallable&gt;&gt; cmds,
+                                                      uint64_t *followerTerm,
+</FONT>                                                      bool_t *followerAppendOK,
+                                                      int64_t *conflictTerm,
+                                                      int64_t *conflictIndex) {
+        /*
+         * More example code for sending a single RPC to server at site_id
+         * You may modify and use this function or just use it as a reference
+         */
+        auto proxies = rpc_par_proxies_[par_id];
+//    Log_info("RaftCommo::SendAppendEntries");
+        auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+        for (auto &p: proxies) {
+            if (p.first == site_id) {
+                RaftProxy *proxy = (RaftProxy *) p.second;
+                FutureAttr fuattr;
+                fuattr.callback = [followerTerm, followerAppendOK, conflictTerm, conflictIndex, ev](Future *fu) {
+                    fu-&gt;get_reply() &gt;&gt; *followerTerm;
+                    fu-&gt;get_reply() &gt;&gt; *followerAppendOK;
+                    fu-&gt;get_reply() &gt;&gt; *conflictTerm;
+                    fu-&gt;get_reply() &gt;&gt; *conflictIndex;
+                };
+                /* wrap Marshallable in a MarshallDeputy to send over RPC */
+                vector&lt;MarshallDeputy&gt; mds;
+                for (shared_ptr&lt;Marshallable&gt; cmd: cmds) {
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match176-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_7.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                    mds.push_back(MarshallDeputy(cmd));
+                }
+                Call_Async(proxy, AppendEntries, term, leaderId, prevLogIndex, prevLogTerm, leaderCommit, mds, fuattr);
+            }
+        }
+        return ev;
+    }
+
+    shared_ptr&lt;IntEvent&gt; RaftCommo::SendString(parid_t par_id, siteid_t site_id, const string &msg, string *res) {
+</FONT>        auto proxies = rpc_par_proxies_[par_id];
+        auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+        for (auto &p: proxies) {
+            if (p.first == site_id) {
+                RaftProxy *proxy = (RaftProxy *) p.second;
+                FutureAttr fuattr;
+                fuattr.callback = [res, ev](Future *fu) {
+                    fu-&gt;get_reply() &gt;&gt; *res;
+                    ev-&gt;Set(1);
+                };
+                /* wrap Marshallable in a MarshallDeputy to send over RPC */
+                Call_Async(proxy, HelloRpc, msg, fuattr);
+            }
+        }
+        return ev;
+    }
+
+
+} // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

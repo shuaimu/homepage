@@ -1,0 +1,186 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-raunaqpahwa/src/shardkv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-gkulhare/src/shardkv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+int64_t ShardKvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match127-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int ShardKvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+    // lab_shard: fill in your code
+  RaftServer& svr = GetRaftServer();
+  
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+</FONT>  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  auto cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+
+  uint64_t index;
+  uint64_t term=0;
+
+  auto leader = svr.Start(cmd, &index, &term);
+  //Log_info("%d started the wait for cosleep for PUT",svr.loc_id_);
+
+  if(leader){
+  //Log_info("%d is the leader",svr.loc_id_);
+  }
+
+  else if(leader==false){
+  //Log_info("trying for the wrong server, leader isn't %d",svr.loc_id_);
+  return KV_NOTLEADER;
+}
+  
+  Coroutine::Sleep(350000);
+  //Log_info("%d done with wait for cosleep for PUT",svr.loc_id_);
+
+if(ops.find(to_string(oid)) != ops.end() && leader==true) {
+  //Log_info("%d: KV PAIR SUCCESSFULLY INSERTED",svr.loc_id_);
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match127-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  return KV_SUCCESS;
+}
+  //Log_info("log not inserted in leader so timing out %d",svr.loc_id_);
+  return KV_TIMEOUT;
+}
+
+int ShardKvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+    // lab_shard: fill in your code
+      RaftServer& svr = GetRaftServer();
+  
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+</FONT>  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("append");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  
+  uint64_t index;
+  uint64_t term=0;
+
+  auto cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+
+  auto leader = svr.Start(cmd, &index, &term);
+  //Log_info("%d started the wait for cosleep for APP",svr.loc_id_);
+  
+  if(leader){
+    //Log_info("%d is the leader",svr.loc_id_);
+  }
+
+  else if(leader==false){
+  //Log_info("trying for the wrong server, leader isn't %d",svr.loc_id_);
+  return KV_NOTLEADER;
+}
+ 
+  Coroutine::Sleep(350000);
+  //Log_info("%d done with wait for cosleep for APP",svr.loc_id_);
+
+if(ops.find(to_string(oid)) != ops.end() && leader==true) {
+  //Log_info("%d: KV PAIR SUCCESSFULLY APPENDED",svr.loc_id_);
+  return KV_SUCCESS;
+}
+  
+  //Log_info("log not appended in leader so timing out %d",svr.loc_id_);
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match127-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  return KV_TIMEOUT;
+}
+
+int ShardKvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+    // lab_shard: fill in your code
+     RaftServer& svr = GetRaftServer();
+  
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+</FONT>  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("get");
+  s-&gt;data_.push_back(k);
+  
+  uint64_t index;
+  uint64_t term=0;
+
+  auto cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+
+  auto leader = svr.Start(cmd, &index, &term);
+  //Log_info("%d started the wait for cosleep for GET",svr.loc_id_);
+
+  if(leader){
+  //Log_info("%d is the leader",svr.loc_id_);
+  }
+
+  else if(leader==false){
+  //Log_info("trying for the wrong server, leader isn't %d",svr.loc_id_);
+  return KV_NOTLEADER;
+}
+    Coroutine::Sleep(350000);
+    //Log_info("%d done with wait for cosleep for GET",svr.loc_id_);
+
+
+if(ops.find(to_string(oid)) != ops.end() && leader==true) {
+  //Log_info("%d: KV PAIR FETCHED",svr.loc_id_);
+  *v=kv_store_[k];
+  return KV_SUCCESS;
+}
+  
+  //Log_info("log not getting in leader so timing out %d",svr.loc_id_);
+  return KV_TIMEOUT;
+}
+
+void ShardKvServer::OnNextCommand(Marshallable& m) {
+    // lab_shard: fill in your code
+    auto v = (MultiStringMarshallable*)(&m);
+  /* your code here */
+  string op = v-&gt;data_[1];
+  if(op=="put"){
+    ops.insert(v-&gt;data_[0]);
+    kv_store_[v-&gt;data_[2]]=v-&gt;data_[3];
+    //Log_info("Putting value %s for %s",v-&gt;data_[2],v-&gt;data_[3]);
+  }
+  else if(op=="append"){
+    ops.insert(v-&gt;data_[0]);
+    kv_store_[v-&gt;data_[2]]=kv_store_[v-&gt;data_[2]]+(v-&gt;data_[3]);
+    //Log_info("appending value %s for %s",v-&gt;data_[2],v-&gt;data_[3]);
+    //Log_info("%s now has value %s",v-&gt;data_[2],kv_store_[v-&gt;data_[2]]);
+  }
+  else{
+    //Log_info("going to attempt to fetch value");
+    ops.insert(v-&gt;data_[0]);
+    //Log_info("Succeeded to fetch value");
+  }
+}
+
+shared_ptr&lt;ShardKvClient&gt; ShardKvServer::CreateClient(Communicator* comm) {
+  auto cli = make_shared&lt;ShardKvClient&gt;();
+  cli-&gt;commo_ = comm;
+  verify(cli-&gt;commo_ != nullptr);
+  static uint32_t id = 0;
+  id++;
+  cli-&gt;cli_id_ = id; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

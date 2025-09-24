@@ -1,0 +1,241 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-Apeksha115908828/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-ksp20/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+#include &lt;mutex&gt;
+#include &lt;string&gt;
+
+namespace janus {
+
+  std::mutex mtxc; 
+  std::recursive_mutex mtx1_{};
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match30-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  /* 
+  Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  */
+  /* your code here */
+  //mtxc.lock();
+  std::lock_guard&lt;std::recursive_mutex&gt; lock123(mtx1_);
+</FONT>  Log_info("put");
+  data.put_ack=false;
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  string opid= to_string(oid);
+  //svr_-&gt;Start();
+  shared_ptr&lt;Marshallable&gt; cmd=s;
+  RaftServer &ser= GetRaftServer();
+  uint64_t index=0; 
+  uint64_t term=0;
+  bool a=false;
+  std::cout&lt;&lt;"value of oid "&lt;&lt;opid&lt;&lt;endl;
+  Coroutine::CreateRun([&](){
+   a=ser.Start(cmd,&index,&term);
+  }); 
+  int timeout=400*1000;
+  while(timeout&gt;0){
+    rrr::Coroutine::Sleep(10000);
+    timeout-=10000;
+    if(ack.find(opid) != ack.end()){
+      break;
+    }
+  }
+  //rrr::Coroutine::Sleep(400*1000);
+  if(!a)
+    return KV_NOTLEADER;
+  else if(ack.find(opid) != ack.end()) { 
+    //std::cout&lt;&lt;"key : "&lt;&lt;k&lt;&lt;" value : "&lt;&lt; v&lt;&lt;" success: "&lt;&lt;db[k]&lt;&lt;endl;
+    return KV_SUCCESS;
+  }
+  else{
+    //std::cout&lt;&lt;"key : "&lt;&lt;k&lt;&lt;" value : "&lt;&lt; v&lt;&lt;" timeout"&lt;&lt;endl;
+     ack[opid]=1;
+    return KV_TIMEOUT;
+  }
+  
+}
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+  std::lock_guard&lt;std::recursive_mutex&gt; lock1(mtx1_);
+  data.append_ack=false;
+  Log_info("append");
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("append");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  string opid= to_string(oid);
+  shared_ptr&lt;Marshallable&gt; cmd=s;
+  RaftServer &ser= GetRaftServer();
+  uint64_t index=0;
+  uint64_t term=0;
+  bool a=false;
+  Coroutine::CreateRun([&](){
+   a=ser.Start(cmd,&index,&term);
+  });
+  int timeout=400*1000;
+  while(timeout&gt;0){
+    rrr::Coroutine::Sleep(10000);
+    timeout-=10000;
+    if(ack.find(opid) != ack.end()){
+      break;
+    }
+  }
+  //rrr::Coroutine::Sleep(400*1000);
+  if(!a)
+    return KV_NOTLEADER;
+  else if(ack.find(opid) != ack.end()) { 
+    //std::cout&lt;&lt;"append key : "&lt;&lt;k&lt;&lt;" value : "&lt;&lt; v&lt;&lt;" success: "&lt;&lt;db[k]&lt;&lt;endl;
+    return KV_SUCCESS;
+  }
+  else{
+    //std::cout&lt;&lt;"append key : "&lt;&lt;k&lt;&lt;" value : "&lt;&lt; v&lt;&lt;" timeout"&lt;&lt;endl;
+    ack[opid]=1;
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match30-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    return KV_TIMEOUT;
+  }
+ 
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+  /* your code here */
+  //mtxc.lock();
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx1_);
+</FONT>  data.get_ack=false;
+  Log_info("get");
+  std::cout&lt;&lt;"value to retreat k :"&lt;&lt; k &lt;&lt;endl;
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("get");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back("get");
+  string opid= to_string(oid);
+  shared_ptr&lt;Marshallable&gt; cmd=s;
+  RaftServer &ser= GetRaftServer();
+  uint64_t index=0;
+  bool a=false;
+  bool isleader=false;
+  uint64_t term=-1;
+  Coroutine::CreateRun([&](){
+    a = ser.Start(cmd,&index,&term);
+  });
+  int timeout=400*1000;
+  while(timeout&gt;0){
+    rrr::Coroutine::Sleep(10000);
+    timeout-=10000;
+    if(ack.find(opid) != ack.end()){
+      break;
+    }
+  }
+  //rrr::Coroutine::Sleep(400*1000);
+  if(!a){
+    return KV_NOTLEADER;
+  }
+  else if(ack.find(opid) != ack.end()){
+    *v=db[k];
+    //std::cout&lt;&lt;"value to retreat k :"&lt;&lt; k &lt;&lt; " completed"&lt;&lt;" value: "&lt;&lt;db[k] &lt;&lt;endl;
+    return KV_SUCCESS;
+  }
+  else{
+     ack[opid]=1;
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match30-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    return KV_TIMEOUT;
+  }
+ 
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  //std::lock_guard&lt;std::recursive_mutex&gt; lockq(mtx1_);
+  auto v = (MultiStringMarshallable*)(&m);
+  string opid=v-&gt;data_[0];
+  string op=v-&gt;data_[1];
+  string key=v-&gt;data_[2];
+</FONT>  string value=v-&gt;data_[3];
+  if(ack.find(opid) != ack.end()){
+    return ;
+  }
+  ack[opid]=1;
+  if(op=="put"){
+    //std::cout&lt;&lt; op &lt;&lt;" "&lt;&lt;key&lt;&lt;" "&lt;&lt;value&lt;&lt;" "; 
+    //db.insert({key,value});
+    db[key]=value;
+    // std::cout&lt;&lt;"line 164 next cmd k : "&lt;&lt;key&lt;&lt;" value : "&lt;&lt; db[key]&lt;&lt;" original value: "&lt;&lt;value &lt;&lt;endl;
+     Log_info("database size %d",db.size());
+  }
+  else if(op=="append"){
+    //std::cout&lt;&lt; op &lt;&lt;" "&lt;&lt;key&lt;&lt;" "&lt;&lt;value&lt;&lt;" "; 
+    if(db.count(key)==0){
+      db[key]=value;
+    }
+    else{
+      db[key]=db[key]+value;
+    }
+     Log_info("append database size %d",db.size());
+  }
+ 
+  
+  //std::cout&lt;&lt;"value of oid in nxtcmd "&lt;&lt;opid&lt;&lt;endl;
+  //std::cout&lt;&lt;"next cmd k : "&lt;&lt;key&lt;&lt;" value : "&lt;&lt; db[key]&lt;&lt;endl;
+  
+  /* your code here */
+  //   std::cout&lt;&lt;"...key: "&lt;&lt;k&lt;&lt;" expected value: "&lt;&lt;v1+v2&lt;&lt;" received :"&lt;&lt;v3&lt;&lt;endl;
+}
+
+//-------------------------------------------------------------------------------------------------------------------------&gt;
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

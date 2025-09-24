@@ -1,0 +1,153 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-bhaveshgawri/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-bhaveshgawri/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+
+void RaftServiceImpl::HandleRequestVote(const uint64_t& candidate_term, 
+                                        const uint64_t& candidate_id,
+                                        const int64_t& candidate_last_log_idx,
+                                        const int64_t& candidate_last_log_trm,
+                                        uint64_t *term, uint64_t *requestGranted,
+                                        rrr::DeferredReply* defer) {
+  /* Your code here */
+  svr_ -&gt; mtx_.lock();
+
+  *requestGranted = 0;
+  if (svr_ -&gt; currentTerm &lt;= candidate_term) {
+    if (svr_ -&gt; currentTerm &lt; candidate_term) {
+        svr_ -&gt; currentTerm = candidate_term;
+        svr_ -&gt; SetServerType(0);
+    }
+
+    const map&lt;uint64_t, uint64_t&gt;& vf = svr_ -&gt; votedFor;
+    const uint64_t ct = svr_ -&gt; currentTerm;
+    if (vf.find(ct) == vf.end() || vf.find(ct) -&gt; second == candidate_id) {
+      
+      int64_t follower_last_log_idx = svr_ -&gt; log . size() - 1;
+      int64_t follower_last_log_trm = follower_last_log_idx == -1 ? -1 : svr_ -&gt; log[follower_last_log_idx] -&gt;term;
+
+      *requestGranted = (follower_last_log_trm &lt; candidate_last_log_trm) || (
+                          (follower_last_log_trm == candidate_last_log_trm) && (
+                            follower_last_log_idx &lt;= candidate_last_log_idx
+                          )
+                        );
+      if (*requestGranted) {
+        svr_ -&gt; votedFor[svr_ -&gt; currentTerm] = candidate_id;
+        svr_ -&gt; ResetElectionTimer();
+      }
+    }
+  }
+  *term = svr_ -&gt; currentTerm;
+
+  svr_ -&gt; mtx_.unlock();
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleAppendEntries(const uint64_t& leader_term,
+                                          const uint64_t& leader_id,
+                                          const int64_t& leader_commit,
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match132-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                          const vector&lt;MarshallDeputy&gt;& cmd_md,
+                                          const vector&lt;uint64_t&gt;& log_term,
+                                          const int64_t& prev_log_idx,
+                                          const int64_t& prev_log_trm,
+                                          uint64_t* term, uint64_t* success,
+                                          rrr::DeferredReply* defer) {
+</FONT>  /* Your code here */
+  svr_ -&gt; mtx_.lock();
+
+  *success = 0;
+  if (svr_ -&gt; currentTerm &lt;= leader_term) { 
+    svr_ -&gt; currentTerm = leader_term;
+    svr_ -&gt; SetServerType(0);
+    svr_ -&gt; ResetElectionTimer();
+
+    uint64_t do_reject = (prev_log_idx != -1) && (
+      prev_log_idx &gt;= svr_ -&gt; log . size() ||
+      prev_log_trm != svr_ -&gt; log[prev_log_idx] -&gt; term
+    );
+    cout &lt;&lt; "HandleAppendEntries: " &lt;&lt; svr_ -&gt; GetServerId() &lt;&lt; " prev_idx: " &lt;&lt; prev_log_idx &lt;&lt; " prev_trm: " &lt;&lt; prev_log_trm 
+          &lt;&lt; " log.size(): " &lt;&lt; svr_ -&gt; log . size() &lt;&lt; " do_reject: " &lt;&lt; do_reject &lt;&lt; " type: " &lt;&lt; svr_ -&gt; type &lt;&lt; endl;
+
+    if (!do_reject) {
+      *success = 1;
+      svr_ -&gt; leaderId = leader_id;
+      
+      auto cmds = GetCmds(cmd_md);
+      AppendCmds(cmds, log_term, prev_log_idx);
+      PushCommits(cmds, prev_log_idx, leader_commit);
+    }
+  }
+  *term = svr_ -&gt; currentTerm;
+  
+  svr_ -&gt; mtx_.unlock();
+  defer-&gt;reply();
+}
+
+vector&lt;shared_ptr&lt;Marshallable&gt;&gt; RaftServiceImpl::GetCmds(const vector&lt;MarshallDeputy&gt;& cmd_md) {
+  vector&lt;shared_ptr&lt;Marshallable&gt;&gt; cmds;
+  for (auto md: cmd_md) {
+    std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(md).sp_data_;
+    cmds.push_back(cmd);
+  }
+  return cmds;
+}
+
+void RaftServiceImpl::AppendCmds(const vector&lt;shared_ptr&lt;Marshallable&gt;&gt;& cmds, 
+                                 const vector&lt;uint64_t&gt;& log_term, 
+                                 const int64_t& prev_log_idx) {
+  
+  svr_ -&gt; log . resize((size_t) prev_log_idx + 1);
+  for (int i = 0; i &lt; cmds.size(); i++) 
+    svr_ -&gt; log . push_back(new RaftCommo::LogEntry(cmds[i], log_term[i]));
+}
+
+void RaftServiceImpl::PushCommits(const vector&lt;shared_ptr&lt;Marshallable&gt;&gt;& cmds, 
+                                  const int64_t& prev_log_idx,
+                                  const int64_t& leader_commit) {
+    // update commit index
+    svr_ -&gt; commitIndex = max(svr_ -&gt; commitIndex, 
+                              min(leader_commit, (int64_t) svr_ -&gt; log . size() - 1)
+                          );
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match132-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    cout &lt;&lt; "siteId: " &lt;&lt; svr_ -&gt; GetServerId() &lt;&lt; " | commitIndex: " &lt;&lt; svr_ -&gt; commitIndex &lt;&lt; " | lastApplied: " &lt;&lt; svr_ -&gt; lastApplied &lt;&lt; endl;
+    
+    // push
+    svr_ -&gt; ApplyCommits();
+}
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     uint64_t* ret, string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("receive an rpc: %s", req.c_str());
+  *ret = svr_ -&gt; GetCurrentTerm();
+</FONT>  *res = "world";
+  usleep(100000);
+  defer-&gt;reply();
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

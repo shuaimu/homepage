@@ -1,0 +1,225 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-E-train-Liu/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-bhaveshgawri/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+// additional imports
+#include &lt;boost/serialization/map.hpp&gt;
+#include &lt;boost/serialization/vector.hpp&gt;
+
+namespace janus {
+
+int64_t ShardMasterServiceImpl::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + ++op_id_cnt_; 
+  return ret;
+}
+
+shared_ptr&lt;Marshallable&gt; ShardMasterServiceImpl::GenOperation(const string& op_type,
+                                                              const string& op_id,
+                                                              const string& arg1,
+                                                              const string& arg2) {
+  auto op = make_shared&lt;MultiStringMarshallable&gt;();
+  op -&gt; data_.push_back(op_type);
+  op -&gt; data_.push_back(op_id);
+  op -&gt; data_.push_back(arg1);
+  op -&gt; data_.push_back(arg2);
+  cout &lt;&lt; "[SHARD_MASTER] Op generated op_type: " &lt;&lt; op_type &lt;&lt; " | op_id: " &lt;&lt; op_id &lt;&lt; " | arg1: " &lt;&lt; arg1 &lt;&lt; " | arg2: " &lt;&lt; arg2 &lt;&lt; endl;
+  return op;
+}
+
+uint64_t ShardMasterServiceImpl::ExecOperation(const string& op_type,
+                                               const string& arg1,
+                                               const string& arg2) {
+  uint64_t ret = KV_TIMEOUT;
+  auto& raft = GetRaftServer();
+  cout &lt;&lt; "[SHARD_MASTER] Executing op, raft type: " &lt;&lt; raft.type &lt;&lt; " | site_id: " &lt;&lt; raft.site_id_ &lt;&lt; endl;
+  if (raft.type == 2) {
+    string op_id = to_string(GetNextOpId());
+    auto op = GenOperation(op_type, op_id, arg1, arg2);
+
+    uint64_t raft_term, raft_index;
+    raft.Start(op, &raft_index, &raft_term);
+
+    outstanding_requests_[op_id] = Reactor::CreateSpEvent&lt;IntEvent&gt;();    
+    outstanding_requests_[op_id] -&gt; Wait(2 * 1000 * 1000); // 2s
+
+    ret = outstanding_requests_[op_id] -&gt; status_ == Event::DONE ? KV_SUCCESS : KV_TIMEOUT;
+    outstanding_requests_.erase(op_id);
+  } else {
+    ret = KV_NOTLEADER;
+  } 
+  return ret;
+}
+
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+  stringstream ss;
+  boost::archive::text_oarchive to(ss);
+  to &lt;&lt; gid_server_map;
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match195-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  *ret = ExecOperation(JOIN, ss.str(), BLANK);
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+</FONT>  stringstream ss;
+  boost::archive::text_oarchive to(ss);
+  to &lt;&lt; gids;
+  *ret = ExecOperation(LEAVE, ss.str(), BLANK);
+  defer-&gt;reply();
+}
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match195-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+  string shard_s = to_string(shard), gid_s = to_string(gid);
+</FONT><A NAME="2"></A><FONT color = #0000FF><A HREF="match195-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  *ret = ExecOperation(MOVE, shard_s, gid_s);
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+</FONT>  string config_no_s = to_string(config_no);
+  *ret = ExecOperation(QUERY, BLANK, BLANK);
+  if (*ret == KV_SUCCESS && (config_no &lt; 0 || config_no &gt; cur_config.number))
+    *config = cur_config;
+  // todo: handle &lt; max && &gt; 0 cases
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::HandleJoin(ShardConfig& new_config, string arg1) {  
+  auto group = new_config.shard_group_map_ = cur_config.shard_group_map_;
+
+  stringstream ss(arg1);
+  boost::archive::text_iarchive ti(ss);
+  ti &gt;&gt; new_config.group_servers_map_;
+  for (auto grp_svr: cur_config.group_servers_map_) {
+    new_config.group_servers_map_.insert(grp_svr);
+  }
+
+  ReallocateShards(new_config, group);
+}
+
+void ShardMasterServiceImpl::HandleLeave(ShardConfig& new_config, string arg1) {
+  auto group = new_config.shard_group_map_ = cur_config.shard_group_map_;
+  new_config.group_servers_map_ = cur_config.group_servers_map_;
+  
+  vector&lt;uint32_t&gt; gids;
+  stringstream ss(arg1);
+  boost::archive::text_iarchive ti(ss);
+  ti &gt;&gt; gids;
+  for (auto gid: gids) 
+    new_config.group_servers_map_.erase(gid);
+
+  if (new_config.group_servers_map_.size() &gt; 0)
+    ReallocateShards(new_config, group);
+  else {
+    for (int32_t shard = 1; shard &lt;= 10; shard++) {
+      new_config.shard_group_map_[shard] = 0;
+    }
+  }
+
+}
+
+void ShardMasterServiceImpl::HandleMove(ShardConfig& new_config, string arg1, string arg2) {
+  int32_t shard = stoi(arg1);
+  uint32_t gid = stoul(arg2);
+  new_config.shard_group_map_[shard] = gid;
+}
+
+void ShardMasterServiceImpl::ReallocateShards(ShardConfig& new_config, const map&lt;uint32_t, uint32_t&gt;& group) {
+  vector&lt;uint32_t&gt; gids;
+  for (auto gid_svr: new_config.group_servers_map_) 
+    gids.push_back(gid_svr.first);
+
+  uint32_t max_shrds_per_grp = 10 / gids.size();
+  unordered_map&lt;uint32_t, uint32_t&gt; cur_shrds_per_grp;
+  vector&lt;int32_t&gt; shrds_to_allocate1, shrds_to_allocate2;
+  for (int32_t shard = 1; shard &lt;= 10; shard++) {
+    if (group.at(shard) == 0 
+    || new_config.group_servers_map_.count(group.at(shard)) == 0 
+    || cur_shrds_per_grp[group.at(shard)] &gt;= max_shrds_per_grp) {
+      shrds_to_allocate1.push_back(shard);
+    } else {
+      cur_shrds_per_grp[group.at(shard)]++;
+    }
+  }
+  for (int32_t shard: shrds_to_allocate1) {
+    bool_t allocated = false;
+    for (auto gid: gids) {
+      if (cur_shrds_per_grp[gid] &lt; max_shrds_per_grp) {
+        new_config.shard_group_map_[shard] = gid;
+        cur_shrds_per_grp[gid]++;
+        allocated = true;
+        break;
+      }
+    }
+    if (!allocated) 
+      shrds_to_allocate2.push_back(shard);
+  }
+  uint32_t idx = 0;
+  for (int32_t shard: shrds_to_allocate2) {
+    new_config.shard_group_map_[shard] = gids[idx++];
+  }
+}
+
+void ShardMasterServiceImpl::UpdateConfig(const string& op_type, const string& op_id, const string& arg1, const string& arg2) {
+  auto& raft = GetRaftServer();
+  cout &lt;&lt; "[SHARD_MASTER] raft.serv: " &lt;&lt; raft.site_id_ &lt;&lt; " | raft.type: " &lt;&lt; raft.type &lt;&lt; " | " &lt;&lt; op_type &lt;&lt; " | " &lt;&lt; op_id &lt;&lt; endl;
+  
+  ShardConfig new_config = *new ShardConfig();
+  new_config.number = stoull(op_id);
+
+  if (op_type == JOIN) {
+    HandleJoin(new_config, arg1);
+  } else if (op_type == LEAVE) {
+    HandleLeave(new_config, arg1);
+  } else if (op_type == MOVE) {
+    HandleMove(new_config, arg1, arg2);
+  }
+
+  cout &lt;&lt; "[SHARD_MASTER] Serv: " &lt;&lt; raft.site_id_ &lt;&lt; " | type: " &lt;&lt; raft.type &lt;&lt; " | new_config: " &lt;&lt; endl;
+  cout &lt;&lt; "[SHARD_MASTER] number: " &lt;&lt; new_config.number &lt;&lt; endl;
+  cout &lt;&lt; "[SHARD_MASTER] group_to_serv: " &lt;&lt; endl; 
+  for (auto x: new_config.group_servers_map_) {
+    cout &lt;&lt; "group: " &lt;&lt; x.first &lt;&lt; " | serv: "; 
+    for (auto y: x.second) cout &lt;&lt; y &lt;&lt; " ";
+  }
+  if (op_type != QUERY)
+    cur_config = new_config;
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  auto op_m = (MultiStringMarshallable*)(&m);
+  string op_type = op_m -&gt; data_[0], op_id = op_m -&gt; data_[1], arg1 = op_m -&gt; data_[2], arg2 = op_m -&gt; data_[3];
+  
+  UpdateConfig(op_type, op_id, arg1, arg2);
+  if (outstanding_requests_.count(op_id))
+      outstanding_requests_[op_id] -&gt; Set(1);
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  return cli;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

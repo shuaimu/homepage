@@ -1,0 +1,453 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/sampathkumar81293/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/sampathkumar81293/src/kvraft/server.go<p><PRE>
+package raftkv
+
+import (
+	"labgob"
+	"labrpc"
+	"log"
+	"raft"
+	"sync"
+	"time"
+)
+
+const Debug = 1
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+type Op struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+	COp       string
+	ClientID  int64
+	RequestID int64
+	//Index     int
+	Key   string
+	Value string
+}
+
+type CacheValue struct {
+	RequestID   int64
+	Key         string
+	GetResponse GetReply
+	PutResponse PutAppendReply
+}
+
+/*
+// Put or Append
+type PutAppendArgs struct {
+	Key   string
+	Value string
+	Op    string // "Put" or "Append"
+	// You'll have to add definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+}
+*/
+
+type KVServer struct {
+	mu              sync.Mutex
+	me              int
+	rf              *raft.Raft
+	applyCh         chan raft.ApplyMsg
+	KillChannel     chan bool
+	Localdb         map[string]string
+	IndexChannelMap map[int]chan raft.ApplyMsg
+	maxraftstate    int // snapshot if log grows this big
+	RequestTimeout  int
+	RequestCache    map[int64]CacheValue
+	// Your definitions here.
+}
+
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match85-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *KVServer) GetrandomtimeDuration() time.Duration {
+	var timeDuration time.Duration
+	timeDuration = time.Duration(kv.RequestTimeout) * time.Millisecond
+	return timeDuration
+}
+
+func (kv *KVServer) PrintGet(args *GetArgs) {
+</FONT>	DPrintf("KVSERVERGET: ClientID: %d \n", args.ClientID)
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match85-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	DPrintf("KVSERVERGET: RequestID: %d \n", args.RequestID)
+	DPrintf("KVSERVERGET: Key: %d \n", args.Key)
+}
+
+func (kv *KVServer) CheckIfLeaderGet(reply *GetReply) {
+
+	_, IsLeaderCheck2 := kv.rf.GetState()
+	if !IsLeaderCheck2 {
+		//reply.Err = "Not Leader"
+		reply.WrongLeader = true
+	} else {
+		reply.WrongLeader = false
+	}
+
+}
+
+func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
+</FONT><A NAME="0"></A><FONT color = #FF0000><A HREF="match85-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	// Your code here.
+	// DPrintf("KVSERVERGET: Get request: \n")
+	//kv.PrintGet(args)
+	reply.WrongLeader = true
+	reply.Err = "Not Leader"
+
+	kv.mu.Lock()
+	Response, CIDExists := kv.RequestCache[args.ClientID]
+	kv.mu.Unlock()
+	//CIDExists = false
+	if CIDExists {
+		if Response.RequestID == args.RequestID && args.Key == Response.Key {
+			reply.Err = Response.GetResponse.Err
+			reply.Value = Response.GetResponse.Value
+</FONT>			reply.WrongLeader = false
+			return
+		}
+	}
+	_, IsLeader := kv.rf.GetState()
+	if !IsLeader {
+		return
+	}
+	var SOp Op = Op{
+		COp:       "Get",
+		Key:       args.Key,
+		ClientID:  args.ClientID,
+		RequestID: args.RequestID,
+	}
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match85-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	Index, _, IsLeaderCheck1 := kv.rf.Start(SOp)
+
+	if !IsLeaderCheck1 {
+		return
+	}
+
+	kv.mu.Lock()
+	_, Exists := kv.IndexChannelMap[Index]
+	kv.mu.Unlock()
+	//var ChanReceiver chan raft.ApplyMsg
+	if Exists {
+		//reply.Err = "Duplicate Entry"
+		// fmt.Printf("KVSERVERPUT: Index already  mapped to another request. Ovrewritin\n")
+		// Fatal error or apply channel is not ready
+		//return
+	}
+	ChanReceiver := make(chan raft.ApplyMsg, 1)
+</FONT><A NAME="7"></A><FONT color = #0000FF><A HREF="match85-1.html#7" TARGET="1"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.mu.Lock()
+	kv.IndexChannelMap[Index] = ChanReceiver
+	kv.mu.Unlock()
+
+	select {
+	case Raftoutput := &lt;-ChanReceiver:
+		kv.CheckIfLeaderGet(reply)
+		//	reply.WrongLeader = false
+		RCop := Raftoutput.Command.(Op)
+</FONT>		if RCop.Key == args.Key && args.ClientID == RCop.ClientID && args.RequestID == RCop.RequestID && Index == Raftoutput.CommandIndex {
+			reply.Err = OK
+			kv.mu.Lock()
+			reply.Value = kv.Localdb[args.Key]
+			kv.mu.Unlock()
+		}
+
+		return
+	case &lt;-time.After(kv.GetrandomtimeDuration()):
+		reply.Err = Timedout
+		kv.CheckIfLeaderGet(reply)
+		// _, ChExists := kv.IndexChannelMap[Index]
+		// if ChExists {
+		// 	kv.mu.Lock()
+		// 	close(kv.IndexChannelMap[Index])
+		// 	delete(kv.IndexChannelMap, Index)
+		// 	kv.mu.Unlock()
+		// }
+		return
+
+	}
+
+}
+
+func (kv *KVServer) PrintPut(args *PutAppendArgs) {
+	DPrintf("KVSERVERGET: ClientID: %d \n", args.ClientID)
+	DPrintf("KVSERVERGET: RequestID: %d \n", args.RequestID)
+	DPrintf("KVSERVERGET: Key: %d \n", args.Key)
+}
+
+func (kv *KVServer) CheckIfLeaderPut(reply *PutAppendReply) {
+
+	_, IsLeaderCheck2 := kv.rf.GetState()
+	if !IsLeaderCheck2 {
+		//reply.Err = "Not Leader"
+		reply.WrongLeader = true
+	} else {
+		reply.WrongLeader = false
+	}
+
+}
+func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	// Your code here.
+	//	DPrintf("KVSERVERPUT: Put request: \n")
+	//	fmt.Printf("KVSERVERPUT: Put request: \n")
+	//kv.PrintPut(args)
+	//fmt.Println(args)
+	reply.Err = "Not Leader"
+	reply.WrongLeader = true
+
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match85-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.mu.Lock()
+	Response, CIDExists := kv.RequestCache[args.ClientID]
+	kv.mu.Unlock()
+	//CIDExists = false
+	if CIDExists {
+		if Response.RequestID == args.RequestID && args.Key == Response.Key {
+</FONT>			reply.Err = Response.PutResponse.Err
+			reply.WrongLeader = false
+			// fmt.Println(reply)
+			// fmt.Printf("KVSERVERPUT: Cache Value returned \n")
+			return
+		}
+	}
+
+	_, IsLeader := kv.rf.GetState()
+	if !IsLeader {
+		//	DPrintf("KVSERVERPUT: Stale Leader \n")
+		//	fmt.Printf("KVSERVERPUT: Stale Leader \n")
+		return
+	}
+	var SOp Op = Op{
+		COp:       args.Op,
+		ClientID:  args.ClientID,
+		RequestID: args.RequestID,
+		Key:       args.Key,
+		Value:     args.Value,
+	}
+	//DPrintf("KVSERVERPUT: Sending Start Request \n")
+	//fmt.Printf("KVSERVERPUT: Sending Start Request \n")
+	Index, _, IsLeaderCheck1 := kv.rf.Start(SOp)
+
+	if !IsLeaderCheck1 {
+		return
+	}
+
+	// fmt.Printf("KVSERVERPUT: Sending Start Request on index : %d\n", Index)
+	kv.mu.Lock()
+	_, Exists := kv.IndexChannelMap[Index]
+	kv.mu.Unlock()
+	//	var ChanReceiver chan raft.ApplyMsg
+	if Exists {
+		//reply.Err = "Duplicate Entry"
+		// fmt.Printf("KVSERVERPUT: Index already  mapped to another request. Ovrewritin\n")
+		// Fatal error or apply channel is not ready
+		//return
+	}
+	ChanReceiver := make(chan raft.ApplyMsg, 1)
+	kv.mu.Lock()
+	kv.IndexChannelMap[Index] = ChanReceiver
+	kv.mu.Unlock()
+
+	select {
+	case Raftoutput := &lt;-ChanReceiver:
+		// fmt.Println(args)
+		// fmt.Printf("KVSERVERPUT: Communication received from apply channel\n")
+		kv.CheckIfLeaderPut(reply)
+		//	reply.WrongLeader = false
+		RCop := Raftoutput.Command.(Op)
+		if RCop.Key == args.Key && args.ClientID == RCop.ClientID && args.RequestID == RCop.RequestID && Index == Raftoutput.CommandIndex {
+			reply.Err = OK
+		}
+		return
+	case &lt;-time.After(kv.GetrandomtimeDuration()):
+		//fmt.Println(args)
+		// fmt.Printf("KVSERVERPUT: Request timedout\n")
+		kv.CheckIfLeaderPut(reply)
+		reply.Err = Timedout
+		// _, ChExists := kv.IndexChannelMap[Index]
+		// if ChExists {
+		// 	kv.mu.Lock()
+		// 	close(kv.IndexChannelMap[Index])
+		// 	delete(kv.IndexChannelMap, Index)
+		// 	kv.mu.Unlock()
+		// }
+		return
+	}
+
+}
+
+//
+// the tester calls Kill() when a KVServer instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+<A NAME="8"></A><FONT color = #00FFFF><A HREF="match85-1.html#8" TARGET="1"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *KVServer) Kill() {
+
+	kv.rf.Kill()
+	// Your code here, if desired.
+	kv.mu.Lock()
+	// fmt.Printf("Invoked Kill from KVServer: %d\n", kv.me)
+	kv.KillChannel &lt;- true
+	kv.mu.Unlock()
+	// fmt.Printf("Invoked Kill completed from KVServer: %d\n", kv.me)
+	close(kv.KillChannel)
+
+}
+
+func (kv *KVServer) ServerLogic() {
+</FONT><A NAME="1"></A><FONT color = #00FF00><A HREF="match85-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+
+	for {
+		select {
+		case &lt;-kv.KillChannel:
+			// fmt.Printf("KVSERVERAPPLY: Killed \n")
+			return
+		case Raftoutput := &lt;-kv.applyCh:
+			// fmt.Printf("KVSERVERAPPLY: \n")
+			//fmt.Printf()
+			// fmt.Println(Raftoutput)
+			if Raftoutput.CommandValid {
+				RCop := Raftoutput.Command.(Op)
+				COp := RCop.COp
+				CClientID := RCop.ClientID
+				CRequestID := RCop.RequestID
+				CIndex := Raftoutput.CommandIndex
+</FONT>				CKey := RCop.Key
+				kv.mu.Lock()
+				Response, CIDExists := kv.RequestCache[CClientID]
+				kv.mu.Unlock()
+				if CIDExists && Response.RequestID == CRequestID {
+					//fmt.Printf("KVSERVERAPPLY: Duplicate\n")
+					continue
+				}
+				kv.mu.Lock()
+				switch COp {
+				case "Get":
+					_, Exists := kv.Localdb[CKey]
+					if !Exists {
+						kv.Localdb[CKey] = ""
+					}
+					kv.RequestCache[CClientID] = CacheValue{
+						RequestID: CRequestID,
+						Key:       CKey,
+						GetResponse: GetReply{
+							Value:       kv.Localdb[CKey],
+							Err:         OK,
+							WrongLeader: false,
+						},
+					}
+				case "Put":
+					// fmt.Printf("KVSERVERAPPLY: Put apply channel\n")
+					kv.Localdb[CKey] = RCop.Value
+<A NAME="9"></A><FONT color = #FF00FF><A HREF="match85-1.html#9" TARGET="1"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+					kv.RequestCache[CClientID] = CacheValue{
+						RequestID: CRequestID,
+						Key:       CKey,
+						PutResponse: PutAppendReply{
+							Err:         OK,
+							WrongLeader: false,
+</FONT>						},
+					}
+				case "Append":
+					// fmt.Printf("KVSERVERAPPLY: Append apply channel\n")
+					kv.Localdb[CKey] += RCop.Value
+<A NAME="10"></A><FONT color = #FF0000><A HREF="match85-1.html#10" TARGET="1"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+					kv.RequestCache[CClientID] = CacheValue{
+						RequestID: CRequestID,
+						Key:       CKey,
+						PutResponse: PutAppendReply{
+							Err:         OK,
+							WrongLeader: false,
+</FONT><A NAME="2"></A><FONT color = #0000FF><A HREF="match85-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+						},
+					}
+				default:
+				}
+
+				ChanReceiver, ChExists := kv.IndexChannelMap[CIndex]
+
+				if ChExists {
+					// fmt.Printf("KVSERVERAPPLY: Waking up ChanReceiver\n")
+					// fmt.Println(Raftoutput)
+					// select {
+					// case &lt;-ChanReceiver:
+					// default:
+					// }
+					ChanReceiver &lt;- Raftoutput
+					// fmt.Printf("KVSERVERAPPLY: Woken up ChanReceiver\n")
+					//kv.mu.Lock()
+					close(kv.IndexChannelMap[CIndex])
+					delete(kv.IndexChannelMap, CIndex)
+					//kv.mu.Unlock()
+				}
+				kv.mu.Unlock()
+
+			}
+		}
+	}
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Raft to
+// form the fault-tolerant key/value service.
+// me is the index of the current server in servers[].
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+// the k/v server should snapshot when Raft's saved state exceeds maxraftstate bytes,
+// in order to allow Raft to garbage-collect its log. if maxraftstate is -1,
+// you don't need to snapshot.
+// StartKVServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
+</FONT>	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+
+	kv := new(KVServer)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+
+	// You may need initialization code here.
+
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+	kv.Localdb = make(map[string]string)
+	kv.IndexChannelMap = make(map[int]chan raft.ApplyMsg)
+	kv.RequestCache = make(map[int64]CacheValue)
+
+	kv.RequestTimeout = 500
+	kv.KillChannel = make(chan bool, 1)
+
+	// You may need initialization code here.
+	go kv.ServerLogic()
+
+	return kv
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

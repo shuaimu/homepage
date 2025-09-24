@@ -1,0 +1,119 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-4molybdenum2/src/deptran/raft/commo.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-4molybdenum2/src/deptran/raft/commo.cc<p><PRE>
+
+#include "commo.h"
+#include "../rcc/graph.h"
+#include "../rcc/graph_marshaler.h"
+#include "../command.h"
+#include "../procedure.h"
+#include "../command_marshaler.h"
+#include "raft_rpc.h"
+#include "macros.h"
+
+namespace janus {
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match13-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_7.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+RaftCommo::RaftCommo(PollMgr* poll) : Communicator(poll) {
+}
+
+void RaftCommo::SendRequestVote(parid_t par_id,
+                                siteid_t site_id,
+                                uint64_t arg1,
+                                uint64_t arg2,
+                                int64_t arg3,
+                                int64_t arg4,
+                                const std::function&lt;void(uint64_t&, bool_t&)&gt;& cb) {
+</FONT>  /*
+   * Example code for sending a single RPC to server at site_id
+   * You may modify and use this function or just use it as a reference
+   */
+  auto proxies = rpc_par_proxies_[par_id];
+  for (auto& p : proxies) {
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match13-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_7.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    if (p.first == site_id) {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [cb](Future* fu) {
+        /* this is a handler that will be invoked when the RPC returns */
+        uint64_t ret1 = 0;
+</FONT>        bool_t vote_granted = false;
+        /* retrieve RPC return values in order */
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match13-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_17.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        fu-&gt;get_reply() &gt;&gt; ret1;
+        fu-&gt;get_reply() &gt;&gt; vote_granted;
+        
+        /* process the RPC response here */
+        cb(ret1, vote_granted);
+      };
+      /* Always use Call_Async(proxy, RPC name, RPC args..., fuattr)
+      * to asynchronously invoke RPCs */
+      Call_Async(proxy, RequestVote, arg1, arg2, arg3, arg4, fuattr);
+    }
+  }
+}
+
+void RaftCommo::SendAppendEntries(parid_t par_id,
+                                  siteid_t site_id,
+                                  uint64_t arg1,
+                                  uint8_t arg2,
+                                  int64_t arg3,
+                                  int64_t arg4,
+                                  vector&lt;RaftLog&gt; arg5,
+                                  int64_t arg6,
+                                  //shared_ptr&lt;Marshallable&gt; cmd,
+                                  const std::function&lt;void(uint64_t&, bool_t&)&gt;& cb) {
+</FONT>  /*
+   * More example code for sending a single RPC to server at site_id
+   * You may modify and use this function or just use it as a reference
+   */
+  auto proxies = rpc_par_proxies_[par_id];
+  for (auto& p : proxies) {
+    if (p.first == site_id) {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [cb](Future* fu) {
+        uint64_t term = 0;
+        bool_t followerAppendOK = false;
+        fu-&gt;get_reply() &gt;&gt; term &gt;&gt; followerAppendOK;
+        cb(term, followerAppendOK);
+      };
+      /* wrap Marshallable in a MarshallDeputy to send over RPC */
+      //MarshallDeputy md(cmd);
+      Call_Async(proxy, AppendEntries, arg1, arg2, arg3, arg4, arg5, arg6, fuattr);
+    }
+  }
+}
+
+shared_ptr&lt;IntEvent&gt; 
+RaftCommo::SendString(parid_t par_id, siteid_t site_id, const string& msg, string* res) {
+  auto proxies = rpc_par_proxies_[par_id];
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  for (auto& p : proxies) {
+    if (p.first == site_id) {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [res,ev](Future* fu) {
+        fu-&gt;get_reply() &gt;&gt; *res;
+        ev-&gt;Set(1);
+      };
+      /* wrap Marshallable in a MarshallDeputy to send over RPC */
+      Call_Async(proxy, HelloRpc, msg, fuattr);
+    }
+  }
+  return ev;
+}
+
+
+} // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

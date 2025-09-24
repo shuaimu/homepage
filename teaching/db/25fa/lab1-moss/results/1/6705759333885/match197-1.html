@@ -1,0 +1,92 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-gaurav-aggarwall/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-sayedbilalbari/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+#include&lt;chrono&gt;
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+int RaftServiceImpl::ReturnLastLogTerm(){
+    int returnVal=-1;
+    svr_-&gt;mtx_.lock();
+    returnVal = svr_-&gt;stateLog.size()-1;
+    svr_-&gt;mtx_.unlock();
+    return returnVal;
+}
+
+
+void RaftServiceImpl::HandleRequestVote(const uint64_t& term,
+                                        const siteid_t& candidateId,
+                                        const uint64_t& lastLogIndex,
+                                        const uint64_t& lastLogTerm,
+                                        uint64_t* returnTerm,
+                                        bool_t* vote_granted,
+                                        rrr::DeferredReply* defer) {
+    svr_-&gt;HandleRequestVote( term,
+                            candidateId,
+                            lastLogIndex,
+                            lastLogTerm,
+                            returnTerm,
+                            vote_granted);
+    defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleAppendEntriesCombined(
+                                        const siteid_t& candidateId,
+                                        const uint64_t& prevLogIndex,
+                                        const uint64_t& prevLogTerm,
+                                        const uint64_t& logTerm,
+                                        const uint64_t& currentTerm,
+                                        const uint64_t& leaderCommitIndex,
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match197-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_26.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                        const uint64_t& isHeartbeat,
+                                        const MarshallDeputy& md_cmd,
+                                        uint64_t* followerLogSize,
+                                        uint64_t* returnTerm,
+                                        bool_t* followerAppendOK,
+                                        rrr::DeferredReply* defer) {
+  svr_-&gt;HandleAppendEntriesCombined(
+                        candidateId,
+                        prevLogIndex,
+                        prevLogTerm,
+                        logTerm,
+                        currentTerm,
+                        leaderCommitIndex,
+                        isHeartbeat,
+                        md_cmd,
+                        followerLogSize,
+                        returnTerm,
+                        followerAppendOK
+                    );
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+</FONT>                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("receive an rpc: %s", req.c_str());
+  *res = "world";
+  defer-&gt;reply();
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

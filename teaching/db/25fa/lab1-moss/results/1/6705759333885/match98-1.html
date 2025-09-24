@@ -1,0 +1,592 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-imtoobose/src/deptran/raft/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-teja219/src/deptran/raft/server.cc<p><PRE>
+
+//Dummy change - 2
+//Dummy change - 3
+#include "server.h"
+// #include "paxos_worker.h"
+#include "exec.h"
+#include "frame.h"
+#include "coordinator.h"
+#include "../classic/tpc_command.h"
+#include &lt;boost/fiber/all.hpp&gt;
+
+namespace janus {
+
+RaftServer::RaftServer(Frame * frame) {
+  frame_ = frame ;
+  currentState = FOLLOWER;
+  currentTerm = 0;
+  votedFor = -1;
+  log = shared_ptr&lt;vector&lt;RaftLogEntry&gt;&gt;(new vector&lt;RaftLogEntry&gt;());
+  emptyHeartBeat = shared_ptr&lt;RaftCommit&gt;(new RaftCommit());
+  totalServers=5;
+//  shared_ptr&lt;std::vector&lt;int&gt;&gt; nextIndex = shared_ptr&lt;std::vector&lt;int&gt;&gt;(new vector&lt;int&gt;(totalServers,1));
+//  shared_ptr&lt;std::vector&lt;int&gt;&gt; matchIndex = shared_ptr&lt;std::vector&lt;int&gt;&gt;(new vector&lt;int&gt;(totalServers,1));
+  commitIndex=-1;
+  lasApplied=-1;
+  /* Your code here for server initialization. Note that this function is 
+     called in a different OS thread. Be careful about thread safety if 
+     you want to initialize variables here. */
+}
+
+RaftServer::~RaftServer() {
+  /* Your code here for server teardown */
+
+}
+
+void RaftServer::Setup() {
+  /* Your code here for server setup. Due to the asynchronous nature of the 
+     framework, this function could be called after a RPC handler is triggered. 
+     Your code should be aware of that. This function is always called in the 
+     same OS thread as the RPC handlers. */
+  //SyncRpcExample();
+
+//    thread t1([](){
+//
+//    });
+
+    Coroutine::CreateRun([this]() {
+        this-&gt;electionTimer(0);
+    });
+}
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match98-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+bool RaftServer::Start(shared_ptr&lt;Marshallable&gt; &cmd,
+                       uint64_t *index,
+                       uint64_t *term) {
+  /* Your code here. This function can be called from another OS thread. */
+  *index = 0;
+  *term = 0;
+  bool is_leader=false;
+</FONT>  this-&gt;mtx_.lock();
+  auto& command = dynamic_cast&lt;TpcCommitCommand&&gt;(*(cmd));
+  if(this-&gt;currentState == LEADER){
+        is_leader = true;
+        *index = this-&gt;log-&gt;size()+1;
+        *term = this-&gt;currentTerm;
+        shared_ptr&lt;RaftLogEntry&gt; z = shared_ptr&lt;RaftLogEntry&gt;(new RaftLogEntry());
+        z-&gt;SetMarshallable(cmd);
+        z-&gt;term = this-&gt;currentTerm;
+        Log_info("[Server:%d]Leader!!Adding a log entry:%d!!! with term:%d",this-&gt;loc_id_,command.tx_id_,z-&gt;term);
+        this-&gt;log-&gt;push_back(*z);
+        this-&gt;printLog();
+  }
+  else{
+      Log_info("[Server:%d]Client tried adding a log entry but I am not a leader:%d!!!",this-&gt;loc_id_,command.tx_id_);
+  }
+  //Log_info("[Server:%d]THEJESH!!!!!RELEASING MUTEX!!!! ",this-&gt;loc_id_);
+  this-&gt;mtx_.unlock();
+  //Handle client requests here if you are a leader
+  return is_leader;
+}
+
+
+void RaftServer::GetState(bool *is_leader, uint64_t *term) {
+  /* Your code here. This function can be called from another OS thread. */
+  *is_leader = false;
+  this-&gt;mtx_.lock();
+  ////Log_info("[Server:%d]THEJESH!!!!!GOT MUTEX!!!! ",this-&gt;loc_id_);
+  if(this-&gt;currentState == LEADER){
+      //Log_info("Look here THEJESH!!!!, you are saying %d is leader for term: %d",this-&gt;loc_id_,this-&gt;currentTerm);
+      //Log_info("THREAD ID- getstate - server - !!!!!!!!!!!!:%d",std::this_thread::get_id());
+      *is_leader = true;
+  }
+  *term = this-&gt;currentTerm;
+  //Log_info("[Server:%d]THEJESH!!!!!RELEASING MUTEX!!!! ",this-&gt;loc_id_);
+this-&gt;mtx_.unlock();
+  return;
+}
+//This election timer is both for exiting a candidate state -&gt; candidate state, follower state -&gt; candidate state
+void RaftServer::electionTimer(int x){
+    srand(time(0));
+    //(int) (10.0 * (rand() / (RAND_MAX + 1.0)))
+    std::chrono::milliseconds timeout = std::chrono::milliseconds(((int) (300.0 * (rand() / (RAND_MAX + 1.0)))) + 900);//timer1
+    //std::chrono::milliseconds timeout = std::chrono::milliseconds(rand() % 300 + 500);//timer1
+    this-&gt;mtx_.lock();
+    ////Log_info("[Server:%d]THEJESH!!!!!GOT MUTEX!!!! ",this-&gt;loc_id_);
+    //5 milliseconds
+    int startTerm = this-&gt;currentTerm;
+    //Log_info("[Server:%d]THEJESH!!!!!RELEASING MUTEX!!!! ",this-&gt;loc_id_);
+    this-&gt;mtx_.unlock();
+    std::chrono::microseconds ticker = std::chrono::milliseconds(10);//timer2
+
+    while (1) {
+        auto sp_e = Reactor::CreateSpEvent&lt;TimeoutEvent&gt;(ticker.count());
+        sp_e-&gt;Wait();
+        this-&gt;mtx_.lock();
+        if(x==5){
+            Log_info("timer-5 [Server:%d]THEJESH!!!!!GOT MUTEX within election timer!!!! ",this-&gt;loc_id_);
+            Log_info("timer-5 [Server:%d]ticking for election, currently in term:%d\n",this-&gt;loc_id_,this-&gt;currentTerm);
+        }
+
+        if (startTerm != this-&gt;currentTerm) {
+            this-&gt;electionResetTimePoint = std::chrono::system_clock::now();
+            //Log_info("[Server:%d]THEJESH!!!!!RELEASING MUTEX within election timer!!!! ",this-&gt;loc_id_);
+            this-&gt;mtx_.unlock();
+            //Log_info("[Server:%d] Returning as the term has changed, we must have received an RPC with greater "
+                     //"term we must end this term[%d] and start new[%d] \n",this-&gt;loc_id_,startTerm,this-&gt;currentTerm);
+                Coroutine::CreateRun([this]() {
+                    this-&gt;electionTimer(1);
+                });
+            return;
+        }
+        if (this-&gt;currentState != CANDIDATE && this-&gt;currentState != FOLLOWER) {
+            //Log_info("Returning as it is a leader");
+            //Log_info("[Server:%d]THEJESH!!!!!RELEASING MUTEX!!!! ",this-&gt;loc_id_);
+            this-&gt;mtx_.unlock();
+            return;
+        }
+        //We are resetting electionTimepoint whenever we are noticing there is a heartbeat or we received a greater term RPC
+        std::chrono::system_clock::time_point currentTime = std::chrono::system_clock::now();
+        std::chrono::milliseconds timeElapsed = std::chrono::duration_cast&lt;std::chrono::milliseconds&gt;(
+                currentTime - this-&gt;electionResetTimePoint);
+        if(timeElapsed &lt; timeout){
+            //Log_info("[Sever:%d]timer didn't out, the time elapsed is %d and timeout is %d\n",this-&gt;loc_id_,timeElapsed.count(),timeout.count());
+        }
+        if (timeElapsed &gt; timeout) {
+            //Log_info("[Sever:%d]timer ran out, starting a new election\n",this-&gt;loc_id_);
+            this-&gt;startElection();
+            //Log_info("[Server:%d]THEJESH!!!!!RELEASING MUTEX!!!! ",this-&gt;loc_id_);
+this-&gt;mtx_.unlock();
+            return;
+        }
+        //Log_info("[Server:%d]THEJESH!!!!!RELEASING MUTEX!!!! ",this-&gt;loc_id_);
+        this-&gt;mtx_.unlock();
+    }
+
+}
+
+void RaftServer::becomeLeader(){
+    this-&gt;currentState = LEADER;
+    for(int i=0;i&lt;this-&gt;totalServers;i++){
+        this-&gt;nextIndex-&gt;at(i)=this-&gt;log-&gt;size();
+        this-&gt;matchIndex-&gt;at(i)=-1;
+    }
+    Coroutine::CreateRun([this](){
+        try{
+            //Send heartbeats every 100 milliseconds, so that followers know it is the leader
+            std::chrono::microseconds ticker = std::chrono::milliseconds(250);//timer3
+            while(1){
+                ////Log_info("Leader:%d is sending heart beat to servers\n",this-&gt;loc_id_);
+                this-&gt;sendHeartBeats();
+                this-&gt;mtx_.lock();
+                int nBool = true;
+                for(int i=0;i&lt;this-&gt;totalServers;i++){
+                    if(this-&gt;matchIndex-&gt;at(i) != this-&gt;commitIndex){
+                        nBool = false;
+                    }
+                }
+                if(this-&gt;log-&gt;size()==0){
+                    Log_info("It is trying for lower RPC's even more");
+                    ticker = std::chrono::milliseconds(300);
+                }
+                else if(this-&gt;commitIndex == this-&gt;log-&gt;size()-1 && nBool){
+                    Log_info("It is trying for lower RPC's");
+                    //Relax, no need to speed-up now, everything is upto date now
+                    ticker = std::chrono::milliseconds(270);
+                }
+                else{
+                    ticker = std::chrono::milliseconds(100);
+                }
+
+                this-&gt;mtx_.unlock();
+                auto sp_e = Reactor::CreateSpEvent&lt;TimeoutEvent&gt;(ticker.count());
+                sp_e-&gt;Wait();
+                ////Log_info("THEJESH!!!!! WAITING FOR MUTEX!!!! - 2");
+                this-&gt;mtx_.lock();
+                ////Log_info("[Server:%d]THEJESH!!!!!GOT MUTEX!!!! ",this-&gt;loc_id_);
+                if(this-&gt;currentState != LEADER){
+                    Log_info("[Server:%d]I am not a leader: I will now start a election timer ",this-&gt;loc_id_);
+                    Coroutine::CreateRun([this]() {
+                        this-&gt;electionTimer(5);
+                    });
+                    this-&gt;mtx_.unlock();
+                    return;
+                }
+                //Log_info("[Server:%d]THEJESH!!!!!RELEASING MUTEX!!!! ",this-&gt;loc_id_);
+                this-&gt;mtx_.unlock();
+            }
+        } catch(...){
+            Log_info("LAUDA - caught exception here");
+        }
+    });
+
+}
+
+shared_ptr&lt;vector&lt;RaftLogEntry&gt; &gt; RaftServer::getLogsToSend(shared_ptr&lt;vector&lt;RaftLogEntry&gt;&gt; l,int index){
+    shared_ptr&lt;vector&lt;RaftLogEntry&gt; &gt; r(new vector&lt;RaftLogEntry&gt;());
+    for(int i=index;i&lt; l-&gt;size();i++){
+        r-&gt;push_back(l-&gt;at(i));
+    }
+    return r;
+}
+
+shared_ptr&lt;vector&lt;i64&gt; &gt; RaftServer::getLogTermsToSend(shared_ptr&lt;vector&lt;RaftLogEntry&gt;&gt; l,int index){
+    shared_ptr&lt;vector&lt;i64&gt; &gt; r(new vector&lt;i64&gt;());
+    for(int i=index;i&lt; l-&gt;size();i++){
+        r-&gt;push_back(l-&gt;at(i).term);
+    }
+    return r;
+}
+
+
+void RaftServer::printLog(){
+    string s = "";
+    for(RaftLogEntry rr: *(this-&gt;log)){
+        auto& command = dynamic_cast&lt;TpcCommitCommand&&gt;(*(rr.sp_data_));
+        //Log_info("%d.....",command.tx_id_);
+        s += to_string(command.tx_id_);
+        s += ",";
+    }
+    cout&lt;&lt;"[Server:"&lt;&lt;this-&gt;loc_id_&lt;&lt;"]"&lt;&lt;"Current log is:["&lt;&lt;s&lt;&lt;"]"&lt;&lt;" with commitIndex:"&lt;&lt;this-&gt;commitIndex&lt;&lt;endl;
+}
+void RaftServer::sendHeartBeats(){
+    this-&gt;mtx_.lock();
+////Log_info("[Server:%d]THEJESH!!!!!GOT MUTEX!!!! while sending heartbeats",this-&gt;loc_id_);
+    i64 savedTerm = this-&gt;currentTerm;
+    parid_t partitionId = this-&gt;partition_id_;
+
+    ////Log_info("THEJESH!!!!! DEEPER!!!! --- look here!-1");
+    ////Log_info("THEJESH!!!!! DEEPER!!!! --- look here!: %d",this-&gt;commo()-&gt;rpc_par_proxies_.size());
+    auto proxies = this-&gt;commo()-&gt;rpc_par_proxies_[this-&gt;partition_id_];
+    i64 leaderId = (i64)this-&gt;loc_id_;
+    //Log_info("[Server:%d]THEJESH!!!!!RELEASING MUTEX in sending heartbeats!!!! ",this-&gt;loc_id_);
+    this-&gt;mtx_.unlock();
+    //Log_info("THEJESH!!!!! DEEPER!!!! --- look here!-2");
+    for (auto& p : proxies) {
+        siteid_t peerId = p.first;
+        if(peerId != this-&gt;loc_id_){
+            Coroutine::CreateRun([partitionId,savedTerm,peerId,leaderId,this](){
+                std::chrono::microseconds ticker = std::chrono::milliseconds(100);
+                i64 responseTerm;
+                bool_t success;
+                this-&gt;mtx_.lock();
+                    int ni = this-&gt;nextIndex-&gt;at(peerId);
+                    i64 prevLogIndex=ni-1;
+                    i64 prevLogTerm=-1;
+                    if(prevLogIndex&gt;=0){
+                        prevLogTerm = this-&gt;log-&gt;at(prevLogIndex).term;
+                    }
+
+                    std::shared_ptr&lt;vector&lt;RaftLogEntry&gt;&gt; cmd = this-&gt;getLogsToSend(this-&gt;log,this-&gt;nextIndex-&gt;at(peerId));
+                    std::shared_ptr&lt;vector&lt;i64&gt;&gt; logTerms = this-&gt;getLogTermsToSend(this-&gt;log,this-&gt;nextIndex-&gt;at(peerId));
+                    if(cmd-&gt;size()&gt;0){
+                       //Log_info("Segmentation fault test3: term: %d, size: %d",cmd-&gt;at(0),cmd-&gt;size());
+                    }
+
+                    i64 commitIndex = this-&gt;commitIndex;
+                    this-&gt;mtx_.unlock();
+                    //shared_ptr&lt;vector&lt;int&gt;&gt; cmd(new vector&lt;int&gt;());
+
+                   //Log_info("[Server:%d]Sending heartbeat requests to server:%d for term:%d,"
+//                             " prevIndex:%d,"
+//                             "prevLogTerm:%d,"
+//                             "commitIndex:%d",this-&gt;loc_id_,peerId,savedTerm,prevLogIndex,prevLogTerm,commitIndex);
+                    string sss = "["+to_string(this-&gt;loc_id_)+"][";
+                    for(RaftLogEntry rr: *(cmd)){
+                        auto& command = dynamic_cast&lt;TpcCommitCommand&&gt;(*(rr.sp_data_));
+
+                        sss += to_string(command.tx_id_);
+                        sss += ",";
+                    }
+                    sss += "]";
+                    cout&lt;&lt;sss&lt;&lt;endl;
+                    auto event = this-&gt;commo()-&gt;SendAppendEntries(partitionId,peerId, cmd, logTerms,
+                                                              savedTerm,
+                                                              leaderId,
+                                                              prevLogIndex,
+                                                              prevLogTerm,
+                                                              commitIndex,
+                                                              &responseTerm,&success);
+
+                event-&gt;Wait(); //timer4
+                //Log_info("MAD LEADER");
+                //Log_info("[Server:%d]LEADER RECEIVED RESPONSE FOR HEARTBEATS from server:%d",this-&gt;loc_id_,peerId);
+                //Log_info("[Server:%d]Received heartbeat response from server:%d for term:%d",this-&gt;loc_id_,peerId,savedTerm);
+
+                this-&gt;mtx_.lock();
+                //Log_info("[Server:%d]THEJESH!!!!!GOT MUTEX!!!! ",this-&gt;loc_id_);
+                if (event-&gt;status_ == Event::TIMEOUT) {
+                    Log_info("[Server:%d] heartbeat response from server:%d timed out",this-&gt;loc_id_,peerId,savedTerm);
+                  // //Log_info("[Server:%d]THEJESH!!!!!RELEASING MUTEX!!!! ",this-&gt;loc_id_);
+                    this-&gt;mtx_.unlock();
+                    return;
+                } else {
+                     if(this-&gt;currentState != LEADER || this-&gt;currentTerm != savedTerm){
+                         this-&gt;mtx_.unlock();
+                         return;
+                     }
+
+                    //Log_info("Am I getting segmentation fault here ? - 4.5\n");
+//                    *responseTerm = 0;
+                    //Log_info("Am I getting segmentation fault here ? - 5\n");
+                    if(responseTerm&gt;savedTerm){
+                        Log_info("[Server:%d]Received heartbeat response with greater term %d from server:%d for term:%d correctly",this-&gt;loc_id_,responseTerm,peerId,savedTerm);
+                       ////Log_info("Am I getting segmentation fault here ? - 6\n");
+                        this-&gt;becomeFollower(responseTerm);
+                        this-&gt;mtx_.unlock();
+                        return;
+                    }
+                   //Log_info("[Server:%d]Received heartbeat response from peer:%d for term:%d,"
+    //                         " prevIndex:%d,"
+  //                           "prevLogTerm:%d,"
+//                             "commitIndex:%d, success:%d",this-&gt;loc_id_,peerId,savedTerm,prevLogIndex,prevLogTerm,commitIndex,success);
+                    if(this-&gt;currentState == LEADER && savedTerm == responseTerm){
+                        if(success){
+
+                            //Trying to update the commitIndex, note that we cannot commit, if our log entries are of older term.
+                            //In which we may have to send an empty log entry, will implement it later
+                            this-&gt;nextIndex-&gt;at(peerId) = ni + cmd-&gt;size();
+                            this-&gt;matchIndex-&gt;at(peerId) = this-&gt;nextIndex-&gt;at(peerId)-1;
+                           //Log_info("[Server:%d]Leader updating next index to %d and match index to %d for peer:%d \n",this-&gt;loc_id_,
+//                                     this-&gt;nextIndex-&gt;at(peerId),
+//                                     this-&gt;matchIndex-&gt;at(peerId),
+//                                     peerId
+//                                     );
+                            //int cm.matchIndex[peerId] = cm.nextIndex[peerId] - 1
+
+                            int savedIndex = commitIndex;
+                            for(int i=commitIndex+1;i&lt;this-&gt;log-&gt;size();i++){
+       //Log_info("[Server:%d]Leader has commitIndex:%d and matchIndexe's [%d,%d,%d,%d,%d], log size:%d,currentTerm:%d,logTerm:%d",
+//                                this-&gt;loc_id_,
+//                                commitIndex,
+//                                this-&gt;matchIndex-&gt;at(0),
+//                                        this-&gt;matchIndex-&gt;at(1),
+//                                        this-&gt;matchIndex-&gt;at(2),
+//                                        this-&gt;matchIndex-&gt;at(3),
+//                                        this-&gt;matchIndex-&gt;at(4),
+//                                        this-&gt;log-&gt;size(),
+//                                        this-&gt;currentTerm,
+//                                        this-&gt;log-&gt;at(i).term
+//                                );
+
+                                //matches with current term, we ignore older entries even if we have received a consensus
+                                //Only commit if the last ter of the log matches with the currenTerm
+                                if(this-&gt;log-&gt;at(i).term==this-&gt;currentTerm){
+                                    int matchCount = 1;//self vote
+                                   //Log_info("[Server:%d] Trying to increase match count,i:%d,matchIndex:%d,totalServers:%d",this-&gt;loc_id_,i,this-&gt;matchIndex-&gt;at(0),this-&gt;totalServers);
+                                    for(int p=0;p&lt;this-&gt;totalServers;p++){
+                                        //Log_info("[Server:%d] Trying to increase match count,i:%d,matchIndex:%d",this-&gt;loc_id_,i,this-&gt;matchIndex-&gt;at(0));
+                                        if(this-&gt;matchIndex-&gt;at(p)&gt;=i){
+                                           //Log_info("[Server:%d] increasing matchcount for index:%d for peer:%d",this-&gt;loc_id_,i,p);
+                                            matchCount++;
+                                        }
+                                    }
+                                    if(matchCount &gt;= 3){//Received majority
+                                        this-&gt;commitIndex = i;
+                                        Log_info("[Server:%d]Leader updating commit index to %d!!!! ",this-&gt;loc_id_,this-&gt;commitIndex);
+                                        this-&gt;printLog();
+                                       //Log_info("[Server:%d]Current log is %s!!!! ",this-&gt;loc_id_,s);
+                                        //this-&gt;app_next_(*(this-&gt;log-&gt;at(this-&gt;commitIndex).sp_data_));
+                                    }
+                                }
+                            }
+                            if(this-&gt;commitIndex!=savedIndex){
+                                //todo: We need to call the state machine
+                                if(this-&gt;commitIndex &gt; this-&gt;lasApplied){
+                                    for(int i=this-&gt;lasApplied+1;i&lt;=this-&gt;commitIndex;i++){
+                                        this-&gt;app_next_(*(this-&gt;log-&gt;at(i).sp_data_));
+                                    }
+                                    this-&gt;lasApplied = this-&gt;commitIndex;
+                                }
+                            }
+
+                        } else {
+                            //It has &lt;= term, but for some reason it rejected this entry, lets decrement the next index and try again
+                            this-&gt;nextIndex-&gt;at(peerId)=ni-1;
+                        }
+                    }
+                    //Log_info("Am I getting segmentation fault here ? - 7\n");
+                   //Log_info("[Server:%d]THEJESH!!!!!RELEASING MUTEX!!!! ",this-&gt;loc_id_);
+                    this-&gt;mtx_.unlock();
+                    return;
+                }
+
+               //Log_info("[Server:%d]THEJESH!!!!!RELEASING MUTEX!!!! ",this-&gt;loc_id_);
+                this-&gt;mtx_.unlock();
+                return;
+            });
+        }
+    }
+}
+
+
+
+void RaftServer::becomeFollower(int new_term){
+    this-&gt;currentState = FOLLOWER;
+    this-&gt;currentTerm = new_term;
+    this-&gt;votedFor = -1;
+    this-&gt;electionResetTimePoint = std::chrono::system_clock::now();
+
+//    Coroutine::CreateRun([this]() {
+//        this-&gt;electionTimer(1);
+//    });
+}
+
+void RaftServer::becomeFollower2(int new_term){
+        this-&gt;currentState = FOLLOWER;
+        this-&gt;currentTerm = new_term;
+        this-&gt;votedFor = -1;
+        this-&gt;electionResetTimePoint = std::chrono::system_clock::now();
+
+    Coroutine::CreateRun([this]() {
+        this-&gt;electionTimer(2);
+    });
+    }
+void RaftServer::startElection(){
+
+        this-&gt;currentState = CANDIDATE;
+        this-&gt;currentTerm = this-&gt;currentTerm+1;
+        i64 savedCurrentTerm = this-&gt;currentTerm;
+        this-&gt;electionResetTimePoint = std::chrono::system_clock::now();
+        this-&gt;votedFor = this-&gt;loc_id_;
+        Log_info("[Server: %d]became candidate for term:%d - 1\n", this-&gt;loc_id_, savedCurrentTerm);
+        int32_t* votesReceived = new int32_t(1);
+        shared_ptr&lt;int32_t&gt; votesPointer(votesReceived);
+
+       //Log_info("Server: %d became candidate for term:%d - 2\n", this-&gt;loc_id_, savedCurrentTerm);
+        if(this-&gt;partition_id_ &gt;= this-&gt;commo()-&gt;rpc_par_proxies_.size()){
+            Log_info("Overflow -1");
+        }
+        auto proxies = this-&gt;commo()-&gt;rpc_par_proxies_[this-&gt;partition_id_];
+        int peerSize = proxies.size();
+       //Log_info("Server: %d became candidate for term:%d - 3\n", this-&gt;loc_id_, savedCurrentTerm);
+        for (auto& p : proxies) {
+            siteid_t peerId = p.first;
+            if(peerId != this-&gt;loc_id_){
+                Coroutine::CreateRun([votesPointer, savedCurrentTerm,peerId, peerSize, this](){
+                    this-&gt;mtx_.lock();
+                    //Log_info("[Server:%d]THEJESH!!!!!GOT MUTEX!!!! ",this-&gt;loc_id_);
+                   //Log_info("[Server:%d] is sending a vote request for term:%d,to peer:%d in a new routine\n", this-&gt;loc_id_,
+//                             savedCurrentTerm, peerId);
+//
+                    i64 response_term;
+                    bool_t vote_granted;
+
+                    i64 lastLogIndex = this-&gt;log-&gt;size()-1;
+                    i64 lastLogTerm = lastLogIndex &gt;= 0 ? this-&gt;log-&gt;at(lastLogIndex).term : -1;
+                    if(this-&gt;currentState != CANDIDATE){
+                        Log_info("[Server:%d]State changed to %d while waiting for vote reply",this-&gt;loc_id_,this-&gt;currentState);
+                        mtx_.unlock();
+                        return;
+                    }
+                    this-&gt;mtx_.unlock();
+                    auto event = this-&gt;commo()-&gt;SendRequestVote(this-&gt;partition_id_,peerId,&response_term,&vote_granted,savedCurrentTerm,this-&gt;loc_id_,lastLogIndex,lastLogTerm);
+////
+                    event-&gt;Wait(); //Wait for 10000 microseconds, ie 10 milli second
+                    this-&gt;mtx_.lock();
+                    Log_info("Event Status:TTTTTTT:%d",event-&gt;status_);
+                    if (event-&gt;status_ == Event::TIMEOUT) {
+                        Log_info("[Server:%d] Timeout happened while waiting for a vote response for term:%d,from peer:%d in a new routine\n", this-&gt;loc_id_,
+                                 savedCurrentTerm, peerId);
+//                       Log_info("timeout happens - Thejesh");
+//                        mtx_.unlock();
+//                        return;
+                    } else {
+                        if(this-&gt;currentState != CANDIDATE || this-&gt;currentTerm!=savedCurrentTerm){
+
+                            Log_info("[Server:%d]State changed to %d while waiting for vote reply",this-&gt;loc_id_,this-&gt;currentState);
+                            mtx_.unlock();
+                            return;
+                        }
+                        if(savedCurrentTerm &lt; response_term){
+                            Log_info("Term out of date, server: %d is stopping for term: %d",this-&gt;loc_id_,savedCurrentTerm);
+                            this-&gt;becomeFollower2(response_term);
+                            mtx_.unlock();
+                            return;
+                        } else if(savedCurrentTerm == response_term){
+                            if(vote_granted){
+                               Log_info("[Server:%d]is trying to become leader of term: %d!!!, it has %d votes",this-&gt;loc_id_,savedCurrentTerm,*votesPointer);
+                                *votesPointer = *votesPointer + 1;
+                                if(*votesPointer &gt;= 3){//todo: Can we get it from else where ?
+                                    Log_info("Candidate: %d is the leader of term: %d!!!, Initiating the heartbeat protocol",this-&gt;loc_id_,savedCurrentTerm);
+                                    becomeLeader();
+                                    mtx_.unlock();
+                                    return;
+                                }
+                            }
+                        }
+
+                    }
+                   //Log_info("[Server:%d]THEJESH!!!!!RELEASING MUTEX!!!! ",this-&gt;loc_id_);
+                    this-&gt;mtx_.unlock();
+                    return;
+                });
+            }
+        }
+        Log_info("Overflow -2");
+        Coroutine::CreateRun([this]() {
+            this-&gt;electionTimer(1);
+        });
+}
+void RaftServer::SyncRpcExample() {
+  /* This is an example of synchronous RPC using coroutine; feel free to 
+     modify this function to dispatch/receive your own messages. 
+     You can refer to the other function examples in commo.h/cc on how 
+     to send/recv a Marshallable object over RPC. */
+  Coroutine::CreateRun([this](){
+    string res;
+    cout&lt;&lt;"Waiting for 5 milliseconds seconds"&lt;&lt;endl;
+    auto timeout = 1 * 5000;
+    auto sp_e = Reactor::CreateSpEvent&lt;TimeoutEvent&gt;(timeout);
+    sp_e-&gt;Wait();
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match98-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    auto event = commo()-&gt;SendString(0, /* partition id is always 0 for lab1 */
+                                     0, "hello", &res);
+    event-&gt;Wait(1000000); //timeout after 1000000us=1s
+    if (event-&gt;status_ == Event::TIMEOUT) {
+     //Log_info("timeout happens");
+    } else {
+     //Log_info("rpc response is: %s", res.c_str());
+    }
+  });
+}
+
+/* Do not modify any code below here */
+
+void RaftServer::Disconnect(const bool disconnect) {
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+  verify(disconnected_ != disconnect);
+  // global map of rpc_par_proxies_ values accessed by partition then by site
+  static map&lt;parid_t, map&lt;siteid_t, map&lt;siteid_t, vector&lt;SiteProxyPair&gt;&gt;&gt;&gt; _proxies{};
+</FONT>  if (_proxies.find(partition_id_) == _proxies.end()) {
+    _proxies[partition_id_] = {};
+  }
+  RaftCommo *c = (RaftCommo*) commo();
+  if (disconnect) {
+    verify(_proxies[partition_id_][loc_id_].size() == 0);
+    verify(c-&gt;rpc_par_proxies_.size() &gt; 0);
+    auto sz = c-&gt;rpc_par_proxies_.size();
+    _proxies[partition_id_][loc_id_].insert(c-&gt;rpc_par_proxies_.begin(), c-&gt;rpc_par_proxies_.end());
+    c-&gt;rpc_par_proxies_ = {};
+    verify(_proxies[partition_id_][loc_id_].size() == sz);
+    verify(c-&gt;rpc_par_proxies_.size() == 0);
+  } else {
+    verify(_proxies[partition_id_][loc_id_].size() &gt; 0);
+    auto sz = _proxies[partition_id_][loc_id_].size();
+    c-&gt;rpc_par_proxies_ = {};
+    c-&gt;rpc_par_proxies_.insert(_proxies[partition_id_][loc_id_].begin(), _proxies[partition_id_][loc_id_].end());
+    _proxies[partition_id_][loc_id_] = {};
+    verify(_proxies[partition_id_][loc_id_].size() == 0);
+    verify(c-&gt;rpc_par_proxies_.size() == sz);
+  }
+  disconnected_ = disconnect;
+}
+
+bool RaftServer::IsDisconnected() {
+  return disconnected_;
+}
+
+} // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

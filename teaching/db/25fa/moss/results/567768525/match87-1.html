@@ -1,0 +1,278 @@
+<HTML>
+<HEAD>
+<TITLE>./spring19/sshshao/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./spring19/sshshao/src/shardkv/server.go<p><PRE>
+package shardkv
+
+import (
+	"context"
+	"labgob"
+	"labrpc"
+	"raft"
+	"shardmaster"
+	"sync"
+)
+
+//TODO: shards done shifting should not be blocked
+//TODO: snapshot config change
+
+type ShardKV struct {
+	mu           sync.Mutex
+	me           int
+	rf           *raft.Raft
+	applyCh      chan raft.ApplyMsg
+	make_end     func(string) *labrpc.ClientEnd
+	gid          int
+	masters      []*labrpc.ClientEnd
+	maxraftstate int // snapshot if log grows this big
+
+	// Your definitions here.
+
+	kvMap             map[int](map[string]string)
+	requestChan       map[int64](chan bool)
+	clientLastRequest map[int64]OpResult
+
+	mck              *shardmaster.Clerk
+	shards           [shardmaster.NShards]ShardInfo
+	configureChannel map[int64](chan bool)
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match87-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	ctx    context.Context
+	cancel context.CancelFunc
+}
+
+//
+// the tester calls Kill() when a ShardKV instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *ShardKV) Kill() {
+	kv.rf.Kill()
+
+	// Your code here, if desired.
+	DPrintf("\033[31m[ShardKV %d] Killed\033[37m", kv.me)
+}
+
+//
+// servers[] contains the ports of the servers in this group.
+//
+// me is the index of the current server in servers[].
+//
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+//
+// the k/v server should snapshot when Raft's saved state exceeds
+// maxraftstate bytes, in order to allow Raft to garbage-collect its
+// log. if maxraftstate is -1, you don't need to snapshot.
+//
+// gid is this group's GID, for interacting with the shardmaster.
+//
+// pass masters[] to shardmaster.MakeClerk() so you can send
+// RPCs to the shardmaster.
+//
+// make_end(servername) turns a server name from a
+// Config.Groups[gid][i] into a labrpc.ClientEnd on which you can
+// send RPCs. You'll need this to send RPCs to other groups.
+//
+// look at client.go for examples of how to use masters[]
+// and make_end() to send RPCs to the group owning a specific shard.
+//
+// StartServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int,
+</FONT>	gid int, masters []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *ShardKV {
+	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+
+	kv := new(ShardKV)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+	kv.make_end = make_end
+	kv.gid = gid
+	kv.masters = masters
+
+	// Your initialization code here.
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match87-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.kvMap = make(map[int](map[string]string))
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.requestChan = make(map[int64](chan bool))
+	kv.clientLastRequest = make(map[int64]OpResult)
+</FONT>	kv.ctx, kv.cancel = context.WithCancel(context.Background())
+
+	kv.mck = shardmaster.MakeClerk(kv.masters)
+	kv.configureChannel = make(map[int64](chan bool))
+
+	for shard := range kv.shards {
+		kv.shards[shard] = ShardInfo{
+			num:           shard,
+			config:        0,
+			host:          0,
+			contentConfig: 0}
+	}
+	//kv.loadSnapshot(kv.rf.LoadSnapshot(persister.ReadSnapshot()))
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match87-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_10.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	go kv.pollShardConfiguration()
+	go kv.receiveCommandExecution()
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+	if maxraftstate &gt; 0 {
+		go kv.truncateRaftLog(persister)
+	}
+
+	DPrintf("\033[31m[KVServer %d] Started KV Server\033[37m", kv.me)
+
+	return kv
+}
+
+func (kv *ShardKV) receiveCommandExecution() {
+	for {
+		select {
+		case applyMsg := &lt;-kv.applyCh:
+			if !applyMsg.CommandValid {
+				continue
+			}
+
+			kv.mu.Lock()
+			//DPrintLog(2, "[KVServer] Received applymsg: %+v\n", kv.me, applyMsg.Command.(Op).OpID, applyMsg)
+			if applyMsg.IsSnapshot {
+				DPrintf("\033[34m[KVServer %d] Loading state from snapshot...\033[37m", kv.me)
+
+				appData := applyMsg.Command.([]byte)
+				kv.loadSnapshot(appData)
+				kv.mu.Unlock()
+</FONT>				continue
+			} else {
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match87-0.html#6" TARGET="0"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				kv.processCommand(applyMsg.Command.(Op))
+			}
+			kv.mu.Unlock()
+		case &lt;-kv.ctx.Done():
+			return
+			//default:
+			//time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+func (kv *ShardKV) processCommand(op Op) {
+</FONT>	switch op.Opcode {
+	case 100:
+		kv.executeGet(op)
+	case 101:
+		kv.executePutAppend(op)
+	case 102:
+		kv.executePutAppend(op)
+	case 300:
+		kv.executeConfigChange(op)
+	}
+}
+
+func (kv *ShardKV) executeGet(op Op) {
+	//kv.mu.Lock()
+	//defer kv.mu.Unlock()
+
+	var result string
+	var err Err
+	var opResult OpResult
+
+	DPrintf("\033[37m[KVServer %d][%d] Executing GET\033[37m", kv.me, op.OpID)
+
+	shard := key2shard(op.Key)
+	hosting := kv.shards[shard].host == kv.gid
+	if value, contains := kv.kvMap[shard][op.Key]; hosting && contains {
+		result = value
+		err = ""
+	} else if hosting && !contains {
+		err = ErrNoKey
+	} else {
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match87-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_11.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		err = ErrWrongGroup
+	}
+
+	opResult = OpResult{
+		OpID:    op.OpID,
+		ClerkID: op.ClerkID,
+		Opcode:  op.Opcode,
+		Err:     err,
+		Value:   result}
+	kv.clientLastRequest[op.ClerkID] = opResult
+	DPrintf("\033[32m[KVServer %d][%d] Executed GET: %+v\033[37m", kv.me, op.OpID, opResult)
+
+	if channel, contains := kv.requestChan[op.OpID]; contains {
+		DPrintf("\033[32m[KVLeader %d][%d] Sending GET result to channel: %+v\033[37m", kv.me, op.OpID, opResult)
+		select {
+		case channel &lt;- true:
+		default:
+		}
+	}
+}
+
+func (kv *ShardKV) executePutAppend(op Op) {
+	//kv.mu.Lock()
+	//defer kv.mu.Unlock()
+
+	var opResult OpResult
+
+	DPrintf("\033[37m[KVServer %d][%d] Executing PUTAPPEND\033[37m", kv.me, op.OpID)
+</FONT>
+	shard := key2shard(op.Key)
+	hosting := kv.shards[shard].host == kv.gid
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match87-0.html#7" TARGET="0"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	if lastResult, executed := kv.clientLastRequest[op.ClerkID]; hosting && executed && lastResult.OpID == op.OpID {
+		DPrintf("\033[36m[KVServer %d][%d] Previously executed PUTAPPEND: %+v\033[37m", kv.me, op.OpID, lastResult)
+		opResult = lastResult
+	} else if hosting {
+</FONT>		if op.Opcode == OpcodePut {
+			kv.kvMap[shard][op.Key] = op.Value
+		} else {
+			if _, contains := kv.kvMap[shard][op.Key]; contains {
+				kv.kvMap[shard][op.Key] += op.Value
+			} else {
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match87-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				kv.kvMap[shard][op.Key] = op.Value
+			}
+		}
+
+		opResult = OpResult{
+			OpID:    op.OpID,
+			ClerkID: op.ClerkID,
+			Opcode:  op.Opcode,
+			Err:     ""}
+		kv.clientLastRequest[op.ClerkID] = opResult
+		DPrintf("\033[32m[KVServer %d][%d] Executed PUTAPPEND: %+v, entry: %s\033[37m", kv.me, op.OpID, opResult, kv.kvMap[shard][op.Key])
+</FONT>	} else {
+		opResult = OpResult{
+			OpID:    op.OpID,
+			ClerkID: op.ClerkID,
+			Opcode:  op.Opcode,
+			Err:     ErrNoKey}
+	}
+
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match87-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	if channel, contains := kv.requestChan[op.OpID]; contains {
+		DPrintf("\033[32m[KVLeader %d][%d] Sending PUTAPPEND result to channel: %+v\033[37m", kv.me, op.OpID, opResult)
+		select {
+		case channel &lt;- true:
+</FONT>		default:
+		}
+	}
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

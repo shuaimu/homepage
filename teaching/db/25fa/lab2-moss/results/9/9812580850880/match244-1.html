@@ -1,0 +1,177 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-jashwanthkumar89/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-kanavtalwar/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  /* 
+  Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  */
+  /* your code here */
+  //Log_info("--IN PUT--");
+  //cout&lt;&lt;"STARTING PUT"&lt;&lt;to_string(oid)&lt;&lt;endl;
+  operationToStatusMapping[to_string(oid)] = KV_TIMEOUT;
+  bool isLeader = false;
+  uint64_t term = 0;
+  this-&gt;GetRaftServer().GetState(&isLeader, &term);
+  if(!isLeader) {
+    return KV_NOTLEADER;
+  }
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  //cout&lt;&lt;"***PUT---OID IS---"&lt;&lt;to_string(oid)&lt;&lt;" key  is "&lt;&lt;k&lt;&lt;" value is "&lt;&lt;v&lt;&lt;endl;
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  uint64_t index = 0;
+  shared_ptr&lt;Marshallable&gt; marshallableObject = s;
+  this-&gt;GetRaftServer().Start(marshallableObject, &index ,&term);
+  Coroutine::Sleep(900000);
+  // if (keyToValueMapping.find(k) == keyToValueMapping.end() || keyToValueMapping[k].compare(v) != 0) {
+  //   cout&lt;&lt;"Key not found in map for PUT FUNCTION"&lt;&lt;endl;
+  //   return KV_SUCCESS;
+  // } else {
+  //   cout&lt;&lt;"Key found in map for PUT FUNCTION"&lt;&lt;endl;
+  //   return KV_SUCCESS;
+  // }
+  
+  if (operationToStatusMapping[to_string(oid)] == KV_TIMEOUT) {
+    cout&lt;&lt;"***PUT---Operation "&lt;&lt;to_string(oid)&lt;&lt;" gave timeout"&lt;&lt;endl;
+    return KV_TIMEOUT;
+  }
+  cout&lt;&lt;"***PUT---Operation "&lt;&lt;to_string(oid)&lt;&lt;" was successful"&lt;&lt;endl;
+  return KV_SUCCESS;
+}
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+  //Log_info("--IN APPEND--");
+  operationToStatusMapping[to_string(oid)] = KV_TIMEOUT;
+  bool isLeader = false;
+  uint64_t term = 0;
+  this-&gt;GetRaftServer().GetState(&isLeader, &term);
+  if(!isLeader) {
+    return KV_NOTLEADER;
+  }
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("append");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  uint64_t index = 0;
+  shared_ptr&lt;Marshallable&gt; marshallableObject = s;
+  this-&gt;GetRaftServer().Start(marshallableObject, &index ,&term);
+  Coroutine::Sleep(900000);
+  if (operationToStatusMapping[to_string(oid)] == KV_TIMEOUT) {
+    cout&lt;&lt;"***APPEND---Operation "&lt;&lt;to_string(oid)&lt;&lt;" gave timeout"&lt;&lt;endl;
+    return KV_TIMEOUT;
+  }
+  //cout&lt;&lt;"***APPEND---Operation "&lt;&lt;to_string(oid)&lt;&lt;" was successful"&lt;&lt;endl;
+  return KV_SUCCESS;
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+  /* your code here */
+  //Log_info("--IN GET--");
+  
+  operationToStatusMapping[to_string(oid)] = KV_TIMEOUT;
+  bool isLeader = false;
+  uint64_t term = 0;
+  this-&gt;GetRaftServer().GetState(&isLeader, &term);
+  if(!isLeader) {
+    return KV_NOTLEADER;
+  }
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("get");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back("0");
+  uint64_t index = 0;
+  shared_ptr&lt;Marshallable&gt; marshallableObject = s;
+  this-&gt;GetRaftServer().Start(marshallableObject, &index ,&term);
+  Coroutine::Sleep(500000);
+  if (operationToStatusMapping[to_string(oid)] != KV_TIMEOUT) {
+    cout&lt;&lt;"GET SUCCESSS FOR - "&lt;&lt;to_string(oid)&lt;&lt;endl;
+    //cout&lt;&lt;" ANS IS "&lt;&lt;keyToValueMapping[k]&lt;&lt;endl;
+    *v = keyToValueMapping[k];
+    return KV_SUCCESS;
+  } else {
+    cout&lt;&lt;"GET TIMEOUTT FOR - "&lt;&lt;to_string(oid)&lt;&lt;endl;
+    return KV_TIMEOUT;
+  }
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  //Log_info("--IN on nextcommand--");
+  auto v = (MultiStringMarshallable*)(&m);
+  string oid = v-&gt;data_.at(0);
+  string operation = v-&gt;data_.at(1);
+  string key = v-&gt;data_.at(2);
+  string val = v-&gt;data_.at(3);
+  operationToStatusMapping[oid] = KV_SUCCESS;
+  //cout&lt;&lt;" VAL FOR REELECTION KEY IS "&lt;&lt;keyToValueMapping["reelection"]&lt;&lt;endl;
+  cout&lt;&lt;"---OPID--"&lt;&lt;oid&lt;&lt;"--operation--"&lt;&lt;operation&lt;&lt;"---KEY---"&lt;&lt;key&lt;&lt;"---value---"&lt;&lt;val&lt;&lt;endl;
+  if (operation.compare("put") == 0) {
+    keyToValueMapping[key] = val;
+  } else if (operation.compare("append") == 0) {
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match244-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    if (keyToValueMapping.find(key) == keyToValueMapping.end()) {
+      keyToValueMapping[key] = val;
+    } else {
+      keyToValueMapping[key] += val;
+    }
+  }
+  //cout&lt;&lt;" VAL FOR REELECTION KEY IS "&lt;&lt;keyToValueMapping["reelection"]&lt;&lt;endl;
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+</FONT>  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

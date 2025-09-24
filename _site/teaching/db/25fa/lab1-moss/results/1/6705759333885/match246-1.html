@@ -1,0 +1,218 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-shivani232/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-shrh18/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+bool_t RaftServiceImpl::logsUTD(int64_t candidateLastLogIndex, uint64_t candidateLastLogTerm){
+
+  if (candidateLastLogTerm &gt; svr_-&gt;getLastLogTerm() || 
+   (candidateLastLogTerm == svr_-&gt;getLastLogTerm() && candidateLastLogIndex &gt;= svr_-&gt;logCommand.size() - 1)) {
+    return true;
+  } else {
+    return false;
+  }
+}
+
+
+void RaftServiceImpl::HandleRequestVote( const uint64_t& currTerm,
+                                         const uint64_t& candidateID,
+                                         const int64_t& lastLogIndex,
+                                         const uint64_t& lastLogTerm,
+                                         uint64_t *returnTerm,
+                                         bool_t *voteGranted,                                
+                                         rrr::DeferredReply* defer) {
+  /* Your code here */
+
+  svr_-&gt;mtx_.lock();
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match246-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  if(currTerm&lt;svr_-&gt;currentTerm){
+    *voteGranted = false;
+    *returnTerm = svr_-&gt;currentTerm;
+  }
+
+  else{
+    
+    if(currTerm&gt;svr_-&gt;currentTerm){
+      svr_-&gt;currentTerm = currTerm;
+</FONT>      svr_-&gt;serverState = 2;
+      svr_-&gt;votedFor = -1;
+    }  
+
+    *voteGranted = false;
+    *returnTerm = svr_-&gt;currentTerm;
+    
+
+    if((svr_-&gt;votedFor == -1 || svr_-&gt;votedFor == candidateID) && (logsUTD(lastLogIndex, lastLogTerm) == 1)){
+      *voteGranted = true;
+      svr_-&gt;votedFor = candidateID;
+      svr_-&gt;currentTerm = currTerm;
+      svr_-&gt;serverState = 2;
+
+      svr_-&gt;electionTimer.stop();
+      svr_-&gt;electionTimer.reset();
+      svr_-&gt;electionTimer.start();
+      
+      *returnTerm = currTerm;
+
+    }
+
+  }
+  // Log_info("Req from %d to %d, its %d", candidateID, svr_-&gt;loc_id_, *voteGranted);
+  svr_-&gt;mtx_.unlock();
+  defer-&gt;reply();
+
+}
+
+// my funtion
+void RaftServiceImpl::HandleHeartbeats(const uint64_t& commitIndex,
+                                      const uint64_t& currentTerm,
+                                      uint64_t* returnTerm,
+                                      bool_t* heartbeatRecieved,
+                                      rrr::DeferredReply* defer) {
+  /* Your code here */
+
+  svr_-&gt;mtx_.lock();
+  
+  *returnTerm = svr_-&gt;currentTerm;
+  *heartbeatRecieved = false;
+
+  if(currentTerm &gt;= svr_-&gt;currentTerm){
+    *heartbeatRecieved = true;
+    *returnTerm = currentTerm;
+    svr_-&gt;currentTerm = currentTerm;
+
+    svr_-&gt;electionTimer.stop();
+    svr_-&gt;electionTimer.reset();
+    svr_-&gt;electionTimer.start();
+    svr_-&gt;votedFor = -1;
+    svr_-&gt;serverState = 2;
+
+    // Log_info("Heartbeat rcvd by %d", svr_-&gt;loc_id_);
+    if(commitIndex &gt; svr_-&gt;commitIndex){
+      int xx = svr_-&gt;commitIndex;
+      svr_-&gt;commitIndex = std::min(static_cast&lt;int64_t&gt;(commitIndex),static_cast&lt;int64_t&gt;(svr_-&gt;logCommand.size()));
+      for(int i=xx; i&lt;svr_-&gt;commitIndex; i++){
+        svr_-&gt;app_next_(*const_cast&lt;MarshallDeputy&&gt;(svr_-&gt;logCommand[i]).sp_data_);
+      }
+    }
+
+  }
+  
+  svr_-&gt;mtx_.unlock();
+  defer-&gt;reply();
+}
+
+
+//my function
+void RaftServiceImpl::HandleAppendEntry(const uint64_t& leaderID,
+                                        const uint64_t& leaderTerm,
+                                        const vector&lt;uint64_t&gt;& logTerm,
+                                        const vector&lt;MarshallDeputy&gt;& logCommand,
+                                        const int64_t& commitIndex,
+                                        const uint64_t& lastApplied,
+                                        bool_t *response,
+                                        uint64_t *returnTerm,
+                                        rrr::DeferredReply* defer) {
+  /* Your code here */
+
+  svr_-&gt;mtx_.lock();
+  
+  // Log_info("Handling Append entry");
+  // Log_info("leader ID - %d", leaderID);
+  // Log_info("leader term - %d", leaderTerm);
+  // Log_info("server term - %d", svr_-&gt;currentTerm);
+
+  // Log_info("LogTerm size - %d", logTerm.size());
+  // Log_info("LogCommand size - %d", logCommand.size());
+
+  *response = false;
+  *returnTerm = svr_-&gt;currentTerm;
+
+  if(svr_-&gt;currentTerm &gt; leaderTerm){
+    *response = false;
+    *returnTerm = svr_-&gt;currentTerm;
+  }
+  else if( leaderTerm &gt;= svr_-&gt;currentTerm){
+
+    // Log_info("Rec Log of size - %d", logTerm.size());
+
+    int lastButOneIndex = commitIndex &lt;= static_cast&lt;int64_t&gt;(svr_-&gt;logTerm.size())-1 ? commitIndex + 1 : svr_-&gt;logTerm.size();
+    int i = 0;
+
+    for (i = 0; i &lt; lastButOneIndex; i++) {
+      if(logTerm[i] != svr_-&gt;logTerm[i]){
+        break;
+      } 
+        
+
+    }
+
+    int IndexForDelete;
+    if (i == 0) {
+        IndexForDelete = 0;
+    } else {
+        IndexForDelete = i - 1;
+    }
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match246-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    svr_-&gt;logCommand.erase(svr_-&gt;logCommand.begin() + IndexForDelete, svr_-&gt;logCommand.end());
+    svr_-&gt;logTerm.erase(svr_-&gt;logTerm.begin() + IndexForDelete, svr_-&gt;logTerm.end());
+</FONT>
+    for (int k = IndexForDelete ; k &lt; logCommand.size() ; k++) {
+      svr_-&gt;logCommand.push_back(logCommand[k]);
+      svr_-&gt;logTerm.push_back(logTerm[k]);
+    }
+
+    // Log_info("Log of size of server - %d", svr_-&gt;logTerm.size());
+    
+    
+    *response = true;
+    *returnTerm = leaderTerm;
+  }
+  svr_-&gt;mtx_.unlock();
+  defer-&gt;reply();
+}
+
+
+void RaftServiceImpl::HandleAppendEntries(const MarshallDeputy& md_cmd,
+                                          bool_t *followerAppendOK,
+                                          rrr::DeferredReply* defer) {
+  /* Your code here */
+  std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(md_cmd).sp_data_;
+  *followerAppendOK = false;
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     int8_t* id,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("receive an rpc: %s", req.c_str());
+  *res = "world";
+  *id = svr_-&gt;site_id_;
+  defer-&gt;reply();
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

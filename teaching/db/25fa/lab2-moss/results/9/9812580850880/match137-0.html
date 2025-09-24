@@ -1,0 +1,216 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-jashwanthkumar89/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-jashwanthkumar89/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  /* 
+  Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  */
+  /* your code here */
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back(PUT);
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+
+  auto m = shared_ptr&lt;Marshallable&gt;(s);
+  uint64_t log_index;
+  uint64_t log_term;
+  RaftServer& svr = GetRaftServer();
+  bool_t ans = svr.Start(m, &log_index, &log_term);
+  Log_info("ans : %d", (uint64_t) ans);
+  if(!ans) return KV_NOTLEADER;
+
+  uint64_t timeout_ = 500*1000;
+  uint64_t timeoutstep_ = 100*1000;
+
+  while(timeout_ &gt; timeoutstep_) {
+
+    if(timeout_ &lt;= timeoutstep_) {
+      Coroutine::Sleep(timeoutstep_);
+      // timeout_ = 0;
+    }
+    Coroutine::Sleep(timeoutstep_);
+    timeout_ -= timeoutstep_;
+
+    if(kv_map_oid.find(to_string(oid)) != kv_map_oid.end()) {
+      break;
+    }
+  }
+
+  if(kv_map_oid.find(to_string(oid)) != kv_map_oid.end()) return KV_SUCCESS;
+  return KV_TIMEOUT;
+}
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back(APPEND);
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  auto m = (shared_ptr&lt;Marshallable&gt;*)(&s);
+  // auto m = shared_ptr&lt;Marshallable&gt;((Marshallable*)(&s));
+  uint64_t log_index;
+  uint64_t log_term;
+  RaftServer& svr = GetRaftServer();
+  bool_t ans = svr.Start(*m, &log_index, &log_term);
+  Log_info("ans : %d", (uint64_t) ans);
+  if(!ans) return KV_NOTLEADER;
+
+  uint64_t timeout_ = 500*1000;
+  uint64_t timeoutstep_ = 100*1000;
+
+  string resulting_value = kv_map.find(k) == kv_map.end()?v:kv_map[k]+v;
+
+  while(timeout_ &gt; timeoutstep_) {
+
+    if(timeout_ &lt;= timeoutstep_) {
+      Coroutine::Sleep(timeoutstep_);
+      // timeout_ = 0;
+    }
+    Coroutine::Sleep(timeoutstep_);
+    timeout_ -= timeoutstep_;
+
+    if(kv_map_oid.find(to_string(oid)) != kv_map_oid.end()) {
+      break;
+    }
+  }
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match137-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  if(kv_map_oid.find(to_string(oid)) != kv_map_oid.end())  return KV_SUCCESS;
+  return KV_TIMEOUT;
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+  /* your code here */
+
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+</FONT>  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back(GET);
+  s-&gt;data_.push_back(k);
+
+
+  uint64_t timeout_ = 500*1000;
+  uint64_t timeoutstep_ = 100*1000;
+
+  auto m = (shared_ptr&lt;Marshallable&gt;*)(&s);
+  // auto m = (shared_ptr) v;
+  uint64_t log_index;
+  uint64_t log_term;
+  RaftServer& svr = GetRaftServer();
+  bool_t ans = svr.Start(*m, &log_index, &log_term);
+  Log_info("ans : %d", (uint64_t) ans);
+
+  if(!ans) return KV_NOTLEADER;
+
+  while(timeout_ &gt; timeoutstep_) {
+
+    if(timeout_ &lt;= timeoutstep_) {
+      Coroutine::Sleep(timeoutstep_);
+      // timeout_ = 0;
+    }
+    Coroutine::Sleep(timeoutstep_);
+    timeout_ -= timeoutstep_;
+
+    if(kv_map_oid.find(to_string(oid)) != kv_map_oid.end()) {
+      break;
+    }
+  }
+  
+  if(kv_map_oid.find(to_string(oid)) == kv_map_oid.end()) return KV_TIMEOUT;
+  
+  
+  *v = kv_map[k];
+  return KV_SUCCESS;
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  auto v = (MultiStringMarshallable*)(&m);
+  // auto v = shared_ptr&lt;MultiStringMarshallable&gt;(m);
+  Log_info("Entering OnNextCommand");
+  string op = v-&gt;data_[1].c_str();
+  cout &lt;&lt; op &lt;&lt; endl;
+  Log_info("op: %s, Entering OnNextCommand", op.c_str());
+  string key = v-&gt;data_[2].c_str();
+  Log_info("key: %s, Entering OnNextCommand", key.c_str());
+
+  kv_map_oid[v-&gt;data_[0].c_str()] = op+" "+key;
+  // for (auto i : kv_map_oid) 
+  //     cout &lt;&lt; i.first &lt;&lt; " \t\t\t " &lt;&lt; i.second &lt;&lt; endl;
+  if(v-&gt;data_.size() == 3) return;
+
+  string value = v-&gt;data_[3].c_str();
+
+
+  if(op == PUT) {
+    kv_map[key] = value;
+    Log_info("put in Onnext, key: %s, value : %s, kv_map[key] : %s", key.c_str(), value.c_str(), kv_map[key].c_str());
+  } else if(op == APPEND) {
+    Log_info("append in Onnext, key: %s, value : %s, kv_map[key] : %s", key.c_str(), value.c_str(), kv_map[key].c_str());
+    if(kv_map.find(key) == kv_map.end()) {
+      kv_map[key] = value;
+    } else {
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match137-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      kv_map[key] += value;
+    }
+  }
+
+  // for (auto i : kv_map) 
+  //       cout &lt;&lt; i.first &lt;&lt; " \t\t\t " &lt;&lt; i.second &lt;&lt; endl;  
+  /* your code here */
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+</FONT>  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

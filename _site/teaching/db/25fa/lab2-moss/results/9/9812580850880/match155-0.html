@@ -1,0 +1,156 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-Abhinav1497/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-Abhinav1497/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match155-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_10.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  return ret;
+}
+
+int KvServer::prepareAndExecuteCommand(const uint64_t& oid, const string& op,
+                               const string& k, const string& v) {
+  
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();                             
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back(op);
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+</FONT>  shared_ptr&lt;Marshallable&gt;cmd = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  return executeCommand(oid, cmd);
+  
+}
+
+int KvServer::executeCommand(const uint64_t& oid,
+                             shared_ptr&lt;Marshallable&gt;& cmd) {
+  
+  
+  uint64_t init_index = 0, init_term = 0;
+  shared_ptr&lt;RaftServer&gt; raftServer = dynamic_pointer_cast&lt;RaftServer&gt;(sp_log_svr_);
+  uint64_t* ptr_index = &init_index, * ptr_term = &init_term;
+ 
+
+  auto e = rrr::Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  pair&lt;string, shared_ptr&lt;IntEvent&gt;&gt; new_request(to_string(oid), e);
+  eventMap.insert(new_request);
+
+  if(!raftServer) {
+    return KV_NOTLEADER;
+  }
+
+  bool startOk = raftServer-&gt;Start(cmd, ptr_index, ptr_term);
+  if(!startOk || raftServer-&gt;IsDisconnected()) {
+    return KV_NOTLEADER;
+  }
+
+  eventMap[to_string(oid)]-&gt;Wait(1000 * 1000);
+  if(eventMap[to_string(oid)]-&gt;status_ == Event::DONE) {
+    return KV_SUCCESS;
+  } 
+  
+  return KV_TIMEOUT;
+}
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  /* 
+  Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  */
+  /* your code here */
+
+  return prepareAndExecuteCommand(oid, "put", k, v);
+  
+  
+}
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+ 
+  return prepareAndExecuteCommand(oid, "app", k, v);
+
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+  /* your code here */
+
+  auto result = prepareAndExecuteCommand(oid, "get", k, "GET_VAL_OP");
+  if(result == KV_SUCCESS)
+    *v =  keyValMap[k];
+  return result;
+  
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  /* your code here */
+
+  auto v = (MultiStringMarshallable*)(&m);
+  shared_ptr&lt;RaftServer&gt;raftServer  = dynamic_pointer_cast&lt;RaftServer&gt;(sp_log_svr_);
+  string oid = v-&gt;data_[0];
+  string operation = v-&gt;data_[1];
+  string k  = v-&gt;data_[2];
+  string val = v-&gt;data_[3];
+  
+  if(operation == "put") {
+    keyValMap[k] = val;
+  } else if (operation == "app") {
+    auto it = keyValMap.find(k);
+    if (it != keyValMap.end()) {
+      it-&gt;second += val;
+    } else {
+      keyValMap[k] = val;
+    }
+  }
+
+  if (raftServer && raftServer-&gt;role_ == kLeader && eventMap.count(oid)) {
+    eventMap[oid]-&gt;Set(1);
+    Log_info("Leader %d applied a command", raftServer-&gt;site_id_);
+  }
+
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

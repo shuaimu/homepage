@@ -1,0 +1,230 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-raunaqpahwa/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-raunaqpahwa/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+namespace janus {
+
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  ShardConfig newConfig = CreateJoinConfig(gid_server_map);
+  auto cmd = MakeMarshallable(newConfig.number);
+  ShardMasterOperationReply event(newConfig);
+  waiting[event.id] = event;
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match74-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  RaftServer &server = GetRaftServer();
+  uint64_t index, term;
+  bool isLeader = server.Start(cmd, &index, &term);
+  if (!isLeader) {
+    *ret = KV_NOTLEADER;
+    waiting.erase(event.id);
+</FONT>    defer-&gt;reply();
+    return;
+  }
+  Coroutine::Sleep(150000);
+  *ret = waiting[event.id].result;
+  waiting.erase(event.id);
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  ShardConfig newConfig = CreateLeaveConfig(gids);
+  auto cmd = MakeMarshallable(newConfig.number);
+  ShardMasterOperationReply event(newConfig);
+  waiting[event.id] = event;
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match74-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  RaftServer &server = GetRaftServer();
+  uint64_t index, term;
+  bool isLeader = server.Start(cmd, &index, &term);
+  if (!isLeader) {
+    *ret = KV_NOTLEADER;
+    waiting.erase(event.id);
+</FONT>    defer-&gt;reply();
+    return;
+  }
+  Coroutine::Sleep(150000);
+  *ret = waiting[event.id].result;
+  waiting.erase(event.id);
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  ShardConfig newConfig = CreateMoveConfig(shard, gid);
+  auto cmd = MakeMarshallable(newConfig.number);
+  ShardMasterOperationReply event(newConfig);
+  waiting[event.id] = event;
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match74-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  RaftServer &server = GetRaftServer();
+  uint64_t index, term;
+  bool isLeader = server.Start(cmd, &index, &term);
+  if (!isLeader) {
+    *ret = KV_NOTLEADER;
+    waiting.erase(event.id);
+</FONT>    defer-&gt;reply();
+    return;
+  }
+  Coroutine::Sleep(150000);
+  *ret = waiting[event.id].result;
+  waiting.erase(event.id);
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+  // your code here
+  ShardConfig newConfig = CreateQueryConfig(config_no);
+  auto cmd = MakeMarshallable(newConfig.number);
+  ShardMasterOperationReply event(newConfig);
+  waiting[event.id] = event;
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match74-1.html#3" TARGET="1"><IMG SRC="../../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  RaftServer &server = GetRaftServer();
+  uint64_t index, term;
+  bool isLeader = server.Start(cmd, &index, &term);
+  if (!isLeader) {
+    *ret = KV_NOTLEADER;
+    waiting.erase(event.id);
+</FONT>    defer-&gt;reply();
+    return;
+  }
+  Coroutine::Sleep(150000);
+  *ret = waiting[event.id].result;
+  *config = waiting[event.id].config;
+  waiting.erase(event.id);
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  // your code here
+  auto& event = dynamic_cast&lt;MultiStringMarshallable&&gt;(m);
+  string s_committedConfigNum = event.data_[0];
+  currentConfigNum = stoi(s_committedConfigNum);
+  waiting[currentConfigNum].result = KV_SUCCESS;
+}
+
+ShardConfig ShardMasterServiceImpl::CreateJoinConfig(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map) {
+  ShardConfig oldConfig = configs_[currentConfigNum];
+  ShardConfig newConfig = oldConfig;
+  newConfig.number = id++;
+  newConfig.group_servers_map_.erase(0);
+  newConfig.group_servers_map_.insert(begin(gid_server_map), end(gid_server_map));
+  unordered_map&lt;uint32_t, vector&lt;uint32_t&gt;&gt; group_shard_map;
+  vector&lt;uint32_t&gt; oldGroups, newGroups;
+  for (auto& shardGroupPair: oldConfig.shard_group_map_) {
+    group_shard_map[shardGroupPair.second].push_back(shardGroupPair.first);
+    if (find(begin(oldGroups), end(oldGroups), shardGroupPair.second) == end(oldGroups)) {
+      oldGroups.push_back(shardGroupPair.second);
+    }
+  }
+  for (auto& gidServerPair: gid_server_map) {
+    if (find(begin(newGroups), end(newGroups), gidServerPair.first) == end(newGroups)) {
+      newGroups.push_back(gidServerPair.first);
+    }
+  }
+  if (find(begin(oldGroups), end(oldGroups), newGroups[0]) != end(oldGroups)) {
+    return newConfig;
+  }
+  sort(begin(oldGroups), end(oldGroups), [&](auto& o1, auto& o2) { return group_shard_map[o2].size() &gt; group_shard_map[o1].size(); });
+  int i = 0;
+  int shardsPerGroup = numShards/((oldGroups[0] == 0 ? 0 : oldGroups.size()) + newGroups.size());
+  int j = 0;
+  while (j &lt; shardsPerGroup) {
+    uint32_t removedShard = group_shard_map[oldGroups[i]].back();
+    group_shard_map[oldGroups[i]].pop_back();
+    group_shard_map[newGroups[0]].push_back(removedShard);
+    i = (i + 1) % oldGroups.size();
+    j++;
+  }
+  newConfig.shard_group_map_.clear();
+  for (auto& groupShardPair: group_shard_map) {
+    for (auto& val: groupShardPair.second) {
+      newConfig.shard_group_map_[val] = groupShardPair.first;
+    }
+  }
+  configs_[newConfig.number] = newConfig;
+  return newConfig;
+}
+
+ShardConfig ShardMasterServiceImpl::CreateLeaveConfig(const std::vector&lt;uint32_t&gt;& gids) {
+  ShardConfig oldConfig = configs_[currentConfigNum];
+  set&lt;uint32_t&gt; allGroups;
+  set&lt;uint32_t&gt; removeShards;
+  for (auto& shardGroupPair: oldConfig.shard_group_map_) {
+    allGroups.insert(shardGroupPair.second);
+  }
+  for (auto& removeGid: gids) {
+    for (auto& shardGroupPair: oldConfig.shard_group_map_) {
+      if (shardGroupPair.second == removeGid) {
+        removeShards.insert(shardGroupPair.first);
+      }
+    }
+    allGroups.erase(removeGid);
+  }
+  ShardConfig newConfig = oldConfig;
+  newConfig.number = id++;
+  for (auto& gid: gids) {
+    newConfig.group_servers_map_.erase(gid);
+  } 
+  for (auto& removeShard: removeShards) {
+    newConfig.shard_group_map_.erase(removeShard);
+  }
+  vector&lt;uint32_t&gt; groups = vector&lt;uint32_t&gt;(begin(allGroups), end(allGroups));
+  int i = groups.size() - 1;
+  for (auto& shard: removeShards) {
+    newConfig.shard_group_map_[shard] = groups[i--];
+    if (i == -1) {
+      i = groups.size() - 1;
+    }
+  }
+  configs_[newConfig.number] = newConfig;
+  return newConfig;
+}
+
+ShardConfig ShardMasterServiceImpl::CreateMoveConfig(const int32_t& shard, const uint32_t& gid) {
+  ShardConfig oldConfig = configs_[currentConfigNum];
+  ShardConfig newConfig = oldConfig;
+  newConfig.number = id++;
+  newConfig.shard_group_map_.erase(shard);
+  newConfig.shard_group_map_[shard] = gid;
+  configs_[newConfig.number] = newConfig;
+  return newConfig;
+}
+
+ShardConfig ShardMasterServiceImpl::CreateQueryConfig(const int32_t& config_no) {
+  ShardConfig newConfig = config_no == -1 or config_no &gt; currentConfigNum ? configs_[currentConfigNum] : configs_[config_no];
+  newConfig.number = id++;
+  configs_[newConfig.number] = newConfig;
+  return newConfig;
+}
+
+shared_ptr&lt;Marshallable&gt; ShardMasterServiceImpl::MakeMarshallable(int32_t configNum) {
+  auto marshallable = make_shared&lt;MultiStringMarshallable&gt;();
+  marshallable-&gt;data_.push_back(to_string(configNum));
+  return marshallable;
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  return cli;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

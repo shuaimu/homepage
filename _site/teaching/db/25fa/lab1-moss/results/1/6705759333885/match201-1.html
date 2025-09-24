@@ -1,0 +1,120 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-akshat2602/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-raycursive/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+#include &lt;memory&gt;
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+void RaftServiceImpl::HandleRequestVote(const uint64_t& candidateTerm,
+                                        const uint32_t& candidateId,
+                                        const uint64_t& lastLogIndex,
+                                        const uint64_t& lastLogTerm,
+                                        uint64_t* term,
+                                        bool_t* voteGranted,
+                                        rrr::DeferredReply* defer) {
+  /**
+   * check if:
+      1. term validation
+      2. be eligible for voting (be a follower and not voted for anyone yet)
+  */
+  svr_-&gt;mtx_.lock();
+  *term = svr_-&gt;currentTerm;
+  *voteGranted = false;
+  if (candidateTerm &gt;= svr_-&gt;currentTerm) {
+    *term = candidateTerm;
+    if (candidateTerm &gt; svr_-&gt;currentTerm) {
+      svr_-&gt;becomeFollower(candidateTerm);
+    }
+    if (svr_-&gt;state == RaftState::Follower) {
+      *voteGranted = svr_-&gt;handleVoteRequest(candidateTerm, candidateId, lastLogIndex, lastLogTerm);
+    }
+  }
+  svr_-&gt;mtx_.unlock();
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::handleAppendEntryProxy(const uint64_t& leaderTerm,
+                            const uint32_t& leaderId,
+                            const uint64_t& prevLogIndex,
+                            const uint64_t& prevLogTerm,
+                            const uint64_t& leaderCommit,
+                            const uint64_t& logTerm,
+                            shared_ptr&lt;Marshallable&gt;&& cmd,
+                            uint64_t* term,
+                            bool_t* followerAppendOK,
+                            rrr::DeferredReply* defer) {
+  svr_-&gt;mtx_.lock();
+  *term = svr_-&gt;currentTerm;
+  *followerAppendOK = false;
+  if (leaderTerm &gt;= svr_-&gt;currentTerm) {
+    *term = leaderTerm;
+    if (leaderTerm &gt; svr_-&gt;currentTerm || (svr_-&gt;state == RaftState::Candidate && leaderTerm == svr_-&gt;currentTerm)) {
+      svr_-&gt;becomeFollower(leaderTerm);
+    }
+    if (svr_-&gt;state == RaftState::Follower)  {
+      *followerAppendOK = svr_-&gt;handleAppendLog(leaderTerm, leaderId, prevLogIndex, prevLogTerm, leaderCommit, logTerm, cmd);
+    }
+  }
+  svr_-&gt;mtx_.unlock();
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleAppendEntries(const uint64_t& leaderTerm,
+                                          const uint32_t& leaderId,
+                                          const uint64_t& prevLogIndex,
+                                          const uint64_t& prevLogTerm,
+                                          const uint64_t& leaderCommit,
+                                          const uint64_t& logTerm,
+                                          const MarshallDeputy& md_cmd,
+                                          uint64_t* term,
+                                          bool_t* followerAppendOK,
+                                          rrr::DeferredReply* defer) {
+  std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(md_cmd).sp_data_;
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match201-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  this-&gt;handleAppendEntryProxy(leaderTerm, leaderId, prevLogIndex, prevLogTerm, leaderCommit, logTerm, std::move(cmd), term, followerAppendOK, defer);
+}
+
+void RaftServiceImpl::HandleAppendEmptyEntry(const uint64_t& leaderTerm,
+                                       const uint32_t& leaderId,
+                                       const uint64_t& prevLogIndex,
+                                       const uint64_t& prevLogTerm,
+</FONT>                                       const uint64_t& leaderCommit,
+                                       uint64_t* term,
+                                       bool_t* followerAppendOK,
+                                       rrr::DeferredReply* defer) {
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match201-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  this-&gt;handleAppendEntryProxy(leaderTerm, leaderId, prevLogIndex, prevLogTerm, leaderCommit, 0, nullptr, term, followerAppendOK, defer);
+}
+
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("receive an rpc: %s", req.c_str());
+  *res = "world";
+</FONT>  defer-&gt;reply();
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

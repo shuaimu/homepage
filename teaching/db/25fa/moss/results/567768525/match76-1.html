@@ -1,0 +1,472 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/raunaksbu/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/raunaksbu/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+import (
+	"labgob"
+	"labrpc"
+	"raft"
+	"sort"
+	"sync"
+	"time"
+)
+
+type ShardMaster struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	// Your data here.
+
+	configs []Config // indexed by config num
+
+	isKilled            bool
+	isAppliedCh         map[int]chan raft.ApplyMsg
+	clientLastRequestID map[int64]int
+}
+
+type Op struct {
+	// Your data here.
+
+	Operation string
+	ClientID  int64
+	RequestID int
+
+	Servers map[int][]string
+	GIDs    []int
+	Shard   int
+	GID     int
+	Num     int
+	Config  Config
+}
+
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+	// Your code here.
+
+<A NAME="8"></A><FONT color = #00FFFF><A HREF="match76-0.html#8" TARGET="0"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	sm.mu.Lock()
+	lastRequestID, ok := sm.clientLastRequestID[args.ClientID]
+	sm.mu.Unlock()
+	if ok == true && args.RequestID &lt; lastRequestID {
+</FONT><A NAME="7"></A><FONT color = #0000FF><A HREF="match76-0.html#7" TARGET="0"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		reply.Err = OK
+	}
+
+	_, isLeader := sm.rf.GetState()
+	if isLeader == false {
+		reply.WrongLeader = true
+		return
+	}
+
+	var op Op
+	op.Operation = "Join"
+</FONT>	op.ClientID = args.ClientID
+	op.RequestID = args.RequestID
+	op.Servers = args.Servers
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match76-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	index, term, ok := sm.rf.Start(op)
+	if ok == false {
+		reply.WrongLeader = true
+		return
+	}
+
+	applyCh := make(chan raft.ApplyMsg)
+	sm.mu.Lock()
+	sm.isAppliedCh[index] = applyCh
+	sm.mu.Unlock()
+
+	startTimer := time.NewTimer(5 * time.Second)
+
+	select {
+	case &lt;-startTimer.C:
+		reply.WrongLeader = true
+	case applyMsg := &lt;-applyCh:
+		startTimer.Stop()
+		if applyMsg.CommandIndex != index ||
+			applyMsg.CommandTerm != term {
+			reply.WrongLeader = true
+		} else {
+			reply.WrongLeader = false
+</FONT><A NAME="5"></A><FONT color = #FF0000><A HREF="match76-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			reply.Err = OK
+		}
+	}
+
+	sm.mu.Lock()
+	delete(sm.isAppliedCh, index)
+	sm.mu.Unlock()
+}
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+	// Your code here.
+
+	sm.mu.Lock()
+</FONT>	lastRequestID, ok := sm.clientLastRequestID[args.ClientID]
+	sm.mu.Unlock()
+
+	if ok == true && args.RequestID &lt; lastRequestID {
+		reply.Err = OK
+	}
+
+	_, isLeader := sm.rf.GetState()
+	if isLeader == false {
+		reply.WrongLeader = true
+		return
+	}
+
+	var op Op
+	op.Operation = "Leave"
+	op.ClientID = args.ClientID
+	op.RequestID = args.RequestID
+	op.GIDs = args.GIDs
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match76-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	index, term, ok := sm.rf.Start(op)
+	if ok == false {
+		reply.WrongLeader = true
+		return
+	}
+
+	applyCh := make(chan raft.ApplyMsg)
+	sm.mu.Lock()
+	sm.isAppliedCh[index] = applyCh
+	sm.mu.Unlock()
+
+	startTimer := time.NewTimer(5 * time.Second)
+
+	select {
+	case &lt;-startTimer.C:
+		reply.WrongLeader = true
+	case applyMsg := &lt;-applyCh:
+		startTimer.Stop()
+		if applyMsg.CommandIndex != index ||
+			applyMsg.CommandTerm != term {
+			reply.WrongLeader = true
+		} else {
+			reply.WrongLeader = false
+</FONT>			reply.Err = OK
+		}
+	}
+
+	sm.mu.Lock()
+	delete(sm.isAppliedCh, index)
+	sm.mu.Unlock()
+
+}
+
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+	// Your code here.
+
+	sm.mu.Lock()
+	lastRequestID, ok := sm.clientLastRequestID[args.ClientID]
+	sm.mu.Unlock()
+
+	if ok == true && args.RequestID &lt; lastRequestID {
+		reply.Err = OK
+	}
+
+	_, isLeader := sm.rf.GetState()
+	if isLeader == false {
+		reply.WrongLeader = true
+		return
+	}
+
+	var op Op
+	op.Operation = "Move"
+	op.ClientID = args.ClientID
+	op.RequestID = args.RequestID
+	op.Shard = args.Shard
+	op.GID = args.GID
+
+	index, term, ok := sm.rf.Start(op)
+	if ok == false {
+		reply.WrongLeader = true
+		return
+	}
+
+	applyCh := make(chan raft.ApplyMsg)
+	sm.mu.Lock()
+	sm.isAppliedCh[index] = applyCh
+	sm.mu.Unlock()
+
+	startTimer := time.NewTimer(5 * time.Second)
+
+	select {
+	case &lt;-startTimer.C:
+		reply.WrongLeader = true
+	case applyMsg := &lt;-applyCh:
+		startTimer.Stop()
+		if applyMsg.CommandIndex != index ||
+			applyMsg.CommandTerm != term {
+			reply.WrongLeader = true
+		} else {
+			reply.WrongLeader = false
+			reply.Err = OK
+		}
+	}
+
+	sm.mu.Lock()
+	delete(sm.isAppliedCh, index)
+	sm.mu.Unlock()
+}
+
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+	// Your code here.
+
+	sm.mu.Lock()
+	lastRequestID, ok := sm.clientLastRequestID[args.ClientID]
+	sm.mu.Unlock()
+
+	if ok == true && args.RequestID &lt; lastRequestID {
+		reply.Err = OK
+	}
+
+	_, isLeader := sm.rf.GetState()
+	if isLeader == false {
+		reply.WrongLeader = true
+		return
+	}
+
+	var op Op
+	op.Operation = "Query"
+	op.ClientID = args.ClientID
+	op.RequestID = args.RequestID
+	op.Num = args.Num
+
+	index, term, ok := sm.rf.Start(op)
+	if ok == false {
+		reply.WrongLeader = true
+		return
+	}
+
+	applyCh := make(chan raft.ApplyMsg)
+	sm.mu.Lock()
+	sm.isAppliedCh[index] = applyCh
+	sm.mu.Unlock()
+
+	startTimer := time.NewTimer(5 * time.Second)
+
+	select {
+	case &lt;-startTimer.C:
+		reply.WrongLeader = true
+	case applyMsg := &lt;-applyCh:
+		startTimer.Stop()
+		if applyMsg.CommandIndex != index ||
+			applyMsg.CommandTerm != term {
+			reply.WrongLeader = true
+		} else {
+			reply.Err = OK
+			op := applyMsg.Command.(Op)
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match76-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			reply.Config = op.Config
+		}
+	}
+
+	sm.mu.Lock()
+	delete(sm.isAppliedCh, index)
+	sm.mu.Unlock()
+}
+
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+	// Your code here, if desired.
+
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	sm.isKilled = true
+	return
+}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+</FONT>	return sm.rf
+}
+
+func (sm *ShardMaster) isServerKilled() bool {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	return sm.isKilled
+}
+
+func (sm *ShardMaster) updateShards(config *Config) {
+	var gids []int
+
+	for i := range config.Groups {
+		gids = append(gids, i)
+	}
+
+	sort.Ints(gids)
+
+	totalGroups := len(config.Groups)
+	if totalGroups &lt;= 0 {
+		for i := range config.Shards {
+			config.Shards[i] = 0
+		}
+	} else {
+		totalShardsPerGroup := NShards / totalGroups
+		j := 0
+		for _, gid := range gids {
+			shardNo := totalShardsPerGroup
+			for i := 0; i &lt; shardNo; i++ {
+				config.Shards[j] = gid
+				j++
+			}
+		}
+	}
+}
+
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match76-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (sm *ShardMaster) applyMsg(msg raft.ApplyMsg) {
+	sm.mu.Lock()
+	op, ok := msg.Command.(Op)
+	if ok {
+		lastRequestID, ok := sm.clientLastRequestID[op.ClientID]
+		if ok == false || op.RequestID &gt; lastRequestID {
+			if op.Operation == "Join" {
+</FONT>				var config Config
+				lastconfig := sm.configs[len(sm.configs)-1]
+				config = lastconfig
+				config.Groups = make(map[int][]string)
+				servers := op.Servers
+
+				for i, group := range lastconfig.Groups {
+					config.Groups[i] = group
+				}
+
+				for i, server := range servers {
+					config.Groups[i] = server
+				}
+
+				sm.updateShards(&config)
+				num := len(sm.configs)
+				config.Num = num
+				sm.configs = append(sm.configs, config)
+			} else if op.Operation == "Leave" {
+				var config Config
+				lastconfig := sm.configs[len(sm.configs)-1]
+				config = lastconfig
+				GIDs := op.GIDs
+				config.Groups = make(map[int][]string)
+
+				for i, group := range lastconfig.Groups {
+					config.Groups[i] = group
+				}
+
+				for _, gid := range GIDs {
+					delete(config.Groups, gid)
+				}
+
+				sm.updateShards(&config)
+				num := len(sm.configs)
+				config.Num = num
+				sm.configs = append(sm.configs, config)
+			} else if op.Operation == "Move" {
+				var config Config
+				shard := op.Shard
+				GID := op.GID
+				config = sm.configs[len(sm.configs)-1]
+				config.Groups = make(map[int][]string)
+
+				for i, group := range sm.configs[len(sm.configs)-1].Groups {
+					config.Groups[i] = group
+				}
+
+				config.Shards[shard] = GID
+				num := len(sm.configs)
+				config.Num = num
+				sm.configs = append(sm.configs, config)
+			} else if op.Operation == "Query" {
+				num := op.Num
+				if num &lt; 0 || num &gt;= len(sm.configs) {
+					op.Config = sm.configs[len(sm.configs)-1]
+				} else {
+					op.Config = sm.configs[num]
+				}
+				msg.Command = op
+			}
+
+			isAppliedCh, ok := sm.isAppliedCh[msg.CommandIndex]
+			if ok {
+				isAppliedCh &lt;- msg
+			}
+
+			sm.clientLastRequestID[op.ClientID] = op.RequestID
+		}
+	}
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match76-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	sm.mu.Unlock()
+}
+
+func (sm *ShardMaster) serverStart() {
+	for {
+		select {
+		case msg := &lt;-sm.applyCh:
+			if msg.CommandValid {
+				sm.applyMsg(msg)
+			}
+
+		default:
+		}
+
+		if sm.isServerKilled() {
+			return
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+</FONT>	sm := new(ShardMaster)
+	sm.me = me
+
+	sm.configs = make([]Config, 1)
+	sm.configs[0].Groups = map[int][]string{}
+
+	labgob.Register(Op{})
+	sm.applyCh = make(chan raft.ApplyMsg)
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match76-0.html#6" TARGET="0"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+
+	// Your code here.
+
+	sm.isAppliedCh = make(map[int]chan raft.ApplyMsg)
+	sm.clientLastRequestID = make(map[int64]int)
+</FONT>
+	go sm.serverStart()
+	return sm
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

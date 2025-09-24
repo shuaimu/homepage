@@ -1,0 +1,211 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-mainak9830/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-ojasdeshpande10-1/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+std::recursive_mutex mtx_{};
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  /* 
+  Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  */
+  /* your code here */
+  resPut=0;
+  Log_info("the value of oid is %d",oid);
+  auto evPut = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  auto commd = make_shared&lt;MultiStringMarshallable&gt;();
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match57-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  commd-&gt;data_.push_back(to_string(oid));
+  commd-&gt;data_.push_back("put");
+  commd-&gt;data_.push_back(k);
+  commd-&gt;data_.push_back(v);
+  janus::RaftServer& svr_ = GetRaftServer();
+</FONT>  //Log_info("the leader is %d current_term is %d log index is %d",svr_.loc_id_,svr_.current_term,svr_.log.size()-1);
+  shared_ptr&lt;Marshallable&gt; cmd_raft = commd;
+  uint64_t index;
+  uint64_t term;
+  Log_info("THe site_id_ of server %d",svr_.site_id_);
+  if(!svr_.Start(cmd_raft,&index,&term)) {
+    Log_info("THe site_id_ of not leader server %d",svr_.site_id_);
+    resPut=KV_NOTLEADER;
+    return resPut;
+  }
+  else {
+      Event_map.insert({to_string(oid),evPut});
+  }
+  evPut-&gt;Wait(3000000);
+  Log_info("Came back to put with %d",evPut-&gt;get());
+  if(evPut-&gt;get()) {
+    resPut=KV_SUCCESS;
+  }
+  else {
+    resPut=KV_TIMEOUT;
+  }
+  return resPut;
+}
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+  auto evAppend = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  resAppend =0;
+  auto commd = make_shared&lt;MultiStringMarshallable&gt;();
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match57-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  commd-&gt;data_.push_back(to_string(oid));
+  commd-&gt;data_.push_back("append");
+  commd-&gt;data_.push_back(k);
+  commd-&gt;data_.push_back(v);
+  janus::RaftServer& svr_ = GetRaftServer();
+</FONT>  Log_info("the leader is %d current_term is %d log index is %d",svr_.loc_id_,svr_.current_term,svr_.log.size()-1);
+  shared_ptr&lt;Marshallable&gt; cmd_raft = commd;
+  uint64_t index;
+  uint64_t term;
+  if(!svr_.Start(cmd_raft,&index,&term)) {
+    resAppend=KV_NOTLEADER;
+    return resAppend;
+  }
+  else {
+    Event_map.insert({to_string(oid),evAppend});
+  }
+  evAppend-&gt;Wait(3000000);
+  Log_info("Came back to append with %d",evAppend-&gt;get());
+  if(evAppend-&gt;get()) {
+    resAppend=KV_SUCCESS;
+  }
+  else {
+    resAppend=KV_TIMEOUT;
+  }
+  return resAppend;
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+  /* your code here */
+  resGet=0;
+  auto evGet = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match57-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  auto commd = make_shared&lt;MultiStringMarshallable&gt;();
+  commd-&gt;data_.push_back(to_string(oid));
+  commd-&gt;data_.push_back("get");
+  commd-&gt;data_.push_back(k);
+  janus::RaftServer& svr_ = GetRaftServer();
+</FONT>  //Log_info("the leader is %d current_term is %d log index is %d",svr_.loc_id_,svr_.current_term,svr_.log.size()-1);
+  shared_ptr&lt;Marshallable&gt; cmd_raft = commd;
+  uint64_t index;
+  uint64_t term;
+  if(!svr_.Start(cmd_raft,&index,&term)) {
+    resGet=KV_NOTLEADER;
+    return resGet;
+  }
+  else {
+    Event_map.insert({to_string(oid),evGet});
+  }
+  evGet-&gt;Wait(3000000);
+   Log_info("Came back to get with %d",evGet-&gt;get());
+  if(evGet-&gt;get()) {
+    resGet=KV_SUCCESS;
+  }
+  else {
+    resGet=KV_TIMEOUT;
+  }
+  if(resGet==KV_SUCCESS) {
+    *v=New_Map[k];
+  }
+  gotGet = false;
+  return resGet;
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  auto v = (MultiStringMarshallable*)(&m);
+  if(v-&gt;data_[1] == "put") {
+    mtx_.lock();
+    New_Map[v-&gt;data_[2]]=v-&gt;data_[3];
+    if(Event_map.find(v-&gt;data_[0])!=Event_map.end()) {
+      //Log_info("PUT-the oid of the command %d",stoi(v-&gt;data_[0]));
+        Event_map[v-&gt;data_[0]]-&gt;Set(1);
+    }
+    mtx_.unlock();
+  }
+
+  else if(v-&gt;data_[1] == "append") {
+    mtx_.lock();
+    //Log_info("Append-the oid of the command %d",stoi(v-&gt;data_[0]));
+    if(New_Map.find(v-&gt;data_[2])==New_Map.end()) {
+      Log_info("the value is not present in map adding it now");
+      New_Map[v-&gt;data_[2]]=v-&gt;data_[3];
+    }
+    else {
+      Log_info("the Appending value to %d",stol(New_Map[v-&gt;data_[2]]));
+      Log_info("the value to be appended %d",stol(v-&gt;data_[3]));
+      New_Map[v-&gt;data_[2]]+=v-&gt;data_[3];
+      Log_info("the Appended value is %d",stol(New_Map[v-&gt;data_[2]]));
+    }
+    if(Event_map.find(v-&gt;data_[0])!=Event_map.end()) {
+        Event_map[v-&gt;data_[0]]-&gt;Set(1);
+    }
+    mtx_.unlock();
+  }
+  else if(v-&gt;data_[1] == "get") {
+    mtx_.lock();
+    //Log_info("GET-the oid of the command %d",stoi(v-&gt;data_[0]));
+    if(Event_map.find(v-&gt;data_[0])!=Event_map.end()) {      
+          if(New_Map.find(v-&gt;data_[2])!=New_Map.end()) {
+             Log_info("the get value is %d",stol(New_Map[v-&gt;data_[2]]));
+             Event_map[v-&gt;data_[0]]-&gt;Set(1);
+          }
+    }
+    mtx_.unlock();
+  }
+  /* your code here */
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,849 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-akshat2602/src/deptran/raft/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-akshat2602/src/deptran/raft/server.cc<p><PRE>
+
+
+#include "server.h"
+// #include "paxos_worker.h"
+#include "exec.h"
+#include "frame.h"
+#include "coordinator.h"
+#include "../classic/tpc_command.h"
+
+namespace janus
+{
+
+  RaftServer::RaftServer(Frame *frame)
+  {
+    frame_ = frame;
+    /* Your code here for server initialization. Note that this function is
+       called in a different OS thread. Be careful about thread safety if
+       you want to initialize variables here. */
+  }
+
+  RaftServer::~RaftServer()
+  {
+    /* Your code here for server teardown */
+  }
+
+  void RaftServer::Setup()
+  {
+    /* Your code here for server setup. Due to the asynchronous nature of the
+       framework, this function could be called after a RPC handler is triggered.
+       Your code should be aware of that. This function is always called in the
+       same OS thread as the RPC handlers. */
+    // SyncRpcExample();
+    RunServer();
+  }
+
+  bool RaftServer::Start(shared_ptr&lt;Marshallable&gt; &cmd,
+                         uint64_t *index,
+                         uint64_t *term)
+  {
+    /* Your code here. This function can be called from another OS thread. */
+    bool is_leader;
+    uint64_t temp_term;
+    this-&gt;GetState(&is_leader, &temp_term);
+    if (!is_leader)
+    {
+      return false;
+    }
+    MarshallDeputy cmd_deputy(cmd);
+    // Log_info("Locking mutex");
+    this-&gt;mtx_.lock();
+    this-&gt;log.push_back(LogEntry{this-&gt;current_term, cmd_deputy});
+    Log_info("Replying to Start with log %d", (this-&gt;log.size() - 1));
+    *index = this-&gt;log.size();
+    *term = this-&gt;current_term;
+    // Log_info("Unlocking mutex");
+    this-&gt;mtx_.unlock();
+
+    return true;
+  }
+
+  void RaftServer::GetState(bool *is_leader, uint64_t *term)
+  {
+    Log_info("Getting state");
+    // Log_info("Locking mutex");
+    mtx_.lock();
+    uint64_t temp_term = this-&gt;current_term;
+    uint64_t temp_state = this-&gt;state;
+    // Log_info("Unlocking mutex");
+    mtx_.unlock();
+    *term = temp_term;
+    if (temp_state == RaftState::LEADER)
+    {
+      *is_leader = true;
+      return;
+    }
+    *is_leader = false;
+    return;
+  }
+
+  void RaftServer::ResetStates(uint64_t reply_term)
+  {
+    // Log_info("Locking mutex");
+    this-&gt;mtx_.lock();
+    if (reply_term &gt; this-&gt;current_term)
+    {
+      this-&gt;current_term = reply_term;
+      this-&gt;state = RaftState::FOLLOWER;
+    }
+    this-&gt;ele_vote_granted = false;
+    // Log_info("Unlocking mutex");
+    this-&gt;mtx_.unlock();
+    return;
+  }
+
+  void RaftServer::ConvertToCandidate(RaftState fromState)
+  {
+    // This function will convert the server to candidate
+    // Log_info("Locking mutex");
+    this-&gt;mtx_.lock();
+    uint64_t temp_state = this-&gt;state;
+    // Log_info("Unlocking mutex");
+    this-&gt;mtx_.unlock();
+    if (temp_state != fromState)
+    {
+      return;
+    }
+    // Log_info("Locking mutex");
+    this-&gt;mtx_.lock();
+    this-&gt;heartbeat_received = false;
+    this-&gt;state = RaftState::CANDIDATE;
+    this-&gt;current_term = this-&gt;current_term + 1;
+    this-&gt;voted_for = this-&gt;loc_id_;
+    // Log_info("Unlocking mutex");
+    this-&gt;mtx_.unlock();
+    return;
+  }
+
+  void RaftServer::ConvertToLeader()
+  {
+    // Log_info("Locking mutex");
+    this-&gt;mtx_.lock();
+    uint64_t temp_state = this-&gt;state;
+    // Log_info("Unlocking mutex");
+    this-&gt;mtx_.unlock();
+    if (temp_state != RaftState::CANDIDATE)
+    {
+      return;
+    }
+    // Log_info("Locking mutex");
+    this-&gt;mtx_.lock();
+    this-&gt;heartbeat_received = true;
+    this-&gt;state = RaftState::LEADER;
+    // Log_info("Unlocking mutex");
+    this-&gt;mtx_.unlock();
+    this-&gt;InitIndex();
+
+    return;
+  }
+
+  void RaftServer::InitIndex()
+  {
+    // Log_info("Locking mutex");
+    this-&gt;mtx_.lock();
+    for (int i = 0; i &lt; commo()-&gt;rpc_par_proxies_[0].size(); i++)
+    {
+      this-&gt;next_index.push_back((this-&gt;log.size() - 1) + 1);
+      this-&gt;match_index.push_back(-1);
+    }
+    // Log_info("Unlocking mutex");
+    this-&gt;mtx_.unlock();
+    return;
+  }
+
+  void RaftServer::UpdateAppNext()
+  {
+    Log_info("Updating app next");
+    // Log_info("Locking mutex");
+    this-&gt;mtx_.lock();
+    for (int64_t i = last_applied + 1; i &lt;= this-&gt;commit_index; i++)
+    {
+      std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy &&gt;(this-&gt;log[i].command).sp_data_;
+      Log_info("Commiting log %d on %d", i, this-&gt;loc_id_);
+      this-&gt;app_next_(*cmd);
+      this-&gt;last_applied = i;
+    }
+    // Log_info("Unlocking mutex");
+    this-&gt;mtx_.unlock();
+    return;
+  }
+
+  void RaftServer::RunServer()
+  {
+    // This is the main function of the server
+    // It will run the main loop of the server and handle all the RPCs
+    Coroutine::CreateRun([this]()
+                         {
+    bool_t temp_ele_vote_granted;
+    bool_t temp_heartbeat_received;
+    int64_t temp_commit_i;
+    int64_t temp_last_applied;
+    while (true)
+    {
+      // Log_info("Locking mutex");
+      this-&gt;mtx_.lock();
+      uint64_t temp_state = this-&gt;state;
+      // Log_info("Unlocking mutex");
+      this-&gt;mtx_.unlock();
+      switch (temp_state)
+      {
+      case RaftState::LEADER:
+        this-&gt;SendAppendEntries();
+        Coroutine::Sleep(this-&gt;heartbeat_interval);
+        // Log_info("Locking mutex");
+        this-&gt;mtx_.lock();
+        this-&gt;heartbeat_received = true;
+        // Log_info("Unlocking mutex");
+        this-&gt;mtx_.unlock();
+
+        break;
+
+      case RaftState::FOLLOWER:
+        Coroutine::Sleep(this-&gt;generate_timeout());
+        // Log_info("Locking mutex");
+        this-&gt;mtx_.lock();
+        temp_heartbeat_received = this-&gt;heartbeat_received;
+        // Log_info("Unlocking mutex");
+        this-&gt;mtx_.unlock();
+        if (!temp_heartbeat_received)
+        {
+          this-&gt;ConvertToCandidate(RaftState::FOLLOWER);
+          this-&gt;SendRequestVote();
+          break;
+        }
+
+        // Log_info("Locking mutex");
+        this-&gt;mtx_.lock();
+        this-&gt;heartbeat_received = false;
+        // Log_info("Unlocking mutex");
+        this-&gt;mtx_.unlock();
+        break;
+
+      case RaftState::CANDIDATE:
+        // Log_info("Locking mutex");
+        this-&gt;mtx_.lock();
+        temp_ele_vote_granted = this-&gt;ele_vote_granted;
+        temp_heartbeat_received = this-&gt;heartbeat_received;
+        // Log_info("Unlocking mutex");
+        this-&gt;mtx_.unlock();
+        if (temp_ele_vote_granted)
+        {
+          this-&gt;ConvertToLeader();
+          break;
+        }
+        Coroutine::Sleep(this-&gt;generate_timeout());
+        if (!temp_heartbeat_received)
+        {
+          this-&gt;ConvertToCandidate(RaftState::CANDIDATE);
+          this-&gt;SendRequestVote();
+          break;
+        }
+
+        break;
+
+      default:
+        Log_info("Default");
+        break;
+      }
+    } });
+  }
+
+  void RaftServer::SendRequestVote()
+  {
+    // Log_info("Locking mutex");
+    this-&gt;mtx_.lock();
+    uint64_t temp_state = this-&gt;state;
+    // Log_info("Unlocking mutex");
+    this-&gt;mtx_.unlock();
+    if (temp_state != RaftState::CANDIDATE)
+    {
+      return;
+    }
+    int64_t last_applied_term;
+    // Log_info("Locking mutex");
+    this-&gt;mtx_.lock();
+    int64_t latest_applied = (this-&gt;log.size() - 1);
+    if (this-&gt;log.size() == 0)
+    {
+      last_applied_term = this-&gt;current_term;
+    }
+    else
+    {
+      last_applied_term = this-&gt;log[latest_applied].term;
+    }
+    uint64_t send_term = this-&gt;current_term;
+    // Log_info("Unlocking mutex");
+    this-&gt;mtx_.unlock();
+    bool_t vote_received;
+    uint64_t reply_term;
+    int64_t yes_count = 1;
+    int64_t no_count = 0;
+    int64_t iter_index = 0;
+    bool_t rpc_sent;
+    auto proxies = commo()-&gt;rpc_par_proxies_[0];
+    for (auto &p : proxies)
+    {
+      if (p.first != this-&gt;loc_id_)
+      {
+        Log_info("Sending request vote from %d to %d", this-&gt;loc_id_, p.first);
+        auto ev = commo()-&gt;SendRequestVote(0,
+                                           this-&gt;loc_id_,
+                                           send_term,
+                                           this-&gt;loc_id_,
+                                           latest_applied,
+                                           last_applied_term,
+                                           &reply_term,
+                                           &vote_received,
+                                           p,
+                                           &rpc_sent);
+
+        ev-&gt;Wait(1000000);
+        // Election complete
+        if (ev-&gt;status_ == Event::TIMEOUT)
+        {
+          Log_info("Timeout happened");
+          return;
+        }
+        if (!rpc_sent)
+        {
+          Log_info("Not ok");
+          iter_index++;
+          continue;
+        }
+        // Log_info("Locking mutex");
+        this-&gt;mtx_.lock();
+        if (this-&gt;state != RaftState::CANDIDATE || this-&gt;current_term != send_term || reply_term &lt; this-&gt;current_term)
+        {
+          // Log_info("Unlocking mutex");
+          this-&gt;mtx_.unlock();
+          iter_index++;
+          continue;
+        }
+        if (reply_term &gt; this-&gt;current_term)
+        {
+          // Log_info("Unlocking mutex");
+          this-&gt;mtx_.unlock();
+          Log_info("Election lost because term issue");
+          this-&gt;ResetStates(reply_term);
+          iter_index++;
+          continue;
+        }
+        // Log_info("Unlocking mutex");
+        this-&gt;mtx_.unlock();
+        if (vote_received)
+        {
+          Log_info("Vote received");
+          yes_count = yes_count + 1;
+          // Log_info("Locking mutex");
+          this-&gt;mtx_.lock();
+          Log_info("yes_count is %d", yes_count);
+          Log_info("Size is %d", commo()-&gt;rpc_par_proxies_[0].size());
+          if (yes_count &gt;= 3)
+          {
+            Log_info("Election won");
+            this-&gt;ele_vote_granted = true;
+            // Log_info("Unlocking mutex");
+            this-&gt;mtx_.unlock();
+            iter_index++;
+            continue;
+          }
+          // Log_info("Unlocking mutex");
+          this-&gt;mtx_.unlock();
+        }
+        else
+        {
+          no_count = no_count + 1;
+          Log_info("no_count is %d", no_count);
+          Log_info("Size is %d", commo()-&gt;rpc_par_proxies_[0].size());
+          if (no_count &gt; 2)
+          {
+            Log_info("Election lost");
+            this-&gt;ResetStates(reply_term);
+            iter_index++;
+            continue;
+          }
+        }
+      }
+      iter_index++;
+    }
+
+    return;
+  }
+
+  void RaftServer::CreateLogForSending()
+  {
+    // Iterate over next_index and match_index and create the log
+    // Log_info("Locking mutex");
+    this-&gt;mtx_.lock();
+    for (int i = 0; i &lt; commo()-&gt;rpc_par_proxies_[0].size(); i++)
+    {
+      vector&lt;LogEntry&gt; temp = {};
+      if (log.size() &gt; 0)
+      {
+        Log_info("Next index for %d is %d", i, this-&gt;next_index[i]);
+        Log_info("Latest applied is %d", this-&gt;log.size() - 1);
+        Log_info("Is true %d", this-&gt;next_index[i] &lt;= (this-&gt;log.size() - 1));
+        if (this-&gt;next_index[i] &lt;= (this-&gt;log.size() - 1))
+        {
+          for (int j = this-&gt;next_index[i]; j &lt;= (this-&gt;log.size() - 1); j++)
+          {
+            temp.push_back(this-&gt;log[j]);
+          }
+        }
+      }
+      // Push the results to the shared vectors
+      this-&gt;cmd.push_back(temp);
+      this-&gt;prev_l_index.push_back(this-&gt;next_index[i] - 1);
+
+      if (this-&gt;next_index[i] - 1 == -1)
+      {
+        this-&gt;prev_l_term.push_back(this-&gt;current_term);
+      }
+      else
+      {
+        this-&gt;prev_l_term.push_back(this-&gt;log[this-&gt;next_index[i] - 1].term);
+      }
+    }
+    // Log_info("Unlocking mutex");
+    this-&gt;mtx_.unlock();
+  }
+
+  void RaftServer::DeleteLogForSending()
+  {
+    // Log_info("Locking mutex");
+    this-&gt;mtx_.lock();
+    this-&gt;cmd.clear();
+    this-&gt;prev_l_index.clear();
+    this-&gt;prev_l_term.clear();
+    // Log_info("Unlocking mutex");
+    this-&gt;mtx_.unlock();
+  }
+
+  void RaftServer::SendAppendEntries()
+  {
+    bool is_leader;
+    uint64_t term;
+    this-&gt;GetState(&is_leader, &term);
+    if (!is_leader)
+    {
+      return;
+    }
+    bool_t f_ok;
+
+    // Log_info("Locking mutex");
+    mtx_.lock();
+    Log_info("Sending append entries from %d", this-&gt;loc_id_);
+    int64_t l_commit = this-&gt;commit_index;
+    // Log_info("Unlocking mutex");
+    mtx_.unlock();
+    uint64_t reply_term, conflict_term;
+    int64_t conflict_index;
+    int64_t temp_commit_index = -1;
+
+    this-&gt;CreateLogForSending();
+
+    uint64_t iter_index = 0;
+    bool_t rpc_sent = false;
+    auto proxies = commo()-&gt;rpc_par_proxies_[0];
+    for (auto &p : proxies)
+    {
+      if (p.first != this-&gt;loc_id_)
+      {
+        // Log_info("Locking mutex");
+        this-&gt;mtx_.lock();
+        vector&lt;LogEntry&gt; *md = &this-&gt;cmd[iter_index];
+        int64_t *prev_log_index = &this-&gt;prev_l_index[iter_index];
+        uint64_t *prev_log_term = &this-&gt;prev_l_term[iter_index];
+        // Log_info("Unlocking mutex");
+        this-&gt;mtx_.unlock();
+        auto ev = commo()-&gt;SendAppendEntries(0,
+                                             this-&gt;loc_id_,
+                                             term,
+                                             this-&gt;loc_id_,
+                                             *prev_log_index,
+                                             *prev_log_term,
+                                             l_commit,
+                                             *md,
+                                             &reply_term,
+                                             &conflict_index,
+                                             &conflict_term,
+                                             &f_ok,
+                                             p,
+                                             &rpc_sent);
+        ev-&gt;Wait(1000000);
+        if (ev-&gt;status_ == Event::TIMEOUT)
+        {
+          Log_info("Timeout happened");
+          return;
+        }
+        if (!rpc_sent)
+        {
+          Log_info("Not ok");
+          iter_index++;
+          continue;
+        }
+        // Log_info("Locking mutex");
+        this-&gt;mtx_.lock();
+        if (this-&gt;state != RaftState::LEADER || this-&gt;current_term != term || reply_term &lt; this-&gt;current_term)
+        {
+          // Log_info("Unlocking mutex");
+          this-&gt;mtx_.unlock();
+          iter_index++;
+          continue;
+        }
+        if (reply_term &gt; this-&gt;current_term)
+        {
+          Log_info("reply term is %d", reply_term);
+          Log_info("current term is %d", this-&gt;current_term);
+          // Log_info("Unlocking mutex");
+          this-&gt;mtx_.unlock();
+          Log_info("Stepping down because term issue");
+          this-&gt;ResetStates(reply_term);
+          iter_index++;
+          continue;
+        }
+        // Log_info("Unlocking mutex");
+        this-&gt;mtx_.unlock();
+        Log_info("fOK is %d", f_ok);
+        if (f_ok)
+        {
+          // Log_info("Locking mutex");
+          this-&gt;mtx_.lock();
+          int64_t temp_match_index = this-&gt;prev_l_index[iter_index] + this-&gt;cmd[iter_index].size();
+          if (temp_match_index &gt; this-&gt;match_index[iter_index])
+          {
+            Log_info("Updating match index to %d", temp_match_index);
+            this-&gt;match_index[iter_index] = temp_match_index;
+          }
+          this-&gt;next_index[iter_index] = this-&gt;match_index[iter_index] + 1;
+          // Log_info("Unlocking mutex");
+          this-&gt;mtx_.unlock();
+        }
+        else if (conflict_term == 0)
+        {
+          // Log_info("Locking mutex");
+          this-&gt;mtx_.lock();
+          this-&gt;next_index[iter_index] = conflict_index;
+          this-&gt;match_index[iter_index] = this-&gt;next_index[iter_index] - 1;
+          // Log_info("Unlocking mutex");
+          this-&gt;mtx_.unlock();
+        }
+        else
+        {
+          // Log_info("Locking mutex");
+          this-&gt;mtx_.lock();
+          auto temp_last_applied = (this-&gt;log.size() - 1);
+          for (; temp_last_applied &gt;= 0; temp_last_applied--)
+          {
+            if (this-&gt;log[temp_last_applied].term == conflict_term)
+            {
+              break;
+            }
+          }
+          if (temp_last_applied &lt; 0)
+          {
+            this-&gt;next_index[iter_index] = conflict_index;
+          }
+          else
+          {
+            this-&gt;next_index[iter_index] = temp_last_applied;
+          }
+          this-&gt;match_index[iter_index] = this-&gt;next_index[iter_index] - 1;
+          // Log_info("Unlocking mutex");
+          this-&gt;mtx_.unlock();
+        }
+      }
+      iter_index++;
+    }
+    this-&gt;DeleteLogForSending();
+    // Log_info("Locking mutex");
+    this-&gt;mtx_.lock();
+    if (this-&gt;log.size() &gt; 0)
+    {
+      for (int64_t n = (this-&gt;log.size() - 1); n &gt;= this-&gt;commit_index; n--)
+      {
+        uint64_t count = 1;
+        if (this-&gt;log[n].term == this-&gt;current_term)
+        {
+          Log_info("Checking for majority for %d", n);
+          for (int i = 0; i &lt; commo()-&gt;rpc_par_proxies_[0].size(); i++)
+          {
+            Log_info("Checking for %d", i);
+            if (i != this-&gt;loc_id_ && this-&gt;match_index[i] &gt;= n)
+            {
+              Log_info("Match index for %d is %d", i, this-&gt;match_index[i]);
+              count++;
+              Log_info("Count is %d", count);
+            }
+          }
+        }
+        if (count &gt; ((commo()-&gt;rpc_par_proxies_[0].size() - 1) / 2))
+        {
+          Log_info("Updating commit index to %d", n);
+          this-&gt;commit_index = n;
+          break;
+        }
+      }
+      // Log_info("Unlocking mutex");
+      this-&gt;mtx_.unlock();
+      this-&gt;UpdateAppNext();
+    }
+    else
+    {
+      // Log_info("Unlocking mutex");
+      this-&gt;mtx_.unlock();
+    }
+  }
+
+  void RaftServer::OnRequestVote(const uint64_t &c_term,
+                                 const uint64_t &c_id,
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match235-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                 const int64_t &last_log_index,
+                                 const uint64_t &last_log_term,
+                                 uint64_t *ret1,
+                                 bool_t *vote_granted,
+                                 bool_t *rpc_sent,
+                                 rrr::DeferredReply *defer)
+  {
+    *rpc_sent = true;
+</FONT>    // Log_info("Locking mutex");
+    this-&gt;mtx_.lock();
+    Log_info("Received request vote from %d at %d and term is %d", c_id, this-&gt;loc_id_, this-&gt;current_term);
+    if (c_term &lt; this-&gt;current_term)
+    {
+      *ret1 = this-&gt;current_term;
+      // Log_info("Unlocking mutex");
+      this-&gt;mtx_.unlock();
+      *vote_granted = false;
+      defer-&gt;reply();
+      return;
+    }
+
+    if (c_term &gt; this-&gt;current_term)
+    {
+      this-&gt;current_term = c_term;
+      this-&gt;state = RaftState::FOLLOWER;
+      this-&gt;voted_for = -1;
+    }
+
+    *ret1 = this-&gt;current_term;
+    *vote_granted = false;
+
+    if (this-&gt;voted_for == -1 || this-&gt;voted_for == c_id)
+    {
+      if (this-&gt;log.size() == 0)
+      {
+        this-&gt;heartbeat_received = true;
+        *vote_granted = true;
+        this-&gt;voted_for = c_id;
+      }
+      else
+      {
+        if (this-&gt;log[(this-&gt;log.size() - 1)].term &lt;= last_log_term && last_log_index &gt;= (this-&gt;log.size() - 1))
+        {
+          this-&gt;heartbeat_received = true;
+          *vote_granted = true;
+          this-&gt;voted_for = c_id;
+        }
+        else if (this-&gt;log[(this-&gt;log.size() - 1)].term &lt; last_log_term)
+        {
+          this-&gt;heartbeat_received = true;
+          *vote_granted = true;
+          this-&gt;voted_for = c_id;
+        }
+      }
+    }
+    // Log_info("Unlocking mutex");
+    this-&gt;mtx_.unlock();
+    defer-&gt;reply();
+    return;
+  }
+
+  void RaftServer::OnAppendEntries(const uint64_t &l_term,
+                                   const uint64_t &l_id,
+                                   const int64_t &prev_l_index,
+                                   const uint64_t &prev_l_term,
+                                   const int64_t &l_commit,
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match235-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                   const vector&lt;LogEntry&gt; &cmd,
+                                   uint64_t *reply_term,
+                                   int64_t *conflict_index,
+                                   uint64_t *conflict_term,
+                                   bool_t *f_ok,
+                                   bool_t *rpc_sent,
+                                   rrr::DeferredReply *defer)
+  {
+    *rpc_sent = true;
+</FONT>    Log_info("Commands receieved: %d", cmd.size());
+    // Log_info("Locking mutex");
+    this-&gt;mtx_.lock();
+    Log_info("Received append entries from %d at %d and term is %d", l_id, this-&gt;loc_id_, this-&gt;current_term);
+    if (l_term &lt; this-&gt;current_term)
+    {
+      *reply_term = this-&gt;current_term;
+      *conflict_index = -1;
+      *conflict_term = 0;
+      // Log_info("Unlocking mutex");
+      this-&gt;mtx_.unlock();
+      *f_ok = false;
+      defer-&gt;reply();
+      return;
+    }
+
+    if (l_term &gt; this-&gt;current_term)
+    {
+      this-&gt;current_term = l_term;
+      this-&gt;state = RaftState::FOLLOWER;
+      this-&gt;voted_for = -1;
+    }
+
+    if (this-&gt;log.size() &gt; 0 && prev_l_index &gt; (this-&gt;log.size() - 1))
+    {
+      *reply_term = this-&gt;current_term;
+      *conflict_index = (this-&gt;log.size() - 1) + 1;
+      *conflict_term = 0;
+      // Log_info("Unlocking mutex");
+      this-&gt;mtx_.unlock();
+      *f_ok = false;
+      defer-&gt;reply();
+      return;
+    }
+
+    if (this-&gt;log.size() &gt; 0 && this-&gt;log[prev_l_index].term != prev_l_term)
+    {
+      *conflict_term = this-&gt;log[(this-&gt;log.size() - 1)].term;
+      for (uint64_t i = prev_l_index; i &gt;= 0 && this-&gt;log[i].term == prev_l_term; i--)
+      {
+        *conflict_index = i;
+      }
+      *reply_term = this-&gt;current_term;
+      // Log_info("Unlocking mutex");
+      this-&gt;mtx_.unlock();
+      *f_ok = false;
+      defer-&gt;reply();
+      return;
+    }
+    uint64_t i = prev_l_index + 1;
+    uint64_t j = 0;
+    if (this-&gt;log.size() &gt; 0)
+    {
+      for (; i &lt; (this-&gt;log.size() - 1) + 1 && j &lt; cmd.size(); i++, j++)
+      {
+        if (this-&gt;log[i].term != cmd[j].term)
+        {
+          this-&gt;log.erase(this-&gt;log.begin() + i, this-&gt;log.end());
+          break;
+        }
+      }
+    }
+
+    for (; j &lt; cmd.size(); j++)
+    {
+      Log_info("Pushing log %d", j);
+      this-&gt;log.push_back(cmd[j]);
+    }
+    // Update last applied
+    Log_info("Latest applied is %d at %d", (this-&gt;log.size() - 1), this-&gt;loc_id_);
+    Log_info("Commit index is %d at %d", this-&gt;commit_index, this-&gt;loc_id_);
+    Log_info("Leader commit is %d at %d", l_commit, this-&gt;loc_id_);
+    if (l_commit &gt; this-&gt;commit_index)
+    {
+      Log_info("Updating commit index %d at %d", l_commit, this-&gt;loc_id_);
+      if (l_commit &lt; (this-&gt;log.size() - 1))
+      {
+        this-&gt;commit_index = l_commit;
+      }
+      else
+      {
+        this-&gt;commit_index = (this-&gt;log.size() - 1);
+      }
+    }
+    // Log_info("Unlocking mutex");
+    this-&gt;mtx_.unlock();
+
+    // Log_info("Locking mutex");
+    this-&gt;mtx_.lock();
+    this-&gt;heartbeat_received = true;
+    *reply_term = this-&gt;current_term;
+    // Log_info("Unlocking mutex");
+    this-&gt;mtx_.unlock();
+    *f_ok = true;
+    this-&gt;UpdateAppNext();
+    defer-&gt;reply();
+    return;
+  }
+
+  void RaftServer::SyncRpcExample()
+  {
+    /* This is an example of synchronous RPC using coroutine; feel free to
+       modify this function to dispatch/receive your own messages.
+       You can refer to the other function examples in commo.h/cc on how
+       to send/recv a Marshallable object over RPC. */
+    Coroutine::CreateRun([this]()
+                         {
+    string res;
+    auto event = commo()-&gt;SendString(0, /* partition id is always 0 for lab1 */
+                                     0, "hello", &res);
+    event-&gt;Wait(1000000); //timeout after 1000000us=1s
+    if (event-&gt;status_ == Event::TIMEOUT) {
+      Log_info("timeout happens");
+    } else {
+      Log_info("rpc response is: %s", res.c_str()); 
+    } });
+  }
+
+  /* Do not modify any code below here */
+
+  void RaftServer::Disconnect(const bool disconnect)
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    verify(disconnected_ != disconnect);
+    // global map of rpc_par_proxies_ values accessed by partition then by site
+    static map&lt;parid_t, map&lt;siteid_t, map&lt;siteid_t, vector&lt;SiteProxyPair&gt;&gt;&gt;&gt; _proxies{};
+    if (_proxies.find(partition_id_) == _proxies.end())
+    {
+      _proxies[partition_id_] = {};
+    }
+    RaftCommo *c = (RaftCommo *)commo();
+    if (disconnect)
+    {
+      verify(_proxies[partition_id_][loc_id_].size() == 0);
+      verify(c-&gt;rpc_par_proxies_.size() &gt; 0);
+      auto sz = c-&gt;rpc_par_proxies_.size();
+      _proxies[partition_id_][loc_id_].insert(c-&gt;rpc_par_proxies_.begin(), c-&gt;rpc_par_proxies_.end());
+      c-&gt;rpc_par_proxies_ = {};
+      verify(_proxies[partition_id_][loc_id_].size() == sz);
+      verify(c-&gt;rpc_par_proxies_.size() == 0);
+    }
+    else
+    {
+      verify(_proxies[partition_id_][loc_id_].size() &gt; 0);
+      auto sz = _proxies[partition_id_][loc_id_].size();
+      c-&gt;rpc_par_proxies_ = {};
+      c-&gt;rpc_par_proxies_.insert(_proxies[partition_id_][loc_id_].begin(), _proxies[partition_id_][loc_id_].end());
+      _proxies[partition_id_][loc_id_] = {};
+      verify(_proxies[partition_id_][loc_id_].size() == 0);
+      verify(c-&gt;rpc_par_proxies_.size() == sz);
+    }
+    disconnected_ = disconnect;
+  }
+
+  bool RaftServer::IsDisconnected()
+  {
+    return disconnected_;
+  }
+
+} // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

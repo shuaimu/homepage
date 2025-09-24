@@ -1,0 +1,728 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-imtoobose/src/deptran/raft/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-imtoobose/src/deptran/raft/server.cc<p><PRE>
+
+
+#include "server.h"
+// #include "paxos_worker.h"
+#include "exec.h"
+#include "frame.h"
+#include "coordinator.h"
+#include "../classic/tpc_command.h"
+#include &lt;random&gt;
+
+/*
+  RPC flow -&gt; 1. Leader/Candidate server triggers a RPC call, sent using commo(). 
+              2. Then commo() sends an async call with a future callback.
+              3. To receive, use a callback or event returned from the commo() callback.
+              4. The RPC call triggers the relevant handler in service.cc, which then can call the server object (followers).
+
+  Register new rpcs in raft_rpc.rpc, change service.cc, service.h
+
+  Errors:
+    1. RPC calls will actually execute without timing out when network is partitioned/cut off. This means that the callback in commo() is
+       STILL CALLED but sets garbage values if you don't set explicit defaults in service.h
+    2. Use shared pointers if passing them to another func in an async parent caller because regular pointers just de-allocate the moment
+       the creating function is out of scope. Shared pointers count references and act like sane golang pointers
+    3. Coroutines should not have two waits at the same time from what I can tell. Even if the coroutine spawns other coroutines??? not sure.
+*/
+
+namespace janus
+{
+
+  RaftServer::RaftServer(Frame *frame)
+  {
+    frame_ = frame;
+    /* Your code here for server initialization. Note that this function is
+       called in a different OS thread. Be careful about thread safety if
+       you want to initialize variables here. */
+    mtx_.lock();
+    currentTerm = 0;
+    serverState = FOLLOWER;
+    votedFor = -1;
+    heartbeat_.Set(0);
+    logs = vector&lt;LogEntry&gt;();
+    logs.push_back(LogEntry{
+      Term : 0,
+    }); // initial log value to prevent negative index calls on getLastLogTerm, getLastLogIndex. Also first log entry is 1-indexed.
+
+    commitIndex = 0;
+    // @todo need to use this variable? why even need this
+    lastApplied = 0;
+    mtx_.unlock();
+  }
+
+  bool RaftServer::mutIsLeader()
+  {
+    mtx_.lock();
+    auto ret = (serverState == LEADER);
+    mtx_.unlock();
+    return ret;
+  }
+
+  bool RaftServer::mutIsCandidate()
+  {
+    mtx_.lock();
+    auto ret = (serverState == CANDIDATE);
+    mtx_.unlock();
+    return ret;
+  }
+
+  bool RaftServer::mutIsFollower()
+  {
+    mtx_.lock();
+    auto ret = (serverState == FOLLOWER);
+    mtx_.unlock();
+    return ret;
+  }
+
+  uint64_t RaftServer::getRandomizedElectionTimeout()
+  {
+    std::random_device dev;
+    std::mt19937 rng(dev());
+    std::uniform_int_distribution&lt;std::mt19937::result_type&gt; uni(700000, 1200000); // 700 ms to 1.2s
+    return uni(rng);
+  }
+
+  RaftServer::~RaftServer()
+  {
+    /* Your code here for server teardown */
+  }
+
+  void RaftServer::Setup()
+  {
+    /* Your code here for server setup. Due to the asynchronous nature of the
+       framework, this function could be called after a RPC handler is triggered.
+       Your code should be aware of that. This function is always called in the
+       same OS thread as the RPC handlers. */
+    BackgroundLoop();
+  }
+
+  // Start receives a cmd from client, and if the instance is the leader, returns its new last log index and term
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match98-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  bool RaftServer::Start(shared_ptr&lt;Marshallable&gt; &cmd,
+                         uint64_t *index,
+                         uint64_t *term)
+  {
+    /* Your code here. This function can be called from another OS thread. */
+    *index = 0;
+    *term = 0;
+
+    auto is_leader = mutIsLeader();
+</FONT>    if (is_leader)
+    {
+      mtx_.lock();
+      // Log_info("recieved new entry leader[%d] term [%d]", loc_id_, currentTerm);
+      *term = currentTerm;
+      logs.push_back(LogEntry{
+        Term : currentTerm,
+        Cmd : cmd,
+      });
+      *index = getLastLogIndex();
+      *term = currentTerm;
+      mtx_.unlock();
+    }
+
+    return is_leader;
+  }
+
+  // Get state returns whether the current instance is the leader, and it's term
+  void RaftServer::GetState(bool *is_leader, uint64_t *term)
+  {
+    /* Your code here. This function can be called from another OS thread. */
+    *is_leader = mutIsLeader();
+    mtx_.lock();
+    *term = currentTerm;
+    mtx_.unlock();
+  }
+
+  void RaftServer::convertToCandidate()
+  {
+    mtx_.lock();
+    serverState = CANDIDATE;
+    mtx_.unlock();
+  }
+
+  // convertToFollower switches to FOLLOWER state, because a recieved RPC term was greater than current term
+  void RaftServer::convertToFollower(uint64_t term)
+  {
+    mtx_.lock();
+    currentTerm = term;
+    serverState = FOLLOWER;
+    votedFor = -1;
+    mtx_.unlock();
+  }
+
+  // getLastLogIndex (not thread safe) 
+  int RaftServer::getLastLogIndex()
+  {
+    return logs.size() - 1;
+  }
+
+  // getLastLogTerm (not thread safe)
+  uint64_t RaftServer::getLastLogTerm()
+  {
+    return logs.at(logs.size() - 1).Term;
+  }
+
+  // convertToLeader switches to leader, and re-initializes matchIndex and nextIndex
+  void RaftServer::convertToLeader()
+  {
+    if (!mutIsCandidate())
+    {
+      return;
+    }
+    mtx_.lock();
+    serverState = LEADER;
+    matchIndex = vector&lt;uint64_t&gt;(commo()-&gt;rpc_clients_.size(), 0);
+    nextIndex = vector&lt;uint64_t&gt;(commo()-&gt;rpc_clients_.size(), getLastLogIndex() + 1); // initialized to leader's lastLogIndex + 1
+    mtx_.unlock();
+  }
+
+  void RaftServer::BackgroundLoop()
+  {
+    Coroutine::CreateRun([this]()
+                         {
+      while (true) {
+        // @todo kill this when server tears down    
+        switch (serverState) {
+          case LEADER:
+          {
+            if (!mutIsLeader()) {
+              break;
+            }
+            // @TODO decide is timeout event should start before or after calling broadcastAppendEntries
+            auto timeoutEvent = Reactor::CreateSpEvent&lt;TimeoutEvent&gt;(HEARTBEAT_INTERVAL);
+            BroadcastAppendEntries();
+            timeoutEvent-&gt;Wait();
+            break;
+          }
+
+          case FOLLOWER:
+          {
+            if (!mutIsFollower()) {
+              break;
+            }
+
+            uint64_t electionTimeout = getRandomizedElectionTimeout();
+            heartbeat_.Set(0);
+            // if an append entry rpc is called, it will set heartbeat_ to 1, and this returns immediately
+            auto wasTimeout = heartbeat_.WaitUntilGreaterOrEqualThan(1, electionTimeout);
+            if (wasTimeout) {
+              convertToCandidate();
+            }
+            break;
+          }
+
+          case CANDIDATE:
+          {
+            if (!mutIsCandidate()) {
+              break;
+            }
+
+            StartElection();
+
+            // if still candidate, restart election with a new timeout
+            if (mutIsCandidate()) {
+              uint64_t electionTimeout = getRandomizedElectionTimeout();
+              auto timeoutEvent = Reactor::CreateSpEvent&lt;TimeoutEvent&gt;(electionTimeout);
+              timeoutEvent-&gt;Wait();
+            }
+            break;
+          }
+        }
+      } });
+  }
+
+  int RaftServer::getMajorityRequired()
+  {
+    const auto totalServers = commo()-&gt;rpc_clients_.size();
+    auto majority = (totalServers - 1) / 2 + 1; // if n = 2k+1, majority = k+1 i.e. (n-1)/2 + 1
+    if (totalServers % 2 == 0)
+    {
+      majority += 1; // in n = 2k, majority = k+1, i.e. n/2 + 1
+    }
+    return majority;
+  }
+
+  // @todo should rewrite this to be like append rpc where all votes are individually checked.
+  // StartElection does the final step of converting to candidate, i.e. incrementing term and setting votedFor to itself
+  // Then it broadcasts RequestVoteRPCs and tallies votes
+  void RaftServer::StartElection()
+  {
+    // this is technically part of convert to candidate, but it's easier to be here
+    mtx_.lock();
+    currentTerm += 1;
+    votedFor = loc_id_;
+    // Log_info("election triggered %d at term [%d] vFor[%d] isLeader[%d]", loc_id_, currentTerm, votedFor, mutIsLeader());
+
+    auto replyVotes = make_shared&lt;uint64_t&gt;();
+    auto replyTerm = make_shared&lt;uint64_t&gt;();
+    const auto totalServers = commo()-&gt;rpc_clients_.size();
+
+    int lastLogIndex = getLastLogIndex();
+    uint64_t lastLogTerm = getLastLogTerm();
+  
+
+    auto ev = commo()-&gt;BroadcastRequestVote(0, 0, loc_id_, currentTerm, lastLogIndex, lastLogTerm, replyTerm, replyVotes);
+    mtx_.unlock();
+    
+    ev-&gt;Wait(200000); // 200 ms
+
+    // Log_info("checking vote results %d - (%d/%d), term (%d)", loc_id_, *replyVotes + 1, totalServers, *replyTerm);
+    // BroadcastRequestVote returns the greatest reply term, so set it to that if &gt; current
+    mtx_.lock();
+    if (*replyTerm &gt; currentTerm)
+    {
+      mtx_.unlock();
+      convertToFollower(*replyTerm);
+      return;
+    }
+    mtx_.unlock();
+
+    auto majority = getMajorityRequired();
+
+    // add + 1 for self-vote
+    if (*replyVotes + 1 &gt;= majority && mutIsCandidate())
+    {
+      // Log_info("%d is leader of term %d", loc_id_, currentTerm);
+      convertToLeader();
+    }
+  }
+
+  // RPC CALLS - RequestVote, EmptyAppendEntry (Heartbeats), AppendEntry ==================================================
+
+  // SendHeartBeats broadcasts empty append entries RPCs and returns the greatest reply term
+  void RaftServer::SendHeartBeats()
+  {
+    Coroutine::CreateRun([this](){
+      mtx_.lock();
+      auto term = currentTerm;
+      mtx_.unlock();
+
+      auto reply = make_shared&lt;uint64_t&gt;();
+      // Log_info("sending out heartbeats from %d at term %d", loc_id_, term);
+      auto ev = commo()-&gt;BroadcastHeartBeat(0, loc_id_, term, commitIndex, reply);
+      ev-&gt;Wait();
+      
+      if (*reply &gt; term) {
+        convertToFollower(*reply);
+      } 
+    });
+  }
+
+  // RecvHeartBeat is the RPC handler for Empty Append RPCs
+  void RaftServer::RecvHeartBeat(uint64_t leaderId, uint64_t leaderTerm, uint64_t leaderCommit, uint64_t *replyTerm)
+  {
+    mtx_.lock();
+    heartbeat_.Set(1);
+    *replyTerm = currentTerm;
+
+    if (leaderTerm &gt; currentTerm)
+    {
+      mtx_.unlock();
+      convertToFollower(leaderTerm);
+      return;
+    }
+
+    if (leaderCommit &gt; commitIndex)
+    {
+      auto minVal = leaderCommit;
+      if (minVal &gt; getLastLogIndex())
+      {
+        minVal = getLastLogIndex();
+      }
+      // Log_info("[svr %d] recv heartbeat, leadercommit = %d, commitIndex = %d, lastLogIndex = %d, minVal = %d", loc_id_, leaderCommit, commitIndex, getLastLogIndex(), minVal);
+      for (long i = long(commitIndex) + 1; i &lt;= long(minVal); i++)
+      {
+        // Log_info("[svr %d] committing logs %d", loc_id_, i);
+        app_next_(*logs.at(i).Cmd);
+      }
+      commitIndex = minVal;
+    }
+    // Log_info("[%d at %d] received heart beat from leader (%d) at term (%d)", loc_id_, currentTerm, leaderId, leaderTerm);
+    mtx_.unlock();
+  }
+
+  // RequestVote is the RPC handler for RequestVoteRPC
+  void RaftServer::RequestVote(uint64_t candidateId, uint64_t candidateTerm, uint64_t lastLogIndex, uint64_t lastLogTerm, shared_ptr&lt;ReplyRequestVote&gt; reply)
+  {
+    mtx_.lock();
+    // Log_info("received request vote [%d] from [%d] - term [%d]", loc_id_, candidateId, candidateTerm);
+    reply-&gt;Term = currentTerm;
+    reply-&gt;Vote = false;
+
+    // imp. to do this first if there's two competing leaders
+    if (candidateTerm &gt; currentTerm)
+    {
+      mtx_.unlock();
+      convertToFollower(candidateTerm);
+      mtx_.lock();
+    }
+
+    if (votedFor == -1 || votedFor == candidateId)
+    {
+      // check for log up to date - election restriction (5.4.1) - 
+      // 1. the next leader should at least have replicated to this server's term
+      // 2. if terms are same, the longer log wins (i.e. greater index)
+      if (lastLogTerm &gt; getLastLogTerm() || lastLogTerm == getLastLogTerm() && lastLogIndex &gt;= getLastLogIndex())
+      {
+        currentTerm = candidateTerm;
+        votedFor = candidateId;
+        reply-&gt;Vote = true;
+        heartbeat_.Set(1);
+      }
+    }
+
+    // Log_info("state after request vote [%d] (from candidate %d - %d) - vFor[%d], cTerm[%d], reply(%d, %d)", loc_id_, candidateId, candidateTerm, votedFor, currentTerm, reply-&gt;Term, reply-&gt;Vote);
+    mtx_.unlock();
+  }
+
+  struct AppendEntryReply
+  {
+    shared_ptr&lt;uint64_t&gt; Term;
+    shared_ptr&lt;bool_t&gt; FollowerOK;
+    shared_ptr&lt;bool_t&gt; Success;
+
+    uint64_t prevLogIndex;
+    uint64_t prevLogTerm;
+    uint64_t entrySize;
+  };
+
+  // BroadcastAppendEntries will start a new co-routine that will send out AppendEntries to all followers
+  // It will then use an AND event to check for all returns, and collect the data in a vector of AppendEntryReply
+  void RaftServer::BroadcastAppendEntries(){
+    Coroutine::CreateRun([this]
+                         {
+    if (!mutIsLeader())
+    {
+      return;
+    }
+    mtx_.lock();
+    auto sz = commo()-&gt;rpc_par_proxies_[0].size();
+    auto replies = vector&lt;AppendEntryReply&gt;(sz);
+    auto andEv = Reactor::CreateSpEvent&lt;AndEvent&gt;();
+
+    for (auto v : commo()-&gt;rpc_par_proxies_[0])
+    {
+      if (v.first == loc_id_)
+      {
+        continue;
+      }
+
+      auto serverId = v.first;
+      // nextIndex is the next log to send, so prevLogIndex is the one before that
+      auto prevLogIndex = nextIndex[serverId] - 1;
+      auto prevLogTerm = logs.at(prevLogIndex).Term;
+
+      // not sure how to put LogEntry in all 3 files (server.cc, commo.cc, and service.cc), so unrolling
+      // LogEntry into it's two members for commo.cc. It has to serialize cmds anyway so.
+      vector&lt;uint64_t&gt;logTerms;
+      vector&lt;shared_ptr&lt;Marshallable&gt;&gt;logCmds;
+      vector&lt;LogEntry&gt; entries;
+
+      // @todo can this cond can ever fail
+      if (nextIndex[serverId] &lt; logs.size()) {
+        entries = vector&lt;LogEntry&gt;(logs.begin() + nextIndex[serverId], logs.end());
+      }
+
+      for(auto e: entries){
+        logTerms.push_back(e.Term);
+        logCmds.push_back(e.Cmd);
+      }
+
+      replies.at(serverId).FollowerOK = make_shared&lt;bool_t&gt;();
+      replies.at(serverId).Term = make_shared&lt;uint64_t&gt;();
+      replies.at(serverId).Success = make_shared&lt;bool_t&gt;();
+      *(replies.at(serverId).Success) = false;
+      replies.at(serverId).prevLogIndex = prevLogIndex;
+      replies.at(serverId).prevLogTerm = prevLogTerm;
+      replies.at(serverId).entrySize = entries.size();
+
+      auto ev = commo()-&gt;SendAppendEntries(0, serverId, loc_id_, currentTerm, prevLogIndex, prevLogTerm, commitIndex, logTerms, logCmds, 
+                            replies.at(serverId).Term, replies.at(serverId).FollowerOK, replies.at(serverId).Success);
+      andEv-&gt;AddEvent(ev);
+    }
+    mtx_.unlock();
+
+    // make sure this ends before heartbeat triggers - weird stuff happens with nextIndex if rpcs take too long
+    andEv-&gt;Wait(HEARTBEAT_INTERVAL-200);
+
+    if (!mutIsLeader() || andEv-&gt;IsTimeout())
+    {
+      // Log_info("[lead_%d at %d] no longer leader (%d) or and event timed out (%d)", loc_id_, currentTerm, mutIsLeader(), andEv-&gt;IsTimeout());
+      return;
+    }
+
+    mtx_.lock();
+    auto term_ = currentTerm;
+    mtx_.unlock();
+    
+    for (long r = 0; r &lt;sz; r++) {
+      if (r == loc_id_) {
+        continue;
+      }
+      auto reply = replies.at(r);
+      if (*(reply.Success) == true) {
+        HandleAppendEntryReply(r, reply.prevLogIndex, reply.prevLogTerm, reply.entrySize, term_, *reply.Term , *reply.FollowerOK);
+      }
+    } });
+  }
+
+  void RaftServer::HandleAppendEntryReply(
+      uint32_t serverId,
+      uint64_t prevLogIndex,
+      uint64_t prevLogTerm,
+      uint64_t entrySize,
+      uint64_t term_,
+      uint64_t replyTerm,
+      bool_t followerOk)
+  {
+    mtx_.lock();
+    // Log_info("[svr %d @ %d] received append rpc reply - term [%d], follower ok - [%d] pLI/plT[%d/%d], entrySize[%d]", serverId, term_, replyTerm, followerOk, prevLogIndex, prevLogTerm, entrySize);
+    if (replyTerm &gt; term_)
+    {
+      mtx_.unlock();
+      convertToFollower(replyTerm);
+      return;
+    }
+
+    // @todo another condition that might not need to be checked 
+    if (entrySize &gt; 0)
+    {
+      // @todo - something to note - when the timeout was lower for OR event wait, multiples of this function was called
+      // because the rpc call would come slower than the heartbeat. This would end up reducing nextIndex to negative values
+      // causing an overflow. Possible soln - send the nextIndex from the follower itself to prevent issues when you have
+      // to replicate a lot of lost logs. Also possible soln - follower decrements nextIndex till the last match then returns
+      // that index
+      if (followerOk)
+      {
+        // highest monotonically increasing index replicated on server, so all the entries from prevLogIndex
+        const auto nextMatchIndex = entrySize + prevLogIndex;
+        if (nextMatchIndex &gt; matchIndex.at(serverId))
+        {
+          matchIndex.at(serverId) = nextMatchIndex;
+        }
+        const auto lastNextIndex = nextIndex.at(serverId);
+        nextIndex.at(serverId) = matchIndex.at(serverId) + 1;
+      }
+      else
+      {
+        // Log_info("[svr_%d] next index reduced if follower not ok, prevLogIndex[%d], prevLogTerm[%d] nextIndex[%d], matchIndex[%d], entrySize[%d]",
+        // serverId, prevLogIndex, prevLogTerm, nextIndex.at(serverId), matchIndex.at(serverId), entrySize);
+        nextIndex.at(serverId) = nextIndex.at(serverId) - 1;
+      }
+    }
+
+    /*
+    If there exists an N such that N &gt; commitIndex, a majority of matchIndex[i] ≥ N, and log[N].term == currentTerm: set commitIndex = N
+    (Figure 8 problem)
+    i.e. only check for majority replication for current term, and commit everything before that.
+    */
+    
+    // the log is already replicated within leader
+    const auto majority = getMajorityRequired() - 1;
+    // converting to long is critical here, for some reason n will keep reducing if you compare a long and a unsigned long?
+    // check backwards because you can commit all previous logs in raft when replication is achieved
+    for (long n = getLastLogIndex(); n &gt;= long(commitIndex); n--)
+    {
+      if (logs.at(n).Term == term_)
+      {
+        int count = 0;
+        for (auto m : matchIndex)
+        {
+          if (m &gt;= n)
+          {
+            count += 1;
+          }
+        }
+
+        if (count &gt;= majority)
+        {
+          for (int j = commitIndex + 1; j &lt;= n; j++)
+          {
+            // Log_info("leader commit %d", j);
+            app_next_(*(logs.at(j).Cmd));
+          }
+          // if (n != commitIndex)
+          // {
+            // Log_info("set new commit index of leader at %d", n);
+          // }
+          commitIndex = n;
+          break;
+        }
+      }
+    }
+    mtx_.unlock();
+  }
+
+  // AppendEntriesRPC handles AppendEntries RPC calls from leader
+  void RaftServer::AppendEntriesRPC(uint64_t leaderTerm,
+                                    uint64_t leaderId,
+                                    uint64_t prevLogIndex,
+                                    uint64_t prevLogTerm,
+                                    vector&lt;LogEntry&gt; entries,
+                                    uint64_t leaderCommit,
+                                    uint64_t *replyTerm,
+                                    bool_t *appendSuccess,
+                                    bool_t *callSuccess)
+  {
+    mtx_.lock();
+    
+    heartbeat_.Set(1);
+
+    *replyTerm = currentTerm;
+    *appendSuccess = false;
+    *callSuccess = true;
+    
+    // Log_info("[svr %d] Receiving AppendEntriesRPC: lid/term[%d | %d], prevLogIndex/term[%d | %d], leaderCommit [%d]", loc_id_, leaderId, leaderTerm, prevLogIndex, prevLogTerm, leaderCommit);
+    if (leaderTerm &lt; currentTerm)
+    {
+      mtx_.unlock();
+      return;
+    }
+
+    if (leaderTerm &gt; currentTerm)
+    {
+      mtx_.unlock();
+      convertToFollower(leaderTerm);
+      mtx_.lock();
+    }
+
+    // if prev log index doesn't match, leader needs to send more logs
+    // Log_info("[svr_%d] checking prev log index term - p[%d]", loc_id_, prevLogIndex);
+    if (entries.size() &gt; 0)
+    {
+      if (prevLogIndex &gt; getLastLogIndex() || logs.at(prevLogIndex).Term != prevLogTerm)
+      {
+        // Log_info("[svr_%d|Term%d] prev log index &gt; last Log index, so there are more entries required (prevLogIndex %d), prevLogTerm %d, lli %d",
+        // loc_id_,
+        // currentTerm,
+        // prevLogIndex,
+        // prevLogTerm,
+        // getLastLogIndex()
+        // );
+        *replyTerm = currentTerm;
+        *appendSuccess = false;
+        mtx_.unlock();
+        return;
+      }
+
+      auto l_it = entries.begin();
+      auto f_it = logs.begin();
+      std::advance(f_it, prevLogIndex + 1); // go to next index
+
+      // check for conflicting entries, checking terms is enough since index = index and term = term is an equal log in raft
+      for (; l_it != entries.end() && f_it != logs.end(); l_it++, f_it++)
+      {
+        if ((*l_it).Term != (*f_it).Term)
+        {
+          break;
+        }
+      }
+
+      // leader overrides conflicting entries
+      if (f_it != logs.end())
+      {
+        logs.erase(f_it, logs.end());
+      }
+
+      for (; l_it != entries.end(); l_it++)
+      {
+        logs.push_back(*l_it);
+      }
+    }
+
+    // commit min(leaderCommit, lastLogIndex) if leaderCommit &gt; commitIndex
+    if (leaderCommit &gt; commitIndex)
+    {
+      auto minVal = leaderCommit;
+      if (minVal &gt; getLastLogIndex())
+      {
+        minVal = getLastLogIndex();
+      }
+
+      for (auto i = commitIndex + 1; i &lt;= minVal; i++)
+      {
+        // Log_info("[svr_%d] committing logs %d", loc_id_, i);
+        app_next_(*logs.at(i).Cmd);
+      }
+      commitIndex = minVal;
+    }
+    *replyTerm = currentTerm;
+    *appendSuccess = true;
+    mtx_.unlock();
+  }
+
+  void RaftServer::SyncRpcExample()
+  {
+    /* This is an example of synchronous RPC using coroutine; feel free to
+       modify this function to dispatch/receive your own messages.
+       You can refer to the other function examples in commo.h/cc on how
+       to send/recv a Marshallable object over RPC. */
+    Coroutine::CreateRun([this]()
+                         {
+    string res;
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match98-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    auto event = commo()-&gt;SendString(0, /* partition id is always 0 for lab1 */
+                                     0, "hello", &res);
+    event-&gt;Wait(1000000); //timeout after 1000000us=1s
+    if (event-&gt;status_ == Event::TIMEOUT) {
+      // Log_info("timeout happens");
+    } else {
+      // Log_info("rpc response is: %s", res.c_str()); 
+    } });
+  }
+
+  /* Do not modify any code below here */
+
+  void RaftServer::Disconnect(const bool disconnect)
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    verify(disconnected_ != disconnect);
+    // global map of rpc_par_proxies_ values accessed by partition then by site
+    static map&lt;parid_t, map&lt;siteid_t, map&lt;siteid_t, vector&lt;SiteProxyPair&gt;&gt;&gt;&gt; _proxies{};
+</FONT>    if (_proxies.find(partition_id_) == _proxies.end())
+    {
+      _proxies[partition_id_] = {};
+    }
+    RaftCommo *c = (RaftCommo *)commo();
+    if (disconnect)
+    {
+      verify(_proxies[partition_id_][loc_id_].size() == 0);
+      verify(c-&gt;rpc_par_proxies_.size() &gt; 0);
+      auto sz = c-&gt;rpc_par_proxies_.size();
+      _proxies[partition_id_][loc_id_].insert(c-&gt;rpc_par_proxies_.begin(), c-&gt;rpc_par_proxies_.end());
+      c-&gt;rpc_par_proxies_ = {};
+      verify(_proxies[partition_id_][loc_id_].size() == sz);
+      verify(c-&gt;rpc_par_proxies_.size() == 0);
+    }
+    else
+    {
+      verify(_proxies[partition_id_][loc_id_].size() &gt; 0);
+      auto sz = _proxies[partition_id_][loc_id_].size();
+      c-&gt;rpc_par_proxies_ = {};
+      c-&gt;rpc_par_proxies_.insert(_proxies[partition_id_][loc_id_].begin(), _proxies[partition_id_][loc_id_].end());
+      _proxies[partition_id_][loc_id_] = {};
+      verify(_proxies[partition_id_][loc_id_].size() == 0);
+      verify(c-&gt;rpc_par_proxies_.size() == sz);
+    }
+    disconnected_ = disconnect;
+  }
+
+  bool RaftServer::IsDisconnected()
+  {
+    return disconnected_;
+  }
+
+} // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

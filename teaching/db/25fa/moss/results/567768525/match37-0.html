@@ -1,0 +1,361 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/jainsat/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/jainsat/src/kvraft/server.go<p><PRE>
+package raftkv
+
+import (
+	"bytes"
+	"fmt"
+	"labgob"
+	"labrpc"
+	"log"
+	"raft"
+	"sync"
+	"time"
+)
+
+const Debug = 0
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+//var requestTracker = map[int64]string{}
+
+type Op struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+	Operation string
+	Key       string
+	Value     string
+	RequestId string
+	ClientId  int64
+}
+
+type KVServer struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+<A NAME="10"></A><FONT color = #FF0000><A HREF="match37-1.html#10" TARGET="1"><IMG SRC="../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	applyCh chan raft.ApplyMsg
+
+	maxraftstate int // snapshot if log grows this big
+
+	db                map[string]string // key value store
+	ddebug            bool
+	indexSubscription map[int]chan Op
+	requestTracker    map[int64]string
+	timer             *time.Timer
+	die               bool
+
+	maxApplyIndexSeen int
+</FONT>
+	// Your definitions here.
+}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match37-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_18.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *KVServer) getDie() bool {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	return kv.die
+}
+
+func (kv *KVServer) listenOnChannel() {
+
+	recvMsg := false
+	var msg raft.ApplyMsg
+	for !kv.getDie() {
+		select {
+		case msg = &lt;-kv.applyCh:
+			recvMsg = true
+			if !kv.timer.Stop() {
+				&lt;-kv.timer.C
+			}
+			kv.timer.Reset(1 * time.Second)
+		case &lt;-kv.timer.C:
+			recvMsg = false
+			kv.debug(true, "No-op\n")
+			kv.rf.Start(Op{Operation: "No-Op", RequestId: "-1"})
+			kv.timer.Reset(1 * time.Second)
+		}
+
+		if recvMsg {
+			kv.debug(true, "Received msg on channel %v\n", msg)
+			kv.executeOp(msg)
+		}
+
+	}
+
+}
+
+func (kv *KVServer) executeOp(msg raft.ApplyMsg) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	if !msg.CommandValid {
+		// snapshot
+		if msg.SnapshotIndex &gt; kv.maxApplyIndexSeen {
+			kv.readPersist(msg.Snapshot)
+			kv.maxApplyIndexSeen = msg.SnapshotIndex
+			// Free everyone waiting before this index.
+			for i, ch := range kv.indexSubscription {
+				if i &lt;= kv.maxApplyIndexSeen {
+					select {
+					case ch &lt;- Op{RequestId: "-1"}:
+					default:
+
+					}
+				}
+			}
+		}
+		return
+	}
+	kv.maxApplyIndexSeen = msg.CommandIndex
+	op := msg.Command.(Op)
+	ch := kv.indexSubscription[msg.CommandIndex]
+	if op.Operation != "No-Op" {
+</FONT>		lastClientReq, ok := kv.requestTracker[op.ClientId]
+		kv.debug(false, "lastclient req = %v\n", lastClientReq)
+		if ok && op.RequestId == lastClientReq {
+			// this is a duplicate
+			if ch != nil {
+				ch &lt;- op
+			}
+			return
+		}
+		kv.requestTracker[op.ClientId] = op.RequestId
+	}
+
+	if op.Operation == "Put" {
+
+		kv.db[op.Key] = op.Value
+		kv.debug(false, "put %v\n", kv.db)
+		if ch != nil {
+			ch &lt;- op
+		}
+		kv.debug(false, "release %v\n", kv.me)
+
+	} else if op.Operation == "Append" {
+<A NAME="12"></A><FONT color = #0000FF><A HREF="match37-1.html#12" TARGET="1"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		kv.db[op.Key] = kv.db[op.Key] + op.Value
+		kv.debug(false, "append %v\n", kv.db)
+</FONT><A NAME="7"></A><FONT color = #0000FF><A HREF="match37-1.html#7" TARGET="1"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		if ch != nil {
+			op.Value = kv.db[op.Key]
+			ch &lt;- op
+		}
+		kv.debug(false, "release %v\n", kv.me)
+
+	} else if op.Operation == "get" {
+</FONT>		kv.debug(false, "Get db = %v\n", kv.db)
+		if ch != nil {
+			op.Value = kv.db[op.Key]
+			ch &lt;- op
+		}
+		kv.debug(false, "release %v\n", kv.me)
+
+	} else {
+		if ch != nil {
+			ch &lt;- op
+		}
+	}
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match37-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.checkRaftState()
+}
+
+func (kv *KVServer) checkRaftState() {
+	if kv.maxraftstate == -1 {
+		return
+	}
+	if (kv.maxraftstate - kv.rf.GetRaftStateSize()) &lt;= 40 {
+		kv.debug(false, "Raft state approaching max %v\n", kv.rf.GetRaftStateSize())
+		w := new(bytes.Buffer)
+		e := labgob.NewEncoder(w)
+		e.Encode(kv.db)
+</FONT>		e.Encode(kv.requestTracker)
+		kv.rf.PersistStateAndSnapshot(w.Bytes(), kv.maxApplyIndexSeen)
+	}
+}
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match37-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
+	// Your code here.
+
+	ch := make(chan Op)
+	op := Op{Operation: "get", Key: args.Key, RequestId: args.RequestId, ClientId: args.ClientId}
+	kv.mu.Lock()
+	index, _, isLeader := kv.rf.Start(op)
+	kv.indexSubscription[index] = ch
+	kv.mu.Unlock()
+	if !isLeader {
+		reply.WrongLeader = true
+</FONT>		reply.Success = false
+<A NAME="8"></A><FONT color = #00FFFF><A HREF="match37-1.html#8" TARGET="1"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		return
+	} else {
+		kv.debug(true, "request %v got accepted at %v.\n", op, index)
+		res := &lt;-ch // wait for result to come.
+
+		if res.RequestId == op.RequestId {
+			reply.Success = true
+			reply.WrongLeader = false
+</FONT>			reply.Value = res.Value
+
+		} else {
+			reply.Success = false
+			reply.WrongLeader = false
+		}
+	}
+
+}
+
+func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	// Your code here.
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match37-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	ch := make(chan Op)
+	op := Op{Operation: args.Op, Key: args.Key, RequestId: args.RequestId, Value: args.Value, ClientId: args.ClientId}
+	kv.mu.Lock()
+	index, _, isLeader := kv.rf.Start(op)
+	kv.indexSubscription[index] = ch
+	kv.mu.Unlock()
+
+	if !isLeader {
+		reply.WrongLeader = true
+</FONT>		reply.Success = false
+<A NAME="9"></A><FONT color = #FF00FF><A HREF="match37-1.html#9" TARGET="1"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		return
+	} else {
+		kv.debug(true, "request %v got accepted at %v.\n", op, index)
+
+		res := &lt;-ch // wait for result to come.
+
+		if res.RequestId == op.RequestId {
+			reply.Success = true
+			reply.WrongLeader = false
+</FONT>			reply.Value = res.Value
+
+		} else {
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match37-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			reply.Success = false
+			reply.WrongLeader = false
+		}
+
+	}
+}
+
+//
+// the tester calls Kill() when a KVServer instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *KVServer) Kill() {
+	kv.debug(true, "Killing server\n")
+	kv.rf.Kill()
+	kv.mu.Lock()
+	kv.ddebug = false
+	kv.die = true
+	kv.mu.Unlock()
+	// Your code here, if desired.
+}
+
+func (kv *KVServer) readPersist(data []byte) {
+	if data == nil || len(data) &lt; 1 { // bootstrap without any state?
+		return
+</FONT>	}
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var db map[string]string
+	var ret map[int64]string
+<A NAME="11"></A><FONT color = #00FF00><A HREF="match37-1.html#11" TARGET="1"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	if d.Decode(&db) != nil ||
+		d.Decode(&ret) != nil {
+		kv.debug(false, "Not able to read persistent state..")
+
+	} else {
+		kv.db = db
+		kv.requestTracker = ret
+	}
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Raft to
+// form the fault-tolerant key/value service.
+// me is the index of the current server in servers[].
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+// the k/v server should snapshot when Raft's saved state exceeds maxraftstate bytes,
+// in order to allow Raft to garbage-collect its log. if maxraftstate is -1,
+// you don't need to snapshot.
+// StartKVServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
+</FONT>	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall
+	labgob.Register(Op{})
+
+	kv := new(KVServer)
+<A NAME="13"></A><FONT color = #00FFFF><A HREF="match37-1.html#13" TARGET="1"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+	kv.timer = time.NewTimer(1 * time.Second)
+	// You may need initialization code here.
+
+	kv.applyCh = make(chan raft.ApplyMsg)
+</FONT><A NAME="5"></A><FONT color = #FF0000><A HREF="match37-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+	kv.ddebug = false
+	kv.db = make(map[string]string)
+	kv.indexSubscription = make(map[int]chan Op)
+	kv.requestTracker = make(map[int64]string)
+	kv.die = false
+</FONT>
+	kv.readPersist(persister.ReadSnapshot())
+	go kv.listenOnChannel()
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match37-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.debug(true, "Restarting me %v, raft max = %v\n", me, maxraftstate)
+
+	// You may need initialization code here.
+
+	return kv
+}
+
+func (ck *KVServer) debug(lock bool, format string, a ...interface{}) {
+	if lock {
+		ck.mu.Lock()
+		defer ck.mu.Unlock()
+	}
+	if ck.ddebug {
+		m := fmt.Sprintf("%v", ck.me)
+</FONT>		fmt.Printf("[service "+m+" ] "+format, a...)
+	}
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

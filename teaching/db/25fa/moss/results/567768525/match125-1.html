@@ -1,0 +1,580 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/mrityunjaykumar911/src/shardkv/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/mrityunjaykumar911/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+import (
+	"log"
+	"raft"
+	"sort"
+	"time"
+)
+import "labrpc"
+import "sync"
+import "labgob"
+
+const Debug  = 0
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match125-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+const Debug2  = 0
+const ConstWaitForChannelTimeout  = 440
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		format = "[ShardMaster] " + format
+		log.Printf(format, a...)
+	}
+	return
+}
+func SPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug2 &gt; 0 {
+		format = "[ShardMaster] " + format
+		log.Printf(format, a...)
+	}
+	return
+}
+
+func (kv *ShardMaster) String() string{
+</FONT>	//return fmt.Sprintf("Server[%v] DB: [%v]",kv.me,kv.configs)
+	return ""
+}
+
+
+type ShardMaster struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	// Your data here.
+
+	configs []Config // indexed by config num
+	persister *raft.Persister
+	requestMapPool map[int64] int
+	requestChanPool map[int] chan ServerReplyArgs
+}
+
+type OpType string
+
+const (
+	JoinOp			OpType = "Join"
+	LeaveOp			OpType = "Leave"
+	MoveOp			OpType = "Move"
+	QueryOp			OpType = "Query"
+)
+
+type ServerReplyArgs struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+	UniqueRequestID int
+	DBOperationType OpType
+	ClientUUID int64
+	CommandIndex int
+	CurrentTerm int
+}
+
+type Op struct {
+	// Your data here.
+	DBOperationType OpType
+	ClientUUID int64
+	UniqueRequestID int
+	RequestConfigNum int
+	CommonInterface interface{}
+}
+
+
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+	// Your code here.
+	// Your code here.
+	_,isLeader := sm.rf.GetState()
+	if !isLeader{
+		reply.WrongLeader = true
+		reply.Err = ""
+		return
+	}
+	op := Op{DBOperationType:JoinOp,
+			 ClientUUID:args.CmnArgs.ClientUUID,
+			 UniqueRequestID:args.CmnArgs.UniqueRequestID,CommonInterface:JoinArgs{Servers:args.Servers}}
+
+	index, term, isLeader := sm.rf.Start(op)
+	if !isLeader{
+		reply.WrongLeader = true
+		reply.Err = ""
+		return
+	}
+
+	// wait for channel indication
+	sm.mu.Lock()
+	_,ok := sm.requestChanPool[index]
+	if !ok {
+		sm.requestChanPool[index] = make(chan ServerReplyArgs,1)
+	}
+	requestChan:= sm.requestChanPool[index]
+	sm.mu.Unlock()
+
+	status:= sm.WaitForTimeoutOrReply(requestChan,index,term,op)
+	if status{
+		reply.Err = OK
+		reply.WrongLeader = false
+	}else{
+		reply.Err = ""
+		reply.WrongLeader = true
+	}
+}
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+	// Your code here.
+	// Your code here.
+	_,isLeader := sm.rf.GetState()
+	if !isLeader{
+		reply.WrongLeader = true
+		reply.Err = ""
+		return
+	}
+	op := Op{DBOperationType:LeaveOp,
+		ClientUUID:args.CmnArgs.ClientUUID,
+		UniqueRequestID:args.CmnArgs.UniqueRequestID,CommonInterface:LeaveArgs{GIDs:args.GIDs}}
+	index, term, isLeader := sm.rf.Start(op)
+	if !isLeader{
+		reply.WrongLeader = true
+		reply.Err = ""
+		return
+	}
+
+	// wait for channel indication
+	sm.mu.Lock()
+	_,ok := sm.requestChanPool[index]
+	if !ok {
+		sm.requestChanPool[index] = make(chan ServerReplyArgs,1)
+	}
+	requestChan:= sm.requestChanPool[index]
+	sm.mu.Unlock()
+
+	status:= sm.WaitForTimeoutOrReply(requestChan,index,term,op)
+	if status{
+		reply.Err = OK
+		reply.WrongLeader = false
+	}else{
+		reply.Err = ""
+		reply.WrongLeader = true
+	}
+}
+
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+	// Your code here.
+	// Your code here.
+	_,isLeader := sm.rf.GetState()
+	if !isLeader{
+		reply.WrongLeader = true
+		reply.Err = ""
+		return
+	}
+	op := Op{DBOperationType:MoveOp,
+		ClientUUID:args.CmnArgs.ClientUUID,
+		UniqueRequestID:args.CmnArgs.UniqueRequestID,CommonInterface:MoveArgs{Shard:args.Shard,GID:args.GID}}
+	index, term, isLeader := sm.rf.Start(op)
+	if !isLeader{
+		reply.WrongLeader = true
+		reply.Err = ""
+		return
+	}
+
+	// wait for channel indication
+	sm.mu.Lock()
+	_,ok := sm.requestChanPool[index]
+	if !ok {
+		sm.requestChanPool[index] = make(chan ServerReplyArgs,1)
+	}
+	requestChan:= sm.requestChanPool[index]
+	sm.mu.Unlock()
+
+	status:= sm.WaitForTimeoutOrReply(requestChan,index,term,op)
+	if status{
+		reply.Err = OK
+		reply.WrongLeader = false
+	}else{
+		reply.Err = ""
+		reply.WrongLeader = true
+	}
+}
+
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+	// Your code here.
+	_,isLeader := sm.rf.GetState()
+	if !isLeader{
+		reply.WrongLeader = true
+		reply.Err = ""
+		return
+	}
+	DPrintf("ARGS: [%v]",args)
+	op := Op{DBOperationType:QueryOp,
+		ClientUUID:args.CmnArgs.ClientUUID,
+		UniqueRequestID:args.CmnArgs.UniqueRequestID,CommonInterface:QueryArgs{Num:args.Num}}
+
+	index, term, isLeader := sm.rf.Start(op)
+	//sm.mu.Unlock()
+	if !isLeader{
+		reply.WrongLeader = true
+		reply.Err = ""
+		return
+	}
+
+	// wait for channel indication
+	sm.mu.Lock()
+	_,ok := sm.requestChanPool[index]
+	if !ok {
+		sm.requestChanPool[index] = make(chan ServerReplyArgs,1)
+	}
+	requestChan:= sm.requestChanPool[index]
+	sm.mu.Unlock()
+
+	status:= sm.WaitForTimeoutOrReply(requestChan,index,term,op)
+	if status{
+		sm.mu.Lock()
+		exists := func(index int)(Config,bool) {
+			if index == -1 {
+				reply:= sm.configs[len(sm.configs)-1]
+				DPrintf("Server[%v] Replying for Query as [%v]",sm.me,reply)
+				return reply,true
+			}
+			if index &lt;= len(sm.configs)-1 {
+				return sm.configs[index],true
+			}
+			return Config{},false
+		}
+		val,ok := exists(args.Num)
+		sm.mu.Unlock()
+		if ok {
+			reply.Err = OK
+			reply.Config = val
+			reply.WrongLeader = false
+		}else{
+
+		}
+	}else{
+		reply.Err = ""
+		reply.WrongLeader = true
+	}
+}
+
+func (sm *ShardMaster) WaitForTimeoutOrReply(requestChanPool chan ServerReplyArgs,index int, term int, op Op)(ret bool) {
+	select {
+	case &lt;-time.After(time.Duration(ConstWaitForChannelTimeout) * time.Millisecond):
+		DPrintf("[WaitForTimeoutOrReply] sm Server[%v] getApplyChanTimeout occurred no apply indication",sm.me)
+		return false
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match125-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	case message := &lt;- requestChanPool:
+		currentTerm, isLeader := sm.rf.GetState()
+		if currentTerm==term && message.UniqueRequestID == op.UniqueRequestID && message.ClientUUID==op.ClientUUID && message.CommandIndex==index{
+			if !isLeader {
+				DPrintf("sm Server[%v] Not a leader or Term Mismatch",sm.me)
+</FONT>				return false
+			}
+			return true
+		}else{
+			DPrintf("[WaitForTimeoutOrReply] sm Server[%v]  &lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt; Reply Mismatch &gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;",sm.me)
+			return false
+		}
+	}
+	return false
+}
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+	// Your code here, if desired.
+}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+	return sm.rf
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	sm := new(ShardMaster)
+	sm.me = me
+
+	sm.configs = make([]Config, 1)
+	sm.configs[0].Groups = map[int][]string{}
+
+	labgob.Register(Op{})
+	labgob.Register(QueryArgs{})
+	labgob.Register(MoveArgs{})
+	labgob.Register(LeaveArgs{})
+	labgob.Register(JoinArgs{})
+
+	sm.applyCh = make(chan raft.ApplyMsg)
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+
+	// Your code here.
+	sm.persister = persister
+	sm.requestMapPool = make(map [int64]int)
+	sm.requestChanPool = make(map[int] chan ServerReplyArgs)
+	// May be
+	// no need to handle
+	//sm.readPersistSM(sm.persister.ReadSnapshot())// read from persister
+
+	go func() {
+		for applyChanMSG := range  sm.applyCh {
+			DPrintf("Server[%v] applyChanMSG from raft",sm.me)
+			if applyChanMSG.CommandValid == false {
+				// no need to handle
+			} else {
+				op := applyChanMSG.Command.(Op)
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match125-0.html#6" TARGET="0"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				SPrintf("[ApplyChan] Server[%v] ToExec applyChanMSG Index=[%v] opType=[%v]", sm.me, applyChanMSG.CommandIndex,op.DBOperationType)
+				sm.mu.Lock()
+				counterRet := sm.requestMapPool[op.ClientUUID]
+				processedStatus:= counterRet &gt;= op.UniqueRequestID
+</FONT>				sm.mu.Unlock()
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match125-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				DPrintf("[ApplyChan] " + sm.String())
+				rArgs := ServerReplyArgs{UniqueRequestID:op.UniqueRequestID,
+										 DBOperationType:op.DBOperationType,
+										 ClientUUID:op.ClientUUID,
+										 CommandIndex:applyChanMSG.CommandIndex,
+										 CurrentTerm:applyChanMSG.CurrentTerm}
+
+				DPrintf("[ApplyChan] Server[%v] before switch", sm.me)
+</FONT>				switch op.DBOperationType {
+					case JoinOp:
+						if !processedStatus {
+							sm.mu.Lock()
+							// do something
+							args := op.CommonInterface.(JoinArgs)
+							DPrintf("[%v]",args.Servers)
+							// ?? put new map of server in current config
+							// reconfigure if required
+							getLatestConfigStored := func() Config{
+								DPrintf("Server[%v] ALL configs [%v]",sm.me,sm.configs)
+								return sm.configs[len(sm.configs)-1]
+							}
+							// add new config as said
+							old := getLatestConfigStored()
+							var latest Config
+							latest = old
+
+							// Thus if you want to create a new Config based on a previous one,
+							// you need to create a new map object (with make())
+							// and copy the keys and values individually.
+							latest.Groups = make(map[int][]string)
+							// first copy old
+							for key,value := range old.Groups{
+								DPrintf("OLD:Key=[%v] Value=[%v]",key,value)
+								latest.Groups[key] = value
+							}
+							for key, value := range  args.Servers{
+								DPrintf("NEW:Key=[%v] Value=[%v]",key,value)
+								latest.Groups[key] = value
+							}
+							DPrintf("Server[%v] added join before new config [%v], latest=[%v]",sm.me,sm.configs,latest)
+							updatedLatest:= sm.reconfigure(latest)
+							updatedLatest.Num = updatedLatest.Num+1
+							sm.configs = append(sm.configs, updatedLatest)
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match125-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+							DPrintf("Server[%v] added join after new config [%v]",sm.me,sm.configs)
+							sm.requestMapPool[op.ClientUUID] = op.UniqueRequestID
+							sm.mu.Unlock()
+						}
+						sm.mu.Lock()
+						chanOp, ok := sm.requestChanPool[applyChanMSG.CommandIndex]
+						if ok {
+							chanOp &lt;- rArgs
+						}
+						sm.mu.Unlock()
+						DPrintf("Server[%v] ---", sm.me)
+
+					case MoveOp:
+</FONT>						if !processedStatus {
+							sm.mu.Lock()
+							// do something
+							args := op.CommonInterface.(MoveArgs)
+							DPrintf("[%v] shards[%v]",args.GID,args.Shard)
+							getLatestConfigStored := func() Config{
+								DPrintf("Server[%v] ALL configs [%v]",sm.me,sm.configs)
+								return sm.configs[len(sm.configs)-1]
+							}
+							old := getLatestConfigStored()
+							var latest Config
+							latest = old
+
+							// Thus if you want to create a new Config based on a previous one,
+							// you need to create a new map object (with make())
+							// and copy the keys and values individually.
+							latest.Groups = make(map[int][]string)
+							// first copy old
+							for key,value := range old.Groups{
+								DPrintf("OLD:Key=[%v] Value=[%v]",key,value)
+								latest.Groups[key] = value
+							}
+							// args.GID must be present in latest config
+							_,presentInLatestConfig := latest.Groups[args.GID]
+
+							if presentInLatestConfig{
+								latest.Shards[args.Shard] = args.GID
+								latest.Num = latest.Num+1
+								sm.configs = append(sm.configs, latest)
+							}
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match125-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+							sm.requestMapPool[op.ClientUUID] = op.UniqueRequestID
+							sm.mu.Unlock()
+						}
+						sm.mu.Lock()
+						chanOp, ok := sm.requestChanPool[applyChanMSG.CommandIndex]
+						if ok {
+							chanOp &lt;- rArgs
+						}
+						sm.mu.Unlock()
+						DPrintf("Server[%v] ---", sm.me)
+
+					case LeaveOp:
+</FONT>						if !processedStatus {
+							sm.mu.Lock()
+							// do something
+							args := op.CommonInterface.(LeaveArgs)
+							DPrintf("[%v]",args.GIDs)
+							getLatestConfigStored := func() Config{
+								DPrintf("Server[%v] ALL configs [%v]",sm.me,sm.configs)
+								return sm.configs[len(sm.configs)-1]
+							}
+							// add new config as said
+							// just delete the gids from the config
+							old := getLatestConfigStored()
+							latest := old
+							latest.Groups = make(map[int][]string)
+							for key,value := range old.Groups{
+								latest.Groups[key] = value
+							}
+
+							for _, v := range args.GIDs {
+								if _, ok := latest.Groups[v]; ok {
+									delete(latest.Groups,v)
+								}
+							}
+							updatedLatest:= sm.reconfigure(latest)
+							updatedLatest.Num = updatedLatest.Num+1
+							sm.configs = append(sm.configs, updatedLatest)
+							sm.requestMapPool[op.ClientUUID] = op.UniqueRequestID
+							sm.mu.Unlock()
+						}
+						sm.mu.Lock()
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match125-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+						chanOp, ok := sm.requestChanPool[applyChanMSG.CommandIndex]
+						if ok {
+							chanOp &lt;- rArgs
+						}
+						sm.mu.Unlock()
+						DPrintf("Server[%v] ---", sm.me)
+</FONT>
+					case QueryOp:
+						if !processedStatus {
+							sm.mu.Lock()
+							sm.requestMapPool[op.ClientUUID] = op.UniqueRequestID
+							sm.mu.Unlock()
+						}
+						sm.mu.Lock()
+						chanOp, ok := sm.requestChanPool[applyChanMSG.CommandIndex]
+						if ok {
+							chanOp &lt;- rArgs
+						}
+						sm.mu.Unlock()
+						DPrintf("Server[%v] ---", sm.me)
+
+				}
+			}
+		}
+	}()
+	return sm
+}
+
+func (sm *ShardMaster) checkIfBalanced(c Config)bool {
+	// more or less balanced sharding?
+	// copied from test suite
+	counts := map[int]int{}
+	for _, g := range c.Shards {
+		counts[g] += 1
+	}
+	min := 257
+	max := 0
+	for g, _ := range c.Groups {
+		if counts[g] &gt; max {
+			max = counts[g]
+		}
+		if counts[g] &lt; min {
+			min = counts[g]
+		}
+	}
+	if max &gt; min+1 {
+		DPrintf("max %v too much larger than min %v", max, min)
+		return false
+	}
+	return true
+}
+
+func(sm *ShardMaster) reconfigure(latestConfig Config)(Config){
+	if len(latestConfig.Groups) == 0{
+		// reset everything and return
+		for k:=0; k&lt; len(latestConfig.Shards); k++ {
+			latestConfig.Shards[k] = 0
+		}
+		return latestConfig
+	}
+	average := len(latestConfig.Shards)/len(latestConfig.Groups)
+	gidList := make([]int,0)
+	for key,_ := range latestConfig.Groups{
+		gidList = append(gidList, key)
+	}
+	if len(gidList) &gt; len(latestConfig.Shards){
+		gidList = gidList[:len(latestConfig.Shards)]
+	}
+	sort.Ints(gidList)
+	aside := len(latestConfig.Shards)%len(latestConfig.Groups)
+	if aside!=0{
+		if average == 0 {
+			average = aside
+		}
+	}
+	pickIndex:=make([]int,0)
+	for _,gid:= range gidList{
+		for i:=0;i &lt; average;i++{
+			pickIndex = append(pickIndex, gid)
+		}
+	}
+	leftOver := len(latestConfig.Shards)
+	for i:=0;i&lt; leftOver;i++{
+		pickIndex = append(pickIndex, gidList[i%len(gidList)])
+	}
+
+	for k:=0; k&lt; len(latestConfig.Shards); k++ {
+		latestConfig.Shards[k] = pickIndex[k]
+	}
+	//if sm.checkIfBalanced(latestConfig) == false{
+	//	DPrintf("Unbalanced here")
+	//}
+	return latestConfig
+}</PRE>
+</PRE>
+</BODY>
+</HTML>

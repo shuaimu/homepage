@@ -1,0 +1,259 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-HOD101s/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-huyanh995/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int KvServer::Put(const uint64_t& op_id, 
+                  const string& k,
+                  const string& v) {
+  /* your code here */
+  auto start = std::chrono::high_resolution_clock::now();
+  auto cmdptr = CmdToMarshallable(op_id, "PUT", k, v);
+  uint64_t replyIndex = -1; // Invalid value
+  uint64_t replyTerm = 0;
+
+  auto isCorrectLeader = GetRaftServer().Start(cmdptr, &replyIndex, &replyTerm);
+  if (isCorrectLeader){
+    // Check when the cmd is committed
+    while (true){
+      auto now = std::chrono::high_resolution_clock::now();
+      auto elapsedTime = std::chrono::duration_cast&lt;std::chrono::milliseconds&gt;(now - start).count();
+      if (elapsedTime &gt; m_timeOutDuration){
+        if (not GetRaftServer().IsInMajority()){
+          return KV_NOTLEADER;
+        }
+        return KV_TIMEOUT;
+      }
+      // Check if a result showed up in the m_results
+      if (m_results.find(op_id) != m_results.end()) { // .contain() only support in C++20
+        if (m_displayLog) Log_info("[INFO] KvServer %d received a PUT op_id: %lu k: %s v: %s", GetRaftServer().loc_id_, op_id, k.c_str(), v.c_str());
+        return KV_SUCCESS;
+      }
+      Coroutine::Sleep(m_checkInterval);
+    }
+  } else {
+    return KV_NOTLEADER;
+  }
+}
+
+int KvServer::Append(const uint64_t& op_id, 
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+  // TODO: Is Add int function? Functioning as Put if key doesn't exist
+  auto start = std::chrono::high_resolution_clock::now();
+  auto cmdptr = CmdToMarshallable(op_id, "APPEND", k, v);
+  uint64_t replyIndex = -1; // Invalid value
+  uint64_t replyTerm = 0;
+  auto isCorrectLeader = GetRaftServer().Start(cmdptr, &replyIndex, &replyTerm);
+  if (isCorrectLeader){
+    // Check when the cmd is committed
+    while (true){
+      auto now = std::chrono::high_resolution_clock::now();
+      auto elapsedTime = std::chrono::duration_cast&lt;std::chrono::milliseconds&gt;(now - start).count();
+      if (elapsedTime &gt; m_timeOutDuration){
+        if (not GetRaftServer().IsInMajority()){
+          return KV_NOTLEADER;
+        }
+        return KV_TIMEOUT;
+      }
+      // Check if a result showed up in the m_results
+      if (m_results.find(op_id) != m_results.end()) {
+        if (m_displayLog) Log_info("[INFO] KvServer %d received an APPEND op_id: %lu k: %s v: %s", GetRaftServer().loc_id_, op_id, k.c_str(), v.c_str());
+        return KV_SUCCESS;
+      }
+      Coroutine::Sleep(m_checkInterval);
+    }
+  } else {
+    return KV_NOTLEADER;
+  }
+}
+
+int KvServer::Get(const uint64_t& op_id, 
+                  const string& k,
+                  string* v) {
+  /* your code here */
+  auto start = std::chrono::high_resolution_clock::now();
+  auto cmdptr = CmdToMarshallable(op_id, "GET", k, "");
+  uint64_t replyIndex = -1; // Invalid value
+  uint64_t replyTerm = 0;
+  auto isCorrectLeader = GetRaftServer().Start(cmdptr, &replyIndex, &replyTerm);
+  if (isCorrectLeader){
+    // Check when the cmd is committed
+    while (true){
+      auto now = std::chrono::high_resolution_clock::now();
+      auto elapsedTime = std::chrono::duration_cast&lt;std::chrono::milliseconds&gt;(now - start).count();
+      if (elapsedTime &gt; m_timeOutDuration){
+        if (not GetRaftServer().IsInMajority()){
+          return KV_NOTLEADER;
+        }
+        return KV_TIMEOUT;
+      }
+      // Check if a result showed up in the m_results
+      if (m_results.find(op_id) != m_results.end() and m_results[op_id] != ""){
+        *v = m_results[op_id];
+        if (m_displayLog) Log_info("[INFO] KvServer %d -&gt; Client GET op_id: %lu k: %s, returned v: %s. DB: [%s]", GetRaftServer().loc_id_, op_id, k.c_str(), v-&gt;c_str(), PrintDB().c_str());
+        return KV_SUCCESS;
+      }
+      Coroutine::Sleep(m_checkInterval);
+    }
+  } else {
+    return KV_NOTLEADER;
+  }
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  /* your code here */
+  if (not m_isOpsLoopRunning) RunLookingCommittedCoro();
+  uint64_t op_id;
+  std::string op, k, v;
+  MarshallableToCmd(m, op_id, op, k, v); 
+  m_committedOps.push(StoredCmd(op_id, op, k, v));
+
+  if(m_displayLog) Log_info("[DEBUG] KvServer %d received committed cmd \"%d %s %s %s\" from RAFT, ops storage size %d", GetRaftServer().loc_id_, op_id, op.c_str(), k.c_str(), v.c_str(), m_committedOps.size());
+}
+
+void KvServer::RunLookingCommittedCoro(){
+  Coroutine::CreateRun([this](){  
+    if(m_displayLog) Log_info("[DEBUG] KvServer %d runs background coroutine", GetRaftServer().loc_id_);
+    m_isOpsLoopRunning = true;
+    // Continuously check the committed queue
+    while (true){
+      if (m_committedOps.size() &gt; 0){
+        auto ok = ApplyCommittedOp(m_committedOps.front());
+        if (ok) m_committedOps.pop();
+      }
+      Coroutine::Sleep(m_checkInterval); // Check 5ms per round
+    }
+  });
+}
+
+bool KvServer::ApplyCommittedOp(StoredCmd& storedCmd){
+  // Scan the op in committedOps queue -&gt; Apply op to m_database and return the result to m_results with op_id as key
+  if (m_results.find(storedCmd.op_id) != m_results.end()){
+    // Duplicated op -&gt; ignore
+    if (m_displayLog) Log_info("[WARN] KvServer %d found duplicated client request op_id %d (k: %s, v: %d)", GetRaftServer().loc_id_, storedCmd.op_id, storedCmd.k.c_str(), storedCmd.v.c_str());
+    return false;
+  }
+
+  if (storedCmd.op.compare("GET") == 0){
+    std::string res = m_database[storedCmd.k];
+    m_results[storedCmd.op_id] = res;
+
+    if (m_displayLog) Log_info("[INFO] KvServer %d apply cmd GET: value of k: %s -&gt; v: %s. DB: [%s]", GetRaftServer().loc_id_, storedCmd.k.c_str(), res.c_str(), PrintDB().c_str());
+
+  } else if (storedCmd.op.compare("APPEND") == 0){
+    try{
+      m_database[storedCmd.k] += storedCmd.v;
+      m_results[storedCmd.op_id] = storedCmd.op;
+    } catch (...){
+      Log_info("[FATAL] bad_alloc suspicion?");
+    }
+
+    if (m_displayLog) Log_info("[INFO] KvServer %d apply cmd APPEND: (k: %s, v: %s). DB: [%s]", GetRaftServer().loc_id_, storedCmd.k.c_str(), storedCmd.v.c_str(), PrintDB().c_str());
+
+  } else if (storedCmd.op.compare("PUT") == 0){
+    // Replace value
+    m_database[storedCmd.k] = storedCmd.v;
+    m_results[storedCmd.op_id] = storedCmd.op;
+
+    if (m_displayLog) Log_info("[INFO] KvServer %d apply cmd PUT: (k: %s, v: %s). DB: [%s]", GetRaftServer().loc_id_, storedCmd.k.c_str(), storedCmd.v.c_str(), PrintDB().c_str());
+  }
+  return true;
+}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match227-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+std::shared_ptr&lt;Marshallable&gt; KvServer::CmdToMarshallable(const uint64_t& op_id,
+                                                        const string& op,
+                                                        const string& k,
+                                                        const string& v){
+  auto cmdptr = make_shared&lt;MultiStringMarshallable&gt;();
+  cmdptr-&gt;data_.push_back(to_string(op_id));
+  cmdptr-&gt;data_.push_back(op);
+  cmdptr-&gt;data_.push_back(k);
+  cmdptr-&gt;data_.push_back(v);
+</FONT>
+  return dynamic_pointer_cast&lt;Marshallable&gt;(cmdptr);
+}
+
+void KvServer::MarshallableToCmd(Marshallable& m, 
+                                uint64_t& op_id, 
+                                string& op, 
+                                string& k, 
+                                string& v){
+
+  // Read the marshallable object (kind of boring)
+  int size;
+  Marshal mar;
+  m.ToMarshal(mar);
+  mar &gt;&gt; size;
+  std::vector&lt;std::string&gt; res;
+  std::string tmp;
+  for (int i = 0; i &lt; size; i++){
+    mar &gt;&gt; tmp;
+    res.push_back(tmp); // vector will make a copy so don't worry
+  }
+  // Assign back to vars
+  op_id = stoll(res[0]);
+  op = res[1];
+  k = res[2];
+  v = res[3];
+}                          
+
+std::string KvServer::PrintDB(){
+  std::string res = "";
+  for (auto kv: m_database){
+    res = res + "(" + kv.first + " :" + kv.second + ") ";
+  }
+  return res;
+}
+
+std::string KvServer::PrintResults(){
+  std::string res = "";
+  for (auto kv: m_results){
+    res += "(" + std::to_string(kv.first) + ": \"" + kv.second + "\") ";
+  }
+  return res;
+}
+
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

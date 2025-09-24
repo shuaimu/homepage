@@ -1,0 +1,145 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/KrishnaDonkada/src/shardmaster/client.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/raunaksbu/src/shardmaster/client.go<p><PRE>
+package shardmaster
+
+//
+// Shardmaster clerk.
+//
+
+import (
+	"crypto/rand"
+	"labrpc"
+	"math/big"
+	"time"
+)
+
+type Clerk struct {
+	servers []*labrpc.ClientEnd
+	// Your data here.
+
+	requestID int
+	clientID  int64
+}
+
+func nrand() int64 {
+	max := big.NewInt(int64(1) &lt;&lt; 62)
+	bigx, _ := rand.Int(rand.Reader, max)
+	x := bigx.Int64()
+	return x
+}
+
+func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
+	ck := new(Clerk)
+	ck.servers = servers
+	// Your code here.
+
+	ck.requestID = 0
+	ck.clientID = nrand()
+	return ck
+}
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match241-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_9.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (ck *Clerk) Query(num int) Config {
+	args := &QueryArgs{}
+	// Your code here.
+
+	ck.requestID++
+	args.Num = num
+	args.RequestID = ck.requestID
+	args.ClientID = ck.clientID
+
+	for {
+		// try each known server.
+		for _, srv := range ck.servers {
+</FONT>			var reply QueryReply
+			ok := srv.Call("ShardMaster.Query", args, &reply)
+			if ok && reply.WrongLeader == false {
+				return reply.Config
+			}
+		}
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match241-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_11.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func (ck *Clerk) Join(servers map[int][]string) {
+	args := &JoinArgs{}
+	// Your code here.
+
+	ck.requestID++
+	args.Servers = servers
+	args.RequestID = ck.requestID
+	args.ClientID = ck.clientID
+
+	for {
+		// try each known server.
+		for _, srv := range ck.servers {
+</FONT>			var reply JoinReply
+			ok := srv.Call("ShardMaster.Join", args, &reply)
+			if ok && reply.WrongLeader == false {
+				return
+			}
+		}
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match241-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_11.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func (ck *Clerk) Leave(gids []int) {
+	args := &LeaveArgs{}
+	// Your code here.
+
+	ck.requestID++
+	args.GIDs = gids
+	args.RequestID = ck.requestID
+	args.ClientID = ck.clientID
+
+	for {
+		// try each known server.
+		for _, srv := range ck.servers {
+</FONT>			var reply LeaveReply
+			ok := srv.Call("ShardMaster.Leave", args, &reply)
+			if ok && reply.WrongLeader == false {
+				return
+			}
+		}
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match241-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_12.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func (ck *Clerk) Move(shard int, gid int) {
+	args := &MoveArgs{}
+	// Your code here.
+
+	ck.requestID++
+	args.Shard = shard
+	args.GID = gid
+	args.RequestID = ck.requestID
+	args.ClientID = ck.clientID
+
+	for {
+		// try each known server.
+		for _, srv := range ck.servers {
+</FONT>			var reply MoveReply
+			ok := srv.Call("ShardMaster.Move", args, &reply)
+			if ok && reply.WrongLeader == false {
+				return
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

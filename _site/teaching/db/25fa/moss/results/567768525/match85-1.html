@@ -1,0 +1,607 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/sampathkumar81293/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/sampathkumar81293/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+import (
+	"labgob"
+	"labrpc"
+	"log"
+	"raft"
+	"sort"
+	"sync"
+	"time"
+)
+
+type ShardMaster struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	// Your data here.
+
+	configs         []Config // indexed by config num
+	RequestCache    map[int64]CacheValue
+	IndexChannelMap map[int]chan SMReply
+	KillChannel     chan bool
+	RequestTimeout  int
+	VersionNumber   int
+}
+
+type CacheValue struct {
+	RequestID int64
+	Cop       string
+	Response  SMReply
+}
+
+type Op struct {
+	// Your data here.
+	Cop string
+	// Num       int // desired config number
+	ClientID  int64
+	RequestID int64
+	// Shard     int
+	// GID       int
+	// GIDs      []int
+	// Servers   map[int][]string
+	Request interface{}
+}
+
+type SMReply struct {
+	WrongLeader bool
+	Err         Err
+	Config      Config
+}
+
+const Debug = 1
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match85-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (sm *ShardMaster) PrintGet(args Op) {
+	DPrintf("SMMASTERRPC: ClientID: %d \n", args.Cop)
+	//DPrintf("SMMASTERRPC: RequestID: %d \n", args)
+	//DPrintf("SMMASTERRPC: Key: %d \n", args.Key)
+}
+
+func (sm *ShardMaster) CheckIfLeaderGet(reply *SMReply) {
+
+	_, IsLeaderCheck2 := sm.rf.GetState()
+	if !IsLeaderCheck2 {
+		//reply.Err = "Not Leader"
+		reply.WrongLeader = true
+	} else {
+		reply.WrongLeader = false
+	}
+
+}
+
+func (sm *ShardMaster) CustomRPCHelper(args Op, reply *SMReply) {
+</FONT><A NAME="0"></A><FONT color = #FF0000><A HREF="match85-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	// Your code here.
+	// DPrintf("SMMASTERRPC: Got request: \n")
+	//sm.PrintGet(args)
+	reply.WrongLeader = true
+	reply.Err = "Not Leader"
+
+	sm.mu.Lock()
+	Response, CIDExists := sm.RequestCache[args.ClientID]
+	sm.mu.Unlock()
+	//CIDExists = false
+	if CIDExists {
+		if Response.RequestID == args.RequestID && args.Cop == Response.Cop {
+			reply.Err = Response.Response.Err
+			//reply.Value = Response.GetResponse.Value
+			reply.WrongLeader = false
+</FONT>			reply.Config = Response.Response.Config
+			return
+		}
+	}
+	_, IsLeader := sm.rf.GetState()
+	if !IsLeader {
+		return
+	}
+
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match85-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	Index, _, IsLeaderCheck1 := sm.rf.Start(args)
+
+	if !IsLeaderCheck1 {
+		return
+	}
+
+	sm.mu.Lock()
+	_, Exists := sm.IndexChannelMap[Index]
+	sm.mu.Unlock()
+	//var ChanReceiver chan raft.ApplyMsg
+	if Exists {
+		//reply.Err = "Duplicate Entry"
+		// fmt.Printf("SMMASTERRPC: Index already  mapped to another request. Ovrewritin\n")
+		// Fatal error or apply channel is not ready
+		//return
+	}
+	ChanReceiver := make(chan SMReply, 1)
+</FONT><A NAME="7"></A><FONT color = #0000FF><A HREF="match85-0.html#7" TARGET="0"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	sm.mu.Lock()
+	sm.IndexChannelMap[Index] = ChanReceiver
+	sm.mu.Unlock()
+
+	select {
+	case Raftoutput := &lt;-ChanReceiver:
+
+		//	reply.WrongLeader = false
+		// RCop := Raftoutput.Command.(Op)
+		// if RCop.Cop == args.Cop && args.ClientID == RCop.ClientID && args.RequestID == RCop.RequestID && Index == Raftoutput.CommandIndex {
+		// 	reply.Err = OK
+		// 	sm.mu.Lock()
+
+		// 	sm.mu.Unlock()
+		// }
+		sm.CheckIfLeaderGet(reply)
+		reply.Err = Raftoutput.Err
+</FONT>		reply.WrongLeader = Raftoutput.WrongLeader
+		reply.Config = Raftoutput.Config
+
+		return
+	case &lt;-time.After(sm.GetrandomtimeDuration()):
+		reply.Err = "Timedout"
+		sm.CheckIfLeaderGet(reply)
+		return
+
+	}
+
+}
+
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match85-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (sm *ShardMaster) GetrandomtimeDuration() time.Duration {
+	var timeDuration time.Duration
+	//kv.mu.Lock()
+	//kv.RequestTimeout = 300
+	//kv.mu.Unlock()
+	timeDuration = time.Duration(sm.RequestTimeout) * time.Millisecond
+	return timeDuration
+}
+
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+</FONT>	// Your code here.
+	var SMReq Op
+	var Resp SMReply
+	SMReq.Cop = "Join"
+	SMReq.Request = *args
+	SMReq.ClientID = args.ClerkID
+	SMReq.RequestID = args.RequestID
+
+	sm.CustomRPCHelper(SMReq, &Resp)
+
+	reply.Err = Resp.Err
+	reply.WrongLeader = Resp.WrongLeader
+
+}
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+	// Your code here.
+	var SMReq Op
+	var Resp SMReply
+	SMReq.Cop = "Leave"
+	SMReq.Request = *args
+	SMReq.ClientID = args.ClerkID
+	SMReq.RequestID = args.RequestID
+
+	sm.CustomRPCHelper(SMReq, &Resp)
+
+	reply.Err = Resp.Err
+	reply.WrongLeader = Resp.WrongLeader
+}
+
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+	// Your code here.
+	var SMReq Op
+	var Resp SMReply
+	SMReq.Cop = "Move"
+	SMReq.Request = *args
+	SMReq.ClientID = args.ClerkID
+	SMReq.RequestID = args.RequestID
+
+	sm.CustomRPCHelper(SMReq, &Resp)
+
+	reply.Err = Resp.Err
+	reply.WrongLeader = Resp.WrongLeader
+}
+
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+	// Your code here.
+	var SMReq Op
+	var Resp SMReply
+	SMReq.Cop = "Query"
+	SMReq.Request = *args
+	SMReq.ClientID = args.ClerkID
+	SMReq.RequestID = args.RequestID
+
+	sm.CustomRPCHelper(SMReq, &Resp)
+
+	reply.Err = Resp.Err
+	reply.WrongLeader = Resp.WrongLeader
+	reply.Config = Resp.Config
+}
+
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+<A NAME="8"></A><FONT color = #00FFFF><A HREF="match85-0.html#8" TARGET="0"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+	// Your code here, if desired.
+	sm.mu.Lock()
+	// fmt.Printf("Invoked Kill from KVServer: %d\n", sm.me)
+	sm.KillChannel &lt;- true
+	sm.mu.Unlock()
+	// fmt.Printf("Invoked Kill completed from KVServer: %d\n", sm.me)
+	close(sm.KillChannel)
+}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+</FONT>	return sm.rf
+}
+
+// func (sm *ShardMaster) IsDuplicate(ClientID int, RequestID int, Operation string) bool {
+
+// 	sm.mu.Lock()
+// 	Response, CIDExists := sm.RequestCache[ClientID]
+// 	sm.mu.Unlock()
+
+// 	if CIDExists {
+// 		if Response.RequestID == RequestID && Operation == Response.Cop {
+// 			return true
+// 		}
+// 	}
+// 	return false
+// }
+
+func (sm *ShardMaster) GetNumShards(Shards [NShards]int, Groups map[int][]string) (int, map[int][]int, []int) {
+	MinShards := 0
+	GidShardMap := make(map[int][]int)
+	OrphanShards := make([]int, 0)
+
+	for Key, _ := range Groups {
+		GidShardMap[Key] = make([]int, 0)
+	}
+
+	for Key, Val := range Shards {
+		if Val != 0 {
+			MinShards++
+			GidShardMap[Val] = append(GidShardMap[Val], Key)
+		} else {
+			OrphanShards = append(OrphanShards, Key)
+		}
+	}
+	return MinShards, GidShardMap, OrphanShards
+}
+
+func (sm *ShardMaster) GetGidCountArray(BGidShardmp map[int][]int) []GidFreq {
+	GidArray := make([]GidFreq, 0)
+	for Key, _ := range BGidShardmp {
+		GidArray = append(GidArray, GidFreq{
+			Gid: Key,
+			Cnt: len(BGidShardmp[Key]),
+		})
+	}
+	return GidArray
+}
+
+type GidFreqtype []GidFreq
+
+type GidFreq struct {
+	Gid int
+	Cnt int
+}
+
+func (s GidFreqtype) Len() int {
+	return len(s)
+}
+func (s GidFreqtype) Less(i, j int) bool {
+	return s[i].Cnt &lt; s[j].Cnt
+}
+
+func (s GidFreqtype) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
+}
+
+func (sm *ShardMaster) PerformBalance(Bkpconfig *Config) {
+
+	_, GidShardMap, OrphanShards := sm.GetNumShards(Bkpconfig.Shards, Bkpconfig.Groups)
+	Glen := len(Bkpconfig.Groups)
+	if Glen &lt; 1 {
+		return
+	}
+	MinShards := NShards / Glen
+	var GidArray []GidFreq
+	GidArray = sm.GetGidCountArray(GidShardMap)
+
+	sort.Sort(GidFreqtype(GidArray))
+
+	// fmt.Printf("START REBALANCE:")
+	// fmt.Println(GidShardMap)
+	// fmt.Println(OrphanShards)
+	// fmt.Println(GidArray)
+
+	// fmt.Println(Bkpconfig)
+	// fmt.Printf("REBALNCE: GIDArraylen: %d \nMinshards cnt: %d ", len(GidArray), MinShards)
+	for Index := len(GidArray) - 1; Index &gt;= 0; Index-- {
+		for i := GidArray[Index].Cnt; i &gt; MinShards; i-- {
+			//	Bkpconfig.Shards[OrphanShards[0]] = GidArray[Index].Gid
+			if len(GidShardMap[GidArray[Index].Gid]) &gt; 0 {
+				FreeShard := GidShardMap[GidArray[Index].Gid][0]
+				Bkpconfig.Shards[FreeShard] = 0
+				GidShardMap[GidArray[Index].Gid] = GidShardMap[GidArray[Index].Gid][1:]
+				OrphanShards = append(OrphanShards, FreeShard)
+				//GidArray[Index].Cnt = i
+			}
+		}
+	}
+	_, NGidShardMap, NOrphanShards := sm.GetNumShards(Bkpconfig.Shards, Bkpconfig.Groups)
+	GidArray = sm.GetGidCountArray(NGidShardMap)
+	sort.Sort(GidFreqtype(GidArray))
+	// fmt.Println(Bkpconfig)
+	// fmt.Printf("ORPHAN:")
+	// fmt.Println(NOrphanShards)
+	// fmt.Println(GidArray)
+
+	if len(NOrphanShards) &gt; 0 {
+		for Index, _ := range GidArray {
+			for i := GidArray[Index].Cnt; i &lt; MinShards; i++ {
+				if len(NOrphanShards) &gt; 0 {
+					Bkpconfig.Shards[NOrphanShards[0]] = GidArray[Index].Gid
+					NGidShardMap[GidArray[Index].Gid] = append(NGidShardMap[GidArray[Index].Gid], NOrphanShards[0])
+					NOrphanShards = NOrphanShards[1:]
+
+					//GidArray[Index].Cnt = i
+				}
+			}
+
+		}
+		GidArraylen := len(GidArray)
+		for i := 0; len(NOrphanShards) &gt; 0; i++ {
+			//	if len(NOrphanShards) &gt; 0 {
+			Bkpconfig.Shards[NOrphanShards[0]] = GidArray[i%GidArraylen].Gid
+			NOrphanShards = NOrphanShards[1:]
+			//	}
+		}
+	}
+
+	// fmt.Printf("SAMPATH:")
+	// fmt.Println(Bkpconfig)
+
+}
+
+func CopyConfig(old Config) Config {
+
+	newConfig := Config{
+		Num:    old.Num + 1,
+		Shards: old.Shards,
+	}
+	newConfig.Groups = make(map[int][]string)
+	for Index, Val := range old.Groups {
+		newConfig.Groups[Index] = Val
+	}
+	// fmt.Printf("CLONE:")
+	// fmt.Println(newConfig)
+	return newConfig
+}
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match85-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (sm *ShardMaster) ServerLogic() {
+
+	for {
+		select {
+		case &lt;-sm.KillChannel:
+			//fmt.Printf("SMServerLogic: Killed \n")
+			return
+		case Raftoutput := &lt;-sm.applyCh:
+			// fmt.Println(Raftoutput)
+			if Raftoutput.CommandValid {
+				RCop := Raftoutput.Command.(Op)
+				Operation := RCop.Cop
+				CIndex := Raftoutput.CommandIndex
+				CClientID := RCop.ClientID
+				CRequestID := RCop.RequestID
+</FONT>
+				var reply SMReply
+				//Isduplicate := sm.IsDuplicate(RCop.ClientID, RCop.RequestID, Operation)
+				Isduplicate := false
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match85-0.html#6" TARGET="0"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				sm.mu.Lock()
+				Response, CIDExists := sm.RequestCache[RCop.ClientID]
+				sm.mu.Unlock()
+
+				if CIDExists {
+					if Response.RequestID == RCop.RequestID && Operation == Response.Cop {
+</FONT>						Isduplicate = true
+					}
+				}
+				sm.mu.Lock()
+				if Isduplicate {
+
+					reply = Response.Response
+
+				} else {
+
+					MapLen := len(sm.configs)
+					switch Operation {
+					case "Move":
+						//sm.mu.Lock()
+						args := RCop.Request.(MoveArgs)
+						Bkpconfig := CopyConfig(sm.configs[MapLen-1])
+						_, Gidexist := Bkpconfig.Groups[args.GID]
+						if Gidexist {
+							Bkpconfig.Shards[args.Shard] = args.GID
+						} else {
+
+						}
+						//sm.PerformBalance(&Bkpconfig)
+						sm.configs = append(sm.configs, Bkpconfig)
+						//sm.mu.Unlock()
+<A NAME="9"></A><FONT color = #FF00FF><A HREF="match85-0.html#9" TARGET="0"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+						sm.RequestCache[CClientID] = CacheValue{
+							RequestID: CRequestID,
+							Cop:       Operation,
+							Response: SMReply{
+								Config:      Bkpconfig,
+								Err:         OK,
+</FONT>								WrongLeader: false,
+							},
+						}
+
+					case "Join":
+						//sm.mu.Lock()
+						args := RCop.Request.(JoinArgs)
+						Bkpconfig := CopyConfig(sm.configs[MapLen-1])
+						for GidKey, Server := range args.Servers {
+							Bkpconfig.Groups[GidKey] = Server
+						}
+						sm.PerformBalance(&Bkpconfig)
+						sm.configs = append(sm.configs, Bkpconfig)
+						//	sm.mu.Unlock()
+<A NAME="10"></A><FONT color = #FF0000><A HREF="match85-0.html#10" TARGET="0"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+						sm.RequestCache[CClientID] = CacheValue{
+							RequestID: CRequestID,
+							Cop:       Operation,
+							Response: SMReply{
+								Config:      Bkpconfig,
+								Err:         OK,
+</FONT>								WrongLeader: false,
+							},
+						}
+
+					case "Leave":
+						//	sm.mu.Lock()
+						args := RCop.Request.(LeaveArgs)
+						Bkpconfig := CopyConfig(sm.configs[MapLen-1])
+
+						for _, GidVal := range args.GIDs {
+
+							for ShardKey, GIDdel := range Bkpconfig.Shards {
+								if GidVal == GIDdel {
+									Bkpconfig.Shards[ShardKey] = 0
+								}
+							}
+							delete(Bkpconfig.Groups, GidVal)
+						}
+						sm.PerformBalance(&Bkpconfig)
+						sm.configs = append(sm.configs, Bkpconfig)
+						//	sm.mu.Unlock()
+						sm.RequestCache[CClientID] = CacheValue{
+							RequestID: CRequestID,
+							Cop:       Operation,
+							Response: SMReply{
+								Config:      Bkpconfig,
+								Err:         OK,
+								WrongLeader: false,
+							},
+						}
+
+					case "Query":
+						//sm.mu.Lock()
+						args := RCop.Request.(QueryArgs)
+						if args.Num &gt;= 0 && args.Num &lt; MapLen {
+							reply.Config = sm.configs[args.Num]
+						} else {
+							if MapLen &lt; 1 {
+								log.Fatal("Maplen is less than 1\n")
+							}
+							reply.Config = sm.configs[MapLen-1]
+						}
+						reply.Err = OK
+						reply.WrongLeader = false
+						//sm.mu.Unlock()
+						sm.RequestCache[CClientID] = CacheValue{
+							RequestID: CRequestID,
+							Cop:       Operation,
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match85-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+							Response:  reply,
+						}
+					default:
+
+					}
+				}
+				//	sm.mu.Lock()
+				ChanReceiver, ChExists := sm.IndexChannelMap[CIndex]
+				//	sm.mu.Lock()
+				if ChExists {
+					// fmt.Printf("KVSERVERAPPLY: Waking up ChanReceiver\n")
+					// fmt.Println(Raftoutput)
+					ChanReceiver &lt;- reply
+					// fmt.Printf("KVSERVERAPPLY: Woken up ChanReceiver\n")
+					close(sm.IndexChannelMap[CIndex])
+					delete(sm.IndexChannelMap, CIndex)
+				}
+				sm.mu.Unlock()
+			}
+
+		}
+	}
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+</FONT>	sm := new(ShardMaster)
+	sm.me = me
+
+	sm.VersionNumber = -1
+	sm.configs = make([]Config, 1)
+	sm.configs[0].Groups = map[int][]string{}
+	// for Key, _ := range sm.configs[0].Shards {
+	// 	sm.configs[0].Shards[Key] = 0
+	// }
+
+	labgob.Register(Op{})
+	labgob.Register(JoinArgs{})
+	labgob.Register(QueryArgs{})
+	labgob.Register(LeaveArgs{})
+	labgob.Register(MoveArgs{})
+
+	sm.applyCh = make(chan raft.ApplyMsg)
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+	sm.RequestCache = make(map[int64]CacheValue)
+	sm.IndexChannelMap = make(map[int]chan SMReply)
+	sm.RequestTimeout = 500
+	sm.KillChannel = make(chan bool, 1)
+	// fmt.Println(sm.configs[0])
+	// Your code here.
+	//return sm
+	go sm.ServerLogic()
+
+	return sm
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

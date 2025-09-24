@@ -1,0 +1,217 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-ksp20/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-ksp20/src/shardkv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+  std::recursive_mutex mtx2_{};
+
+// static int volatile x1 =
+//   MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+//                                     [] () -&gt; Marshallable* {
+//                                       return new MultiStringMarshallableShard;
+//                                     });
+
+int64_t ShardKvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int ShardKvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+    // lab_shard: fill in your code
+  std::lock_guard&lt;std::recursive_mutex&gt; lock123(mtx2_);
+  Log_info("put");
+  data.put_ack=false;
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  string opid= to_string(oid);
+  //svr_-&gt;Start();
+  shared_ptr&lt;Marshallable&gt; cmd=s;
+  RaftServer &ser= GetRaftServer();
+  uint64_t index=0; 
+  uint64_t term=0;
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match18-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  bool a=false;
+  //std::cout&lt;&lt;"value of oid "&lt;&lt;opid&lt;&lt;endl;
+  Coroutine::CreateRun([&](){
+   a=ser.Start(cmd,&index,&term);
+   //kv_snapshot();
+  });
+   
+  int timeout=5000*1000;
+  while(timeout&gt;0){
+    rrr::Coroutine::Sleep(10000);
+    timeout-=10000;
+    if(ack.find(opid) != ack.end()){
+      break;
+    }
+    if(!a){
+</FONT>      return KV_NOTLEADER;
+    }
+  }
+  if(!a)
+    return KV_NOTLEADER;
+  else if(ack.find(opid) != ack.end()) { 
+    return KV_SUCCESS;
+  }
+  else{
+     ack[opid]=1;
+    return KV_TIMEOUT;
+  }
+}
+
+int ShardKvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+    // lab_shard: fill in your code
+    std::lock_guard&lt;std::recursive_mutex&gt; lock1(mtx2_);
+  data.append_ack=false;
+  Log_info("append");
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("append");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  string opid= to_string(oid);
+  shared_ptr&lt;Marshallable&gt; cmd=s;
+  RaftServer &ser= GetRaftServer();
+  uint64_t index=0;
+  uint64_t term=0;
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match18-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  bool a=false;
+  Coroutine::CreateRun([&](){
+   a=ser.Start(cmd,&index,&term);
+   //kv_snapshot();
+  });
+  int timeout=600*1000;
+  while(timeout&gt;0){
+    rrr::Coroutine::Sleep(10000);
+    timeout-=10000;
+    if(ack.find(opid) != ack.end()){
+      break;
+    }
+    if(!a){
+</FONT>      return KV_NOTLEADER;
+    }
+  }
+  if(!a)
+    return KV_NOTLEADER;
+  else if(ack.find(opid) != ack.end()) { 
+    return KV_SUCCESS;
+  }
+  else{
+    ack[opid]=1;
+    return KV_TIMEOUT;
+  }
+ 
+}
+
+int ShardKvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+    // lab_shard: fill in your code
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx2_);
+  data.get_ack=false;
+  Log_info("get");
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("get");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back("get");
+  string opid= to_string(oid);
+  shared_ptr&lt;Marshallable&gt; cmd=s;
+  RaftServer &ser= GetRaftServer();
+  uint64_t index=0;
+  bool a=false;
+  bool isleader=false;
+  uint64_t term=-1;
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match18-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  Coroutine::CreateRun([&](){
+    a = ser.Start(cmd,&index,&term);
+    //kv_snapshot();
+  });
+  int timeout=600*1000;
+  while(timeout&gt;0){
+    rrr::Coroutine::Sleep(10000);
+    timeout-=10000;
+    if(ack.find(opid) != ack.end()){
+      break;
+    }
+    if(!a){
+</FONT>      return KV_NOTLEADER;
+    }
+  }
+  if(!a){
+    return KV_NOTLEADER;
+  }
+  else if(ack.find(opid) != ack.end()){
+    *v=db[k];
+    return KV_SUCCESS;
+  }
+  else{
+     ack[opid]=1;
+    return KV_TIMEOUT;
+  }
+}
+
+void ShardKvServer::OnNextCommand(Marshallable& m) {
+    // lab_shard: fill in your code
+  auto v = (MultiStringMarshallable*)(&m);
+  string opid=v-&gt;data_[0];
+  string op=v-&gt;data_[1];
+  string key=v-&gt;data_[2];
+  string value=v-&gt;data_[3];
+  RaftServer &ser= GetRaftServer();
+  index_size++;
+  if(ack.find(opid) != ack.end()){
+    return ;
+  }
+  ack[opid]=1;
+  if(op=="put"){
+    db[key]=value;
+    Log_info("database size %d",db.size());
+  }
+  else if(op=="append"){
+    if(db.count(key)==0){
+      db[key]=value;
+    }
+    else{
+      db[key]=db[key]+value;
+    }
+    Log_info("append database size %d",db.size()); 
+  }
+ 
+}
+
+shared_ptr&lt;ShardKvClient&gt; ShardKvServer::CreateClient(Communicator* comm) {
+  auto cli = make_shared&lt;ShardKvClient&gt;();
+  cli-&gt;commo_ = comm;
+  verify(cli-&gt;commo_ != nullptr);
+  static uint32_t id = 0;
+  id++;
+  cli-&gt;cli_id_ = id; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

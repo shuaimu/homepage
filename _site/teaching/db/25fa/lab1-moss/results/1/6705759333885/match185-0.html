@@ -1,0 +1,312 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-RotonEvan/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-RotonEvan/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+#include &lt;chrono&gt;
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+
+void RaftServiceImpl::HandleRequestVote(const uint64_t& term,
+                                        const uint64_t& candidateId,
+                                        const uint64_t& lastLogIndex,
+                                        const uint64_t& lastLogTerm,
+                                        uint64_t *retTerm,
+                                        bool_t *vote_granted,
+                                        rrr::DeferredReply* defer) {
+  /* Your code here */
+  // // *cout &lt;&lt; "Handling RequestVote RPC at server " &lt;&lt; svr_-&gt;site_id_ &lt;&lt; endl;
+  svr_-&gt;raft_mtx_.lock();
+  uint64_t curr_time = std::chrono::duration_cast&lt;std::chrono::milliseconds&gt;(
+    std::chrono::system_clock::now().time_since_epoch()).count();
+  
+  
+  
+  // *cout &lt;&lt; "ReqVoteRPC - term received: " &lt;&lt; term &lt;&lt; " current term: " &lt;&lt; svr_-&gt;currentTerm &lt;&lt; " lastHeartbeat: " &lt;&lt; svr_-&gt;lastHeartbeat &lt;&lt; " server: " &lt;&lt; svr_-&gt;site_id_ &lt;&lt; endl;
+  if (term &gt; svr_-&gt;currentTerm) {
+    svr_-&gt;state = 1;
+    svr_-&gt;currentTerm = term;
+    svr_-&gt;votedFor = -1;
+    svr_-&gt;lastHeartbeat = std::chrono::duration_cast&lt;std::chrono::milliseconds&gt;(std::chrono::system_clock::now().time_since_epoch()).count();
+    // *vote_granted = true;
+    *retTerm = term;
+    // svr_-&gt;electionHandler();
+  }
+  if (term == svr_-&gt;currentTerm && (svr_-&gt;votedFor == -1 || svr_-&gt;votedFor == candidateId)) {
+    if (lastLogTerm &gt; svr_-&gt;log[svr_-&gt;log.size() - 1][0] || (lastLogTerm == svr_-&gt;log[svr_-&gt;log.size() - 1][0] && lastLogIndex &gt;= svr_-&gt;log.size() - 1)) {
+      *vote_granted = true;
+      *retTerm = term;
+      svr_-&gt;currentTerm = term;
+      svr_-&gt;votedFor = candidateId;
+      svr_-&gt;state = 1;
+      svr_-&gt;lastHeartbeat = std::chrono::duration_cast&lt;std::chrono::milliseconds&gt;(std::chrono::system_clock::now().time_since_epoch()).count();
+      // svr_-&gt;electionHandler();
+    } else {
+      *vote_granted = false;
+      *retTerm = svr_-&gt;currentTerm;
+    }
+  } else {
+    *vote_granted = false;
+    *retTerm = svr_-&gt;currentTerm;
+  }
+    // else {
+    // // // *cout &lt;&lt; "vote granted" &lt;&lt; endl;
+    // // If votedFor is null or candidateId, and candidate’s log is at least as up-to-date as receiver’s log, grant vote
+    // if (svr_-&gt;votedFor == -1 || svr_-&gt;votedFor == candidateId) {
+    //   if (lastLogTerm &gt; svr_-&gt;log[svr_-&gt;log.size() - 1][0] || (lastLogTerm == svr_-&gt;log[svr_-&gt;log.size() - 1][0] && lastLogIndex &gt;= svr_-&gt;log.size() - 1)) {
+    //     *vote_granted = true;
+    //     *retTerm = term;
+    //     svr_-&gt;currentTerm = term;
+    //     svr_-&gt;votedFor = candidateId;
+    //     svr_-&gt;state = 1;
+    //     svr_-&gt;lastHeartbeat = curr_time;
+    //   } else {
+    //     *vote_granted = false;
+    //     *retTerm = term;
+    //   }
+    // } else {
+    //   *vote_granted = false;
+    //   *retTerm = term;
+    // }
+    // *vote_granted = true;
+    // *retTerm = term;
+    // svr_-&gt;currentTerm = term;
+    // svr_-&gt;votedFor = candidateId;
+    // svr_-&gt;state = 1;
+  
+  // *retTerm = 0;
+  // *vote_granted = false;
+  // *cout &lt;&lt; "current term at server " &lt;&lt; svr_-&gt;site_id_ &lt;&lt; " is " &lt;&lt; svr_-&gt;currentTerm &lt;&lt; " and return term is " &lt;&lt; *retTerm &lt;&lt; endl;
+  
+  svr_-&gt;raft_mtx_.unlock();
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match185-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  defer-&gt;reply();
+
+}
+
+void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t& term,
+                                  const uint64_t& leaderId,
+                                  const uint64_t& leaderCommit,
+                                  uint64_t *retTerm,
+                                  bool_t *success,
+</FONT>                                  rrr::DeferredReply* defer) {
+  /* Your code here */
+  // *cout &lt;&lt; "Handling EmptyAppendEntries RPC at server " &lt;&lt; svr_-&gt;site_id_ &lt;&lt; endl;
+  // get system time in ms
+  svr_-&gt;raft_mtx_.lock();
+  uint64_t curr_time = std::chrono::duration_cast&lt;std::chrono::milliseconds&gt;(
+    std::chrono::system_clock::now().time_since_epoch()).count();
+  
+  if (svr_-&gt;IsDisconnected()) {
+    defer-&gt;reply();
+  }  
+  
+    // // *cout &lt;&lt; "term received: " &lt;&lt; term &lt;&lt; " current term: " &lt;&lt; svr_-&gt;currentTerm &lt;&lt; " lastHeartbeat: " &lt;&lt; svr_-&gt;lastHeartbeat &lt;&lt; endl;
+  // // *cout &lt;&lt; "EmptyAppendEntryRPC from server " &lt;&lt; leaderId &lt;&lt; " - term received: " &lt;&lt; term &lt;&lt; " current term: " &lt;&lt; svr_-&gt;currentTerm &lt;&lt; " lastHeartbeat: " &lt;&lt; svr_-&gt;lastHeartbeat &lt;&lt; endl;
+  if (term &lt; svr_-&gt;currentTerm) {
+    *success = false;
+    *retTerm = svr_-&gt;currentTerm;
+  } else if (term == svr_-&gt;currentTerm) {
+    if (svr_-&gt;state == 0 || svr_-&gt;state == 2) {
+      svr_-&gt;currentTerm = term;
+      svr_-&gt;state = 1;
+      svr_-&gt;votedFor = -1;
+      // svr_-&gt;electionHandler();
+    }
+    svr_-&gt;lastHeartbeat = std::chrono::duration_cast&lt;std::chrono::milliseconds&gt;(
+    std::chrono::system_clock::now().time_since_epoch()).count();;
+    *success = true;
+    *retTerm = term;
+    
+    // svr_-&gt;votedFor = leaderId;
+  } else {
+    svr_-&gt;currentTerm = term;
+    svr_-&gt;state = 1;
+    svr_-&gt;votedFor = -1;
+    svr_-&gt;lastHeartbeat = std::chrono::duration_cast&lt;std::chrono::milliseconds&gt;(
+    std::chrono::system_clock::now().time_since_epoch()).count();;
+    *success = true;
+    *retTerm = term;
+    // svr_-&gt;electionHandler();
+  }
+  // if (leaderCommit &gt; svr_-&gt;commitIndex) {
+  //   svr_-&gt;commitIndex = min(leaderCommit, svr_-&gt;log.size() - 1);
+  //   // for each log entry till commitIndex, commit the command by passing to app_next_ as marshallable
+  //   for (int i = svr_-&gt;lastApplied + 1; i &lt;= svr_-&gt;commitIndex; i++) {
+  //     uint64_t cmd_ = svr_-&gt;log[i][1];
+  //     auto cmdptr = std::make_shared&lt;TpcCommitCommand&gt;();
+  //     auto vpd_p = std::make_shared&lt;VecPieceData&gt;();
+  //     vpd_p-&gt;sp_vec_piece_data_ = std::make_shared&lt;vector&lt;shared_ptr&lt;SimpleCommand&gt;&gt;&gt;();
+  //     cmdptr-&gt;tx_id_ = cmd_;
+  //     cmdptr-&gt;ret_ = svr_-&gt;log[i][0];
+  //     cmdptr-&gt;cmd_ = vpd_p;
+  //     // auto cmd_m = *(dynamic_pointer_cast&lt;Marshallable&gt;(cmdptr));
+  //     // *cout &lt;&lt; "committing command: " &lt;&lt; cmd_ &lt;&lt; endl;
+  //     svr_-&gt;app_next_(*dynamic_pointer_cast&lt;Marshallable&gt;(cmdptr));
+  //   }
+  //   svr_-&gt;lastApplied = svr_-&gt;commitIndex;
+    // for (int j = 0; j &lt; svr_-&gt;log.size(); j++) {
+    //   // *cout &lt;&lt; "log[" &lt;&lt; j &lt;&lt; "]: " &lt;&lt; svr_-&gt;log[j][0] &lt;&lt; " " &lt;&lt; svr_-&gt;log[j][1] &lt;&lt; "; ";
+    // }
+    // // *cout &lt;&lt; endl;
+  // }
+  // // *cout &lt;&lt; "current term at server " &lt;&lt; svr_-&gt;site_id_ &lt;&lt; " is " &lt;&lt; svr_-&gt;currentTerm &lt;&lt; " with log size " &lt;&lt; svr_-&gt;log.size() &lt;&lt; endl;
+  
+  
+  // // *cout &lt;&lt; "all values set at server " &lt;&lt; svr_-&gt;site_id_ &lt;&lt; endl;
+  // // *cout &lt;&lt; "current term at server " &lt;&lt; svr_-&gt;site_id_ &lt;&lt; " is " &lt;&lt; svr_-&gt;currentTerm &lt;&lt; endl;
+  svr_-&gt;raft_mtx_.unlock();
+  defer-&gt;reply();
+  
+}
+
+void RaftServiceImpl::HandleAppendEntries(
+                                          const uint64_t& term,
+                                          const uint64_t& leaderId,
+                                          const uint64_t& prevLogIndex,
+                                          const uint64_t& prevLogTerm,
+                                          const vector&lt;vector&lt;uint64_t&gt;&gt;& entries,
+                                          const uint64_t& leaderCommit,
+                                          // const MarshallDeputy& md_cmd,
+                                          uint64_t *retTerm,
+                                          bool_t *success,
+                                          rrr::DeferredReply* defer) {
+  /* Your code here */
+  // // *cout &lt;&lt; "Handling AppendEntries RPC at server " &lt;&lt; svr_-&gt;site_id_ &lt;&lt; endl;
+  svr_-&gt;raft_mtx_.lock();
+  uint64_t curr_time = std::chrono::duration_cast&lt;std::chrono::milliseconds&gt;(
+    std::chrono::system_clock::now().time_since_epoch()).count();
+  
+  // std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(md_cmd).sp_data_;
+  // auto tpc_cmd = dynamic_pointer_cast&lt;TpcCommitCommand&gt;(cmd);
+  // uint64_t cmd_ = tpc_cmd-&gt;tx_id_;
+  
+  // // *cout &lt;&lt; "server: " &lt;&lt; svr_-&gt;site_id_ &lt;&lt; "term received: " &lt;&lt; term &lt;&lt; " current term: " &lt;&lt; svr_-&gt;currentTerm &lt;&lt; " lastHeartbeat: " &lt;&lt; svr_-&gt;lastHeartbeat &lt;&lt; endl;
+  // if (svr_-&gt;log.size() &gt; 1) {
+  //   // *cout &lt;&lt; "log at server " &lt;&lt; svr_-&gt;site_id_ &lt;&lt; " is: ";
+  //   for (int j = 0; j &lt; svr_-&gt;log.size(); j++) {
+  //     // *cout &lt;&lt; "log[" &lt;&lt; j &lt;&lt; "]: " &lt;&lt; svr_-&gt;log[j][0] &lt;&lt; " " &lt;&lt; svr_-&gt;log[j][1] &lt;&lt; "; ";
+  //   }
+  //   // *cout &lt;&lt; endl;
+  // }
+  
+  if (term &gt; svr_-&gt;currentTerm) {
+    svr_-&gt;currentTerm = term;
+    svr_-&gt;state = 1;
+    svr_-&gt;votedFor = -1;
+    svr_-&gt;lastHeartbeat = std::chrono::duration_cast&lt;std::chrono::milliseconds&gt;(
+    std::chrono::system_clock::now().time_since_epoch()).count();
+  }
+  *success = false;
+  if (term == svr_-&gt;currentTerm) {
+    if (svr_-&gt;state == 0 || svr_-&gt;state == 2) {
+      svr_-&gt;currentTerm = term;
+      svr_-&gt;state = 1;
+      svr_-&gt;votedFor = -1;
+      // svr_-&gt;electionHandler();
+    }
+    svr_-&gt;lastHeartbeat = std::chrono::duration_cast&lt;std::chrono::milliseconds&gt;(
+    std::chrono::system_clock::now().time_since_epoch()).count();
+    // auto svrLogLastIndex = (svr_-&gt;log.size() - 1);
+    // // *cout &lt;&lt; "prevLogIndex: " &lt;&lt; prevLogIndex &lt;&lt; " svrLogLastIndex: " &lt;&lt; svrLogLastIndex &lt;&lt; " at server " &lt;&lt; svr_-&gt;site_id_ &lt;&lt; endl;
+    // // *cout &lt;&lt; "prevLogTerm: " &lt;&lt; prevLogTerm &lt;&lt; " svr_-&gt;log[prevLogIndex][0]: " &lt;&lt; svr_-&gt;log[prevLogIndex][0] &lt;&lt; " at server " &lt;&lt; svr_-&gt;site_id_ &lt;&lt; endl;
+    // if ( svrLogLastIndex &gt;= prevLogIndex && svr_-&gt;log[prevLogIndex][0] != prevLogTerm) {
+    //   // *success = false;
+    // } else if (svrLogLastIndex &lt; prevLogIndex) {
+    //   // *success = false;
+    // } else if(svrLogLastIndex &gt;= prevLogIndex) {
+    if(prevLogIndex &lt; svr_-&gt;log.size() and prevLogTerm == svr_-&gt;log[prevLogIndex][0]) { 
+      *success = true;
+      int followerIndex = prevLogIndex + 1;
+      int leaderIndex = 0;
+      while (true) {
+        if (followerIndex &gt;= svr_-&gt;log.size() || leaderIndex &gt;= entries.size()) {
+          break;
+        }
+        if (svr_-&gt;log[followerIndex][0] != entries[leaderIndex][0]) {
+          break;
+        }
+        followerIndex++;
+        leaderIndex++;
+      }      
+      // // *cout &lt;&lt; "erasing log entries at server " &lt;&lt; svr_-&gt;site_id_ &lt;&lt; " from " &lt;&lt; followerIndex &lt;&lt; " to " &lt;&lt; svr_-&gt;log.size() - 1 &lt;&lt; endl;
+      if (leaderIndex &lt; entries.size()) {
+        svr_-&gt;log.erase(svr_-&gt;log.begin() + followerIndex, svr_-&gt;log.end());
+        svr_-&gt;log.insert(svr_-&gt;log.end(), entries.begin() + leaderIndex, entries.end());
+      }
+    } 
+    if (leaderCommit &gt; svr_-&gt;commitIndex) {
+      auto oldCommit = svr_-&gt;commitIndex;
+      svr_-&gt;commitIndex = min(leaderCommit, svr_-&gt;log.size() - 1);
+      // for each log entry till commitIndex, commit the command by passing to app_next_ as marshallable
+      for (int i = svr_-&gt;lastApplied + 1; i &lt;= svr_-&gt;commitIndex; i++) {
+        uint64_t cmd_ = svr_-&gt;log[i][1];
+        auto cmdptr = std::make_shared&lt;TpcCommitCommand&gt;();
+        auto vpd_p = std::make_shared&lt;VecPieceData&gt;();
+        vpd_p-&gt;sp_vec_piece_data_ = std::make_shared&lt;vector&lt;shared_ptr&lt;SimpleCommand&gt;&gt;&gt;();
+        cmdptr-&gt;tx_id_ = cmd_;
+        cmdptr-&gt;ret_ = svr_-&gt;log[i][0];
+        cmdptr-&gt;cmd_ = vpd_p;
+        // auto cmd_m = *(dynamic_pointer_cast&lt;Marshallable&gt;(cmdptr));
+        // *cout &lt;&lt; "follower: " &lt;&lt; svr_-&gt;site_id_ &lt;&lt; " committing command: " &lt;&lt; cmd_ &lt;&lt; endl;
+        svr_-&gt;app_next_(*dynamic_pointer_cast&lt;Marshallable&gt;(cmdptr));
+      }
+      svr_-&gt;lastApplied = svr_-&gt;commitIndex;
+    }
+
+    // *success = true;
+    *retTerm = svr_-&gt;currentTerm;
+    // svr_-&gt;lastHeartbeat = std::chrono::duration_cast&lt;std::chrono::milliseconds&gt;(
+    // std::chrono::system_clock::now().time_since_epoch()).count();
+  }
+  
+  // if (term &lt; svr_-&gt;currentTerm) {
+  //   *success = false;
+  //   *retTerm = svr_-&gt;currentTerm;
+  // } else {
+  //   *retTerm = term;
+  //   if (svr_-&gt;state == 0 || svr_-&gt;state == 2) {
+  //     svr_-&gt;state = 1;
+  //     svr_-&gt;currentTerm = term;
+  //   }
+  //   svr_-&gt;lastHeartbeat = curr_time;
+  // }
+  // // *cout &lt;&lt; "current term at server " &lt;&lt; svr_-&gt;site_id_ &lt;&lt; " is " &lt;&lt; svr_-&gt;currentTerm &lt;&lt; " with log size " &lt;&lt; svr_-&gt;log.size() &lt;&lt; endl;
+  // svr_-&gt;raft_mtx_.unlock();
+  // *success = false;
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match185-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  *retTerm = svr_-&gt;currentTerm;
+  svr_-&gt;raft_mtx_.unlock();
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("receive an rpc: %s", req.c_str());
+</FONT>  *res = "world";
+  defer-&gt;reply();
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,409 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-gkulhare/src/deptran/raft/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-ojasdeshpande10-1/src/deptran/raft/server.cc<p><PRE>
+
+#include "server.h"
+// #include "paxos_worker.h"
+#include "exec.h"
+#include "frame.h"
+#include "coordinator.h"
+#include "../classic/tpc_command.h"
+#include &lt;random&gt;
+
+
+namespace janus {
+
+RaftServer::RaftServer(Frame * frame) {
+  frame_ = frame ;
+  /* Your code here for server initialization. Note that this function is 
+     called in a different OS thread. Be careful about thread safety if 
+     you want to initialize variables here. */
+  //Log_info("Lock1");
+  ////mtx_.lock();
+  votedFor=-1;
+  current_term=0;
+  state=0;
+  votedFor=-1;
+  commitIndex=0;
+  lastApplied=0;
+  gotAppendRpc=false;
+  gotRequestRpc=false;
+  for(int i=0;i&lt;NSERVERS;i++) {
+    nextIndex[i]=1;
+    matchIndex[i]=0;
+  }
+  shared_ptr&lt;Marshallable&gt; cmd;
+  LogEntry temp = {0,cmd};
+  log.push_back(temp);
+  ////mtx_.unlock();
+  Log_info("UnLock1");
+
+}
+
+RaftServer::~RaftServer() {
+  /* Your code here for server teardown */
+
+}
+
+void RaftServer::Setup() {
+  /* Your code here for server setup. Due to the asynchronous nature of the 
+     framework, this function could be called after a RPC handler is triggered. 
+     Your code should be aware of that. This function is always called in the 
+     same OS thread as the RPC handlers. */
+  //SyncRpcExample();
+  SyncSendVoteRequest();
+  //SyncSendAppendEntries();
+  SyncSendAppendEntriesLog();
+}
+
+bool RaftServer::Start(shared_ptr&lt;Marshallable&gt; &cmd,
+                       uint64_t *index,
+                       uint64_t *term) {
+  /* Your code here. This function can be called from another OS thread. */
+  ////mtx_.lock();
+  //Log_info("Lock2");
+  if(state == 1) {
+    mtx_.lock();
+    *term = current_term;
+    LogEntry temp = {*term,cmd};
+    log.push_back(temp);
+    lastApplied=log.size()-1;
+    //debugging comment
+    Log_info("***********last applied %d term applied is %d**********",lastApplied,*term);
+    *index=lastApplied;
+    //debugging comment
+    Log_info("appended the command in leader %d with log size %d and last term in log %d", site_id_,log.size(),log[log.size()-1].term);
+    Log_info("updating nextIndex of all servers");
+    for(int i=0;i&lt;NSERVERS;i++) {
+      if(i==site_id_) {
+        nextIndex[i]++;
+        matchIndex[i]=lastApplied;
+      }
+    }
+    mtx_.unlock();
+    ////mtx_.unlock();
+    //Log_info("UnLock2");
+    return true;
+  }
+  return false;
+}
+
+void RaftServer::GetState(bool *is_leader, uint64_t *term) {
+  /* Your code here. This function can be called from another OS thread. */
+  Log_info("checking for leader status %d and current term %d  server_id: %d", state,current_term,loc_id_);
+  ////mtx_.lock();
+  //Log_info("Lock3");
+  if(state == 1) {
+    *is_leader=true;
+  }
+  else {
+    *is_leader=false;
+  }
+  *term = current_term;
+  ////mtx_.unlock();
+  //Log_info("unLock3");
+}
+
+void RaftServer::SyncRpcExample() {
+  /* This is an example of synchronous RPC using coroutine; feel free to 
+     modify this function to dispatch/receive your own messages. 
+     You can refer to the other function examples in commo.h/cc on how 
+     to send/recv a Marshallable object over RPC. */
+  Coroutine::CreateRun([this](){
+    string res;
+    auto event = commo()-&gt;SendString(0, /* partition id is always 0 for lab1 */
+                                     0, "hello", &res);
+    event-&gt;Wait(1000000); //timeout after 1000000us=1s
+    if (event-&gt;status_ == Event::TIMEOUT) {
+      Log_info("timeout happens");
+    } else {
+      Log_info("rpc response is: %s", res.c_str()); 
+    }
+  });
+}
+void RaftServer::SyncSendVoteRequest() {
+    Coroutine::CreateRun([this](){
+    while(1) {
+
+      std::random_device rd;   
+      std::mt19937 gen(rd());
+
+      // Define the range you want (1 to 4)
+      std::uniform_real_distribution&lt;double&gt; dist(1.0, 2.3);
+
+      // Generate a random number within the specified range
+      double randomValue = dist(gen);
+      Log_info("Random value %f",randomValue);
+      Coroutine::Sleep(randomValue*1000000);
+
+      if(!gotAppendRpc && !gotRequestRpc && state!=1) {
+        //mtx_.lock();
+        //Log_info("Lock4");
+        //debugging comment
+        Log_info("entering candidate state %d", site_id_);
+        state=2;
+        votedFor=site_id_;
+        current_term++;
+        Log_info("Coroutine started for request vote for %d",site_id_);
+        //debugging comment
+        int votes=1;
+        int highestTerm=-1;
+        //Log_info("unLock4");
+        //mtx_.unlock();
+        for(int i=0;i&lt;NSERVERS;i++) {
+          if(i==site_id_) continue;
+          int getTerm;
+          bool votedg;
+          bool sendRPC=false;
+          Log_info("Sending request vote to %d from %d",i,site_id_);
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match218-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+          auto event = commo()-&gt;SendRequestVote(0,i,current_term,site_id_,log.size()-1,log[log.size()-1].term,&getTerm,&votedg,&sendRPC);
+</FONT>          event-&gt;Wait(10000000);
+          Coroutine::Sleep(10000);
+          if(!sendRPC) continue;
+          Log_info("event sent this %d votedg %d term we got is %d",event-&gt;get(),votedg,getTerm);
+          if(votedg) {
+            votes++;
+          }
+          else {
+            if(getTerm&gt;current_term) {
+              //mtx_.lock();
+              //Log_info("Lock5");
+              state=0;
+              current_term=getTerm;
+              //Log_info("unLock5");
+              //mtx_.unlock();
+              break;
+            }
+          }
+          if(state!=2) break;
+        }
+        Log_info("number of votes  %d",votes);
+        //mtx_.lock();
+        //Log_info("Lock6");
+        if(state==2 && votes&gt;NSERVERS/2) {
+          state=1;
+          Log_info("changing %d to leader", site_id_);
+          for(int i=0;i&lt;NSERVERS;i++) {
+            nextIndex[i]=log.size();
+          }
+        //mtx_.unlock();
+        //Log_info("unLock6");
+        }
+        else {
+          if(state==0) {
+            Log_info("it changed to follower");
+          }
+          else {
+            Log_info("the votes are less and cannot change to leader or");
+          }
+          //mtx_.unlock();
+          //Log_info("unLock6");
+        }
+
+      }
+      //Coroutine::Sleep(1000000);
+      gotAppendRpc=false;
+      gotRequestRpc=false;
+    }
+    });
+
+}
+void RaftServer::SyncSendAppendEntries() {
+  Coroutine::CreateRun([this](){
+    while(1) {
+      Coroutine::Sleep(HEARTBEAT_INTERVAL);
+      shared_ptr&lt;Marshallable&gt; cmd;
+      if(state==1) {
+        //debugging comment
+        int latest_term;
+        //Log_info("Coroutine started for appendEntry Rpc for %d",site_id_);
+        auto event = commo()-&gt;SendAppendEntries(0,site_id_,current_term,commitIndex,&latest_term);
+        event-&gt;Wait(10000);
+        //Log_info("1current_term of leader is %d and maximum of followers is %d",current_term,latest_term);
+        if(latest_term &gt; current_term) {
+          Log_info("2current_term of leader is %d and maximum of followers is %d",current_term,latest_term);
+          current_term=latest_term;
+          state=0;
+          Log_info("changing to follower %d",site_id_);
+        }
+      }
+    }
+  });
+}
+void RaftServer::SyncSendAppendEntriesLog() {
+    Coroutine::CreateRun([this](){
+      while(1) {
+      Coroutine::Sleep(HEARTBEAT_INTERVAL);
+      //Log_info("Waiting for log to run");
+      if(state==1) {
+        //debugging comment
+        //Sending append entries to each server seperately.
+        int highest_term = -1;
+        ////mtx_.unlock();
+        //Log_info("unLock7");
+        
+        for (int i = 0; i &lt; NSERVERS; i++) {
+          //Log_info("{**********");
+          //mtx_.lock();
+          //Log_info("Lock8");
+          if(i==site_id_) {
+            continue;
+          }
+          Log_info("Sending Log/heartbeat to be replicated from %d with log size %d to %d", loc_id_,log.size(),i);
+          vector&lt;shared_ptr&lt;Marshallable&gt;&gt; cmds;
+          vector&lt;uint64_t&gt; terms;
+          //Log_info("value of nextIndex for %d is %d with %d as leader",i,nextIndex[i],site_id_);
+          //Log_info("the nextIndex for %d is %d and log last Index of leader is %d",i,nextIndex[i],log.size()-1);
+          
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match218-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+          for(int j=nextIndex[i];j&lt;log.size();j++) {
+            //Log_info("pushing terms");
+            terms.push_back(log[j].term);
+            //Log_info("pushing commands"); 
+            cmds.push_back(log[j].cmd);
+          }
+          uint64_t prevLogIndex = 0;
+</FONT>          //Log_info("prevLogIndex after assigning from nextIndex %d",prevLogIndex);
+          uint64_t prevLogTerm = 0;
+          if(nextIndex[i]&gt;0) {
+            prevLogIndex=nextIndex[i]-1;
+            prevLogTerm= log[prevLogIndex].term;
+          }
+          Log_info("the size of entries is %d",terms.size());
+          //mtx_.unlock();
+          //Log_info("unLock8");
+          //shared_ptr&lt;Marshallable&gt; temp_cmd = log[log.size()-1].cmd;
+          int get_term;
+          int fail_term;
+          int fail_Index;
+          bool followerAppendOk;
+          bool sendAPE=false;
+          //Log_info("prevLogIndex%d prevLogTerm%d current_term%d commitIndex%d entries size() %d",prevLogIndex,prevLogTerm,current_term,commitIndex,terms.size());
+          auto event = commo()-&gt;SendAppendEntriesLog(0,i,current_term,site_id_,prevLogIndex,prevLogTerm,commitIndex,terms,cmds,&get_term, &fail_term, &fail_Index,&followerAppendOk, &sendAPE);
+          event-&gt;Wait(100000);
+          //Coroutine::Sleep(10000);
+          if(!sendAPE) continue;
+          //mtx_.lock();
+          //Log_info("Lock9");
+          Log_info("followerAppend value %d for %d coming from %d",event-&gt;get(),site_id_,i);
+          if(followerAppendOk) {
+          //debugging comment
+            if(terms.size()&gt;0) {
+                //Log_info("Follower %d is appended to %d incrementing Logindex",i,site_id_);
+                matchIndex[i]=prevLogIndex+terms.size();
+                nextIndex[i]+=terms.size();
+            }
+            else {
+              Log_info("Heartbeat was sent for %d by %d",i,site_id_);
+            }
+            //mtx_.unlock();
+            //Log_info("unLock9");
+          }
+          else {
+            Log_info("Append RPC failed on some condition term we got is %d current Term %d", get_term, current_term);
+            if(get_term&gt;current_term) {
+              Log_info("2current_term of leader is %d and maximum of followers is %d",current_term,get_term);
+              current_term=get_term;
+              state=0;
+              Log_info("changing to follower %d",site_id_);
+              //mtx_.unlock();
+              //Log_info("unLock9");
+              break;
+            }
+            
+            Log_info("fail index %d  fail term %d",fail_Index,fail_term);
+            if(fail_term!=0 && fail_Index!=0) {
+              //add check if the term is same
+              //Log_info("Changing nextIndex");
+              nextIndex[i]=fail_Index;
+            }
+            //mtx_.unlock();
+            //Log_info("unLock9");
+            //debugging comment
+            // if(terms.size()&gt;0)
+            // nextIndex[i]--;
+            //Log_info("Follower %d not appended to %d",i,site_id_); 
+          }
+          if(state!=1) break;
+        
+          //Log_info("**********}");
+      }
+
+      //mtx_.lock();
+      //Log_info("Lock10");
+      for(int n=log.size()-1;n&gt;commitIndex;n--) {
+        int count = 0;
+        if(log[n].term!=current_term) {
+          break;
+        }
+        for (int i = 0; i &lt; NSERVERS; i++) { 
+          if(n&lt;=matchIndex[i]) {
+            count++;
+          }
+        }
+        Log_info("majority for replication %d", count);
+        if(count&gt;(NSERVERS/2)) {
+          for(int j=commitIndex+1;j&lt;=n;j++) {
+            Log_info("commitIndex %d",j);
+            Log_info("commit log entry at commitIndex+1 for leader %d  %d %d with term in log entry as %d",site_id_,j,*(log.at(j).cmd),log[j].term);
+            app_next_(*(log.at(j).cmd));
+          }
+          commitIndex=n;
+          break;
+        }
+      }
+      //Log_info("number of servers replicated by %d   %d number of servers at the time %d", count, loc_id_,NSERVERS);
+      //mtx_.unlock();
+      //Log_info("unLock10");    
+    }
+    }
+  });
+}
+
+/* Do not modify any code below here */
+
+void RaftServer::Disconnect(const bool disconnect) {
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+  verify(disconnected_ != disconnect);
+  // global map of rpc_par_proxies_ values accessed by partition then by site
+  static map&lt;parid_t, map&lt;siteid_t, map&lt;siteid_t, vector&lt;SiteProxyPair&gt;&gt;&gt;&gt; _proxies{};
+  if (_proxies.find(partition_id_) == _proxies.end()) {
+    _proxies[partition_id_] = {};
+  }
+  RaftCommo *c = (RaftCommo*) commo();
+  if (disconnect) {
+    verify(_proxies[partition_id_][loc_id_].size() == 0);
+    verify(c-&gt;rpc_par_proxies_.size() &gt; 0);
+    auto sz = c-&gt;rpc_par_proxies_.size();
+    _proxies[partition_id_][loc_id_].insert(c-&gt;rpc_par_proxies_.begin(), c-&gt;rpc_par_proxies_.end());
+    c-&gt;rpc_par_proxies_ = {};
+    verify(_proxies[partition_id_][loc_id_].size() == sz);
+    verify(c-&gt;rpc_par_proxies_.size() == 0);
+  } else {
+    verify(_proxies[partition_id_][loc_id_].size() &gt; 0);
+    auto sz = _proxies[partition_id_][loc_id_].size();
+    c-&gt;rpc_par_proxies_ = {};
+    c-&gt;rpc_par_proxies_.insert(_proxies[partition_id_][loc_id_].begin(), _proxies[partition_id_][loc_id_].end());
+    _proxies[partition_id_][loc_id_] = {};
+    verify(_proxies[partition_id_][loc_id_].size() == 0);
+    verify(c-&gt;rpc_par_proxies_.size() == sz);
+  }
+  disconnected_ = disconnect;
+}
+
+bool RaftServer::IsDisconnected() {
+  return disconnected_;
+}
+
+} // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

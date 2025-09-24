@@ -1,0 +1,305 @@
+<HTML>
+<HEAD>
+<TITLE>./spring19/sshshao/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./spring19/sshshao/src/kvraft/server.go<p><PRE>
+package raftkv
+
+import (
+	"context"
+	"labgob"
+	"labrpc"
+	"raft"
+	"sync"
+)
+
+type KVServer struct {
+	mu           sync.Mutex
+	me           int
+	rf           *raft.Raft
+	maxraftstate int // snapshot if log grows this big
+	applyCh      chan raft.ApplyMsg
+
+	// Your definitions here.
+	kvMap             map[string]string
+	requestChan       map[int64](chan bool)
+	clientLastRequest map[int64]OpResult
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match87-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	ctx    context.Context
+	cancel context.CancelFunc
+}
+
+//
+// the tester calls Kill() when a KVServer instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *KVServer) Kill() {
+	kv.rf.Kill()
+	// Your code here, if desired.
+	DPrintf("KV Server %d KILLED", kv.me)
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Raft to
+// form the fault-tolerant key/value service.
+// me is the index of the current server in servers[].
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+// the k/v server should snapshot when Raft's saved state exceeds maxraftstate bytes,
+// in order to allow Raft to garbage-collect its log. if maxraftstate is -1,
+// you don't need to snapshot.
+// StartKVServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
+</FONT>	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+	DPrintf("[KVServer Creation] KV Server %d Starting...", me)
+	kv := new(KVServer)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+
+	// You may need initialization code here.
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match87-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.kvMap = make(map[string]string)
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.requestChan = make(map[int64](chan bool))
+	kv.clientLastRequest = make(map[int64]OpResult)
+</FONT><A NAME="1"></A><FONT color = #00FF00><A HREF="match87-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_14.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.ctx, kv.cancel = context.WithCancel(context.Background())
+
+	go kv.receiveCommandExecution()
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+	if maxraftstate &gt; 0 {
+		go kv.truncateRaftLog(persister)
+	}
+
+	DPrintf("\033[31m[KVServer %d] Started KV Server\033[37m", kv.me)
+
+	return kv
+}
+
+func (kv *KVServer) receiveCommandExecution() {
+	for {
+		select {
+		case applyMsg := &lt;-kv.applyCh:
+			if !applyMsg.CommandValid {
+				continue
+			}
+
+			kv.mu.Lock()
+			//DPrintLog(2, "[KVServer] Received applymsg: %+v\n", kv.me, applyMsg.Command.(Op).OpID, applyMsg)
+			if applyMsg.IsSnapshot {
+				DPrintf("\033[34m[KVServer %d] Loading state from snapshot...\033[37m", kv.me)
+
+				appData := applyMsg.Command.([]byte)
+				kv.loadSnapshot(appData)
+				kv.mu.Unlock()
+</FONT>				continue
+			} else {
+				switch applyMsg.Command.(Op).Opcode {
+				case 100:
+					kv.executeGet(applyMsg.Command.(Op))
+				case 101:
+					kv.executePutAppend(applyMsg.Command.(Op))
+				case 102:
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match87-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+					kv.executePutAppend(applyMsg.Command.(Op))
+				}
+			}
+			kv.mu.Unlock()
+		case &lt;-kv.ctx.Done():
+			return
+			//default:
+			//time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+func (kv *KVServer) executeGet(op Op) {
+</FONT>	//kv.mu.Lock()
+	//defer kv.mu.Unlock()
+
+	var result string
+	var err Err
+	var opResult OpResult
+
+	DPrintf("\033[37m[KVServer %d][%d] Executing GET\033[37m", kv.me, op.OpID)
+
+	if value, contains := kv.kvMap[op.Key]; contains {
+		result = value
+		err = ""
+	} else {
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match87-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_15.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		err = ErrNoKey
+	}
+
+	opResult = OpResult{
+		OpID:    op.OpID,
+		ClerkID: op.ClerkID,
+		Opcode:  op.Opcode,
+		Err:     err,
+		Value:   result}
+	kv.clientLastRequest[op.ClerkID] = opResult
+	DPrintf("\033[32m[KVServer %d][%d] Executed GET: %+v\033[37m", kv.me, op.OpID, opResult)
+
+	if channel, contains := kv.requestChan[op.OpID]; contains {
+		DPrintf("\033[32m[KVLeader %d][%d] Sending GET result to channel: %+v\033[37m", kv.me, op.OpID, opResult)
+		select {
+		case channel &lt;- true:
+		default:
+		}
+	}
+}
+
+func (kv *KVServer) executePutAppend(op Op) {
+	//kv.mu.Lock()
+	//defer kv.mu.Unlock()
+
+	var opResult OpResult
+
+	DPrintf("\033[37m[KVServer %d][%d] Executing PUTAPPEND\033[37m", kv.me, op.OpID)
+</FONT>
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match87-1.html#7" TARGET="1"><IMG SRC="../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	if lastResult, executed := kv.clientLastRequest[op.ClerkID]; executed && lastResult.OpID == op.OpID {
+		DPrintf("\033[36m[KVServer %d][%d] Previously executed PUTAPPEND: %+v\033[37m", kv.me, op.OpID, lastResult)
+		opResult = lastResult
+	} else {
+		if op.Opcode == OpcodePut {
+</FONT>			kv.kvMap[op.Key] = op.Value
+		} else {
+			if _, contains := kv.kvMap[op.Key]; contains {
+				kv.kvMap[op.Key] += op.Value
+			} else {
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match87-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_8.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				kv.kvMap[op.Key] = op.Value
+			}
+		}
+
+		opResult = OpResult{
+			OpID:    op.OpID,
+			ClerkID: op.ClerkID,
+			Opcode:  op.Opcode,
+			Err:     ""}
+		kv.clientLastRequest[op.ClerkID] = opResult
+		DPrintf("\033[32m[KVServer %d][%d] Executed PUTAPPEND: %+v, entry: %s\033[37m", kv.me, op.OpID, opResult, kv.kvMap[op.Key])
+</FONT>	}
+
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match87-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	if channel, contains := kv.requestChan[op.OpID]; contains {
+		DPrintf("\033[32m[KVLeader %d][%d] Sending PUTAPPEND result to channel: %+v\033[37m", kv.me, op.OpID, opResult)
+		select {
+		case channel &lt;- true:
+</FONT>		default:
+		}
+	}
+}
+
+/*
+func (kv *KVServer) StartApplyingCommands(ch chan raft.ApplyMsg, persister *raft.Persister) {
+	for {
+		commandWrapper := &lt;-ch
+		// DPrintf("\033[32m[KVServer %d New Command]: %+v", kv.me, commandWrapper)
+		if !commandWrapper.CommandValid {
+			continue
+		}
+
+		if commandWrapper.IsSnapshot {
+			DPrintf("\033[34m[KVServer %d] Loading a snapshot...\033[37m", kv.me)
+			kv.mu.Lock()
+			appData := commandWrapper.Command.([]byte)
+			kv.LoadKVData(appData)
+			kv.mu.Unlock()
+			continue
+		}
+		commandToApply := commandWrapper.Command.(Op)
+		clerkID := commandToApply.ClerkID
+		requestID := commandToApply.RequestID
+		opType := commandToApply.Op
+		key := commandToApply.Key
+		value := commandToApply.Value
+
+		kv.mu.Lock()
+		if lastRequestID, exist := kv.clerkRequestLastSeen[clerkID]; exist && lastRequestID == requestID {
+			// Duplicate Request.
+			DPrintf("\033[31m[KVServer %d] Duplicate Request (CID %d, RID %d)\033[37m", kv.me, clerkID, requestID)
+			if ch, exist := kv.requestStatusLookup[lastRequestID]; exist {
+				kv.mu.Unlock()
+				ch &lt;- true
+			} else {
+				kv.mu.Unlock()
+			}
+		} else {
+			kv.mu.Unlock()
+
+			switch opType {
+			case PutOp:
+				kv.mu.Lock()
+				kv.DB[key] = value
+				// Notify the main routine this put has been handled.
+				if ch, exist := kv.requestStatusLookup[requestID]; exist {
+					kv.clerkRequestLastSeen[clerkID] = requestID
+					kv.mu.Unlock()
+					ch &lt;- true
+				} else {
+					kv.clerkRequestLastSeen[clerkID] = requestID
+					kv.mu.Unlock()
+				}
+				DPrintf("\033[32m[KVServer %d Applied] (%d, %d) - (%s, %s, %s)\033[37m", kv.me, clerkID, requestID, opType, key, value)
+			case AppendOp:
+				kv.mu.Lock()
+				if curVal, exist := kv.DB[key]; exist {
+					kv.DB[key] = curVal + value
+				} else {
+					kv.DB[key] = value
+				}
+				// Notify the main routine this put has been handled.
+				if ch, exist := kv.requestStatusLookup[requestID]; exist {
+					kv.clerkRequestLastSeen[clerkID] = requestID
+
+					kv.mu.Unlock()
+					ch &lt;- true
+				} else {
+					kv.clerkRequestLastSeen[clerkID] = requestID
+
+					kv.mu.Unlock()
+				}
+				DPrintf("\033[32m[KVServer %d Applied] (%d, %d) - (%s, %s, %s)\033[37m", kv.me, clerkID, requestID, opType, key, value)
+			case GetOp:
+				kv.mu.Lock()
+				if ch, exist := kv.requestStatusLookup[requestID]; exist {
+					kv.clerkRequestLastSeen[clerkID] = requestID
+					kv.mu.Unlock()
+					ch &lt;- true
+				} else {
+					kv.clerkRequestLastSeen[clerkID] = requestID
+					kv.mu.Unlock()
+				}
+				DPrintf("\033[32m[KVServer %d Applied] (CID %d, RID %d) - (%s, %s, %s)\033[37m", kv.me, clerkID, requestID, opType, key, value)
+			}
+		}
+
+		DPrintf("\033[35m***END [KVServer %d Applied] (CID %d, RID %d) - (%s, %s, %s)\033[37m", kv.me, clerkID, requestID, opType, key, value)
+	}
+}
+*/
+</PRE>
+</PRE>
+</BODY>
+</HTML>

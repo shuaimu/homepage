@@ -1,0 +1,492 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/RonakKhandelwal/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/RonakKhandelwal/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+import (
+	"log"
+	"raft"
+	"time"
+)
+import "labrpc"
+import "sync"
+import "labgob"
+
+<A NAME="8"></A><FONT color = #00FFFF><A HREF="match73-0.html#8" TARGET="0"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if true {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+type ShardMaster struct {
+</FONT>	mu              sync.Mutex
+	me              int
+	rf              *raft.Raft
+	applyCh         chan raft.ApplyMsg
+	indexChannelMap sync.Map
+	lastSeen        map[int64]int
+	massMurderer    chan bool
+	persister       *raft.Persister
+	// Your data here.
+
+	configs []Config // indexed by config num
+}
+
+type Op struct {
+	Operation   string
+	Parameters  interface{}
+	ClientId    int64
+	OperationId int
+}
+
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match73-0.html#7" TARGET="0"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (sm *ShardMaster) performOperation(op Op) bool {
+	index, _, isLeader := sm.rf.Start(op)
+	if !isLeader {
+		DPrintf("The peer %d was not the leader", sm.me)
+		return false
+</FONT>	}
+	DPrintf("Performing operation %+v", op)
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match73-0.html#6" TARGET="0"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	ch := make(chan raft.ApplyMsg, 1)
+	sm.mu.Lock()
+	sm.indexChannelMap.Store(index, ch)
+	sm.mu.Unlock()
+
+	defer func() {
+		sm.mu.Lock()
+</FONT><A NAME="0"></A><FONT color = #FF0000><A HREF="match73-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		if ch, ok := sm.indexChannelMap.Load(index); ok {
+			if c, ok := ch.(chan raft.ApplyMsg); ok {
+				//Close the channel
+				close(c)
+			}
+		}
+
+		sm.indexChannelMap.Delete(index)
+		sm.mu.Unlock()
+	}()
+	select {
+	case msg := &lt;-ch:
+		{
+			//Compare the operations and then proceed
+			if real, ok := msg.Command.(Op); ok {
+				if real.OperationId == op.OperationId && real.Operation == op.Operation {
+					return true
+				}
+			}
+			DPrintf("Received message but some issue parsing the contents")
+			return false
+		}
+	case &lt;-time.After(500 * time.Millisecond):
+		return false
+	}
+}
+
+func (sm *ShardMaster) ArrivalStation() {
+	for {
+		select {
+		case &lt;-sm.massMurderer:
+			return
+		case msg := &lt;-sm.applyCh:
+</FONT><A NAME="5"></A><FONT color = #FF0000><A HREF="match73-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			if smg, ok := msg.Command.(Op); ok && msg.CommandValid {
+				sm.mu.Lock()
+				if smg.OperationId &gt; sm.lastSeen[smg.ClientId] {
+</FONT>					switch smg.Operation {
+					case "Query":
+						//No-Op Since we are handling it
+					case "Join":
+						//Take the previous config
+						prev := sm.configs[len(sm.configs)-1]
+						//Take the next config
+						nextConfigNo := prev.Num + 1
+						nextShards := prev.Shards
+						next := Config{
+							Groups: make(map[int][]string),
+							Num:    nextConfigNo,
+							Shards: nextShards,
+						}
+
+						for g, s := range prev.Groups {
+							//Append the previous config. As the lab said it will store reference if I don't do this.
+							updated := append([]string(nil), s...)
+							next.Groups[g] = updated
+						}
+
+						if params, ok := smg.Parameters.(JoinArgs); ok {
+							for index, serverList := range params.Servers {
+								updated := append([]string(nil), serverList...)
+								next.Groups[index] = updated
+								sm.reBalanceAfterJoin(&next, index)
+							}
+						}
+						sm.configs = append(sm.configs, next)
+
+					case "Leave":
+						prev := sm.configs[len(sm.configs)-1]
+						//Take the next config
+						nextConfigNo := prev.Num + 1
+						nextShards := prev.Shards
+						next := Config{
+							Num:    nextConfigNo,
+							Shards: nextShards,
+							Groups: make(map[int][]string),
+						}
+
+						for g, s := range prev.Groups {
+							//Append the previous config. As the lab said it will store reference if I don't do this.
+							updated := append([]string(nil), s...)
+							next.Groups[g] = updated
+						}
+
+						if args, ok := smg.Parameters.(LeaveArgs); ok {
+							for _, id := range args.GIDs {
+								//Library function to do it.
+								delete(next.Groups, id)
+								sm.reBalanceAfterLeave(&next, id)
+							}
+						}
+
+						sm.configs = append(sm.configs, next)
+					case "Move":
+						prev := sm.configs[len(sm.configs)-1]
+						//Take the next config
+						nextConfigNo := prev.Num + 1
+						nextShards := prev.Shards
+						next := Config{
+							Num:    nextConfigNo,
+							Shards: nextShards,
+							Groups: make(map[int][]string),
+						}
+
+						for g, s := range prev.Groups {
+							//Append the previous config. As the lab said it will store reference if I don't do this.
+							next.Groups[g] = append([]string{}, s...)
+						}
+						if params, ok := smg.Parameters.(MoveArgs); ok {
+							if _, ok = next.Groups[params.GID]; ok {
+								next.Shards[params.Shard] = params.GID
+								sm.configs = append(sm.configs, next)
+							}
+						}
+					default:
+					}
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match73-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+					sm.lastSeen[msg.Command.(Op).ClientId] = msg.Command.(Op).OperationId
+				}
+
+				//Pass the result back to the handler.
+				if ch, ok1 := sm.indexChannelMap.Load(msg.CommandIndex); ok1 {
+					go func(msg raft.ApplyMsg, ch chan raft.ApplyMsg) {
+						ch &lt;- msg
+					}(msg, ch.(chan raft.ApplyMsg))
+</FONT>				}
+
+				sm.mu.Unlock()
+			}
+
+		}
+	}
+}
+
+func (sm *ShardMaster) reBalanceAfterJoin(config *Config, id int) {
+	shards := map[int][]int{}
+	for shardIndex := range config.Groups {
+		shards[shardIndex] = make([]int, 0)
+	}
+
+	for index, val := range config.Shards {
+		shards[val] = append(shards[val], index)
+	}
+	noOfShardsPerGroup := NShards / len(config.Groups)
+	for i := 0; i &lt; noOfShardsPerGroup; i++ {
+		groupIdMaxShards := -1
+		maxVal := -100000
+		for index, arr := range shards {
+			if len(arr) &gt; maxVal {
+				groupIdMaxShards = index
+				maxVal = len(arr)
+			}
+		}
+
+		//Move the shard around.
+		index := shards[groupIdMaxShards][0]
+		config.Shards[index] = id
+		shards[groupIdMaxShards] = shards[groupIdMaxShards][1:]
+	}
+}
+
+func (sm *ShardMaster) reBalanceAfterLeave(config *Config, id int) {
+	shards := map[int][]int{}
+	for shardIndex := range config.Groups {
+		shards[shardIndex] = make([]int, 0)
+	}
+
+	for index, val := range config.Shards {
+		shards[val] = append(shards[val], index)
+	}
+
+	if shardgroup, ok := shards[id]; ok {
+		delete(shards, id)
+		if len(config.Groups) == 0 {
+			config.Shards = [NShards]int{}
+			return
+		}
+
+		for _, shard := range shardgroup {
+			groupIdMin := -1
+			minVal := 100000
+			//Find the min value shard group
+			for index, arr := range shards {
+				if len(arr) &lt; minVal {
+					groupIdMin = index
+					minVal = len(arr)
+				}
+			}
+
+			config.Shards[shard] = groupIdMin
+			shards[groupIdMin] = append(shards[groupIdMin], shard)
+		}
+	} else {
+		return
+	}
+}
+
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+	_, isLeader := sm.rf.GetState()
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match73-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	if !isLeader {
+		reply.WrongLeader = true
+		reply.Err = WrongLeaderError
+		return
+	}
+
+	if !sm.AcceptRequest(args.ClientId, args.OperationId) {
+		reply.WrongLeader = false
+		reply.Err = RepeatRequestError
+		DPrintf("Repeated Request %+v", args)
+		return
+	}
+
+	op := Op{
+		Operation:  "Join",
+</FONT>		Parameters: *args, // Pass by value? Why do I always feel that pass by value will be better.
+		// FML
+		ClientId:    args.ClientId,
+		OperationId: args.OperationId,
+	}
+
+	if sm.performOperation(op) {
+		reply.WrongLeader = false
+		reply.Err = ""
+		return
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match73-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	} else {
+		reply.WrongLeader = false
+		reply.Err = TimeOutError
+		return
+	}
+}
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+	_, isLeader := sm.rf.GetState()
+	if !isLeader {
+		reply.WrongLeader = true
+		reply.Err = WrongLeaderError
+		return
+	}
+
+	if !sm.AcceptRequest(args.ClientId, args.OperationId) {
+		reply.WrongLeader = false
+		reply.Err = RepeatRequestError
+		DPrintf("Repeated Request %+v", args)
+		return
+	}
+
+	op := Op{
+		Operation:  "Leave",
+</FONT>		Parameters: *args, // Pass by value? Why do I always feel that pass by value will be better.
+		// FML
+		ClientId:    args.ClientId,
+		OperationId: args.OperationId,
+	}
+
+	if sm.performOperation(op) {
+		reply.WrongLeader = false
+		reply.Err = ""
+		return
+
+	} else {
+		reply.WrongLeader = false
+		reply.Err = TimeOutError
+		return
+	}
+}
+
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+	// Your code here.
+	_, isLeader := sm.rf.GetState()
+	if !isLeader {
+		reply.WrongLeader = true
+		reply.Err = WrongLeaderError
+		return
+	}
+
+	if !sm.AcceptRequest(args.ClientId, args.OperationId) {
+		reply.WrongLeader = false
+		reply.Err = RepeatRequestError
+		DPrintf("Repeated Request %+v", args)
+		return
+	}
+
+	op := Op{
+		Operation:   "Move",
+		Parameters:  *args, //Since I need to send both the things.
+		ClientId:    args.ClientId,
+		OperationId: args.OperationId,
+	}
+
+	if sm.performOperation(op) {
+		reply.WrongLeader = false
+		reply.Err = ""
+		return
+
+	} else {
+		reply.WrongLeader = false
+		reply.Err = TimeOutError
+		return
+	}
+}
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match73-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (sm *ShardMaster) AcceptRequest(clientId int64, operationId int) bool {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	if val, ok := sm.lastSeen[clientId]; ok {
+		if val &lt; operationId {
+			return true
+		} else {
+			return false
+		}
+	} else {
+		return true
+	}
+}
+
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+	//A lot like the get command so handle it like get command
+	//Actually it is a get command stupid lab.
+	_, isLeader := sm.rf.GetState()
+</FONT>	if !isLeader {
+		reply.WrongLeader = true
+		reply.Err = WrongLeaderError
+		return
+	}
+
+	if !sm.AcceptRequest(args.ClientId, args.OperationId) {
+		reply.WrongLeader = false
+		reply.Err = RepeatRequestError
+		DPrintf("Repeated Request %+v", args)
+		return
+	}
+
+	op := Op{
+		Operation:   "Query",
+		Parameters:  *args,
+		ClientId:    args.ClientId,
+		OperationId: args.OperationId,
+	}
+
+	if sm.performOperation(op) {
+		sm.mu.Lock()
+		if args.Num &lt; len(sm.configs) && args.Num &gt;= 0 {
+			reply.Config = sm.configs[args.Num]
+		} else {
+			reply.Config = sm.configs[len(sm.configs)-1]
+		}
+		reply.WrongLeader = false
+		reply.Err = ""
+		sm.mu.Unlock()
+		return
+
+	} else {
+		reply.WrongLeader = false
+		reply.Err = TimeOutError
+		return
+	}
+}
+
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+	for i := 0; i &lt; 9; i++ {
+		sm.massMurderer &lt;- true
+	}
+	// Your code here, if desired.
+}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+	return sm.rf
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+
+func registerStructures() {
+	labgob.Register(Op{})
+	labgob.Register(JoinArgs{})
+	labgob.Register(MoveArgs{})
+	labgob.Register(QueryArgs{})
+	labgob.Register(LeaveArgs{})
+}
+
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	sm := new(ShardMaster)
+	sm.me = me
+
+	sm.configs = make([]Config, 1)
+	sm.configs[0].Groups = map[int][]string{}
+
+	registerStructures()
+	sm.applyCh = make(chan raft.ApplyMsg)
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+	sm.indexChannelMap = sync.Map{}
+	sm.massMurderer = make(chan bool, 10)
+	sm.lastSeen = make(map[int64]int)
+	go sm.ArrivalStation()
+	// Your code here.
+
+	return sm
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

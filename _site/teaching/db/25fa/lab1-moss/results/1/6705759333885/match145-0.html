@@ -1,0 +1,1006 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-BruceWang3077/src/deptran/raft/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-BruceWang3077/src/deptran/raft/server.cc<p><PRE>
+
+
+#include "server.h"
+// #include "paxos_worker.h"
+#include "exec.h"
+#include "frame.h"
+#include "coordinator.h"
+#include "../classic/tpc_command.h"
+#include &lt;time.h&gt;
+
+namespace janus
+{
+  uint64_t RaftServer::server_num = 0;
+
+  uint64_t RaftServer::getId()
+  {
+    printf("testing2\n");
+    // std::unique_lock&lt;std::mutex&gt; lock(cv_m);
+    printf("testing3\n");
+    uint64_t tmp = server_num++; // ID start from 0, spare 99 as default value
+    return tmp;
+  }
+
+  RaftServer::RaftServer(Frame *frame)
+  {
+    frame_ = frame;
+    /* Your code here for server initialization. Note that this function is
+       called in a different OS thread. Be careful about thread safety if
+       you want to initialize variables here. */
+    std::unique_lock&lt;std::mutex&gt; lock(cv_m);
+    printf("testing1\n");
+
+    loc_id_ = this-&gt;getId();
+    rpc_received = 0;
+    voted_for = 99;
+    leader_id = 99;
+    cur_term = 0;
+    status = RaftServer::FOLLOWER;
+    commit_index = 0;
+    last_applied = 0;
+    int32_t kind = 1;
+    follower_interacted = false;
+    std::shared_ptr&lt;Marshallable&gt; marshallablePtr = std::make_shared&lt;janus::Marshallable&gt;(kind);
+
+    log_entry first_le = {0, 0, true, marshallablePtr};
+    log.push_back(first_le);
+    for (int i = 0; i &lt;= server_num; i++)
+    {
+      votes[i] = false;
+    }
+    //-------------------------------------
+    // printf("constructor function working: the serverId: %d, Status: %ld, log index: %d  \n", loc_id_, status, log.back().index);
+    //-------------------------------------
+  }
+
+  RaftServer::~RaftServer()
+  {
+    /* Your code here for server teardown */
+    std::unique_lock&lt;std::mutex&gt; lock(cv_m);
+    status = RaftServer::DOWN;
+  }
+
+  void RaftServer::Setup()
+  {
+    /* Your code here for server setup. Due to the asynchronous nature of the
+       framework, this function could be called after a RPC handler is triggered.
+       Your code should be aware of that. This function is always called in the
+       same OS thread as the RPC handlers. */
+    // SyncRpcExample();
+    //-------------------------------------
+    // printf("SetUp: the serverId: %d, Status: %ld \n", loc_id_, status);
+    //-------------------------------------
+    std::thread backgroundThread([this]
+                                 { senderThread(); });
+
+    //+------------------------------------
+    // printf("4\n");
+    //-------------------------------------
+    backgroundThread.detach();
+    //+------------------------------------
+    // printf("5\n");
+    //-------------------------------------
+  }
+  // handle RPC sender end
+  void RaftServer::requestVoteCallback(uint32_t receiver_id, uint64_t return_term, bool_t vote_granted)
+  {
+    std::unique_lock&lt;std::mutex&gt; lock(cv_m);
+    //-------------------------------------
+    // printf("requestVodeCallback:  %d term %ld gets response from %d, Status: %ld ,return_term: %ld, %s, servernum: %ld\n", loc_id_, cur_term, receiver_id, status, return_term, vote_granted ? "true" : "false", server_num);
+    //-------------------------------------
+    if (status == RaftServer::CANDIDATE)
+    {
+      if (cur_term &lt; return_term)
+      {
+        cur_term = return_term;
+        status = RaftServer::FOLLOWER;
+        voted_for = 99;
+        for (int i = 0; i &lt;= server_num; i++)
+        {
+          votes[i] = false;
+        }
+        cv.notify_all();
+      }
+      else
+      {
+        if (vote_granted)
+        {
+          votes[receiver_id] = true;
+          uint32_t vote_count = 0;
+          for (int i = 0; i &lt;= server_num; i++)
+          {
+            if (votes[i])
+            {
+              vote_count++;
+            }
+          }
+          //-------------------------------------
+          // printf("server %d gets %d votes\n", loc_id_, vote_count);
+          //-------------------------------------
+          if (vote_count &gt; server_num / 2)
+          {
+            status = RaftServer::LEADER;
+            leader_id = loc_id_;
+            voted_for = 99;
+            for (int i = 0; i &lt;= server_num; i++)
+            {
+              votes[i] = false;
+              nextIndex[i] = log.back().index + 1;
+              matchIndex[i] = 0;
+              AEprocessed[i] = true;
+            }
+            let_follower_commit = true;
+            cv.notify_all();
+            //-------------------------------------
+            // printf("server %d becomes leader at term %ld, status: %ld \n", loc_id_, cur_term, status);
+            //-------------------------------------
+          }
+        }
+      }
+    }
+    else
+    {
+      //-------------------------------------
+      // printf("server %d not candidate anymore; term %ld, status: %ld \n", loc_id_, cur_term, status);
+      //-------------------------------------
+    }
+  };
+  void RaftServer::heartbeatCallback(uint32_t receiver_id, uint64_t return_term_captured, bool_t followerAppendOK_captured)
+  {
+    //-------------------------------------
+    // printf("heartbeatCallback: %d status %ld, gets response from %d, current_term: %ld\n", loc_id_, status, receiver_id, cur_term);
+    //-------------------------------------
+    std::unique_lock&lt;std::mutex&gt; lock(cv_m);
+    if (status == RaftServer::LEADER)
+    {
+      if (cur_term &lt; return_term_captured)
+      {
+        cur_term = return_term_captured;
+        leader_id = 99;
+        status = RaftServer::FOLLOWER;
+        voted_for = 99;
+        cv.notify_all();
+        //-------------------------------------
+        // printf("leader %d becomes follower at term %ld, status: %ld\n", loc_id_, cur_term, status);
+        //-------------------------------------
+      }
+    }
+  };
+  void RaftServer::appendEntriesCallback(bool_t connection, uint32_t receiver_id, uint64_t return_term_captured, bool_t followerAppendOK_captured, uint32_t last_replicated)
+  {
+    std::unique_lock&lt;std::mutex&gt; lock(cv_m);
+    if (status != RaftServer::LEADER)
+    {
+      AEprocessed[receiver_id] = true;
+      return;
+    }
+    if (!connection)
+    {
+      AEprocessed[receiver_id] = true;
+      return;
+    }
+    if (followerAppendOK_captured)
+    {
+      nextIndex[receiver_id] = last_replicated + 1;
+      matchIndex[receiver_id] = last_replicated;
+      if (commit_index &lt; last_replicated)
+      {
+        int count = 0;
+        for (int i = 0; i &lt; server_num; i++)
+        {
+          if (matchIndex[i] &gt;= last_replicated)
+          {
+            count++;
+          }
+        }
+        printf("count: %d, lastreplicated: %d, MatchIndex: ", count, last_replicated);
+        for (int x = 0; x &lt; matchIndex.size(); x++)
+        {
+          printf("%d : %d  ", x, matchIndex[x]);
+        }
+        printf("\n");
+        if (count &gt; server_num / 2)
+        {
+          commit_index = last_replicated;
+          for (int i = 0; i &lt; log.size(); i++)
+          {
+            if (log.at(i).index &lt;= commit_index)
+            {
+              if (!log.at(i).is_commited)
+              {
+                //-------------------------------------
+                // printf("leader %d commit log entry at index %d \n", loc_id_, log.at(i).index);
+                //-------------------------------------
+                log.at(i).is_commited = true;
+                app_next_(*(log.at(i).cmd));
+                let_follower_commit = false;
+              }
+            }
+            else
+            {
+              break;
+            }
+          }
+          last_applied = commit_index;
+          //-------------------------------------
+          // printf("leader %d update last_applied: %d \n", loc_id_, last_applied);
+          //-------------------------------------
+        }
+      }
+    }
+    else
+    {
+      if (nextIndex[receiver_id] &gt; 1)
+      {
+        nextIndex[receiver_id]--;
+      }
+      //-------------------------------------
+      // printf("leader %d update nextindex of %d, nextindex: %d \n", loc_id_, receiver_id, nextIndex[receiver_id]);
+      //-------------------------------------
+    }
+    AEprocessed[receiver_id] = true;
+    return;
+  };
+  // handle RPC receiver end
+  void RaftServer::handleRequestVote(const uint64_t &cur_term_received,
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match145-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                     const uint32_t &candidate_id,
+                                     const uint32_t &last_log_index,
+                                     const uint64_t &last_log_term,
+                                     uint64_t *ret1, // cur_term
+                                     bool_t *vote_granted)
+  {
+    //-------------------------------------
+    // printf("handleRequestVode: the receiverId: %d, Status: %ld, candidate_id: %d, current_term: %ld, cur_term_received: %ld, voted %d\n", loc_id_, status, candidate_id, cur_term, cur_term_received, voted_for);
+    // printf("llIndex: %d, llTerm: %ld, my_llIndex: %d, my_llTerm: %ld\n", last_log_index, last_log_term, log.back().index, log.back().term);
+    //-------------------------------------
+    std::unique_lock&lt;std::mutex&gt; lock(cv_m);
+</FONT>    rpc_received++;
+    // be careful when leader transfer to follower
+    if (status == RaftServer::CANDIDATE)
+    {
+      if (cur_term &gt;= cur_term_received)
+      {
+        *ret1 = cur_term;
+        *vote_granted = false;
+        return;
+      }
+      else
+      {                                // received term &gt; cur_term
+        status = RaftServer::FOLLOWER; // reset timeout
+        voted_for = 99;
+        leader_id = 99;
+        cur_term = cur_term_received;
+        *ret1 = cur_term;
+        *vote_granted = false;
+        for (int i = 0; i &lt;= server_num; i++)
+        {
+          votes[i] = false;
+        }
+        // cv.notify_all();
+        // return;
+      }
+    }
+    if (status == RaftServer::LEADER)
+    {
+      //-------------------------------------
+      // printf("handleRequestVode: the receiverId: %d, Status: %ld, candidate_id: %d, current_term: %ld, cur_term_received: %ld, voted %d\n", loc_id_, status, candidate_id, cur_term, cur_term_received, voted_for);
+      //-------------------------------------
+
+      if (cur_term &gt;= cur_term_received)
+      {
+        *ret1 = cur_term;
+        *vote_granted = false;
+        // send heartbeat?
+        return;
+      }
+      else
+      {
+        // received term number is more up-to-date: transit to follower and vote for it
+        status = RaftServer::FOLLOWER; // reset timeout
+        voted_for = 99;
+        leader_id = 99;
+        cur_term = cur_term_received;
+        *ret1 = cur_term;
+        *vote_granted = false;
+
+        // cv.notify_all();
+        // return;
+      }
+    }
+    if (status == RaftServer::FOLLOWER)
+    {
+      if (cur_term &gt; cur_term_received)
+      {
+        if (voted_for == candidate_id)
+        { // corner case 1
+          voted_for = 99;
+        }
+        *ret1 = cur_term;
+        *vote_granted = false;
+      }
+      else
+      {
+        if (cur_term_received &gt; cur_term)
+        {
+          voted_for = 99;
+        }
+        cur_term = cur_term_received;
+        *ret1 = cur_term;
+        *vote_granted = false;
+        if (voted_for == 99 || voted_for == candidate_id)
+        {
+          uint32_t my_last_log_index = log.back().index;
+          uint64_t my_last_log_term = log.back().term;
+          if (last_log_term &gt; my_last_log_term || ((last_log_term == my_last_log_term) && (last_log_index &gt;= my_last_log_index)))
+          {
+            voted_for = candidate_id;
+            *vote_granted = true;
+            follower_interacted = true;
+            cv.notify_all();
+          }
+        }
+      }
+      // else if (cur_term == cur_term_received)
+      // {
+      //   if (voted_for == 99 || voted_for == candidate_id)
+      //   {
+      //     // haven't voted or have voted to this
+      //     voted_for = candidate_id;
+      //     cur_term = cur_term_received;
+      //   }
+      //   *ret1 = cur_term;
+      //   *vote_granted = true;
+      // }
+      // else
+      // {
+      //   // received term number is more up-to-date: vote
+      //   voted_for = candidate_id;
+      //   cur_term = cur_term_received;
+      //   *ret1 = cur_term;
+      //   *vote_granted = true;
+      // }
+
+      return;
+    }
+  }
+  void RaftServer::handleAppendEntries(const vector&lt;MarshallDeputy&gt; &cmd,
+                                       const vector&lt;uint32_t&gt; &indices,
+                                       const vector&lt;uint64_t&gt; &terms,
+                                       const bool_t &is_heartbeat,
+                                       const uint64_t &leader_term,
+                                       const uint32_t &leader_id_received,
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match145-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                       const uint32_t &prev_log_index,
+                                       const uint64_t &prev_log_term,
+                                       const uint32_t &leader_commit,
+                                       uint64_t *return_term,
+                                       bool_t *followerAppendOK,
+                                       uint32_t *last_replicated)
+  {
+    std::unique_lock&lt;std::mutex&gt; lock(cv_m);
+</FONT>    rpc_received++;
+    if (is_heartbeat)
+    {
+      follower_interacted = true;
+      //-------------------------------------
+      // printf("handleHeartbeat: the senderId: %d,the receiverId: %d, Status: %ld, current_term: %ld,leader_term: %ld \n", leader_id_received, loc_id_, status, cur_term, leader_term);
+      //-------------------------------------
+      if (status == RaftServer::FOLLOWER)
+      {
+        follower_interacted = true;
+        if (leader_id == leader_id_received)
+        {
+          // regular heartbeat
+          *return_term = cur_term;
+          *followerAppendOK = true;
+          cv.notify_all();
+          return;
+        }
+        else
+        {
+          // candidate claiming to be a leader
+          if (cur_term &gt; leader_term)
+          {
+            // leader is outdated
+            *return_term = cur_term;
+            *followerAppendOK = false;
+            cv.notify_all();
+            return;
+          }
+          else
+          {
+            // accept it as the leader
+            *return_term = cur_term;
+            *followerAppendOK = true;
+            leader_id = leader_id_received;
+            cur_term = leader_term;
+            voted_for = 99;
+            cv.notify_all();
+            return;
+          }
+        }
+      }
+      else if (status == RaftServer::CANDIDATE)
+      {
+        if (cur_term &gt; leader_term)
+        {
+          // leader is outdated
+          *return_term = cur_term;
+          *followerAppendOK = false;
+          return;
+        }
+        else
+        {
+          // accept it as the leader
+          status = RaftServer::FOLLOWER;
+          cur_term = leader_term;
+          *return_term = cur_term;
+          *followerAppendOK = true;
+          leader_id = leader_id_received;
+          voted_for = 99;
+          cv.notify_all();
+          return;
+        }
+      }
+      else if (status == RaftServer::LEADER)
+      {
+        // old leader reconnect
+        // old get heartbeat from new leader
+        if (cur_term &lt;= leader_term)
+        {
+          // accept leader
+          status = RaftServer::FOLLOWER;
+          cur_term = leader_term;
+          *return_term = cur_term;
+          *followerAppendOK = true;
+          leader_id = leader_id_received;
+          voted_for = 99;
+          cv.notify_all();
+          return;
+        }
+        else
+        {
+          *return_term = cur_term;
+          *followerAppendOK = false;
+          return;
+        }
+      }
+    }
+    else
+    {
+      // appendentry rpc
+      if (status == RaftServer::FOLLOWER)
+      { //-------------------------------------
+        // printf("follower %d gets AE from leader %d, pIndex: %d, pTerm: %ld \n", loc_id_, leader_id_received, prev_log_index, prev_log_term);
+        //-------------------------------------
+        follower_interacted = true;
+        if (cur_term &lt; leader_term)
+        {
+          *followerAppendOK = false;
+          cv.notify_all();
+          return;
+        }
+        int index = 0;
+        bool_t has_match = false;
+        for (int i = log.size() - 1; i &gt;= 0; i--)
+        {
+          if (log.at(i).index == prev_log_index)
+          {
+            if (log.at(i).term != prev_log_term)
+            {
+              // same index but different term
+              // delete entry i and everything following it
+              for (int j = log.size() - 1; j &gt;= i; j--)
+              {
+                log.pop_back();
+              }
+              // last_applied = log.at(i - 1).index;
+              //-------------------------------------
+              // printf("follower %d same index wrong term \n", loc_id_);
+              //-------------------------------------
+              *followerAppendOK = false;
+              cv.notify_all();
+              return;
+            }
+            else
+            {
+              for (int j = log.size() - 1; j &gt; i; j--)
+              {
+                log.pop_back();
+              }
+              // last_applied = i;
+              index = i;
+              has_match = true;
+              break;
+            }
+          }
+        }
+        if (!has_match)
+        { // doesn't conatin any entry at prev_log_index
+          printf("follower %d no entry at index %d \n", loc_id_, prev_log_index);
+          *followerAppendOK = false;
+          cv.notify_all();
+          return;
+        }
+        else if (cmd.size() &gt; 0)
+        {
+          // the entry at prev_log_index matches prev_log_term
+          //----------------------
+          // printf(log.back().index == indices.at(0) - 1 ? "Index Check passed" : "Index Check Failed");
+          //----------------------
+          for (int i = 0; i &lt; cmd.size(); i++)
+          {
+            std::shared_ptr&lt;Marshallable&gt; tmp_cmd = const_cast&lt;MarshallDeputy &&gt;(cmd.at(i)).sp_data_;
+            log_entry new_le = {terms.at(i), indices.at(i), false, tmp_cmd};
+            log.push_back(new_le);
+          }
+        }
+
+        if (leader_commit &gt; commit_index)
+        { // check leader_commit
+          for (int i = 0; i &lt; log.size(); i++)
+          {
+            if (log.at(i).index &lt;= leader_commit)
+            {
+              if (!log.at(i).is_commited)
+              {
+                //-------------------------------------
+                // printf("follower %d commit at index %d \n", loc_id_, log.at(i).index);
+                //-------------------------------------
+                log.at(i).is_commited = true;
+                app_next_(*(log.at(i).cmd));
+              }
+            }
+            else
+            {
+              break;
+            }
+          }
+          commit_index = leader_commit;
+          last_applied = commit_index;
+          //-------------------------------------
+          // printf("follower %d commit_index %d \n", loc_id_, commit_index);
+          //-------------------------------------
+        }
+        *last_replicated = log.back().index;
+        *followerAppendOK = true;
+        cv.notify_all();
+        return;
+      }
+      else
+      {
+        *followerAppendOK = false;
+        cv.notify_all();
+        return;
+      }
+    }
+  }
+
+  bool RaftServer::Start(shared_ptr&lt;Marshallable&gt; &cmd,
+                         uint64_t *index,
+                         uint64_t *term)
+  {
+    /* Your code here. This function can be called from another OS thread. */
+    bool return_value;
+    std::unique_lock&lt;std::mutex&gt; lock(cv_m);
+    if (status == RaftServer::LEADER)
+    {
+
+      return_value = true;
+      log_entry new_le = {cur_term, log.back().index + 1, false, cmd};
+      log.push_back(new_le);
+      matchIndex[loc_id_] = log.back().index;
+      nextIndex[loc_id_] = log.back().index + 1;
+      *index = log.back().index;
+      *term = cur_term;
+      //-------------------------------------
+      // printf("Leader %d add new log entry at index%d term %ld\n", loc_id_, log.back().index, cur_term);
+
+      //-------------------------------------
+    }
+    else
+    {
+      *index = 0;
+      *term = 0;
+      return_value = false;
+    }
+    return return_value;
+  }
+
+  void RaftServer::GetState(bool *is_leader, uint64_t *term)
+  {
+    /* Your code here. This function can be called from another OS thread. */
+    std::unique_lock&lt;std::mutex&gt; lock(cv_m);
+    *is_leader = (status == RaftServer::LEADER) ? true : false;
+    *term = cur_term;
+  }
+
+  void RaftServer::SyncRpcExample()
+  {
+    /* This is an example of synchronous RPC using coroutine; feel free to
+       modify this function to dispatch/receive your own messages.
+       You can refer to the other function examples in commo.h/cc on how
+       to send/recv a Marshallable object over RPC. */
+    Coroutine::CreateRun([this]()
+                         {
+    string res;
+    auto event = commo()-&gt;SendString(0, /* partition id is always 0 for lab1 */
+                                     0, "hello", &res);
+    event-&gt;Wait(1000000); //timeout after 1000000us=1s
+    if (event-&gt;status_ == Event::TIMEOUT) {
+      Log_info("timeout happens");
+    } else {
+      Log_info("rpc response is: %s", res.c_str()); 
+    } });
+  }
+
+  void RaftServer::timer()
+  { //-------------------------------------
+    // printf("background timer start %d\n", loc_id_);
+    //-------------------------------------
+
+    int time_to_wait = 0;
+    while (true)
+    {
+      if (status == RaftServer::FOLLOWER)
+      {
+
+        std::unique_lock&lt;std::mutex&gt; lock(cv_m);
+        //-------------------------------------
+        // printf("from background: it's follower %d term %ld, status: %ld \n", loc_id_, cur_term, status);
+        //-------------------------------------
+        srand(time(NULL) + loc_id_);
+        time_to_wait = rand() % 25 * 30 + 500;
+
+        cv.wait_for(lock, std::chrono::milliseconds(time_to_wait));
+
+        if (!follower_interacted)
+        {
+          //-------------------------------------
+          // if (rpc_received == 0)
+          // {
+          //   printf("follower %d gets no rpcs, timeout after %d s\n", loc_id_, time_to_wait);
+          // }
+          // else
+          // {
+          //   printf("follower %d gets has no meaningful interactions, timeout after %d s\n", loc_id_, time_to_wait);
+          // }
+
+          //-------------------------------------
+          status = RaftServer::CANDIDATE;
+          cur_term++;
+          voted_for = loc_id_;
+          votes[loc_id_] = true;
+          leader_id = 99;
+          // sent requestVote
+        }
+        else
+        {
+          rpc_received = 0;
+          follower_interacted = false;
+          //-------------------------------------
+          // printf("timeout reset after receiving rpc\n");
+          //-------------------------------------
+        }
+        continue;
+      }
+      if (status == RaftServer::CANDIDATE)
+      {
+        //-------------------------------------
+        // printf("from background: it's candidate %d term %ld, status: %ld \n", loc_id_, cur_term, status);
+        //-------------------------------------
+        std::unique_lock&lt;std::mutex&gt; lk(cv_m);
+        srand(time(NULL) + loc_id_);
+        int time_to_wait = rand() % 25 * 30 + 500;
+        cv.wait_for(lk, std::chrono::milliseconds(time_to_wait));
+
+        if (rpc_received == 0 && status == RaftServer::CANDIDATE) // a candidate could get votes without receiving rpcs from others
+        {
+          // no communication
+
+          cur_term++;
+          //-------------------------------------
+          // printf("from background: it's candidate %d gets no rpcs, term increases term %ld, status: %ld \n", loc_id_, cur_term, status);
+          //-------------------------------------
+        }
+        else
+        {
+          if (leader_id == 99 && status == RaftServer::CANDIDATE)
+          {
+            cur_term++;
+          }
+          rpc_received = 0;
+        }
+      }
+      while (status == RaftServer::LEADER)
+      {
+        std::unique_lock&lt;std::mutex&gt; lk(cv_m);
+        //-------------------------------------
+        // printf("from background: it's leader %d term %ld, status: %ld \n", loc_id_, cur_term, status);
+        //-------------------------------------
+        // Marshallable tmp(1);
+        // shared_ptr&lt;Marshallable&gt; s_tmp = std::make_shared&lt;Marshallable&gt;(tmp);
+        // int32_t kind = 1; // Replace with the appropriate kind value
+        // std::shared_ptr&lt;Marshallable&gt; marshallablePtr = std::make_shared&lt;janus::Marshallable&gt;(kind);
+        vector&lt;shared_ptr&lt;Marshallable&gt;&gt; tmp;
+        // tmp.push_back(marshallablePtr);
+
+        for (uint16_t i = 0; i &lt; server_num; i++)
+        {
+          if (i == loc_id_)
+          {
+            continue;
+          }
+          commo()-&gt;SendAppendEntries(
+              0, i, tmp, vector&lt;uint32_t&gt;(0), vector&lt;uint64_t&gt;(0), true, cur_term, loc_id_, 0, 0, 0,
+              [this](uint16_t receiver_id, uint64_t return_term, bool_t followAppendOK)
+              {
+                heartbeatCallback(receiver_id, return_term, followAppendOK);
+              },
+              [this](bool_t connection, uint32_t receiver_id, uint64_t return_term, bool_t followAppendOK, uint32_t last_replicated)
+              {
+                appendEntriesCallback(connection, receiver_id, return_term, followAppendOK, last_replicated);
+              });
+        }
+        srand(time(NULL) + loc_id_);
+        cv.wait_for(lk, std::chrono::milliseconds(120));
+      }
+      if (status == RaftServer::DOWN)
+      {
+        break;
+      }
+    }
+  }
+
+  void RaftServer::senderThread()
+  { //-------------------------------------
+    // printf("senderThread start \n");
+    //-------------------------------------
+    std::thread worker([this]
+                       { timer(); });
+    while (true)
+    {
+      std::unique_lock&lt;std::mutex&gt; lk(cv_m);
+      if (status == RaftServer::FOLLOWER)
+      {
+      }
+      if (status == RaftServer::CANDIDATE)
+      {
+        for (uint16_t i = 0; i &lt; server_num; i++)
+        {
+          if (loc_id_ == i)
+          {
+            continue;
+          }
+          commo()-&gt;SendRequestVote(0, i, cur_term, loc_id_, log.back().index, log.back().term,
+                                   [this](uint32_t receiver_id, uint64_t return_term, bool_t vote_granted)
+                                   {
+                                     requestVoteCallback(receiver_id, return_term, vote_granted);
+                                   });
+        }
+      }
+      if (status == RaftServer::LEADER)
+      {
+        if (!updateCheck())
+        {
+          // shared_ptr&lt;Marshallable&gt; cmd = log.back().cmd;
+
+          // // cmd_vec.push_back(cmd);
+          // /// debug
+          // int32_t kind = 1;
+          // std::shared_ptr&lt;Marshallable&gt; marshallablePtr = std::make_shared&lt;janus::Marshallable&gt;(kind);
+
+          for (uint16_t i = 0; i &lt; server_num; i++)
+          {
+            if (loc_id_ == i)
+            {
+              continue;
+            }
+            if (matchIndex[i] &lt; log.back().index && AEprocessed[i])
+            { //-------------------------------------
+              // printf("Leader %d start sending out AE\n", loc_id_);
+              //-------------------------------------
+              vector&lt;shared_ptr&lt;Marshallable&gt;&gt; cmd_vec;
+              vector&lt;uint32_t&gt; indices;
+              vector&lt;uint64_t&gt; terms;
+              uint32_t prev_log_index = nextIndex[i] - 1;
+              uint64_t prev_log_term = 0;
+              int index = 0;
+              for (index = log.size() - 1; index &gt; 0; index--)
+              {
+                if (log.at(index).index == nextIndex[i] - 1)
+                {
+                  prev_log_term = log.at(index).term;
+                  break;
+                }
+              }
+              // if (index == 0)
+              // {
+              //   index = 1;
+              // }
+              for (index = index + 1; index &lt; log.size(); index++)
+              {
+                shared_ptr&lt;Marshallable&gt; tmp_cmd = log.at(index).cmd;
+                cmd_vec.push_back(tmp_cmd);
+                indices.push_back(log.at(index).index);
+                terms.push_back(log.at(index).term);
+              }
+
+              commo()-&gt;SendAppendEntries(
+                  0, i,
+                  cmd_vec,
+                  // left to change
+                  indices,
+                  terms,
+                  false,
+                  cur_term,
+                  loc_id_,
+                  prev_log_index,
+                  prev_log_term,
+                  commit_index,
+                  [this](uint32_t receiver_id, uint64_t return_term, bool_t followAppendOK)
+                  {
+                    heartbeatCallback(receiver_id, return_term, followAppendOK);
+                  },
+                  [this](bool_t connection, uint32_t receiver_id, uint64_t return_term, bool_t followAppendOK, uint32_t last_replicated)
+                  {
+                    appendEntriesCallback(connection, receiver_id, return_term, followAppendOK, last_replicated);
+                  });
+              AEprocessed[i] = false;
+              //-------------------------------------
+              // printf("leader %d send AE to %d, pIndex: %d, pTerm: %ld, commit_indexL %d \n", loc_id_, i, prev_log_index, prev_log_term, commit_index);
+              //-------------------------------------
+            }
+          }
+        }
+        if (!let_follower_commit)
+        {
+          let_follower_commit = true;
+          for (uint16_t i = 0; i &lt; server_num; i++)
+          {
+            if (i == loc_id_)
+            {
+              continue;
+            }
+            //-------------------------------------
+            // printf("Leader %d start sending out AE commit update\n", loc_id_);
+            //-------------------------------------
+            vector&lt;shared_ptr&lt;Marshallable&gt;&gt; cmd_vec;
+            vector&lt;uint32_t&gt; indices;
+            vector&lt;uint64_t&gt; terms;
+            uint32_t prev_log_index = nextIndex[i] - 1;
+            uint64_t prev_log_term = 0;
+            int index = 0;
+            for (index = log.size() - 1; index &gt; 0; index--)
+            {
+              if (log.at(index).index == nextIndex[i] - 1)
+              {
+                prev_log_term = log.at(index).term;
+                break;
+              }
+            }
+            // if (index == 0)
+            // {
+            //   index = 1;
+            // }
+            for (index = index + 1; index &lt; log.size(); index++)
+            {
+              shared_ptr&lt;Marshallable&gt; tmp_cmd = log.at(index).cmd;
+              cmd_vec.push_back(tmp_cmd);
+              indices.push_back(log.at(index).index);
+              terms.push_back(log.at(index).term);
+            }
+
+            commo()-&gt;SendAppendEntries(
+                0, i,
+                cmd_vec,
+                // left to change
+                indices,
+                terms,
+                false,
+                cur_term,
+                loc_id_,
+                prev_log_index,
+                prev_log_term,
+                commit_index,
+                [this](uint32_t receiver_id, uint64_t return_term, bool_t followAppendOK)
+                {
+                  heartbeatCallback(receiver_id, return_term, followAppendOK);
+                },
+                [this](bool_t connection, uint32_t receiver_id, uint64_t return_term, bool_t followAppendOK, uint32_t last_replicated)
+                {
+                  appendEntriesCallback(connection, receiver_id, return_term, followAppendOK, last_replicated);
+                });
+            AEprocessed[i] = false;
+            //-------------------------------------
+            // printf("leader %d send AE commit update to %d, pIndex: %d, pTerm: %ld, commit_indexL %d \n", loc_id_, i, prev_log_index, prev_log_term, commit_index);
+            //-------------------------------------
+          }
+        }
+        cv.wait_for(lk, std::chrono::milliseconds(80));
+      }
+      if (status == DOWN)
+      {
+        break;
+      }
+      cv.wait_for(lk, std::chrono::milliseconds(80));
+    }
+    worker.join();
+  }
+
+  bool_t RaftServer::updateCheck()
+  {
+
+    for (int i = 0; i &lt; server_num; i++)
+    {
+      if (matchIndex[i] &lt; log.back().index)
+      {
+        if (i == loc_id_)
+        {
+          continue;
+        }
+        //-------------------------------------
+        // printf("Leader %d found outdated servers \n", loc_id_);
+        //-------------------------------------
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /* Do not modify any code below here */
+
+  void RaftServer::Disconnect(const bool disconnect)
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    verify(disconnected_ != disconnect);
+    // global map of rpc_par_proxies_ values accessed by partition then by site
+    static map&lt;parid_t, map&lt;siteid_t, map&lt;siteid_t, vector&lt;SiteProxyPair&gt;&gt;&gt;&gt; _proxies{};
+    if (_proxies.find(partition_id_) == _proxies.end())
+    {
+      _proxies[partition_id_] = {};
+    }
+    RaftCommo *c = (RaftCommo *)commo();
+    if (disconnect)
+    {
+      verify(_proxies[partition_id_][loc_id_].size() == 0);
+      verify(c-&gt;rpc_par_proxies_.size() &gt; 0);
+      auto sz = c-&gt;rpc_par_proxies_.size();
+      _proxies[partition_id_][loc_id_].insert(c-&gt;rpc_par_proxies_.begin(), c-&gt;rpc_par_proxies_.end());
+      c-&gt;rpc_par_proxies_ = {};
+      verify(_proxies[partition_id_][loc_id_].size() == sz);
+      verify(c-&gt;rpc_par_proxies_.size() == 0);
+    }
+    else
+    {
+      verify(_proxies[partition_id_][loc_id_].size() &gt; 0);
+      auto sz = _proxies[partition_id_][loc_id_].size();
+      c-&gt;rpc_par_proxies_ = {};
+      c-&gt;rpc_par_proxies_.insert(_proxies[partition_id_][loc_id_].begin(), _proxies[partition_id_][loc_id_].end());
+      _proxies[partition_id_][loc_id_] = {};
+      verify(_proxies[partition_id_][loc_id_].size() == 0);
+      verify(c-&gt;rpc_par_proxies_.size() == sz);
+    }
+    disconnected_ = disconnect;
+  }
+
+  bool RaftServer::IsDisconnected()
+  {
+    return disconnected_;
+  }
+
+} // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

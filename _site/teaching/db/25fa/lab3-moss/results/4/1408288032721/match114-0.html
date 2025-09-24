@@ -1,0 +1,175 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-ameya-zope/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-ameya-zope/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+namespace janus {
+// Submit to lab3 : Attempt 2
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  ShardConfig newShardConfig;
+  uint32_t numConfigs = this-&gt;configs_.size();
+  newShardConfig.number=numConfigs+1;
+  if(numConfigs&gt;0) {
+      newShardConfig.group_servers_map_=this-&gt;configs_[numConfigs].group_servers_map_;
+      newShardConfig.shard_group_map_=this-&gt;configs_[numConfigs].shard_group_map_;
+  }
+
+  for(auto &it: gid_server_map) {
+    uint32_t gid = it.first;
+    vector&lt;uint32_t&gt; serverNames = it.second;
+    
+    newShardConfig.group_servers_map_[gid]=serverNames;
+  
+    if(newShardConfig.group_servers_map_.find(gid)==newShardConfig.group_servers_map_.end()) {
+      uint32_t numServers = newShardConfig.group_servers_map_.size();
+      if(numServers==1) {
+        newShardConfig.shard_group_map_[1]=gid;
+        newShardConfig.shard_group_map_[2]=gid;
+        newShardConfig.shard_group_map_[3]=gid;
+        newShardConfig.shard_group_map_[4]=gid;
+        newShardConfig.shard_group_map_[5]=gid;
+
+        newShardConfig.shard_group_map_[6]=gid;
+        newShardConfig.shard_group_map_[7]=gid;
+        newShardConfig.shard_group_map_[8]=gid;
+        newShardConfig.shard_group_map_[9]=gid;
+        newShardConfig.shard_group_map_[10]=gid;
+      }
+      else if(numServers==2) {
+        newShardConfig.shard_group_map_[6]=gid;
+        newShardConfig.shard_group_map_[7]=gid;
+        newShardConfig.shard_group_map_[8]=gid;
+        newShardConfig.shard_group_map_[9]=gid;
+        newShardConfig.shard_group_map_[10]=gid;
+      }
+      else if(numServers==3) {
+        newShardConfig.shard_group_map_[1]=gid;
+        newShardConfig.shard_group_map_[2]=gid;
+        newShardConfig.shard_group_map_[9]=gid;
+        newShardConfig.shard_group_map_[10]=gid;
+      }
+      else if(numServers==4) {
+        newShardConfig.shard_group_map_[1]=gid;
+        newShardConfig.shard_group_map_[2]=gid;
+      }
+      else if(numServers==5) {
+        newShardConfig.shard_group_map_[5]=gid;
+        newShardConfig.shard_group_map_[6]=gid;
+      }
+    }
+  }
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match114-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  this-&gt;configs_[numConfigs+1] = newShardConfig;
+  *ret = KV_SUCCESS;
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+</FONT>  // your code here
+  ShardConfig newShardConfig;
+  uint32_t numConfigs = this-&gt;configs_.size();
+  newShardConfig.number=numConfigs+1;
+  if(numConfigs&gt;0) {
+      newShardConfig.group_servers_map_=this-&gt;configs_[numConfigs].group_servers_map_;
+      newShardConfig.shard_group_map_=this-&gt;configs_[numConfigs].shard_group_map_;
+  }
+  for(int i=0;i&lt;gids.size();i++) {
+    uint32_t gid = gids[i];
+    newShardConfig.group_servers_map_.erase(gid);
+  }
+  int numGroups = newShardConfig.group_servers_map_.size();
+  vector&lt;uint32_t&gt; remainingGroups;
+  for(auto &it : newShardConfig.group_servers_map_) {
+    remainingGroups.push_back(it.first);
+  }
+  // int idx = 0;
+  // for(int i=0;i&lt;gids.size();i++) {
+  //   for(auto &it: newShardConfig.shard_group_map_) {
+  //     if(it.second==gids[i]) {
+  //       newShardConfig.shard_group_map_[it.first]=remainingGroups[idx%remainingGroups.size()];
+  //       idx++;
+  //     }
+  //   }
+  // }
+
+  if(numGroups==1) {
+        newShardConfig.shard_group_map_[1]=remainingGroups[0];
+        newShardConfig.shard_group_map_[2]=remainingGroups[0];
+        newShardConfig.shard_group_map_[3]=remainingGroups[0];
+        newShardConfig.shard_group_map_[4]=remainingGroups[0];
+        newShardConfig.shard_group_map_[5]=remainingGroups[0];
+
+        newShardConfig.shard_group_map_[6]=remainingGroups[0];
+        newShardConfig.shard_group_map_[7]=remainingGroups[0];
+        newShardConfig.shard_group_map_[8]=remainingGroups[0];
+        newShardConfig.shard_group_map_[9]=remainingGroups[0];
+        newShardConfig.shard_group_map_[10]=remainingGroups[0];
+      }
+      else if(numGroups==2) {
+        newShardConfig.shard_group_map_[6]=remainingGroups[0];
+        newShardConfig.shard_group_map_[7]=remainingGroups[0];
+        newShardConfig.shard_group_map_[8]=remainingGroups[0];
+        newShardConfig.shard_group_map_[9]=remainingGroups[1];
+        newShardConfig.shard_group_map_[10]=remainingGroups[1];
+      }
+      else if(numGroups==3) {
+        newShardConfig.shard_group_map_[1]=remainingGroups[0];
+        newShardConfig.shard_group_map_[2]=remainingGroups[1];
+        newShardConfig.shard_group_map_[9]=remainingGroups[2];
+        newShardConfig.shard_group_map_[10]=remainingGroups[0];
+      }
+      else if(numGroups==4) {
+        newShardConfig.shard_group_map_[1]=remainingGroups[0];
+        newShardConfig.shard_group_map_[2]=remainingGroups[1];
+      }
+  
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match114-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  this-&gt;configs_[numConfigs+1] = newShardConfig;
+  *ret = KV_SUCCESS;
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+  // your code here
+  if(config_no==-1 || config_no&gt;this-&gt;configs_.size()) {
+</FONT>    *config = (this-&gt;configs_[this-&gt;configs_.size()]);
+    Log_info("[ShMas] config.number=%d",config-&gt;number);
+  }
+  else {
+    *config = (this-&gt;configs_[config_no]);
+  }
+  *ret = KV_SUCCESS;
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  // your code here
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  return cli;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

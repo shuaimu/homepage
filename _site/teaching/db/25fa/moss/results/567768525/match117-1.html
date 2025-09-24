@@ -1,0 +1,580 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/shrikant-jagtap/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/shrikant-jagtap/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+import (
+	"raft"
+	"time"
+)
+import "labrpc"
+import "sync"
+import "labgob"
+
+type ShardMaster struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	// Your data here.
+	commandIndexMappingFromStart        map[int]Op
+	commandIndexMappingFromApplyChannel map[int]Op
+	killChannel                         chan bool
+
+	configs []Config // indexed by config num
+}
+
+type Op struct {
+	// Your data here.
+	//SingleConfig Config
+	Operation      string
+	MoveArguments  MoveArgs
+	JoinArguments  JoinArgs
+	LeaveArguments LeaveArgs
+	QueryArguments QueryArgs
+}
+
+func (sm *ShardMaster) GetShardMapping(pShardCountPerGroup map[int]int, pLastConfigIndex int, pListOfGUIDs []int) [NShards]int {
+
+	var lShard [NShards]int
+
+	//lShard = sm.configs[pLastConfigIndex].Shards
+	////log.Println("Server: ",sm.me," Count per group: ",pShardCountPerGroup," List of Guids: ",pListOfGUIDs," Shard list: ",sm.configs[pLastConfigIndex].Shards)
+
+	if len(pListOfGUIDs) == 0 {
+		for i := 0; i &lt; len(lShard); i++ {
+			lShard[i] = 0
+		}
+
+		return lShard
+	}
+
+	for i := 0; i &lt; len(sm.configs[pLastConfigIndex].Shards); i++ {
+		lShard[i] = sm.configs[pLastConfigIndex].Shards[i]
+	}
+
+	for i := 0; i &lt; len(sm.configs[pLastConfigIndex].Shards); i++ {
+		lGIDOfShard := sm.configs[pLastConfigIndex].Shards[i]
+		lMaxShardPerGuid := (len(sm.configs[pLastConfigIndex].Shards) / len(pListOfGUIDs))
+
+		lValueFound := false
+		for i := 0; i &lt; len(pListOfGUIDs); i++ {
+			if pListOfGUIDs[i] == lGIDOfShard {
+				lValueFound = true
+				break
+			}
+		}
+
+		if !lValueFound || lGIDOfShard == 0 || pShardCountPerGroup[lGIDOfShard] &gt; lMaxShardPerGuid {
+
+			for j := 0; j &lt; len(pListOfGUIDs); j++ {
+				lGuid := pListOfGUIDs[j]
+				//println("Server guid: ",lGuid)
+				if _, ok := pShardCountPerGroup[lGuid]; ok {
+
+					if pShardCountPerGroup[lGuid] &lt; lMaxShardPerGuid {
+						lShard[i] = lGuid
+						pShardCountPerGroup[lGuid] += 1
+						pShardCountPerGroup[lGIDOfShard] -= 1
+
+						//////log.Println("Server: ",sm.me," Shard 2 count map: ",pShardCountPerGroup)
+						break
+					}
+				} else {
+					lShard[i] = lGuid
+					pShardCountPerGroup[lGuid] += 1
+					pShardCountPerGroup[lGIDOfShard] -= 1
+					//////log.Println("Server: ",sm.me," Shard 1 count map: ",pShardCountPerGroup)
+
+					break
+				}
+			}
+		}
+	}
+
+	////log.Println("Server: ",sm.me,"Later Shards: ",lShard)
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match117-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	return lShard
+}
+
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+	// Your code here.
+	sm.mu.Lock()
+	////log.Println("Server: ",sm.me," Join: ",args.Servers)
+
+	//lConfig := new(Config)
+	//lastConfigIndex := len(sm.configs) - 1
+	//lNewGroupConfig := make(map[int][]string)
+	//var listOfGUIDs []int
+	//
+	//lConfig.Num = lastConfigIndex + 1
+	//for key, value := range (sm.configs[lastConfigIndex].Groups){
+	//	lNewGroupConfig[key] = value
+	//	listOfGUIDs = append(listOfGUIDs, key)
+	//}
+	//
+	//for key, value := range (args.Servers){
+	//	lNewGroupConfig[key] = value
+	//	listOfGUIDs = append(listOfGUIDs, key)
+	//}
+	//
+	//lShardCountPerGroup := make(map[int]int)
+	//for i:=0; i&lt;len(sm.configs[lastConfigIndex].Shards) ; i++ {
+	//	lShardCountPerGroup[sm.configs[lastConfigIndex].Shards[i]] += 1
+	//}
+	//
+	//lConfig.Groups = lNewGroupConfig
+	//lConfig.Shards = sm.GetShardMapping(lShardCountPerGroup, lastConfigIndex, listOfGUIDs)
+
+	operationArgs := Op{
+		Operation:     "Join",
+</FONT>		JoinArguments: *args,
+	}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match117-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	lIndex, _, lIsLeader := sm.rf.Start(operationArgs)
+	if lIsLeader == false {
+		reply.WrongLeader = true
+		reply.Err = OK
+		sm.mu.Unlock()
+
+		return
+	}
+
+	////log.Println("Join Server: ",sm.me," Servers joined: ",args.Servers," Latest Config: ",lConfig)
+
+	sm.commandIndexMappingFromStart[lIndex] = operationArgs
+	sm.mu.Unlock()
+
+	for {
+		select {
+		case &lt;-time.After(time.Duration(10) * time.Millisecond):
+			sm.mu.Lock()
+			if _, lFound := sm.commandIndexMappingFromApplyChannel[lIndex]; lFound { //Value at the index comitted
+</FONT>				//if operationArgs == operationFromApplyChannel { //Correct operation comitted
+				reply.WrongLeader = false
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match117-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				reply.Err = OK
+
+				sm.mu.Unlock()
+				return
+				//} else { //Inconrect operation comitted
+				//	reply.WrongLeader = true
+				//
+				//	//delete(kv.commandIndexMappingFromApplyChannel, lIndex)
+				//	sm.mu.Unlock()
+				//	return
+				//}
+			} else { //Operation not yet comitted
+				_, lIsLeader = sm.rf.GetState()
+
+				if lIsLeader == false { // No more a leader
+					reply.WrongLeader = true
+					sm.mu.Unlock()
+					return
+				}
+			}
+			sm.mu.Unlock()
+		}
+	}
+
+}
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+	// Your code here.
+	sm.mu.Lock()
+	////log.Println("Server: ",sm.me," Left: ",args.GIDs)
+	//lConfig := new(Config)
+	//lastConfigIndex := len(sm.configs) - 1
+	//
+	//lConfig.Num = lastConfigIndex + 1
+	//lNewGroupConfig := make(map[int][]string)
+	//for key, value := range (sm.configs[lastConfigIndex].Groups){
+	//	lNewGroupConfig[key] = value
+	//}
+	//for i:= 0 ; i&lt;len(args.GIDs);i++{
+	//	delete(lNewGroupConfig, args.GIDs[i])
+	//}
+	//
+	//var listOfGUIDs []int
+	//for key,_ := range(lNewGroupConfig){
+	//	listOfGUIDs = append(listOfGUIDs, key)
+	//}
+	//
+	//lShardCountPerGroup := make(map[int]int)
+	//for i:=0; i&lt;len(sm.configs[lastConfigIndex].Shards) ; i++ {
+	//	lShardCountPerGroup[sm.configs[lastConfigIndex].Shards[i]] += 1
+	//}
+	//
+	//lConfig.Groups = lNewGroupConfig
+	//lConfig.Shards = sm.GetShardMapping(lShardCountPerGroup, lastConfigIndex, listOfGUIDs)
+
+	operationArgs := Op{
+</FONT>		Operation:      "Leave",
+		LeaveArguments: *args,
+	}
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match117-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	lIndex, _, lIsLeader := sm.rf.Start(operationArgs)
+	if lIsLeader == false {
+		reply.WrongLeader = true
+		reply.Err = OK
+		sm.mu.Unlock()
+
+		return
+	}
+
+	////log.Println("Leave Server: ",sm.me, " Servers left: ",args.GIDs," Latest Config: ",lConfig)
+	sm.commandIndexMappingFromStart[lIndex] = operationArgs
+	sm.mu.Unlock()
+
+	for {
+		select {
+		case &lt;-time.After(time.Duration(10) * time.Millisecond):
+			sm.mu.Lock()
+			if _, lFound := sm.commandIndexMappingFromApplyChannel[lIndex]; lFound { //Value at the index comitted
+</FONT>				//if operationArgs == operationFromApplyChannel { //Correct operation comitted
+				reply.WrongLeader = false
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match117-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				reply.Err = OK
+
+				sm.mu.Unlock()
+				return
+				//} else { //Inconrect operation comitted
+				//	reply.WrongLeader = true
+				//
+				//	//delete(kv.commandIndexMappingFromApplyChannel, lIndex)
+				//	sm.mu.Unlock()
+				//	return
+				//}
+			} else { //Operation not yet comitted
+				_, lIsLeader = sm.rf.GetState()
+
+				if lIsLeader == false { // No more a leader
+					reply.WrongLeader = true
+					sm.mu.Unlock()
+					return
+				}
+			}
+			sm.mu.Unlock()
+		}
+	}
+}
+
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+</FONT>	// Your code here.
+	sm.mu.Lock()
+	//lConfig := new(Config)
+	//lastConfigIndex := len(sm.configs) - 1
+	//
+	//lConfig.Num = lastConfigIndex + 1
+	//for i:=0 ;i&lt;len(sm.configs[lastConfigIndex].Shards); i++{
+	//	if i == args.Shard{
+	//		lConfig.Shards[i] = args.GID
+	//	}else{
+	//		lConfig.Shards[i] = sm.configs[lastConfigIndex].Shards[i]
+	//	}
+	//}
+	//lConfig.Groups = sm.configs[lastConfigIndex].Groups
+
+	////log.Println("Move Server: ",sm.me," Latest Config: ",lConfig)
+	operationArgs := Op{
+		Operation:     "Move",
+		MoveArguments: *args,
+	}
+
+	lIndex, _, lIsLeader := sm.rf.Start(operationArgs)
+	if lIsLeader == false {
+		reply.WrongLeader = true
+		reply.Err = OK
+		sm.mu.Unlock()
+
+		return
+	}
+
+	sm.commandIndexMappingFromStart[lIndex] = operationArgs
+	sm.mu.Unlock()
+
+	for {
+		select {
+		case &lt;-time.After(time.Duration(10) * time.Millisecond):
+			sm.mu.Lock()
+			if _, lFound := sm.commandIndexMappingFromApplyChannel[lIndex]; lFound { //Value at the index comitted
+				//if operationArgs == operationFromApplyChannel { //Correct operation comitted
+				reply.WrongLeader = false
+				reply.Err = OK
+
+				sm.mu.Unlock()
+				return
+				//} else { //Inconrect operation comitted
+				//	reply.WrongLeader = true
+				//
+				//	//delete(kv.commandIndexMappingFromApplyChannel, lIndex)
+				//	sm.mu.Unlock()
+				//	return
+				//}
+			} else { //Operation not yet comitted
+				_, lIsLeader = sm.rf.GetState()
+
+				if lIsLeader == false { // No more a leader
+					reply.WrongLeader = true
+					sm.mu.Unlock()
+					return
+				}
+			}
+			sm.mu.Unlock()
+		}
+	}
+}
+
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+	// Your code here.
+
+	sm.mu.Lock()
+
+	//lConfig := new(Config)
+	//lConfig.Num = args.Num
+
+	operationArgs := Op{
+		Operation:      "Query",
+		QueryArguments: *args,
+	}
+
+	lIndex, _, lIsLeader := sm.rf.Start(operationArgs)
+	if lIsLeader == false {
+		reply.WrongLeader = true
+		reply.Err = OK
+		sm.mu.Unlock()
+
+		return
+	}
+
+	sm.commandIndexMappingFromStart[lIndex] = operationArgs
+	sm.mu.Unlock()
+
+	for {
+		select {
+		case &lt;-time.After(time.Duration(10) * time.Millisecond):
+			sm.mu.Lock()
+			if _, lFound := sm.commandIndexMappingFromApplyChannel[lIndex]; lFound { //Value at the index comitted
+				//if (operationArgs.SingleConfig.Num == operationFromChannel.SingleConfig.Num) { //Correct operation comitted
+
+				if args.Num == -1 || args.Num &gt; len(sm.configs) {
+					reply.Config = sm.configs[len(sm.configs)-1]
+					reply.Err = OK
+					reply.WrongLeader = false
+
+					sm.mu.Unlock()
+					return
+				}
+				for i := 0; i &lt; len(sm.configs); i++ {
+					if args.Num == sm.configs[i].Num {
+						reply.Config = sm.configs[i]
+						reply.Err = OK
+						reply.WrongLeader = false
+
+						sm.mu.Unlock()
+						return
+					}
+				}
+				//} else { //Inconrect operation comitted
+				//	reply.WrongLeader = true
+				//
+				//	sm.mu.Unlock()
+				//	return
+				//}
+			} else { //Operation not yet comitted
+				_, lIsLeader = sm.rf.GetState()
+
+				if lIsLeader == false { // No more a leader
+					reply.WrongLeader = true
+					sm.mu.Unlock()
+
+					return
+				}
+			}
+			sm.mu.Unlock()
+		}
+	}
+
+}
+
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+	sm.killChannel &lt;- true
+	// Your code here, if desired.
+	//println("Killed: ",sm.me)
+}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+	return sm.rf
+}
+
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match117-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (sm *ShardMaster) CommitChannelListener() {
+	channelKilled := false
+
+	for {
+
+		select {
+		case appliedCommand := &lt;-sm.applyCh:
+
+			appliedOperation := appliedCommand.Command.(Op)
+</FONT>			sm.mu.Lock()
+			sm.commandIndexMappingFromApplyChannel[appliedCommand.CommandIndex] = appliedOperation
+
+			if appliedOperation.Operation == "Join" {
+				sm.ProcessJoinCommand(appliedOperation.JoinArguments)
+			} else if appliedOperation.Operation == "Leave" {
+				sm.ProcessLeaveCommand(appliedOperation.LeaveArguments)
+			} else if appliedOperation.Operation == "Move" {
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match117-0.html#6" TARGET="0"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				sm.ProcessMoveCommand(appliedOperation.MoveArguments)
+			}
+			sm.mu.Unlock()
+
+		case &lt;-sm.killChannel:
+			channelKilled = true
+			break
+		}
+
+		if channelKilled == true {
+			break
+		}
+	}
+}
+
+func (sm *ShardMaster) ProcessJoinCommand(args JoinArgs) {
+</FONT>	lConfig := new(Config)
+	lastConfigIndex := len(sm.configs) - 1
+	lNewGroupConfig := make(map[int][]string)
+	var listOfGUIDs []int
+
+	lConfig.Num = lastConfigIndex + 1
+	for key, value := range sm.configs[lastConfigIndex].Groups {
+		lNewGroupConfig[key] = value
+		listOfGUIDs = append(listOfGUIDs, key)
+	}
+
+	for key, value := range args.Servers {
+		lNewGroupConfig[key] = value
+		listOfGUIDs = append(listOfGUIDs, key)
+	}
+
+	lShardCountPerGroup := make(map[int]int)
+	for i := 0; i &lt; len(sm.configs[lastConfigIndex].Shards); i++ {
+		lShardCountPerGroup[sm.configs[lastConfigIndex].Shards[i]] += 1
+	}
+
+	lConfig.Groups = lNewGroupConfig
+	lConfig.Shards = sm.GetShardMapping(lShardCountPerGroup, lastConfigIndex, listOfGUIDs)
+
+	sm.configs = append(sm.configs, *lConfig)
+}
+
+func (sm *ShardMaster) ProcessLeaveCommand(args LeaveArgs) {
+	lConfig := new(Config)
+	lastConfigIndex := len(sm.configs) - 1
+
+	lConfig.Num = lastConfigIndex + 1
+	lNewGroupConfig := make(map[int][]string)
+	for key, value := range sm.configs[lastConfigIndex].Groups {
+		lNewGroupConfig[key] = value
+	}
+	for i := 0; i &lt; len(args.GIDs); i++ {
+		delete(lNewGroupConfig, args.GIDs[i])
+	}
+
+	var listOfGUIDs []int
+	for key, _ := range lNewGroupConfig {
+		listOfGUIDs = append(listOfGUIDs, key)
+	}
+
+	lShardCountPerGroup := make(map[int]int)
+	for i := 0; i &lt; len(sm.configs[lastConfigIndex].Shards); i++ {
+		lShardCountPerGroup[sm.configs[lastConfigIndex].Shards[i]] += 1
+	}
+
+	lConfig.Groups = lNewGroupConfig
+	lConfig.Shards = sm.GetShardMapping(lShardCountPerGroup, lastConfigIndex, listOfGUIDs)
+
+	sm.configs = append(sm.configs, *lConfig)
+}
+
+func (sm *ShardMaster) ProcessMoveCommand(args MoveArgs) {
+	lConfig := new(Config)
+	lastConfigIndex := len(sm.configs) - 1
+
+	lConfig.Num = lastConfigIndex + 1
+	for i := 0; i &lt; len(sm.configs[lastConfigIndex].Shards); i++ {
+		if i == args.Shard {
+			lConfig.Shards[i] = args.GID
+		} else {
+			lConfig.Shards[i] = sm.configs[lastConfigIndex].Shards[i]
+		}
+	}
+	lConfig.Groups = sm.configs[lastConfigIndex].Groups
+
+	sm.configs = append(sm.configs, *lConfig)
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	sm := new(ShardMaster)
+	sm.me = me
+
+	sm.configs = make([]Config, 1)
+	sm.configs[0].Groups = map[int][]string{}
+	//sm.configs[0].Num = 0
+	//sm.configs[0].Shards = [10]int{}
+	//lConfig := Config{
+	//	Num:    0,
+	//	Shards: [10]int{},
+	//	Groups: nil,
+	//}
+	//
+	//sm.configs = append(sm.configs, lConfig)
+	//////log.Println("Make: ",sm.me," Configs: ",sm.configs)
+	sm.killChannel = make(chan bool)
+	labgob.Register(Op{})
+	sm.applyCh = make(chan raft.ApplyMsg)
+	sm.commandIndexMappingFromStart = make(map[int]Op)
+	sm.commandIndexMappingFromApplyChannel = make(map[int]Op)
+
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+
+	// Your code here.
+	go func() {
+		sm.CommitChannelListener()
+	}()
+
+	return sm
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

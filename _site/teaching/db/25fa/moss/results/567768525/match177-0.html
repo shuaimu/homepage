@@ -1,0 +1,370 @@
+<HTML>
+<HEAD>
+<TITLE>./spring19/areddy1213/src/shardmaster/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./spring19/areddy1213/src/shardmaster/server.go<p><PRE>
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match177-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+package shardmaster
+
+
+import "raft"
+import "labrpc"
+import "sync"
+//import "fmt"
+import "labgob"
+import "time"
+import "sort"
+
+
+
+
+type ShardMaster struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	CommandIdx  map[int64]int
+</FONT>
+	OptCh map[int64]chan Opt 
+	
+	LogIdx int
+
+	configs []Config // indexed by config num
+}
+
+
+type Op struct {
+	Join    JoinArgs
+	Query   QueryArgs
+	Move    MoveArgs   
+	Leave   LeaveArgs   
+	CltId   int64      	
+	Type	byte
+}
+
+type Opt struct {
+	Seq int
+	Val 	Config
+}
+
+type gidShard struct {
+	gid int
+	shCount int
+}
+
+
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+	var lead bool
+    _, lead = sm.rf.GetState()
+     
+    if !lead {
+        reply.WrongLeader = true
+        return
+    } else{
+        reply.WrongLeader = false
+        sm.mu.Lock()
+        _, present := sm.OptCh[args.CltId]
+        if !present{
+            sm.OptCh[args.CltId] = make(chan Opt)
+        } 
+        sm.mu.Unlock()
+        jargs := Op{Type : 'J', Join : *args, CltId : args.CltId }
+
+        _,_, islead := sm.rf.Start(jargs)
+
+        if !islead{
+         reply.WrongLeader = true
+         return
+        }
+        select{
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match177-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+            case opt := &lt;- sm.OptCh[args.CltId]:
+               if opt.Seq == args.Seq{
+                  reply.Err = OK
+               }
+            case &lt;-time.After(2000 * time.Millisecond):
+                reply.Err = "TIME OUT"
+        }
+    }
+}
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+</FONT>	var lead bool
+    _, lead = sm.rf.GetState()
+     
+    if !lead {
+        reply.WrongLeader = true
+        return
+    } else{
+        reply.WrongLeader = false
+        sm.mu.Lock()
+        _, present := sm.OptCh[args.CltId]
+        if !present{
+            sm.OptCh[args.CltId] = make(chan Opt)
+        } 
+        sm.mu.Unlock()
+        largs := Op{Type : 'L', Leave : *args , CltId : args.CltId}
+
+        _,_, islead := sm.rf.Start(largs)
+
+        if !islead{
+         reply.WrongLeader = true
+         return
+        }
+        select{
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match177-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+            case opt := &lt;- sm.OptCh[args.CltId]:
+               if opt.Seq == args.Seq{
+                  reply.Err = OK
+               }
+            case &lt;-time.After(2000 * time.Millisecond):
+                reply.Err = "TIME OUT"
+        }
+    }
+
+}
+
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+</FONT>	var lead bool
+    _, lead = sm.rf.GetState()
+     
+    if !lead {
+        reply.WrongLeader = true
+        return
+    } else{
+        reply.WrongLeader = false
+        sm.mu.Lock()
+        _, present := sm.OptCh[args.CltId]
+        if !present{
+            sm.OptCh[args.CltId] = make(chan Opt)
+        } 
+        sm.mu.Unlock()
+        margs := Op{Type : 'M', Move : *args , CltId : args.CltId}
+
+        _,_, islead := sm.rf.Start(margs)
+
+        if !islead{
+         reply.WrongLeader = true
+         return
+        }
+        select{
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match177-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+            case opt := &lt;- sm.OptCh[args.CltId]:
+               if opt.Seq == args.Seq{
+                  reply.Err = OK
+               }
+            case &lt;-time.After(2000 * time.Millisecond):
+                reply.Err = "TIME OUT"
+        }
+    }
+}
+
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+</FONT>
+	var lead bool
+    _, lead = sm.rf.GetState()
+     
+    if !lead {
+        reply.WrongLeader = true
+        return
+    } else{
+        reply.WrongLeader = false
+        sm.mu.Lock()
+        _, present := sm.OptCh[args.CltId]
+        if !present{
+            sm.OptCh[args.CltId] = make(chan Opt)
+        } 
+        sm.mu.Unlock()
+        jargs := Op{Type : 'Q', Query : *args, CltId : args.CltId}
+
+        _,_, islead := sm.rf.Start(jargs)
+
+        if !islead{
+         reply.WrongLeader = true
+         return
+        }
+        select{
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match177-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+            case opt := &lt;- sm.OptCh[args.CltId]:
+               if opt.Seq == args.Seq{
+                  reply.Err = OK
+                  reply.Config = opt.Val
+               }
+            case &lt;-time.After(2000 * time.Millisecond):
+                reply.Err = "TIME OUT"
+        }
+    }
+}
+
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+	return sm.rf
+}
+
+func (sm *ShardMaster) startService(oper Op) Opt {
+</FONT>	
+	switch oper.Type {
+		case 'J':
+			optVal := Opt{Seq: oper.Join.Seq}
+			if sm.CommandIdx[oper.Join.CltId] &lt; oper.Join.Seq {
+				var srvs map[int][]string = oper.Join.Servers
+				resconf := sm.reqConf(-1)
+				for g, srv := range srvs {
+					resconf.Groups[g] = srv
+				}
+				sm.rebalanceConfig(resconf)
+			}
+			sm.CommandIdx[oper.Join.CltId] = oper.Join.Seq
+			return optVal
+		case 'L':
+			optVal := Opt{Seq: oper.Leave.Seq}
+			if sm.CommandIdx[oper.Leave.CltId] &lt; oper.Leave.Seq {
+				var gs []int = oper.Leave.GIDs
+				resconf := sm.reqConf(-1)
+				for _, g := range gs {
+					delete(resconf.Groups, g)
+				}
+				sm.rebalanceConfig(resconf)
+			}
+			sm.CommandIdx[oper.Leave.CltId] = oper.Leave.Seq
+			return optVal
+		case 'M':
+			optVal := Opt{Seq: oper.Move.Seq}
+			if sm.CommandIdx[oper.Move.CltId] &lt; oper.Move.Seq {
+				resconf := sm.reqConf(-1)
+				resconf.Shards[oper.Move.Shard] = oper.Move.GID
+				resconf.Num += 1
+				sm.configs = append(sm.configs, resconf) 
+			}
+			sm.CommandIdx[oper.Move.CltId] = oper.Move.Seq
+			return optVal
+		case 'Q':
+			optVal := Opt{Seq: oper.Query.Seq}
+			if sm.CommandIdx[oper.Query.CltId] &lt; oper.Query.Seq {
+				optVal.Val = sm.reqConf(oper.Query.Num)
+			}
+			sm.CommandIdx[oper.Query.CltId] = oper.Query.Seq
+			return optVal
+		}
+		
+		return Opt{}
+	}
+
+
+func (sm *ShardMaster) reqConf(idx int) Config {
+	configLen := len(sm.configs)
+	
+	var oC *Config
+
+	if idx &gt;= configLen || idx &lt; 0 {
+		oC = &sm.configs[configLen - 1]
+	} else {
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match177-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		oC = &sm.configs[idx]
+	}
+	nC := *oC
+	nC.Groups = make(map[int][]string)
+	
+	for k, v := range oC.Groups {
+</FONT>		nC.Groups[k] = v
+	}
+	return nC
+}
+
+
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	labgob.Register(Op{})
+	sm := new(ShardMaster)
+	sm.me = me
+
+	sm.configs = make([]Config, 1)
+	sm.configs[0].Groups = map[int][]string{}
+
+	sm.applyCh = make(chan raft.ApplyMsg)
+	sm.OptCh = make(map[int64]chan Opt)
+	sm.CommandIdx = make(map[int64]int)
+
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+
+	go func(){
+		for {
+			app := &lt;- sm.applyCh
+			op := app.Command.(Op)
+			opt := sm.startService(op)
+			if app.CommandIndex &gt; sm.LogIdx {
+				sm.LogIdx = app.CommandIndex
+			}
+
+			select {
+			case sm.OptCh[op.CltId] &lt;- opt:
+				//fmt.Println("Success")
+			default:
+				//fmt.Println("Failure")
+			}
+		}
+		}()
+	
+	return sm
+}
+
+func (sm *ShardMaster) rebalanceConfig (inpCon Config) {
+	inpCon.Num += 1
+	mS := make(chan int, NShards)
+	lShards := make(map[int][]int)
+    i := 0
+	for i &lt; NShards {
+		if _, present := inpCon.Groups[inpCon.Shards[i]]; present {
+			lShards[inpCon.Shards[i]] = append(lShards[inpCon.Shards[i]], i)
+		} else { mS &lt;- i}
+		i++
+	}
+	var keyValPair []gidShard
+	for g, _ := range inpCon.Groups {
+		keyValPair = append(keyValPair, gidShard{g, len(lShards[g])})
+	}
+	sort.SliceStable(keyValPair, func(i, j int) bool {
+        return keyValPair[i].shCount &gt; keyValPair[j].shCount
+	})
+    //fmt.Println(keyValPair)
+    var inc int 
+    inc = 0 
+	for inc &lt; len(keyValPair){
+		num := NShards / len(inpCon.Groups)
+		if inc &lt; NShards % len(inpCon.Groups){ num ++ }
+		j := 0 
+		for keyValPair[inc].shCount &gt; num {
+			keyValPair[inc].shCount --
+			mS &lt;- lShards[keyValPair[inc].gid][j]
+			j++
+		}
+		for  ; keyValPair[inc].shCount &lt; num; keyValPair[inc].shCount ++ {
+			inpCon.Shards[&lt;-mS] = keyValPair[inc].gid
+		}
+		inc += 1 
+	}
+	sm.configs = append(sm.configs, inpCon) 
+
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

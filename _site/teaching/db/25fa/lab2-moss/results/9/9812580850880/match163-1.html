@@ -1,0 +1,247 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-DeepshikaR/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-jaranzie/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+// shared_ptr&lt;MultiStringMarshallable&gt; make_msg(uint64_t oid, const string& op, const string& k, const string& v) {
+//   auto msg = make_shared&lt;MultiStringMarshallable&gt;();
+//   msg-&gt;data_.push_back(to_string(oid));
+//   msg-&gt;data_.push_back("put");
+//   msg-&gt;data_.push_back(k);
+//   msg-&gt;data_.push_back(v);
+// }
+
+#define JKV_TIMEOUT (1000000)
+
+int KvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  /* 
+  Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  */
+  /* your code here */
+  // Log_info("PUT %d locid: %d", std::this_thread::get_id(), GetRaftServer().loc_id_);
+  auto msg = make_shared&lt;MultiStringMarshallable&gt;();
+  msg-&gt;data_.push_back(to_string(oid));
+  msg-&gt;data_.push_back("put");
+  msg-&gt;data_.push_back(k);
+  msg-&gt;data_.push_back(v);
+  
+  uint64_t index = 0;
+  uint64_t term = 0;
+  auto smsg = dynamic_pointer_cast&lt;Marshallable&gt;(msg);
+  auto wait_event = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  auto res = make_shared&lt;string&gt;();
+  auto p = make_pair(wait_event, res);
+  // buffer_lock.lock();
+  if (!GetRaftServer().Start(smsg, &index, &term)) {
+    // we're not leader
+    // buffer_lock.unlock();
+    return KV_NOTLEADER;
+  }
+  // Log_info("PUT %d elements in data", msg-&gt;data_.size());
+  responses.insert({oid, p});
+  // buffer_lock.unlock();
+  wait_event-&gt;Wait(JKV_TIMEOUT);
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match163-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  if (wait_event-&gt;status_ == Event::TIMEOUT) {
+    // Timedout
+    return KV_TIMEOUT;
+  } else {
+    // Success?
+    return KV_SUCCESS;
+  }
+}
+
+// use some kind of buffer
+
+int KvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+  // Log_info("APP %d locid: %d", std::this_thread::get_id(), GetRaftServer().loc_id_);
+  auto msg = make_shared&lt;MultiStringMarshallable&gt;();
+</FONT>  msg-&gt;data_.push_back(to_string(oid));
+  msg-&gt;data_.push_back("append");
+  msg-&gt;data_.push_back(k);
+  msg-&gt;data_.push_back(v);
+  uint64_t index = 0;
+  uint64_t term = 0;
+  auto smsg = dynamic_pointer_cast&lt;Marshallable&gt;(msg);
+  auto wait_event = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  auto res = make_shared&lt;string&gt;();
+  auto p = make_pair(wait_event, res);
+  // buffer_lock.lock();
+  if (!GetRaftServer().Start(smsg, &index, &term)) {
+    // we're not leader
+    // buffer_lock.unlock();
+    return KV_NOTLEADER;
+  }
+  // Log_info("APPEND %d elements in data", msg-&gt;data_.size());
+  responses.insert({oid, p});
+  // buffer_lock.unlock();
+  wait_event-&gt;Wait(JKV_TIMEOUT);
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match163-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  if (wait_event-&gt;status_ == Event::TIMEOUT) {
+    // Timedout
+    return KV_TIMEOUT;
+  } else {
+    // Success?
+    return KV_SUCCESS;
+  }
+}
+
+int KvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+</FONT>  /* your code here */
+  // Log_info("GET %d locid: %d", std::this_thread::get_id(), GetRaftServer().loc_id_);
+  auto msg = make_shared&lt;MultiStringMarshallable&gt;();
+  msg-&gt;data_.push_back(to_string(oid));
+  msg-&gt;data_.push_back("get");
+  msg-&gt;data_.push_back(k);
+  msg-&gt;data_.push_back("noval");
+  uint64_t index = 0;
+  uint64_t term = 0;
+  auto smsg = dynamic_pointer_cast&lt;Marshallable&gt;(msg);
+  auto wait_event = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  auto res = make_shared&lt;string&gt;();
+  auto p = make_pair(wait_event, res);
+  // buffer_lock.lock();
+  if (!GetRaftServer().Start(smsg, &index, &term)) {
+    // we're not leader
+    // buffer_lock.unlock();
+    return KV_NOTLEADER;
+  }
+  // Log_info("GET %d elements in data", msg-&gt;data_.size());
+  responses.insert({oid, p});
+  // buffer_lock.unlock();
+  wait_event-&gt;Wait(JKV_TIMEOUT);
+  if (wait_event-&gt;status_ == Event::TIMEOUT) {
+    // Timedout
+    return KV_TIMEOUT;
+  } else {
+    // Log_info("%s returning", res);
+    *v = *res;
+    return KV_SUCCESS;
+  }
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  // Log_info("NEXT COMMAND %d locid: %d", std::this_thread::get_id(), GetRaftServer().loc_id_);
+  auto v = (MultiStringMarshallable*)(&m);
+  /* your code here */
+  // string oid = v-&gt;data_.at(0);
+
+  // Log_info("%d elements in data", v-&gt;data_.size());
+
+  if (v-&gt;data_.size() != 4) {
+    // Log_info("Log length not correct");
+    return;
+  }
+
+  string value = v-&gt;data_.back();
+  v-&gt;data_.pop_back();
+  string key = v-&gt;data_.back();
+  v-&gt;data_.pop_back();
+  string op = v-&gt;data_.back();
+  v-&gt;data_.pop_back();
+  uint64_t oid = std::stol(v-&gt;data_.back());
+  v-&gt;data_.pop_back();
+
+  // uint64_t oid = std::stol(v-&gt;data_.at(0));
+  // string op = v-&gt;data_.at(1);
+  // string key = v-&gt;data_.at(2);
+  
+  bool started_command = false;
+  // std::lock_guard&lt;std::mutex&gt; lg(buffer_lock);
+  if (responses.find(oid) != responses.end()) {
+    started_command = true;
+  }
+  if (started_command && responses.at(oid).first-&gt;status_ == Event::TIMEOUT) {
+    responses.erase(oid);
+    return;
+  }
+  if (op == "get") {
+    if (started_command) {
+      *responses.at(oid).second = internal_kv.at(key);
+      // Log_info("Get request returning %s of len %d", internal_kv.at(key), internal_kv.at(key).size());
+    }
+  } else if (op == "put") {
+    if (internal_kv.find(key) != internal_kv.end()) {
+      // Log_info("Removing old value");
+      internal_kv.erase(key);
+    }
+    internal_kv.insert(make_pair(key, value));
+    // Log_info("Inserting %s, %d", value, value.size());
+  } else if (op == "append") {
+    string old_val = "";
+    if (internal_kv.find(key) != internal_kv.end()) {
+      old_val = internal_kv.at(key);
+      internal_kv.erase(key);
+    }
+
+    // Log_info("oldv len %d", old_val.size());
+    string new_val = old_val + value;
+    // Log_info("Append request old: %s, app: %s, new: %s", old_val, value, new_val);
+    // Log_info("oldv len %d, app len %d, new_len: %d", old_val.size(), value.size(), new_val.size());
+    internal_kv.insert(make_pair(key, new_val));
+  } else {
+    // Log_debug("Didn't match any ops");
+    throw new std::exception();
+  }
+
+  if (started_command) {
+    responses.at(oid).first-&gt;Set(1);
+    responses.erase(oid);
+  }
+  
+  return;
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

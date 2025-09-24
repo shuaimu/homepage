@@ -1,0 +1,153 @@
+<HTML>
+<HEAD>
+<TITLE>./spring19/xigaoli/src/shardmaster/client.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./spring19/xigaoli/src/shardmaster/client.go<p><PRE>
+package shardmaster
+
+//
+// Shardmaster clerk.
+//
+
+import (
+	"crypto/rand"
+	"labrpc"
+	"math/big"
+	"sync"
+	"time"
+)
+
+//Clerk .
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match224-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+type Clerk struct {
+	servers []*labrpc.ClientEnd
+	// Your data here.
+	mu        sync.Mutex
+	clientId  int64
+	requestId int
+}
+
+func nrand() int64 {
+	max := big.NewInt(int64(1) &lt;&lt; 62)
+	bigx, _ := rand.Int(rand.Reader, max)
+</FONT>	x := bigx.Int64()
+	return x
+}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match224-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_12.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
+	ck := new(Clerk)
+	ck.servers = servers
+	// Your code here.
+	ck.requestId = 0
+	ck.clientId = nrand()
+	return ck
+}
+
+func (ck *Clerk) Query(num int) Config {
+	args := &QueryArgs{}
+	// Your code here.
+	args.Num = num
+	ck.mu.Lock()
+	ck.requestId++
+	args.ClientID = ck.clientId
+	args.RequestID = ck.requestId
+</FONT>	DPrintf("CK[%v] recv query of[%v]\n", args.ClientID, args.Num)
+	ck.mu.Unlock()
+	for {
+		// try each known server.
+		for _, srv := range ck.servers {
+			var reply QueryReply
+			ok := srv.Call("ShardMaster.Query", args, &reply)
+			if ok && reply.WrongLeader == false {
+				return reply.Config
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match224-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_7.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (ck *Clerk) Join(servers map[int][]string) {
+	args := &JoinArgs{}
+	// Your code here.
+	args.Servers = servers
+
+	ck.mu.Lock()
+	ck.requestId++
+	args.ClientID = ck.clientId
+	args.RequestID = ck.requestId
+</FONT>	ck.mu.Unlock()
+
+	for {
+		// try each known server.
+		for _, srv := range ck.servers {
+			var reply JoinReply
+			ok := srv.Call("ShardMaster.Join", args, &reply)
+			if ok && reply.WrongLeader == false {
+				return
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match224-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_7.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (ck *Clerk) Leave(gids []int) {
+	args := &LeaveArgs{}
+	// Your code here.
+	args.GIDs = gids
+	ck.mu.Lock()
+	ck.requestId++
+	args.ClientID = ck.clientId
+	args.RequestID = ck.requestId
+</FONT>	ck.mu.Unlock()
+
+	for {
+		// try each known server.
+		for _, srv := range ck.servers {
+			var reply LeaveReply
+			ok := srv.Call("ShardMaster.Leave", args, &reply)
+			if ok && reply.WrongLeader == false {
+				return
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match224-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_8.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (ck *Clerk) Move(shard int, gid int) {
+	args := &MoveArgs{}
+	// Your code here.
+	args.Shard = shard
+	args.GID = gid
+	ck.mu.Lock()
+	ck.requestId++
+	args.ClientID = ck.clientId
+	args.RequestID = ck.requestId
+</FONT>	ck.mu.Unlock()
+
+	for {
+		// try each known server.
+		for _, srv := range ck.servers {
+			var reply MoveReply
+			ok := srv.Call("ShardMaster.Move", args, &reply)
+			if ok && reply.WrongLeader == false {
+				return
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

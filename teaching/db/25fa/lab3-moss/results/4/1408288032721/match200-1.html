@@ -1,0 +1,215 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-shivani232/src/shardkv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-shrh18/src/shardkv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+int64_t ShardKvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match200-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_12.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int ShardKvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+  // lab_shard: fill in your code
+
+  // Log_info("In shard Put");
+
+  // auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  // s-&gt;data_.push_back(to_string(oid));
+  // s-&gt;data_.push_back("put");
+  // s-&gt;data_.push_back(k);                                                            // should handle map, append only when it is commitedd by all raft serves
+  // s-&gt;data_.push_back(v);
+
+  // auto kvCommand  = dynamic_pointer_cast&lt;Marshallable&gt;(s); 
+
+  // skvevPut.Set(0);
+  // bool isLeader =  GetRaftServer().Start(kvCommand, &index, &term );
+  // if(isLeader){
+  //   skvevPut.WaitUntilGreaterOrEqualThan(1, 5000000);
+  //   if(skvevPut.value_ == 1){
+  //     Log_info("Returned KV_SUCCESS for Put");
+  //     return KV_SUCCESS;
+  //   }
+  //   else{
+  //     Log_info("Returned KV_TIMEOUT for Put");
+  //     return KV_TIMEOUT;
+  //   }
+  // }
+  
+  // if(isLeader == false){
+  //   Log_info("Returned KV_NOTLEADER for Put");
+  //   return KV_NOTLEADER;
+  // }
+
+  kv_store_[k] = v;
+  // Log_info("Returned KV_SUCCESS for Put");
+  return KV_SUCCESS;
+}
+
+int ShardKvServer::Append(const uint64_t& oid, 
+                     const string& k,
+</FONT>                     const string& v) {
+    // lab_shard: fill in your code
+  // Log_info("in shard Append");
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(oid));
+  s-&gt;data_.push_back("append"); 
+  s-&gt;data_.push_back(k);                                                            // should handle map, append only when it is commitedd by all raft servers
+  s-&gt;data_.push_back(v);
+
+  // auto kvCommand = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  // skvevAppend.Set(0);
+  // bool isLeader = GetRaftServer().Start(kvCommand, &index, &term);
+  // if(isLeader){
+  //   skvevAppend.WaitUntilGreaterOrEqualThan(2, 5000000);
+  //   if(skvevAppend.value_ == 2){
+  //     Log_info("Returned KV_SUCCESS for Append");
+  //     return KV_SUCCESS;
+  //   }
+  //   else{
+  //     Log_info("Returned KV_TIMEOUT for Append");
+  //     return KV_TIMEOUT;
+  //   }
+  // }
+  // if(isLeader == false){
+  //   Log_info("Returned KV_NOTLEADER for Append");
+  //     return KV_NOTLEADER;
+  // }
+
+  if(kv_store_.count(k)){
+    // Log_info("In append append");
+    string x = kv_store_[k] + v;
+    kv_store_[k] = x;
+    // skvevAppend.Set(2);
+    // cout &lt;&lt; "Key, Value" &lt;&lt; key &lt;&lt; kv_store_[key];
+  }
+  else{
+    // Log_info("In append put");
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match200-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_9.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    kv_store_.insert({k, v});
+    // skvevAppend.Set(2);
+    // cout &lt;&lt; "Key, Value" &lt;&lt; key &lt;&lt; kv_store_[key];
+  }
+  // Log_info("Returned KV_SUCCESS for Append");
+  return KV_SUCCESS;
+
+}
+
+int ShardKvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+    // lab_shard: fill in your code
+  // Log_info("In shard Get");
+  // auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  // s-&gt;data_.push_back(to_string(oid));
+  // s-&gt;data_.push_back("get");
+  // s-&gt;data_.push_back(k);
+
+  // auto kvCommand = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  // skvevGet.Set(0);
+  // bool isLeader = GetRaftServer().Start(kvCommand, &index, &term);
+  // if(isLeader){
+  //   skvevGet.WaitUntilGreaterOrEqualThan(2, 5000000);
+  //   if(skvevGet.value_ == 3){  
+  //     *v = kv_store_[k];
+  //     Log_info("Returned KV_SUCCESS for Get");
+  //     return KV_SUCCESS;
+  //   }
+  //   else{
+  //     Log_info("Returned KV_TIMEOUT for Get");
+  //     return KV_TIMEOUT;
+  //   }
+  // }
+  // if(isLeader == false){
+  //   *v = kv_store_[k];
+  //   Log_info("Returned KV_NOTLEADER for Get");
+  //   return KV_NOTLEADER;
+  // }
+
+  *v = kv_store_[k];
+  // Log_info("Returned KV_SUCCESS for Get");
+  return KV_SUCCESS;
+
+}
+
+void ShardKvServer::OnNextCommand(Marshallable& m) {
+</FONT>    // lab_shard: fill in your code
+  
+  auto v = (MultiStringMarshallable*)(&m);
+
+  if(v){
+    string oid = v-&gt;data_[0];
+    // Log_info("oid - %s", oid.c_str());
+    string operation = v-&gt;data_[1];
+    // Log_info("operation - %s", operation.c_str());
+    string key = v-&gt;data_[2];
+    // Log_info("key - %s", key.c_str());
+    // string value = data[3];
+    // Log_info("%d %s %s %s\n", oid, operation.c_str(), key.c_str(), value.c_str());
+
+    if(operation == "put"){
+      // kv_store_[key].insert(kv_store_[key],value);
+      // Log_info("In put");
+      string value = v-&gt;data_[3];
+      kv_store_[key] = value;
+      skvevPut.Set(1);
+      // cout &lt;&lt; "Key, Value" &lt;&lt; key &lt;&lt; kv_store_[key];
+    }
+    if(operation == "append"){
+      string value = v-&gt;data_[3];
+      // Log_info("In append");
+      if(kv_store_.count(key)){
+        // Log_info("In append append");
+        string x = kv_store_[key] + value;
+        kv_store_[key] = x;
+        skvevAppend.Set(2);
+        // cout &lt;&lt; "Key, Value" &lt;&lt; key &lt;&lt; kv_store_[key];
+      }
+      else{
+        // Log_info("In append put");
+        kv_store_.insert({key, value});
+        skvevAppend.Set(2);
+        // cout &lt;&lt; "Key, Value" &lt;&lt; key &lt;&lt; kv_store_[key];
+      }
+    }
+    if(operation == "get"){
+      skvevGet.Set(3);
+    }
+  } 
+  else {
+    // Handle the case where v is nullptr (null pointer)
+    std::cerr &lt;&lt; "v is nullptr." &lt;&lt; std::endl;
+  }
+}
+
+shared_ptr&lt;ShardKvClient&gt; ShardKvServer::CreateClient(Communicator* comm) {
+  auto cli = make_shared&lt;ShardKvClient&gt;();
+  cli-&gt;commo_ = comm;
+  verify(cli-&gt;commo_ != nullptr);
+  static uint32_t id = 0;
+  id++;
+  cli-&gt;cli_id_ = id; 
+  return cli;
+}
+
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

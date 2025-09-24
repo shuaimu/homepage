@@ -1,0 +1,555 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/gomathi-ganesan/src/shardkv/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/gomathi-ganesan/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+
+import "raft"
+import "labrpc"
+import "sync"
+import "labgob"
+import "time"
+//import "fmt"
+
+// Balancing the load of shards logic reference : https://www.geeksforgeeks.org/split-the-number-into-n-parts-such-that-difference-between-the-smallest-and-the-largest-part-is-minimum/
+type ShardMaster struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+	
+	configs []Config // indexed by config num
+	isAlive bool
+	processedWrites map[int64]int64
+	// Lab notes: An RPC handler should notice when Raft commits its Op, and then reply to the RPC.
+	serversApplyCh map[int]chan OpReply
+}
+
+
+type Op struct {
+	Operation string // join,leave,move,query
+	ClientId int64
+	RequestId int64
+
+	//join
+	Servers map[int][]string
+	//move
+	GIDs []int
+	Shard int
+	//leave
+	GID   int
+	//query
+	Num int
+
+}
+
+type OpReply struct {
+	applyMsg raft.ApplyMsg
+	config Config
+}
+
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+	op := Op{}
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match185-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	op.Operation = "Join"
+	op.ClientId = args.ClientId
+	op.RequestId = args.RequestId
+	op.Servers = args.Servers
+
+	index, term, isLeader := sm.rf.Start(op)
+</FONT><A NAME="1"></A><FONT color = #00FF00><A HREF="match185-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	if (!isLeader) {
+		reply.WrongLeader = true
+		reply.Err = "WrongLeader"
+		return
+	}
+
+	reply.Err, reply.Config, reply.WrongLeader = sm.opCommitStatus(index, term)
+}
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+	op := Op{}
+	op.Operation = "Leave"
+</FONT>	op.ClientId = args.ClientId
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match185-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	op.RequestId = args.RequestId
+	op.GIDs = args.GIDs
+
+	index, term, isLeader := sm.rf.Start(op)
+	if (!isLeader) {
+		reply.WrongLeader = true
+</FONT>		reply.Err = "WrongLeader"
+		return
+	}
+	reply.Err, reply.Config, reply.WrongLeader = sm.opCommitStatus(index, term)
+}
+
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+	op := Op{}
+	op.Operation = "Move"
+	op.ClientId = args.ClientId
+	op.RequestId = args.RequestId
+	op.Shard = args.Shard
+	op.GID = args.GID
+
+	index, term, isLeader := sm.rf.Start(op)
+	if (!isLeader) {
+		reply.WrongLeader = true
+		reply.Err = "WrongLeader"
+		return
+	}
+
+	reply.Err, reply.Config, reply.WrongLeader = sm.opCommitStatus(index, term)
+}
+
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+	op := Op{}
+	op.Operation = "Query"
+	//op.ClientId = args.ClientId
+	//op.RequestId = args.RequestId
+	op.Num = args.Num
+
+	index, term, isLeader := sm.rf.Start(op)
+	if (!isLeader) {
+		reply.WrongLeader = true
+		reply.Err = "WrongLeader"
+		return
+	}
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match185-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	reply.Err, reply.Config, reply.WrongLeader = sm.opCommitStatus(index, term)
+}
+
+
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+	sm.mu.Lock()
+	sm.isAlive = false
+	sm.mu.Unlock()
+</FONT>}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+	return sm.rf
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	labgob.Register(Op{})
+	labgob.Register(JoinArgs{})
+	labgob.Register(MoveArgs{})
+	labgob.Register(QueryArgs{})
+	labgob.Register(LeaveArgs{})
+
+	sm := new(ShardMaster)
+	sm.me = me
+	sm.isAlive = true
+
+	sm.configs = make([]Config, 1)
+	sm.configs[0].Groups = map[int][]string{}
+
+
+	sm.applyCh = make(chan raft.ApplyMsg, 2000)
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+
+	sm.processedWrites = make(map[int64]int64)
+	sm.serversApplyCh = make(map[int]chan OpReply)
+
+	go sm.checkApplyCh()
+	return sm
+}
+
+
+// Check the applyCh and do the needful.
+func (sm *ShardMaster) checkApplyCh() {
+	for {
+		select {
+			case applyMsg := &lt;-sm.applyCh:
+				isCommitted := applyMsg.CommandValid
+				opReply := OpReply{}
+				if (isCommitted) {
+					op,ok := applyMsg.Command.(Op)
+					opReply.applyMsg = applyMsg
+					if(ok) {
+						operation := op.Operation
+						if (operation == "Join") {
+							sm.doJoin(op)
+							opReply.config = Config{}
+						} else if(operation == "Leave") {
+							sm.doLeave(op)
+							opReply.config = Config{}
+						} else if(operation == "Move") {
+							sm.doMove(op)
+							opReply.config = Config{}
+						} else if (operation == "Query") {
+							//add configuration to opReply
+							//query -1 should return last config
+							//fmt.Printf(".\n", sm.me)
+							sm.mu.Lock()
+							num := -1
+							if (op.Num == -1) {
+								num = sm.findLastConfigNum()
+							} else {
+								num = op.Num
+							}
+							opReply.config = sm.configs[num]
+							//fmt.Printf("In %d: query called..len(opReply.config.Groups) is %d\n", sm.me, len(opReply.config.Groups))
+							sm.mu.Unlock()
+						}
+					}
+				}
+				// Todo: add configuration to opReply
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match185-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				sm.mu.Lock()
+				serversApplyCh, isReady := sm.serversApplyCh[applyMsg.CommandIndex]
+				sm.mu.Unlock()
+				if (isReady) {
+					serversApplyCh &lt;- opReply
+				}
+			default:
+				sm.mu.Lock()
+				isAlive := sm.isAlive
+				sm.mu.Unlock()
+				if (!isAlive) {
+					return
+				}
+		}
+	}
+}
+
+func (sm *ShardMaster) findLastConfigNum() int{
+</FONT>	return len(sm.configs) - 1
+}
+
+// Lab hint: if you want to create a new Config based on a previous one, you need to create a new map object (with make()) and copy the keys and values individually.
+func (sm *ShardMaster) copyConfig(n int) Config{
+	resultConfig := Config{}
+	resultConfig.Groups = make(map[int][]string)
+	if (n &lt; len(sm.configs)) {
+		fromConfig := sm.configs[n]
+		resultConfig.Num = fromConfig.Num
+		resultConfig.Shards = fromConfig.Shards
+		for grpid, svr := range fromConfig.Groups {
+			var servers []string
+			grpidServers, isPresent := resultConfig.Groups[grpid]
+			if (isPresent) {
+				resultConfig.Groups[grpid] = append(grpidServers, svr...)
+			} else {
+			 	resultConfig.Groups[grpid] = append(servers, svr...)
+			}
+		}
+	} else {
+		resultConfig.Num = -1
+	}
+	return resultConfig
+}
+
+func (sm *ShardMaster) doJoin(op Op) {
+	sm.mu.Lock()
+	prevConfig := sm.configs[sm.findLastConfigNum()]
+	resultConfig := sm.copyConfig(sm.findLastConfigNum())
+	latestRequest, isPresent := sm.processedWrites[op.ClientId]
+	sm.mu.Unlock()
+
+	if (!isPresent || (isPresent && latestRequest &lt; op.RequestId)) {
+		// Add the new servers
+		sm.addServers(&resultConfig, op)
+		extraGids := sm.getExtraGids(&resultConfig, &prevConfig)
+		sm.balanceShardLoad(&resultConfig, extraGids)
+		
+		sm.mu.Lock()
+		sm.processedWrites[op.ClientId] = op.RequestId
+		resultConfig.Num = resultConfig.Num + 1
+		sm.configs = append(sm.configs, resultConfig)
+		//fmt.Printf("In %d: add one config from join...len(sm.configs) is %d\n", sm.me, len(sm.configs))
+		sm.mu.Unlock()
+	}
+}
+
+func (sm *ShardMaster) addServers(config *Config, op Op) {
+	servers := op.Servers
+	for groupid, svr := range servers {
+		svrs, isPresent := config.Groups[groupid]
+		var newSvrs []string
+		if (isPresent) {
+			newSvrs = append(newSvrs, svrs...)
+		}
+		config.Groups[groupid] = append(newSvrs, svr...)
+	}
+	sm.clearShard(config)
+}
+
+func (sm *ShardMaster) clearShard(config *Config) {
+	if (len(config.Groups) == 0) {
+		//clear shard from old config
+		config.Shards = [NShards]int{}
+	}
+}
+
+func (sm *ShardMaster) getExtraGids(newConfig *Config, oldConfig *Config) []int{
+	var extraGids []int
+	for groupid := range newConfig.Groups {
+		_, isPresent := oldConfig.Groups[groupid]
+		if (!isPresent) {
+			extraGids = append(extraGids, groupid)
+		}
+	}
+	return extraGids
+}
+
+
+// Balancing the load of shards logic reference : https://www.geeksforgeeks.org/split-the-number-into-n-parts-such-that-difference-between-the-smallest-and-the-largest-part-is-minimum/
+func (sm *ShardMaster) balanceShardLoad(resultConfig *Config, extraGids []int) {
+
+	//avoid divide by 0 error
+	if(len(resultConfig.Groups) &gt; 0) {
+		//find the upper and lower limits of shards each gid can have
+		minimum := NShards / len(resultConfig.Groups)
+		remainingUnassignedShards := NShards % len(resultConfig.Groups)
+		maximum := minimum
+
+		if (remainingUnassignedShards &gt; 0) {
+			maximum = minimum + 1
+		}
+
+		sm.fixShardsForGID(resultConfig, extraGids, minimum, maximum, remainingUnassignedShards)
+	}
+}
+
+func (sm *ShardMaster) fixShardsForGID(resultConfig *Config, extraGids []int, min int, max int, unassigned int) {
+	
+	orphanShards := make(map[int]bool)
+	sm.findOrphanShards(resultConfig, orphanShards)
+
+	gidCapacity := make(map[int]int)
+
+	fixedCapacity := (min == max)
+
+	currExtraGID := 0
+	// assign orpahn shards first
+	for idx := 0; idx &lt; NShards; idx++ {
+		if (orphanShards[idx]) {
+			resultConfig.Shards[idx] = extraGids[currExtraGID]
+			gidCapacity[extraGids[currExtraGID]]++
+			currExtraGID += 1
+			if (currExtraGID == len(extraGids)) {
+				currExtraGID = 0
+			}
+		}
+	}
+
+	// re distribute remaining already assigned shards
+	currExtraGID = 0
+	limit := min //to track unassigned shard count
+	for idx := 0; idx &lt; NShards; idx++ {
+		
+		// if gid capacity isnot fullnoneed to re-assign
+		if (!sm.isGidFull(gidCapacity[resultConfig.Shards[idx]], fixedCapacity, min, unassigned)) {
+			gidCapacity[resultConfig.Shards[idx]]++
+			if (gidCapacity[resultConfig.Shards[idx]] == limit) {
+				unassigned--
+			}
+		}  else {
+				resultConfig.Shards[idx] = extraGids[currExtraGID]
+				gidCapacity[extraGids[currExtraGID]]++
+				currExtraGID += 1
+				if (currExtraGID == len(extraGids)) {
+					currExtraGID = 0
+				}
+		}
+	}
+}
+
+func (sm *ShardMaster) isGidFull(gidCapacity int,fixedCapacity bool, min int, unassigned int) bool{
+
+	if (fixedCapacity) {
+		return gidCapacity == min
+	} else {
+		if(unassigned &lt;= 0) {
+			return gidCapacity == min
+		}
+	}
+	return false
+}
+
+func (sm *ShardMaster) findOrphanShards(config *Config, orphanShards map[int]bool) {
+	for shard:= 0; shard &lt; NShards; shard++ {
+		if (config.Shards[shard] == 0) {
+			orphanShards[shard] = true
+		} else {
+			orphanShards[shard] = false
+		}
+	}
+}
+
+func (sm *ShardMaster) doLeave(op Op) {
+	sm.mu.Lock()
+	resultConfig := sm.copyConfig(sm.findLastConfigNum())
+	latestRequest, isPresent := sm.processedWrites[op.ClientId]
+	sm.mu.Unlock()
+
+	if (!isPresent || (isPresent && latestRequest &lt; op.RequestId)) {
+		removedGids := sm.clearLavingGids(&resultConfig, op.GIDs)
+		if (len(resultConfig.Groups) &gt; 0) {
+			currentGIDs := sm.findCurrentGids(&resultConfig)
+			for shard:=0; shard &lt; NShards ; shard++ {
+				gid := resultConfig.Shards[shard]
+				
+				for _, leaveGid := range removedGids {
+					if (leaveGid == gid) {
+						resultConfig.Shards[shard] = 0
+						break
+					}
+				}
+			}
+			sm.reorderShards(&resultConfig, removedGids, currentGIDs)
+		}
+
+		//append new config
+		sm.mu.Lock()
+		sm.processedWrites[op.ClientId] = op.RequestId
+		resultConfig.Num = resultConfig.Num + 1
+		sm.configs = append(sm.configs, resultConfig)
+		sm.mu.Unlock()
+	}
+}
+
+func (sm *ShardMaster) doMove(op Op) {
+	sm.mu.Lock()
+	resultConfig := sm.copyConfig(sm.findLastConfigNum())
+	latestRequest, isPresent := sm.processedWrites[op.ClientId]
+	sm.mu.Unlock()
+
+	if (!isPresent || (isPresent && latestRequest &lt; op.RequestId)) {
+		sm.mu.Lock()
+		sm.processedWrites[op.ClientId] = op.RequestId
+		resultConfig.Shards[op.Shard] = op.GID
+		resultConfig.Num = resultConfig.Num + 1
+		sm.configs = append(sm.configs, resultConfig)
+		sm.mu.Unlock()
+	}
+}
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match185-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (sm *ShardMaster) opCommitStatus(commitIndex int, term int) (Err, Config, bool) {
+	sm.mu.Lock()
+	sm.serversApplyCh[commitIndex] = make(chan OpReply, 1)
+	serversApplyCh := sm.serversApplyCh[commitIndex]
+	sm.mu.Unlock()
+</FONT>	counter := 0
+
+	for {
+		select {
+			case opReply := &lt;-serversApplyCh:
+				applyMsg := opReply.applyMsg
+				//config := Config{}
+				if applyMsg.CommandTerm == term {
+					return OK, opReply.config, false
+				} else {
+					return WrongLeader, opReply.config, true
+				}
+			default:
+				time.Sleep( 10 * time.Millisecond)
+				//_, isLeader := kv.rf.GetState()
+				counter += 1
+				if (counter == 250) {
+					sm.mu.Lock()
+					config := Config{}
+					//if(!isLeader) {
+					delete(sm.serversApplyCh, commitIndex)
+					sm.mu.Unlock()
+					return WrongLeader, config, true
+				}
+				//kv.mu.Unlock()
+		}
+	}
+}
+
+
+func (sm *ShardMaster) clearLavingGids (config *Config, leavingGids []int) []int {
+	var removedGids []int
+	for _, groupid := range leavingGids {
+		delete(config.Groups, groupid)
+		removedGids = append(removedGids, groupid)
+	}
+	sm.clearShard(config)
+	return removedGids
+}
+
+func (sm *ShardMaster) findCurrentGids (config *Config) []int{
+	var currentGIDs []int
+	for groupid := range config.Groups {
+		currentGIDs = append(currentGIDs, groupid)
+	}
+	return currentGIDs
+}
+
+func (sm *ShardMaster) reorderShards(config *Config, removedGids []int, currentGIDs []int) {
+	orphanShards := make(map[int]bool)
+	sm.findOrphanShards(config, orphanShards)
+	minGidCapacity := NShards / len(config.Groups)
+	gidCapacity := make(map[int]int)
+	currGid := 0
+	for shard := 0 ; shard &lt; NShards; shard++ {
+		needReassignment := orphanShards[shard] //orphan shards need re-assignment
+		// if current assigned gid is full re-assign to another gid
+		if (!needReassignment && gidCapacity[config.Shards[shard]] == minGidCapacity) {
+			needReassignment = true
+		}
+
+		if (!needReassignment) {
+			gidCapacity[config.Shards[shard]] += 1
+		} else {
+			assigned := false
+			nextFreeGID := sm.findFreeGid(currentGIDs, minGidCapacity, gidCapacity)
+			if(nextFreeGID != -1) {
+				config.Shards[shard] = nextFreeGID
+				gidCapacity[nextFreeGID]++
+				assigned = true
+			}
+			
+			//means NShards % len(config.Groups) &gt; 0 , some NShards % len(config.Groups) gids will have one extra shard each
+			if (!assigned) {
+				config.Shards[shard] = currentGIDs[currGid]
+				gidCapacity[currentGIDs[currGid]] ++
+				currGid++
+				if(currGid == len(currentGIDs)) {
+					currGid = 0
+				}
+			}
+		}
+	}
+}
+
+func(sm *ShardMaster) findFreeGid(currentGIDs []int, minGidCapacity int, gidCapacity map[int]int) int {
+	for _, id := range currentGIDs {
+		if gidCapacity[id] &lt; minGidCapacity {
+			return id
+		}
+	}
+	return -1
+}</PRE>
+</PRE>
+</BODY>
+</HTML>

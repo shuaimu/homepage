@@ -1,0 +1,229 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-Pritish1/src/deptran/raft/commo.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-Pritish1/src/deptran/raft/commo.cc<p><PRE>
+
+#include "commo.h"
+#include "../rcc/graph.h"
+#include "../rcc/graph_marshaler.h"
+#include "../command.h"
+#include "../procedure.h"
+#include "../command_marshaler.h"
+#include "raft_rpc.h"
+#include "macros.h"
+#include "service.h"
+
+namespace janus {
+
+RaftCommo::RaftCommo(PollMgr* poll) : Communicator(poll) {
+}
+
+shared_ptr&lt;IntEvent&gt; RaftCommo::SendRequestVoteEvent(parid_t par_id,
+                                siteid_t site_id,
+                                uint64_t& candidateTerm,
+                                uint64_t candidateId,
+                                uint64_t candidateLastLogIndex,
+                                uint64_t candidateLastLogTerm,
+                                int& voteCount,
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match1-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                int& state) {
+  /*
+   * Example code for sending a single RPC to server at site_id
+   * You may modify and use this function or just use it as a reference
+   * retry 2
+   */
+  auto proxies = rpc_par_proxies_[par_id];
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  for (auto& p : proxies) {
+
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+
+      fuattr.callback = [&, candidateId, ev](Future* fu) {
+
+        /* this is a handler that will be invoked when the RPC returns */
+
+        int64_t responseTerm;
+        bool_t voteGranted;
+</FONT>        /* retrieve RPC return values in order */
+        fu-&gt;get_reply() &gt;&gt; responseTerm;
+        fu-&gt;get_reply() &gt;&gt; voteGranted;
+
+        //is a reponse from a connected server
+        if (responseTerm &gt;= 0){
+              if(voteGranted){
+                  voteCount += 1;
+              }else{
+                if(responseTerm &gt; candidateTerm){
+                    candidateTerm = responseTerm;
+                    state = FOLLOWER;
+                    ev-&gt;Set(1);
+                }
+              }
+              if (voteCount == 3) {
+                  Log_info("LEADER SELECTED =&gt; ServerId : %d Total Votes : %d", candidateId, voteCount); 
+                  state = LEADER;
+                  ev-&gt;Set(1);
+              }
+        }
+        /* process the RPC response here */
+      };
+
+      if(candidateId != p.first){
+          Call_Async(proxy, RequestVote, candidateTerm, candidateId, candidateLastLogIndex, candidateLastLogTerm, fuattr);
+      }
+  }
+  return ev;
+}
+
+
+void RaftCommo::SendAppendEntries(
+                                  parid_t par_id,
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match1-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                  siteid_t site_id,
+                                  uint64_t& leaderTerm,
+                                  uint64_t leaderId,
+                                  int64_t& leaderCommit,
+                                  std::vector&lt;LogEntry&gt;& logs,
+                                  std::vector&lt;int&gt;& nextIndex,
+</FONT>                                  std::vector&lt;int&gt;& matchIndex,
+                                  int& state,
+                                  function&lt;void(Marshallable &)&gt; app_next_,
+                                  int& lastApplied) {
+  auto proxies = rpc_par_proxies_[par_id];
+  for (auto& p : proxies) {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      uint64_t prevLogIndex = 0;
+      uint64_t prevLogTerm = 0;
+      vector&lt;LogEntry&gt;entries{};
+      prevLogIndex = nextIndex[p.first] - 1;
+      prevLogTerm = logs[prevLogIndex].term;
+      for(int i=nextIndex[p.first];i&lt;logs.size();i++){
+        entries.push_back(logs[i]);
+      }
+
+      fuattr.callback = [&, leaderId, prevLogIndex, prevLogTerm](Future* fu) {
+
+        uint64_t responseTerm = 0;
+        bool_t success;
+        AEReply aeReply;
+
+        uint64_t conflictIndex;
+        uint64_t conflictTerm;
+        int64_t serverId;
+        uint64_t sizeOfEntries;
+
+        fu-&gt;get_reply() &gt;&gt; responseTerm;
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match1-1.html#3" TARGET="1"><IMG SRC="../../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        fu-&gt;get_reply() &gt;&gt; success;
+        fu-&gt;get_reply() &gt;&gt; aeReply;
+
+        conflictIndex = aeReply.conflictIndex;
+        conflictTerm = aeReply. conflictTerm;
+        serverId = aeReply.serverId;
+        sizeOfEntries = aeReply.sizeOfEntries;
+</FONT>
+        Log_info("%d APPEND ENTRIES CALLBACK =&gt; ResponseTerm %d Leader %d", serverId, responseTerm, leaderId);
+        
+        if (serverId &gt;= 0){
+          if(success == false){
+            // FOLLOWER HAS GREATER TERM THAN LEADER, LEADER SHOULD STEP DOWN
+            if(responseTerm &gt; leaderTerm){
+                leaderTerm = responseTerm;
+                state = 0;
+                return;
+            }
+            if (conflictTerm &lt;= 0){
+                // FOLLOWER HAS SHORTER LOGS THAN LEADER
+                nextIndex[serverId] = conflictIndex;
+                matchIndex[serverId] = nextIndex[serverId] - 1;
+                Log_info("FOLLOWER LOGS &lt; LEADER LOGS =&gt; nextIndex is now %d matchIndex is %d", nextIndex[serverId], matchIndex[serverId]);
+            } else {
+                // TERM CONFLICT AT PREVLOGINDEX, FIND LATEST CONFLICT TERM IN LEADER'S LOGS OR SET NEXTINDEX TO CONFLICT INDEX
+                int latestConflictTermAtLeader = -1;
+                for(int i=logs.size()-1;i&gt;=0;i--){
+                  if(logs[i].term == conflictTerm){
+                    latestConflictTermAtLeader = i;
+                    break;
+                  }
+                }
+                nextIndex[serverId] = latestConflictTermAtLeader == -1 ? conflictIndex : latestConflictTermAtLeader;
+                matchIndex[serverId] = nextIndex[serverId] - 1;
+                Log_info("TERM CONFLICT AT PREVLOGINDEX =&gt; leader %d server %d new nextIndex is %d new matchIndex is %d", leaderId, serverId, nextIndex[serverId], matchIndex[serverId]);
+            }
+          } else if(success == true){
+              //Update the matchIndex for the server
+              if(prevLogIndex + sizeOfEntries &gt; matchIndex[serverId])
+                matchIndex[serverId] = prevLogIndex + sizeOfEntries;
+              nextIndex[serverId] = matchIndex[serverId] + 1;
+              Log_info("%d AE SUCCESS =&gt; PrevLogIndex %d SizeOfEntries %d UpdatedMatchIndex %d UpdatedNextInex %d", serverId, prevLogIndex, sizeOfEntries, matchIndex[serverId], nextIndex[serverId]);
+          }
+          //Figure 8 check, leader should update commit to an index which is in the current term and not previous terms
+          int N = logs.size() - 1;
+          for(int i=N;i&gt;=leaderCommit;i--){
+            int count = 1;
+            if (logs[i].term == leaderTerm){
+              for (int j=0; j&lt;5; j++){
+                if (j != leaderId && matchIndex[j] &gt;= i){
+                  count+=1;
+                }
+              }
+            }
+            if (count &gt;= 3){
+               for(int k=lastApplied+1;k&lt;=i;k++){
+                  MarshallDeputy md = logs[k].md;
+                  shared_ptr&lt;Marshallable&gt; sp = md.sp_data_;
+                  app_next_(*sp);
+                }
+                leaderCommit = i;
+                lastApplied = leaderCommit;
+                Log_info("LEADER %d COMMIT UPDATED =&gt; commit index %d lastApplied %d", leaderId, leaderCommit, lastApplied);
+              break;
+            }
+          }
+        }
+
+      };
+      /* wrap Marshallable in a MarshallDeputy to send over RPC */
+      // MarshallDeputy md(cmd);
+    if(leaderId != p.first){
+      Log_info("LEADER %d SENDING APPEND ENTRY to %d =&gt; Leader term %d | Leader log size %d | Entries size is %d | LeaderCommit %d | Server NextIndex %d", leaderId, p.first, leaderTerm, logs.size(), entries.size(), leaderCommit, nextIndex[p.first]);
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match1-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_8.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      Call_Async(proxy, AppendEntries, leaderTerm, leaderId, prevLogIndex, prevLogTerm, entries, leaderCommit, fuattr);
+    }
+  }
+}
+
+shared_ptr&lt;IntEvent&gt; 
+RaftCommo::SendString(parid_t par_id, siteid_t site_id, const string& msg, const uint64_t& candidateId, string* res) {
+  auto proxies = rpc_par_proxies_[par_id];
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  for (auto& p : proxies) {
+    // if (p.first == site_id) {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [res,ev](Future* fu) {
+        fu-&gt;get_reply() &gt;&gt; *res;
+</FONT>        ev-&gt;Set(1);
+      };
+      /* wrap Marshallable in a MarshallDeputy to send over RPC */
+    if(candidateId != p.first)
+      Call_Async(proxy, HelloRpc, msg, fuattr);
+    // }
+  }
+  return ev;
+}
+
+} // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

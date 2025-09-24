@@ -1,0 +1,74 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-E-train-Liu/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-E-train-Liu/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+
+void RaftServiceImpl::HandleRequestVote(const uint64_t& candidate_term,
+                                        const uint64_t& candidate_id,
+                                        const uint64_t& last_log_index,
+                                        const uint64_t& last_log_term,
+                                        uint64_t *term,
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match58-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_16.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                        bool_t *vote_granted,
+                                        rrr::DeferredReply* defer) {
+  /* Your code here */
+  svr_-&gt;HandleRequestVote(candidate_term, candidate_id,
+                          last_log_index, last_log_term,
+                          term, vote_granted);
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleAppendEntries(const uint64_t& leader_term,
+</FONT>                                          const uint64_t& leader_id,
+                                          const uint64_t& prev_log_index,
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match58-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_15.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                          const uint64_t& prev_log_term,
+                                          const vector&lt;RaftLogEntry&gt;& entries,
+                                          const uint64_t& leader_commit,
+                                          uint64_t *term,
+                                          bool_t *success,
+                                          rrr::DeferredReply* defer) {
+  /* Your code here */
+  svr_-&gt;HandleAppendEntries(leader_term, leader_id,
+</FONT>                            prev_log_index, prev_log_term,
+                            entries,
+                            leader_commit,
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match58-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_14.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                            term, success);
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("receive an rpc: %s", req.c_str());
+</FONT>  *res = "world";
+  defer-&gt;reply();
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

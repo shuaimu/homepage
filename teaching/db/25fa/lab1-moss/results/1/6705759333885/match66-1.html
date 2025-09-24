@@ -1,0 +1,542 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-BruceWang3077/src/deptran/raft/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-gaurav-aggarwall/src/deptran/raft/server.cc<p><PRE>
+
+
+#include "server.h"
+// #include "paxos_worker.h"
+#include "exec.h"
+#include "frame.h"
+#include "coordinator.h"
+#include "../classic/tpc_command.h"
+
+namespace janus
+{
+
+  RaftServer::RaftServer(Frame *frame)
+  {
+    frame_ = frame;
+    /* Your code here for server initialization. Note that this function is
+       called in a different OS thread. Be careful about thread safety if
+       you want to initialize variables here. */
+
+    // TO make the first index as 1 as per paper
+    LogEntry dummy;
+    dummy.term = -1;
+    dummy.cmd = NULL;
+    log.push_back(dummy);
+
+    for (int i = 0; i &lt; NSERVERS; i++)
+    {
+      nextIndex[i] = log.size();
+      matchIndex[i] = 0;
+    }
+  }
+
+  RaftServer::~RaftServer()
+  {
+    /* Your code here for server teardown */
+    IS_TIMER_STOPPED = true;
+  }
+
+  void RaftServer::Setup()
+  {
+    /* Your code here for server setup. Due to the asynchronous nature of the
+       framework, this function could be called after a RPC handler is triggered.
+       Your code should be aware of that. This function is always called in the
+       same OS thread as the RPC handlers. */
+    startElectionTimer();
+  }
+
+  void RaftServer::convertToFollower()
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+
+    state = FOLLOWER;
+    startElectionTimer();
+  }
+
+  void RaftServer::convertToCandidate()
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+
+    if (state != FOLLOWER || getRemainingTimerVal() &gt; 0)
+      return;
+
+    state = CANDIDATE;
+    sendRequestVote();
+  }
+
+  void RaftServer::convertToLeader()
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+
+    if (state != CANDIDATE)
+      return;
+
+    IS_TIMER_STOPPED = true;
+    state = LEADER;
+    startHeartbeats();
+
+    for (int i = 0; i &lt; NSERVERS; i++)
+    {
+      nextIndex[i] = log.size();
+      matchIndex[i] = 0;
+    }
+  }
+
+  void RaftServer::addTimeToTimer(uint64_t timeInMicroSeconds)
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+
+    if (IS_TIMER_STOPPED)
+    {
+      TIMER_VAL.tv_sec = 0;
+      TIMER_VAL.tv_usec = 0;
+      return;
+    }
+
+    TIMER_VAL.tv_usec += timeInMicroSeconds;
+
+    // Overflow
+    if (TIMER_VAL.tv_usec &gt;= SECONDS_TO_MICROSECONDS)
+    {
+      TIMER_VAL.tv_sec += TIMER_VAL.tv_usec / SECONDS_TO_MICROSECONDS;
+      TIMER_VAL.tv_usec = TIMER_VAL.tv_usec % SECONDS_TO_MICROSECONDS;
+    }
+  }
+
+  // Can return -ve value if the current time is already passed the timer value
+  int64_t RaftServer::getRemainingTimerVal()
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+
+    if (IS_TIMER_STOPPED)
+      return 0;
+
+    struct timeval currentTime;
+    gettimeofday(&currentTime, nullptr);
+    int64_t remainingTime = (TIMER_VAL.tv_sec - currentTime.tv_sec) * SECONDS_TO_MICROSECONDS + TIMER_VAL.tv_usec - currentTime.tv_usec;
+
+    if (remainingTime &lt;= 0)
+      IS_TIMER_STOPPED = true;
+
+    return remainingTime;
+  }
+
+  void RaftServer::startElectionTimer()
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+
+    if (state != FOLLOWER)
+      return;
+
+    IS_TIMER_STOPPED = false;
+    gettimeofday(&TIMER_VAL, nullptr);
+    addTimeToTimer(ELECTION_TIMEOUT);
+
+    if (ElectionCoroutine != nullptr)
+      return;
+
+    ElectionCoroutine = Coroutine::CreateRun([this]()
+                                             {
+    while(true) {
+      uint64_t remainingTime = getRemainingTimerVal();
+
+      if (IS_TIMER_STOPPED || remainingTime &lt;= 0) break;
+      
+      Coroutine::Sleep(remainingTime);
+      
+      if (state != FOLLOWER) break;
+
+      if (getRemainingTimerVal() &lt;= 0) convertToCandidate();
+    }
+    ElectionCoroutine = nullptr; });
+  }
+
+  void RaftServer::sendRequestVote()
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+
+    if (state != CANDIDATE)
+      return;
+
+    // Disconnected
+    if (commo()-&gt;rpc_par_proxies_[partition_id_].size() == 0)
+    {
+      convertToFollower();
+      return;
+    }
+
+    currentTerm += 1;
+    votedFor = site_id_;
+
+    uint64_t lastLogIndex = log.size() - 1;
+    uint64_t lastLogTerm = log[lastLogIndex].term;
+
+    shared_ptr&lt;QuorumEvent&gt; ev = commo()-&gt;SendRequestVote(partition_id_, site_id_, currentTerm, lastLogIndex, lastLogTerm);
+    ev-&gt;Wait();
+
+    if ((currentTerm &lt; ev-&gt;highest_term_) || ev-&gt;No())
+    {
+      votedFor = -1;
+      currentTerm = ev-&gt;highest_term_;
+      convertToFollower();
+      return;
+    }
+
+    convertToLeader();
+  }
+
+  void RaftServer::startHeartbeats()
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+
+    if (state != LEADER)
+      return;
+
+    Coroutine::CreateRun([this]()
+                         {
+    while(true) {
+      if (state != LEADER) break;
+  
+      Coroutine::Sleep(HEARTBEAT_INTERVAL);
+  
+      if (state != LEADER) break;
+
+      sendAppendEntries();
+    } });
+  }
+
+  void RaftServer::sendAppendEntries()
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+
+    if (state != LEADER)
+      return;
+
+    auto proxies = commo()-&gt;rpc_par_proxies_[partition_id_];
+
+    // Disconnected
+    if (proxies.size() == 0)
+      return;
+
+    unordered_map&lt;siteid_t, uint64_t&gt; prevLogIndexes;
+    unordered_map&lt;siteid_t, uint64_t&gt; prevLogTerms;
+    unordered_map&lt;siteid_t, pair&lt;vector&lt;uint64_t&gt;, vector&lt;MarshallDeputy&gt;&gt;&gt; entries;
+
+    uint64_t lastLogIndex = log.size() - 1;
+
+    for (auto &proxy : proxies)
+    {
+      siteid_t proxyId = proxy.first;
+
+      if (proxyId == site_id_)
+        continue;
+
+      uint64_t prevLogIndex = nextIndex[proxyId] - 1;
+      uint64_t nextLogIndex = nextIndex[proxyId];
+
+      prevLogIndexes[proxyId] = prevLogIndex;
+      prevLogTerms[proxyId] = log[prevLogIndex].term;
+
+      if (lastLogIndex &gt;= nextLogIndex)
+      {
+        vector&lt;uint64_t&gt; terms;
+        vector&lt;MarshallDeputy&gt; commands;
+
+        for (int i = nextLogIndex; i &lt;= lastLogIndex; i++)
+        {
+          terms.push_back(log[i].term);
+
+          MarshallDeputy md(log[i].cmd);
+          commands.push_back(md);
+        }
+
+        entries[proxyId] = {terms, commands};
+      }
+    }
+
+    commo()-&gt;serverAcks = vector&lt;int&gt;(NSERVERS, 0);
+    commo()-&gt;serverFirstIndex = vector&lt;int&gt;(NSERVERS, 1);
+
+    shared_ptr&lt;QuorumEvent&gt; ev = commo()-&gt;SendAppendEntries(partition_id_, site_id_, currentTerm, prevLogIndexes, prevLogTerms, entries, commitIndex);
+    ev-&gt;Wait();
+
+    for (auto &proxy : proxies)
+    {
+      siteid_t proxyId = proxy.first;
+
+      if (proxyId == site_id_ || commo()-&gt;serverAcks[proxyId] == 1)
+      {
+        nextIndex[proxyId] = log.size();
+        matchIndex[proxyId] = log.size() - 1;
+      }
+      else
+      {
+        nextIndex[proxyId] = commo()-&gt;serverFirstIndex[proxyId];
+      }
+    }
+
+    for (uint64_t N = log.size() - 1; N &gt; commitIndex; N--)
+    {
+      if (log[N].term == currentTerm)
+      {
+        int count = 0;
+
+        for (int i = 0; i &lt; NSERVERS; i++)
+        {
+          if (matchIndex[i] &gt;= N)
+            count += 1;
+        }
+
+        if (count &gt; (NSERVERS / 2))
+        {
+          commitIndex = N;
+          break;
+        }
+      }
+    }
+
+    ApplyLogs();
+
+    if (currentTerm &lt; ev-&gt;highest_term_)
+    {
+      currentTerm = ev-&gt;highest_term_;
+      votedFor = -1;
+      convertToFollower();
+      return;
+    }
+  }
+
+  bool RaftServer::Start(shared_ptr&lt;Marshallable&gt; &cmd,
+                         uint64_t *index,
+                         uint64_t *term)
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+
+    if (state != LEADER)
+      return false;
+
+    *index = log.size();
+    *term = currentTerm;
+
+    LogEntry entry;
+    entry.term = currentTerm;
+    entry.cmd = cmd;
+    log.push_back(entry);
+
+    return true;
+  }
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match66-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  void RaftServer::GetState(bool *is_leader, uint64_t *term)
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+
+    *is_leader = state == LEADER;
+</FONT>    *term = currentTerm;
+  }
+
+  void RaftServer::HandleRequestVote(const uint64_t &candidateTerm,
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match66-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                     const uint64_t &candidateId,
+                                     const uint64_t &lastLogIndex,
+                                     const uint64_t &lastLogTerm,
+                                     uint64_t *term,
+                                     bool_t *voteGranted)
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+</FONT>
+    *term = currentTerm;
+
+    if ((currentTerm &gt; candidateTerm) ||
+        ((currentTerm == candidateTerm) && (votedFor != -1 && votedFor != candidateId)))
+    {
+      *term = currentTerm;
+      *voteGranted = false;
+      return;
+    }
+
+    if (currentTerm &lt; candidateTerm)
+    {
+      currentTerm = candidateTerm;
+      convertToFollower();
+    }
+
+    uint64_t selfLastLogIndex = log.size() - 1;
+    uint64_t selfLastLogTerm = log[selfLastLogIndex].term;
+
+    if ((selfLastLogTerm &gt; lastLogTerm) || ((selfLastLogTerm == lastLogTerm) && (selfLastLogIndex &gt; lastLogIndex)))
+    {
+      *voteGranted = false;
+      return;
+    }
+
+    *voteGranted = true;
+    votedFor = candidateId;
+    convertToFollower();
+    return;
+  }
+
+  void RaftServer::HandleAppendEntries(const uint64_t &leaderTerm,
+                                       const uint64_t &leaderId,
+                                       const uint64_t &prevLogIndex,
+                                       const uint64_t &prevLogTerm,
+                                       const vector&lt;uint64_t&gt; &terms,
+                                       const vector&lt;MarshallDeputy&gt; &commands,
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match66-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                       const uint64_t &leaderCommit,
+                                       uint64_t *term,
+                                       uint64_t *firstIndex,
+                                       bool_t *success)
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+
+    uint64_t selfLastLogIndex = log.size() - 1;
+</FONT>
+    /**
+      Reject Append Entry if:
+       1. Current Term is bigger than leader term
+       2. Log inconsistency
+    **/
+    if ((leaderTerm &lt; currentTerm) || (prevLogIndex &gt; selfLastLogIndex))
+    {
+      *term = currentTerm;
+      *success = false;
+      *firstIndex = prevLogIndex;
+      return;
+    }
+
+    // optimization
+    if (prevLogTerm != log[prevLogIndex].term)
+    {
+      uint64_t responseIndex = prevLogIndex;
+
+      while (responseIndex &gt;= 1 && log[responseIndex - 1].term == log[prevLogIndex].term)
+      {
+        responseIndex -= 1;
+      }
+
+      *term = currentTerm;
+      *firstIndex = responseIndex;
+      *success = false;
+      return;
+    }
+
+    if (terms.size() &gt; 0)
+    {
+      /**
+        Log Syncing
+         1. Delete all the entries starting from prevLogIndex + 1 (nextIndex)
+         2. Append all the entries sent by the leader
+       **/
+      uint64_t nextIndex = prevLogIndex + 1;
+      log.erase(log.begin() + nextIndex, log.end());
+
+      for (int i = 0; i &lt; terms.size(); i++)
+      {
+        LogEntry entry;
+        entry.cmd = const_cast&lt;MarshallDeputy &&gt;(commands[i]).sp_data_;
+        entry.term = terms[i];
+
+        log.push_back(entry);
+      }
+    }
+
+    if (commitIndex &lt; leaderCommit)
+      commitIndex = min(leaderCommit, log.size() - 1);
+
+    ApplyLogs();
+
+    *term = currentTerm;
+    currentTerm = leaderTerm;
+    *success = true;
+    convertToFollower();
+    return;
+  }
+
+  void RaftServer::ApplyLogs()
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+
+    for (int i = lastApplied + 1; i &lt;= commitIndex; i++)
+    {
+      janus::Marshallable &cmd = *(log[i].cmd);
+      app_next_(cmd);
+    }
+
+    lastApplied = commitIndex;
+  }
+
+  void RaftServer::SyncRpcExample()
+  {
+    /* This is an example of synchronous RPC using coroutine; feel free to
+       modify this function to dispatch/receive your own messages.
+       You can refer to the other function examples in commo.h/cc on how
+       to send/recv a Marshallable object over RPC. */
+    Coroutine::CreateRun([this]()
+                         {
+    string res;
+    auto event = commo()-&gt;SendString(0, /* partition id is always 0 for lab1 */
+                                     0, "hello", &res);
+    event-&gt;Wait(1000000); //timeout after 1000000us=1s
+    if (event-&gt;status_ == Event::TIMEOUT) {
+      Log_info("timeout happens");
+    } else {
+      Log_info("rpc response is: %s", res.c_str()); 
+    } });
+  }
+
+  /* Do not modify any code below here */
+
+  void RaftServer::Disconnect(const bool disconnect)
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    verify(disconnected_ != disconnect);
+    // global map of rpc_par_proxies_ values accessed by partition then by site
+    static map&lt;parid_t, map&lt;siteid_t, map&lt;siteid_t, vector&lt;SiteProxyPair&gt;&gt;&gt;&gt; _proxies{};
+    if (_proxies.find(partition_id_) == _proxies.end())
+    {
+      _proxies[partition_id_] = {};
+    }
+    RaftCommo *c = (RaftCommo *)commo();
+    if (disconnect)
+    {
+      verify(_proxies[partition_id_][loc_id_].size() == 0);
+      verify(c-&gt;rpc_par_proxies_.size() &gt; 0);
+      auto sz = c-&gt;rpc_par_proxies_.size();
+      _proxies[partition_id_][loc_id_].insert(c-&gt;rpc_par_proxies_.begin(), c-&gt;rpc_par_proxies_.end());
+      c-&gt;rpc_par_proxies_ = {};
+      verify(_proxies[partition_id_][loc_id_].size() == sz);
+      verify(c-&gt;rpc_par_proxies_.size() == 0);
+    }
+    else
+    {
+      verify(_proxies[partition_id_][loc_id_].size() &gt; 0);
+      auto sz = _proxies[partition_id_][loc_id_].size();
+      c-&gt;rpc_par_proxies_ = {};
+      c-&gt;rpc_par_proxies_.insert(_proxies[partition_id_][loc_id_].begin(), _proxies[partition_id_][loc_id_].end());
+      _proxies[partition_id_][loc_id_] = {};
+      verify(_proxies[partition_id_][loc_id_].size() == 0);
+      verify(c-&gt;rpc_par_proxies_.size() == sz);
+    }
+    disconnected_ = disconnect;
+  }
+
+  bool RaftServer::IsDisconnected()
+  {
+    return disconnected_;
+  }
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

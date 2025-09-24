@@ -1,0 +1,207 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-carwyn987/src/deptran/raft/commo.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-carwyn987/src/deptran/raft/commo.cc<p><PRE>
+
+#include "commo.h"
+#include "../rcc/graph.h"
+#include "../rcc/graph_marshaler.h"
+#include "../command.h"
+#include "../procedure.h"
+#include "../command_marshaler.h"
+#include "raft_rpc.h"
+#include "macros.h"
+
+namespace janus {
+
+RaftCommo::RaftCommo(PollMgr* poll) : Communicator(poll) {
+}
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match157-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void RaftCommo::SendRequestVote(parid_t par_id,
+                                siteid_t site_id,
+                                uint64_t arg1,
+                                uint64_t arg2,
+                                uint64_t lastLogIndex,
+                                uint64_t lastLogTerm,
+                                bool* voted_for_glo) {
+  /*
+   * Example code for sending a single RPC to server at site_id
+   * You may modify and use this function or just use it as a reference
+   */
+  auto proxies = rpc_par_proxies_[par_id];
+</FONT>  //   auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+//   cout &lt;&lt; "RPC CALL SEND: Server #" &lt;&lt; arg2 &lt;&lt; " requesting server #" &lt;&lt; site_id &lt;&lt; " for vote. Term of request: " &lt;&lt; arg1 &lt;&lt; endl;
+  for (auto& p : proxies) {
+    if (p.first == site_id) {
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match157-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_9.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [voted_for_glo, site_id](Future* fu) {
+        /* this is a handler that will be invoked when the RPC returns */
+        uint64_t ret1;
+        uint64_t vote_granted;
+        /* retrieve RPC return values in order */
+        fu-&gt;get_reply() &gt;&gt; ret1;
+        fu-&gt;get_reply() &gt;&gt; vote_granted;
+</FONT>
+        // cout &lt;&lt; "RETURNED VOTE!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" &lt;&lt; site_id &lt;&lt; " VOTE GRANTED: " &lt;&lt; vote_granted &lt;&lt; " RET1: " &lt;&lt; ret1 &lt;&lt; " ERROR CODE: " &lt;&lt; fu-&gt;get_error_code() &lt;&lt; endl;
+
+        // cout &lt;&lt; "COUT VOTE GRANTED: vote granted: " &lt;&lt; vote_granted &lt;&lt; endl;
+        *voted_for_glo = (vote_granted == 1) ? true : false;
+
+        // *vote_granted_glo = vg;
+        /* process the RPC response here */
+      };
+      /* Always use Call_Async(proxy, RPC name, RPC args..., fuattr)
+      * to asynchronously invoke RPCs */
+    //   cout &lt;&lt; "RPC CALL SEND22: Server #" &lt;&lt; arg2 &lt;&lt; " requesting server #" &lt;&lt; site_id &lt;&lt; " for vote. Term of request: " &lt;&lt; arg1 &lt;&lt; endl;
+      Call_Async(proxy, RequestVote, arg1, arg2, lastLogIndex, lastLogTerm, fuattr);
+    }
+  }
+//   return ev;
+}
+
+shared_ptr&lt;IntEvent&gt;
+RaftCommo::SendAppendEntries(parid_t par_id,
+                                  siteid_t site_id,
+                                  shared_ptr&lt;Marshallable&gt; cmd,
+                                  uint64_t term,
+                                  uint64_t leaderId,
+                                  uint64_t prevLogIndex,
+                                  uint64_t prevLogTerm,
+                                  int64_t logTerm,
+                                  uint64_t leaderCommit,
+                                  uint64_t* cur_term_ptr,
+                                  volatile uint64_t* nextIndexPtr,
+                                  std::recursive_mutex* mtx,
+                                  roles* role,
+                                  std::chrono::high_resolution_clock::time_point* time_since_rec) {
+  /*
+   * More example code for sending a single RPC to server at site_id
+   * You may modify and use this function or just use it as a reference
+   */
+  auto proxies = rpc_par_proxies_[par_id];
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  for (auto& p : proxies) {
+    if (p.first == site_id) {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+
+      fuattr.callback = [cur_term_ptr, ev, nextIndexPtr, site_id, leaderId, mtx, role, time_since_rec](Future* fu) {
+        int64_t temp_success;
+        uint64_t rtt;
+        bool_t success = false;
+        fu-&gt;get_reply() &gt;&gt; temp_success;
+        fu-&gt;get_reply() &gt;&gt; rtt;
+
+        /*
+            If temp_success = 2 :: true, appended
+            If temp_success = 1 :: false, need to send prev request (or check if terms are off)
+            If temp_success = 0 :: request failed
+            If temp_success = -1 :: heartbeat, ignore
+        */
+       if(temp_success == 0){
+        // cout &lt;&lt; "request ignored" &lt;&lt; endl;
+        return;
+       }
+
+       if(temp_success == -1){
+            // Heartbeat, ignore
+            ev-&gt;Set(1);
+            if(rtt &gt; *cur_term_ptr){
+                *cur_term_ptr = rtt; // Maybe?
+                *role = follower; // follower
+                *time_since_rec = std::chrono::high_resolution_clock::now();
+            }
+       }else{
+            success = (temp_success == 1) ? false : true;
+            ev-&gt;Set(1);
+            *time_since_rec = std::chrono::high_resolution_clock::now();
+
+            // If term is higher than leader, incremnet and "step down?"
+            if(rtt &gt; *cur_term_ptr){
+                *cur_term_ptr = rtt; // Maybe?
+                *role = follower; // follower
+            }
+
+            // If false, decrement nextIndex of this server
+            mtx-&gt;lock();
+            if(!success && *nextIndexPtr &gt; 1){
+                // cout &lt;&lt; "decrement index " &lt;&lt; *nextIndexPtr &lt;&lt; " temp_success: " &lt;&lt; temp_success &lt;&lt; "site_ids " &lt;&lt; site_id &lt;&lt; " " &lt;&lt; leaderId &lt;&lt; endl;
+                (*nextIndexPtr)--;
+            }
+
+            // If true, increment nextIndex of this server
+            if(success){
+                // cout &lt;&lt; "increment index " &lt;&lt; *nextIndexPtr &lt;&lt; " temp_success: " &lt;&lt; temp_success &lt;&lt; endl;
+                (*nextIndexPtr)++;
+            }
+            mtx-&gt;unlock();
+            // cout &lt;&lt; "after decrement index " &lt;&lt; *nextIndexPtr &lt;&lt; endl;
+            // cout &lt;&lt; "Svr " &lt;&lt; site_id &lt;&lt; " updated leaders nextIndex of it to " &lt;&lt; *nextIndexPtr &lt;&lt; ", Got temp success: " &lt;&lt; temp_success &lt;&lt; ", and received term: " &lt;&lt; rtt &lt;&lt; endl;
+       }        
+      };
+      /* wrap Marshallable in a MarshallDeputy to send over RPC */
+      MarshallDeputy md(cmd);
+      Call_Async(proxy, AppendEntries, md, term, leaderId, prevLogIndex, prevLogTerm, logTerm, leaderCommit, fuattr);
+    }
+  }
+  return ev;
+}
+
+/*
+
+shared_ptr&lt;IntEvent&gt; 
+RaftCommo::SendString(parid_t par_id, siteid_t site_id, const string& msg, string* res) {
+  auto proxies = rpc_par_proxies_[par_id];
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  for (auto& p : proxies) {
+    if (p.first == site_id) {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [res,ev](Future* fu) {
+        fu-&gt;get_reply() &gt;&gt; *res;
+        ev-&gt;Set(1);
+      };
+      // wrap Marshallable in a MarshallDeputy to send over RPC 
+      Call_Async(proxy, HelloRpc, msg, fuattr);
+    }
+  }
+  return ev;
+}
+
+void RaftCommo::SendHeartBeat(parid_t par_id, siteid_t site_id, const uint64_t term, string* res) {
+  auto proxies = rpc_par_proxies_[par_id];
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  for (auto& p : proxies) {
+    if (p.first == site_id) {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [res,ev](Future* fu) {
+        // this is a handler that will be invoked when the RPC returns 
+        // uint64_t ret1;
+        // uint64_t vote_granted;
+        // retrieve RPC return values in order 
+        fu-&gt;get_reply() &gt;&gt; *res;
+      };
+
+      // wrap Marshallable in a MarshallDeputy to send over RPC
+      Call_Async(proxy, HeartBeatRpc, term, fuattr);
+    }
+  }
+}
+
+*/
+
+
+} // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

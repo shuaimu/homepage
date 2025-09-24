@@ -1,0 +1,164 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-yskot1999/src/shardkv/client.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-shrh18/src/shardkv/client.cc<p><PRE>
+
+
+#include "client.h"
+#include "server.h"
+#include "../shardmaster/client.h"
+
+namespace janus {
+
+int ShardKvClient::Op(function&lt;int(uint32_t*)&gt; func) {
+  uint64_t t1 = Time::now();
+  while (true) {
+    uint64_t t2 = Time::now();
+    if (t2 - t1 &gt; 10000000) {
+      return KV_TIMEOUT;
+    }
+    uint32_t ret = 0;
+    int r1; 
+    r1 = func(&ret);
+    if (r1 == ETIMEDOUT || ret == KV_TIMEOUT) {
+      leader_idx_ = (leader_idx_+1) % 5;
+      return KV_TIMEOUT;
+    }
+    if (ret == KV_SUCCESS) {
+      return KV_SUCCESS;
+    }
+    if (ret == KV_NOTLEADER) {
+      leader_idx_ = (leader_idx_+1) % 5;
+      // Log_info("Leader idx - %d", leader_idx_);
+    }
+  }
+
+}
+
+// std::shared_ptr&lt;ShardMasterClient&gt; ShardKvClient::CreateSMClient(){
+//   auto shardmaster_cli = make_shared&lt;ShardMasterClient&gt;();
+//   shardmaster_cli-&gt;commo_ = new Communicator(); 
+//   return shardmaster_cli;
+// }
+
+int ShardKvClient::Put(const string& k, const string& v) {
+
+  uint32_t shardID = Key2Shard(k);
+  Log_info("Key is - %s", k.c_str());
+  Log_info("Key lies in shard - %d", shardID);
+  uint32_t returnVal;
+  auto xx = (ShardMasterProxy*)commo_-&gt;rpc_proxies_.at(0);
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match16-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  ShardConfig config;
+  xx-&gt;Query(-1, &returnVal, &config);
+  vector&lt;uint32_t&gt; configServers = config.group_servers_map_[config.shard_group_map_[shardID]];
+</FONT>  for(auto& gg : configServers){
+    Log_info("%d has shard %d", gg, shardID);
+  }
+
+
+  // Log_info("size is - %d", configServers.size());
+  // Log_info("Grp size - %d", config.shard_group_map_[shardID]);
+
+  // int ret;
+  // uint32_t* r;
+  // for(auto& ll : configServers){
+  //   Log_info("Trying for svr - %d", ll);
+  //   ret = Proxy(ll).Put(GetNextOpId(), k, v, r);
+  //   if(ret == KV_SUCCESS){
+  //     Log_info("ldr - %d", ll);
+  //     break;
+  //   }
+  // }
+  // return ret;
+  // leader_idx_ = configServers[0];
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match16-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_8.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  return Op([&](uint32_t* r)-&gt;int{
+    return Proxy(configServers[0]).Put(GetNextOpId(), k, v, r);
+  });
+}
+
+ShardKvProxy& ShardKvClient::Proxy(siteid_t site_id) {
+  verify(commo_);
+  auto p = (ShardKvProxy*)commo_-&gt;rpc_proxies_.at(site_id);
+</FONT>  return *p; 
+}
+
+int ShardKvClient::Append(const string& k, const string& v) {
+
+  uint32_t shardID = Key2Shard(k);
+  Log_info("Key is - %s", k.c_str());
+  Log_info("Key lies in shard - %d", shardID);
+  uint32_t returnVal;
+  auto xx = (ShardMasterProxy*)commo_-&gt;rpc_proxies_.at(0);
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match16-0.html#3" TARGET="0"><IMG SRC="../../../bitmaps/tm_3_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  ShardConfig config;
+  xx-&gt;Query(-1, &returnVal, &config);
+  vector&lt;uint32_t&gt; configServers = config.group_servers_map_[config.shard_group_map_[shardID]];
+</FONT>  for(auto& gg : configServers){
+    Log_info("%d has shard %d", gg, shardID);
+  }
+  
+  // Log_info("size is - %d", configServers.size());
+  // Log_info("Grp size - %d", config.shard_group_map_[shardID]);
+
+  // int ret;
+  // uint32_t* r;
+  // for(auto& ll : configServers){
+  //   ret = Proxy(ll).Append(GetNextOpId(), k, v, r);
+  //   if(ret == KV_SUCCESS){
+  //     Log_info("ldr - %d", ll);
+  //     break;
+  //   }
+  // }
+  // return ret;
+  leader_idx_ = configServers[0]%10;
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match16-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_7.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  return Op([&](uint32_t* r)-&gt;int{
+    return Proxy(configServers[0]).Append(GetNextOpId(), k, v, r);
+  });
+}
+
+int ShardKvClient::Get(const string& k, string* v) {
+
+    uint32_t shardID = Key2Shard(k);
+</FONT>  Log_info("Key is - %s", k.c_str());
+  Log_info("Key lies in shard - %d", shardID);
+  uint32_t returnVal;
+  auto xx = (ShardMasterProxy*)commo_-&gt;rpc_proxies_.at(0);
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match16-0.html#4" TARGET="0"><IMG SRC="../../../bitmaps/tm_4_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  ShardConfig config;
+  xx-&gt;Query(-1, &returnVal, &config);
+  vector&lt;uint32_t&gt; configServers = config.group_servers_map_[config.shard_group_map_[shardID]];
+</FONT>  for(auto& gg : configServers){
+    Log_info("%d has shard %d", gg, shardID);
+  }
+  
+  // Log_info("size is - %d", configServers.size());
+  // Log_info("Grp size - %d", config.shard_group_map_[shardID]);
+
+  // int ret;
+  // uint32_t* r;
+  // // for(auto& ll : configServers){
+  //   ret = Proxy(configServers[0]).Get(GetNextOpId(), k, r, v);
+  // // }
+  // Log_info("Get val - %s", v-&gt;c_str());
+  // return ret;
+  // leader_idx_ = configServers[0];
+  return Op([&](uint32_t* r)-&gt;int{
+    return Proxy(configServers[0]).Get(GetNextOpId(), k, r, v);
+  });
+}
+
+} // namesapce janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,538 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/vishalnarayanan/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/vishalnarayanan/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+import (
+	"raft"
+)
+import "labrpc"
+import "sync"
+import "labgob"
+
+type ShardMaster struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	//killCh chan bool
+
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match155-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	StartChannelsPerClient map[int64]chan bool
+	StopChannelsPerClient  map[int64]chan bool
+	SeenSeqNo              map[int64]int
+	rfPersister            *raft.Persister
+	configs                []Config // indexed by config num
+</FONT>	HighestSeenConfig      int
+}
+
+type OperationType int
+
+const (
+	Join  OperationType = 0
+	Move  OperationType = 1
+	Leave OperationType = 2
+)
+
+type Operation struct {
+	Join  JoinArgs
+	Move  MoveArgs
+	Leave LeaveArgs
+}
+
+type Op struct {
+	ClientId int64
+	//SeqNo         int
+	IsConfig      bool
+	OperationType OperationType
+	Operation     Operation
+	QueryIndex    int
+	// Your data here.
+}
+
+func (kv *ShardMaster) GetUniqueSequenceForClientReq(Command Op) int64 {
+	return Command.ClientId
+}
+
+func (sm *ShardMaster) JoinOP(pervConfig Config, ServersToJoin map[int][]string) Config {
+	var NewConfig Config
+
+	NewConfig.Num = pervConfig.Num + 1
+	NewConfig.Groups = make(map[int][]string)
+
+	EachGroupCount := make(map[int]int)
+	TotalGroupList := make([]int, 0)
+	for k, v := range pervConfig.Groups {
+		NewConfig.Groups[k] = v
+		EachGroupCount[k] = 0
+		TotalGroupList = append(TotalGroupList, k)
+	}
+	for k, v := range pervConfig.Shards {
+		NewConfig.Shards[k] = v
+	}
+
+	//TODO : length of args.serves is zero then what
+	groupIDs := make([]int, 0)
+	//log.Println("****** Command Before JOIN", Command)
+
+	for k, v := range ServersToJoin {
+		if servers, ok := NewConfig.Groups[k]; ok {
+			servers = append(servers, v...)
+		} else {
+			NewConfig.Groups[k] = v
+		}
+		groupIDs = append(groupIDs, k)
+		TotalGroupList = append(TotalGroupList, k)
+	}
+
+	if len(pervConfig.Groups) == 0 {
+		i := 0
+		for k, _ := range NewConfig.Shards {
+			NewConfig.Shards[k] = TotalGroupList[i]
+			i += 1
+			if i &gt;= len(TotalGroupList) {
+				i = 0
+			}
+		}
+		//log.Println("****** Command", Command)
+	} else {
+		i := 0
+		var idealGroupCount int
+		if len(NewConfig.Groups) &gt;= 10 {
+			idealGroupCount = 1
+		} else {
+			idealGroupCount = int(NShards / len(NewConfig.Groups))
+		}
+
+		for k, v := range pervConfig.Shards {
+			if count, ok := EachGroupCount[v]; ok {
+				if count &gt;= idealGroupCount {
+					NewConfig.Shards[k] = groupIDs[i]
+					i += 1
+					if i &gt;= len(groupIDs) {
+						i = 0
+					}
+				} else {
+					EachGroupCount[v] += 1
+				}
+			}
+		}
+	}
+	//log.Println("Join Servers : ", ServersToJoin, " Previous : ", pervConfig, " New : ", NewConfig)
+	return NewConfig
+}
+
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+	// Your code here.
+	//sm.mu.Lock()
+	//log.Println("Join Arguments length : ",len(args.Servers))
+	var Command Op
+	Command.OperationType = Join
+	Command.ClientId = args.ClientID
+	Command.IsConfig = true
+	Command.Operation.Join = *args
+	//Command.SeqNo = args.SeqNo
+	//TODO: Numbering decide
+
+	//sm.mu.Unlock()
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match155-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	_, _, isLeader := sm.rf.Start(Command)
+
+	if isLeader == false {
+		reply.WrongLeader = true
+		return
+	}
+
+	//println("Wait ")
+
+	sm.mu.Lock()
+	//println("Wait ACh")
+
+	respChannel := make(chan bool)
+	stopChannel := make(chan bool)
+	keyValue := sm.GetUniqueSequenceForClientReq(Command)
+	if Channel, ok := sm.StopChannelsPerClient[keyValue]; ok {
+		Channel &lt;- true
+	}
+	sm.StopChannelsPerClient[keyValue] = stopChannel
+	sm.StartChannelsPerClient[keyValue] = respChannel
+	sm.mu.Unlock()
+
+	select {
+	case &lt;-stopChannel:
+		reply.WrongLeader = true
+		//log.Println("Total Group List : ", TotalGroupList)
+		//log.Println("****** Command JOIN", Command)
+		return
+	case &lt;-respChannel:
+		reply.Err = OK
+</FONT>		return
+	}
+}
+
+func (sm *ShardMaster) findMinCountGroupID(GroupCount map[int]int) int {
+	min := 11
+	server := -1
+	for ser, count := range GroupCount {
+		if min &gt; count {
+			min = count
+			server = ser
+		}
+	}
+	return server
+}
+
+func (sm *ShardMaster) GetGroupCountExceptMap(shard [NShards]int, GIDS []int) map[int]int {
+	GroupCount := make(map[int]int)
+	for _, server := range shard {
+		skip := false
+		for _, GID := range GIDS {
+			//println("GID : ", GID, "server : ", server)
+			if GID == server {
+				//println("Skipping")
+				skip = true
+			}
+		}
+		if skip {
+			continue
+		}
+		if _, ok := GroupCount[server]; ok {
+			GroupCount[server] += 1
+		} else {
+			GroupCount[server] = 1
+		}
+	}
+	return GroupCount
+}
+
+func (sm *ShardMaster) AddMissingGroupInCount(GroupCount map[int]int, GIDs []int) map[int]int {
+	for _, GID := range GIDs {
+		if _, ok := GroupCount[GID]; ok == false {
+			GroupCount[GID] = 0
+		}
+	}
+	return GroupCount
+}
+
+func (sm *ShardMaster) LeaveOP(prevConfig Config, GIDs []int) Config {
+	var NewConfig Config
+	NewConfig.Num = prevConfig.Num + 1
+	NewConfig.Groups = make(map[int][]string)
+	for k, v := range prevConfig.Groups {
+		NewConfig.Groups[k] = v
+	}
+
+	for k, v := range prevConfig.Shards {
+		NewConfig.Shards[k] = v
+	}
+
+	for _, GID := range GIDs {
+		delete(NewConfig.Groups, GID)
+	}
+
+	TotalGroupList := make([]int, 0)
+	for k, _ := range NewConfig.Groups {
+		TotalGroupList = append(TotalGroupList, k)
+	}
+
+	GroupCount := sm.GetGroupCountExceptMap(NewConfig.Shards, GIDs)
+	GroupCount = sm.AddMissingGroupInCount(GroupCount, TotalGroupList)
+	//log.Println("Leave  Group Count : ", GroupCount)
+	for k, v := range NewConfig.Shards {
+		for _, GID := range GIDs {
+			if GID == v {
+				NewServer := sm.findMinCountGroupID(GroupCount)
+				NewConfig.Shards[k] = NewServer
+				GroupCount[NewServer] += 1
+			}
+		}
+
+	}
+	//log.Println("Leave Servers : ", GIDs, " Previous : ", prevConfig, " New : ", NewConfig)
+	return NewConfig
+}
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+	// Your code here.
+	//sm.mu.Lock()
+	//log.Println("Leave  arg : ",args.GIDs)
+	var Command Op
+	Command.ClientId = args.ClientID
+	Command.IsConfig = true
+	Command.OperationType = Leave
+	Command.Operation.Leave = *args
+
+	//sm.mu.Unlock()
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match155-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	_, _, isLeader := sm.rf.Start(Command)
+
+	if isLeader == false {
+		reply.WrongLeader = true
+		return
+	}
+
+	//println("Wait ")
+
+	sm.mu.Lock()
+	//println("Wait ACh")
+	respChannel := make(chan bool)
+	stopChannel := make(chan bool)
+	keyValue := sm.GetUniqueSequenceForClientReq(Command)
+	if Channel, ok := sm.StopChannelsPerClient[keyValue]; ok {
+		Channel &lt;- true
+	}
+	sm.StopChannelsPerClient[keyValue] = stopChannel
+	sm.StartChannelsPerClient[keyValue] = respChannel
+	sm.mu.Unlock()
+
+	select {
+	case &lt;-stopChannel:
+		reply.WrongLeader = true
+		//log.Println("****** Command Leave", Command)
+		return
+	case &lt;-respChannel:
+		reply.Err = OK
+</FONT>		return
+	}
+}
+
+func (sm *ShardMaster) MoveOP(prevConfig Config, shard int, GID int) Config {
+	var newConfig Config
+
+	newConfig.Num = sm.configs[len(sm.configs)-1].Num + 1
+
+	newConfig.Groups = make(map[int][]string)
+	for k, v := range sm.configs[len(sm.configs)-1].Groups {
+		newConfig.Groups[k] = v
+	}
+
+	for k, v := range sm.configs[len(sm.configs)-1].Shards {
+		newConfig.Shards[k] = v
+	}
+
+	newConfig.Shards[shard] = GID
+	//log.Println("Move Shard : ", shard, " GID ",GID," Previous : ", prevConfig, " New : ", newConfig)
+	return newConfig
+}
+
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+	// Your code here.
+	//sm.mu.Lock()
+
+	//println("Put Ach",kv.me)
+	var Command Op
+	Command.ClientId = args.ClientID
+	Command.IsConfig = true
+	Command.OperationType = Move
+	Command.Operation.Move = *args
+
+	//sm.mu.Unlock()
+
+	_, _, isLeader := sm.rf.Start(Command)
+
+	if isLeader == false {
+		reply.WrongLeader = true
+		return
+	}
+
+	//println("Wait ")
+
+	sm.mu.Lock()
+	//println("Wait ACh")
+	respChannel := make(chan bool)
+	stopChannel := make(chan bool)
+	keyValue := sm.GetUniqueSequenceForClientReq(Command)
+	if Channel, ok := sm.StopChannelsPerClient[keyValue]; ok {
+		Channel &lt;- true
+	}
+	sm.StopChannelsPerClient[keyValue] = stopChannel
+	sm.StartChannelsPerClient[keyValue] = respChannel
+	sm.mu.Unlock()
+
+	select {
+	case &lt;-stopChannel:
+		reply.WrongLeader = true
+		//log.Println("****** Command MOVE", Command)
+		return
+	case &lt;-respChannel:
+		reply.Err = OK
+		return
+	}
+
+}
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match155-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+	// Your code here.
+	sm.mu.Lock()
+	var Command Op
+	Command.ClientId = args.ClientID
+
+	Command.IsConfig = false
+	sm.mu.Unlock()
+</FONT>
+	_, _, isLeader := sm.rf.Start(Command)
+
+	if isLeader == false {
+		reply.WrongLeader = true
+		return
+	}
+
+	sm.mu.Lock()
+	//println("Wait ACh")
+	respChannel := make(chan bool)
+	stopChannel := make(chan bool)
+	keyValue := sm.GetUniqueSequenceForClientReq(Command)
+	if Channel, ok := sm.StopChannelsPerClient[keyValue]; ok {
+		Channel &lt;- true
+	}
+	sm.StopChannelsPerClient[keyValue] = stopChannel
+	sm.StartChannelsPerClient[keyValue] = respChannel
+	sm.mu.Unlock()
+	select {
+	case &lt;-stopChannel:
+		reply.WrongLeader = true
+		return
+	case &lt;-respChannel:
+		sm.mu.Lock()
+		//log.Println("****** Command QUery", Command)
+
+		//println("args.NUM : ", args.Num)
+		//log.Println("Config : ", sm.configs)
+		if args.Num == -1 || args.Num &gt; sm.HighestSeenConfig {
+			//println("Camee hereeeeee`1111111111111111111111111111")
+			reply.Config = sm.configs[len(sm.configs)-1]
+			//log.Println("Replying this config : ", reply.Config)
+			reply.Err = OK
+			sm.mu.Unlock()
+			return
+		} else {
+			for _, config := range sm.configs {
+				if config.Num == args.Num {
+					reply.Config = config
+					reply.Err = OK
+					reply.WrongLeader = false
+					sm.mu.Unlock()
+					return
+				}
+			}
+			return
+		}
+		sm.mu.Unlock()
+	}
+
+}
+
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+	//sm.killCh &lt;- true
+
+	// Your code here, if desired.
+}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+	return sm.rf
+}
+
+func (sm *ShardMaster) ReadApplyChan() {
+	for {
+		select {
+		case AppliedMessage := &lt;-sm.applyCh:
+
+			sm.mu.Lock()
+
+			//println("KV server :---------------------------------- Server : ", sm.me, " index : ", AppliedMessage.CommandIndex," Command : ", AppliedMessage.Command)
+			lOperation := AppliedMessage.Command.(Op)
+			//println("KV server :---------------------------------- Applied New Message 222222: ")
+
+			//log.Println("KVServer ApplyCHannel Operation :", lOperation)
+			if lOperation.IsConfig == true {
+				var NewConfig Config
+				prevConfig := sm.configs[len(sm.configs)-1]
+				if lOperation.OperationType == Join {
+					NewConfig = sm.JoinOP(prevConfig, lOperation.Operation.Join.Servers)
+				} else if lOperation.OperationType == Leave {
+					NewConfig = sm.LeaveOP(prevConfig, lOperation.Operation.Leave.GIDs)
+				} else if lOperation.OperationType == Move {
+					NewConfig = sm.MoveOP(prevConfig, lOperation.Operation.Move.Shard, lOperation.Operation.Move.GID)
+				}
+				sm.configs = append(sm.configs, NewConfig)
+
+				if sm.HighestSeenConfig &lt; NewConfig.Num {
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match155-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+					sm.HighestSeenConfig = NewConfig.Num
+				}
+			}
+
+			//log.Println("KV Server : ", kv.me," Updated Map : ", kv.KVdb)
+			if Channel, ok := sm.StartChannelsPerClient[sm.GetUniqueSequenceForClientReq(lOperation)]; ok {
+
+				delete(sm.StopChannelsPerClient, sm.GetUniqueSequenceForClientReq(lOperation))
+				delete(sm.StartChannelsPerClient, sm.GetUniqueSequenceForClientReq(lOperation))
+				//println("+--------------------Trying to write ",kv.GetUniqueSequenceForClientReq(lOperation))
+				//kv.mu.Unlock()
+				Channel &lt;- true
+</FONT>				//println("+-------------------Done ",kv.GetUniqueSequenceForClientReq(lOperation))
+				//return
+			}
+
+			//println("Exiting KV serverr:", kv.me)
+			sm.mu.Unlock()
+			//case &lt;-sm.killCh:
+			//	return
+		}
+
+	}
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	sm := new(ShardMaster)
+	sm.me = me
+
+	sm.configs = make([]Config, 1)
+	sm.configs[0].Groups = map[int][]string{}
+
+	labgob.Register(Op{})
+	sm.applyCh = make(chan raft.ApplyMsg)
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+	sm.HighestSeenConfig = 0
+
+	sm.StartChannelsPerClient = make(map[int64]chan bool)
+	sm.StopChannelsPerClient = make(map[int64]chan bool)
+
+	//sm.killCh = make(chan bool)
+
+	// Your code here.
+	go func() { sm.ReadApplyChan() }()
+
+	return sm
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

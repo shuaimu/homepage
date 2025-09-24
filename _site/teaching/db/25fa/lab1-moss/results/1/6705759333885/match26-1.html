@@ -1,0 +1,713 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-Sirneij/src/deptran/raft/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-huyanh995/src/deptran/raft/server.cc<p><PRE>
+#include "server.h"
+// #include "paxos_worker.h"
+#include "exec.h"
+#include "frame.h"
+#include "coordinator.h"
+#include "../classic/tpc_command.h"
+
+
+namespace janus {
+
+RaftServer::RaftServer(Frame * frame) {
+  frame_ = frame ;
+  /* Your code here for server initialization. Note that this function is 
+     called in a different OS thread. Be careful about thread safety if 
+     you want to initialize variables here. */
+}
+
+//===================================================================
+/* Default server code*/
+
+RaftServer::~RaftServer() {
+  /* Your code here for server teardown */
+  /* When server teardown -&gt; it should save its persistent state to disk?
+  What if it suddently crashes? 
+  */
+
+}
+
+
+void RaftServer::Setup() {
+  /* Your code here for server setup. Due to the asynchronous nature of the 
+     framework, this function could be called after a RPC handler is triggered. 
+     Your code should be aware of that. This function is always called in the 
+     same OS thread as the RPC handlers. */
+  // if (m_currentTime.time_since_epoch() == decltype(m_currentTime)::duration::zero()){
+  //   m_currentTime = std::chrono::high_resolution_clock::now();
+  // }
+  // Assign value to quorum first
+  for (int i = 0; i &lt; m_NSERVERS; i++){ // 5 is default NSERVERS
+    m_peerIds[i] = m_NSERVERS*partition_id_ + i;
+  }
+  m_quorum = ceil((m_peerIds.size()+1)/2);
+  Coroutine::Sleep(2000000); // Idle period to make sure all server finished set up
+  BecomeFollower(0, Role::FOLLOWER); 
+  StartBackgroundTicker(); // Can obey this line by BecomeFollower from Role::LEADER
+}
+
+
+bool RaftServer::Start(shared_ptr&lt;Marshallable&gt; &cmd,
+                       uint64_t *index,
+                       uint64_t *term) {
+  /* Your code here. This function can be called from another OS thread. */
+  // Code to get EntryLog from client
+  if (m_currentRole == Role::LEADER){
+    // Get cmd from Marshal object
+    if (m_cmdType == -1) m_cmdType =cmd-&gt;kind_; // Assign the type of cmd -&gt; Maybe include in Log struct to make it more versatile
+    verify(m_cmdType != -1);
+    std::string cmdData = GetCmd(cmd);
+
+    mtx_.lock();
+    m_log.push_back(LogEntry(m_currentTerm, cmdData)); 
+    *index = m_log.size(); // 1-indexed
+    *term = m_currentTerm;
+    mtx_.unlock();
+    #pragma region DEBUG
+    if (m_displayLog or m_KVLog) Log_info("[DEBUG]  %s %d added cmd (index: %d, term: %d, cmd: \"%s\"), m_log size %d", Role2String[m_currentRole].c_str(), site_id_, *index, *term, cmdData.c_str(), m_log.size());
+    #pragma endregion
+    return true;
+  } 
+  return false;
+}
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match26-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void RaftServer::GetState(bool *is_leader, uint64_t *term) {
+  /* Your code here. This function can be called from another OS thread. */
+  *is_leader = m_currentRole == Role::LEADER;
+  *term = m_currentTerm;
+}
+
+//===================================================================
+/* Changing State (Role) functions */
+void RaftServer::BecomeFollower(int64_t newTerm, Role fromRole){
+</FONT>  mtx_.lock();
+  m_currentRole = Role::FOLLOWER;
+  ResetInternalState(newTerm);
+  ResetTickerDuration();
+  ResetTimestamp();
+  // TODO Experiment
+  m_nextIndex.fill(0);
+  m_matchIndex.fill(0); 
+  mtx_.unlock();
+  if (fromRole == Role::LEADER){
+    if (m_displayLog or m_KVLog) Log_info("[DEBUG]  leader %d steps down to follower, timer %d", site_id_, m_isTimerRunning);
+  }
+}
+
+void RaftServer::StartElection(){
+  // This function should run inside a Coroutine
+  // Clear internal state first (in case running from previous candidate session)
+  mtx_.lock();
+  m_currentRole = Role::CANDIDATE; // This will stop the Background Ticker
+  ResetTickerDuration();
+  ResetTimestamp();
+
+  m_currentTerm ++;
+  m_receivedVote.clear();
+  int64_t currentTerm = m_currentTerm; // Saved the current term in case term changed (i.e receiving higher term AE)
+  uint64_t lastLogIndex = m_log.size() - 1; 
+  uint64_t lastLogTerm = 0;
+  if (!m_log.empty()) lastLogTerm = m_log.back().term;
+
+  // * Vote for itself
+  m_voteFor = site_id_;
+  m_receivedVote.insert(site_id_); 
+  mtx_.unlock();
+
+  #pragma region DEBUG
+  if (m_displayLog or m_unrealiableLog) Log_info("[WARN]  %s %d dis %d timer %d starts election process at term %d, timeout %d", Role2String[m_currentRole].c_str(), site_id_, disconnected_, m_isTimerRunning, m_currentTerm, m_tickerDuration);
+  #pragma endregion
+
+  for (uint64_t serverId : m_peerIds){
+    if (serverId == site_id_){
+      continue;
+    }
+    CallRequestVote(serverId, currentTerm, lastLogIndex, lastLogTerm);
+  }
+}
+
+void RaftServer::StartLeader(){
+  // Reset internal state when was a Candidate
+  // Extra safety because it'll be cleared when going down to a follower
+  if (m_currentRole == Role::CANDIDATE){
+    mtx_.lock();
+    ResetInternalState(-1); // reset without changing term
+    // Init leader volatile state
+    m_nextIndex.fill(m_commitIndex); // commitIndex is 1-index
+    m_matchIndex.fill(-1);
+    m_peerDisconnected.clear();
+    m_currentRole = Role::LEADER; // Will kick of the leader role of background timer
+    mtx_.unlock();
+  }
+}
+
+//===================================================================
+/* Reset variables functions */
+void RaftServer::ResetInternalState(int64_t newTerm){
+  // Need to call inside a mutex lock
+  if (newTerm &gt;= 0) m_currentTerm = newTerm; // Only valid newTerm
+  m_voteFor = -1;
+  m_receivedVote.clear();
+}
+
+void RaftServer::ResetTimestamp(){
+  // if (m_unrealiableLog) Log_info("[INFO] %s %d resets timestamp", Role2String[m_currentRole].c_str(), site_id_);
+  m_currentTime = std::chrono::high_resolution_clock::now();
+}
+
+void RaftServer::ResetTickerDuration(){
+  m_tickerDuration = rand() % m_electionTimerRange + m_electionTimerOffset;
+  if (m_currentRole == Role::CANDIDATE){
+    m_tickerDuration += 3 * m_resendRVInterval/1000; // Add time for 3 rounds more of resend RV for candidate
+  }
+  #pragma region DEBUG
+  if (m_displayLog) Log_info("[INFO]  %s %d resets its ticker to %d ms, timer %d", Role2String[m_currentRole].c_str(), site_id_, m_tickerDuration, m_isTimerRunning);
+  #pragma endregion
+}
+
+void RaftServer::BroadcastAppendEntry(){
+  /* Server sending AE Rpc for both Heart Beat and Append Logs */
+  // Saved current term when issue an Rpc
+  // In case term changed before sending Rpc to all servers
+  if (m_currentRole != Role::LEADER) return;
+  mtx_.lock();
+  int64_t currentTerm = m_currentTerm;
+  mtx_.unlock();
+  #pragma region DEBUG
+  if (m_displayLog) Log_info("[DEBUG] %s %d dis %d at term %d broadcasts AE with log %s", Role2String[m_currentRole].c_str(), site_id_, disconnected_, currentTerm, PrintLog().c_str());
+  std::string res = "";
+  for (auto e: m_peerDisconnected){
+    res = res + std::to_string(e) + " ";
+  }
+  if (m_displayLog or m_KVLog or m_unrealiableLog) Log_info("[INFO] %s %d dis %d term %d m_log size %d unresponsive server last round %s", Role2String[m_currentRole].c_str(), site_id_, disconnected_, m_currentTerm, m_log.size(), res.c_str());
+  #pragma endregion
+  for (auto serverId : m_peerIds){
+    if (serverId != site_id_){
+      CallAppendEntry(serverId, currentTerm);
+    }
+  }
+}
+
+void RaftServer::CallAppendEntry(uint64_t serverId, int64_t currentTerm){
+  Coroutine::CreateRun([this, serverId, currentTerm](){
+    // Retrieve AE Rpc args for each follower
+    mtx_.lock();
+    int64_t peerNextIndex = m_nextIndex[serverId % m_NSERVERS]; // 0-indexed -&gt; per server
+    int64_t prevLogIndex = peerNextIndex - 1; // 0-indexed
+    int64_t prevLogTerm = 0; // 1-indexed
+    if (prevLogIndex &gt; -1) prevLogTerm = m_log[prevLogIndex].term;
+    int64_t leaderCommit = m_commitIndex; // 1-indexed
+
+    // Preparing log to send
+    std::vector&lt;std::string&gt; sendLog = ComposeSendLog(prevLogIndex + 1);
+    mtx_.unlock();
+
+    // Var for receiving reply from  follower
+    int64_t replyTerm;
+    bool_t replySuccess;
+    int64_t replyConflictTerm;
+    int64_t replyConflictIndex;
+
+    // Three cases:
+    // 1. If replyTerm &gt; savedCurrentTerm -&gt; Become a Follower
+    // 2. If reply is false and replyTerm == -1 -&gt; Follower disconnected
+    //    Try to resend the same Rpc
+    // 3. If reply is false and replyTerm == savedCurrentTerm -&gt; decrease prevLogIndex by 1 and update prevLogTerm -&gt; Send AE Rpc
+    // 4. If reply is true and replyTerm == savedCurrentTerm -&gt; Success
+    // 5. If reply is true and replyTerm != savedCurrentTerm -&gt; Able to happen?
+    #pragma region DEBUG
+    if ((m_displayLog) and not disconnected_) Log_info("[INFO]  SendAE: %s %d -&gt; %d, dis %d (prevLog (Idx:%d, Term:%d), sendLogLength %d, leaderCommitIndex %d | nextIndex %d, matchIndex %d)", Role2String[m_currentRole].c_str(), site_id_, serverId, disconnected_, prevLogIndex, prevLogTerm, sendLog.size(), leaderCommit, m_nextIndex[serverId % m_NSERVERS], m_matchIndex[serverId % m_NSERVERS]);
+    #pragma endregion
+
+    // Check before sending Rpc 
+    mtx_.lock();
+    if (m_currentRole != Role::LEADER or m_currentTerm != currentTerm){
+      mtx_.unlock();
+      return; // halt immediately
+    }
+    mtx_.unlock();
+
+
+    m_peerDisconnected.insert(serverId);
+    auto event = commo()-&gt;SendAppendEntries(partition_id_, 
+                                            serverId, 
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match26-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                            site_id_, // leaderId
+                                            currentTerm, 
+                                            prevLogIndex, 
+                                            prevLogTerm, 
+                                            m_cmdType,
+                                            sendLog, 
+                                            leaderCommit, 
+                                            &replyTerm, 
+                                            &replySuccess,
+                                            &replyConflictTerm,
+                                            &replyConflictIndex);
+    
+    // event-&gt;Wait(m_heartBeatInterval); // Need to send faster to reduce the chance other servers timed out
+    event-&gt;Wait(1000000);
+    if (event-&gt;status_ == Event::TIMEOUT) {
+</FONT>      // #pragma region DEBUG
+      // if (m_displayLog and not disconnected_) Log_info("[INFO]  ResendAE: %s %d -&gt; %d dis? %d resend AE", Role2String[m_currentRole].c_str(), site_id_, serverId, disconnected_);
+      // #pragma endregion
+      // becasue the error in event.cc line 127
+      // maybe the event is not destroyed? so it stayed alive in TIMEOUT status?
+      // if (event) event-&gt;status_ = Event::DONE; 
+      return; 
+    } else {
+      #pragma region DEBUG
+      if (m_displayLog) Log_info("[INFO]  ReceiveAE: %s %d &lt;- %d response (Term: %d, Success: %d, ConflictTerm %d, ConflictIndex %d)", Role2String[m_currentRole].c_str(), site_id_, serverId, replyTerm, replySuccess, replyConflictTerm, replyConflictIndex);
+      #pragma endregion
+
+      if (replyTerm == 0){
+        // Follower is disconnected -&gt; Resend Rpc with the same content
+        return;
+      }
+
+      if (replyTerm &gt; currentTerm){
+        // Become a follower
+        BecomeFollower(replyTerm, Role::LEADER);
+        // Put it after BecomeFollower to prevent the exact moment the leader role haven't changed yet but client send a request
+        m_peerDisconnected.erase(serverId); 
+        return;
+      }
+
+      mtx_.lock();
+      if (m_currentTerm != currentTerm){
+        // Term changed before and after receive Rpc reply
+        if (m_unrealiableLog) Log_info("[WARN] %s %d changed term while processing AE reply", Role2String[m_currentRole].c_str(), site_id_);
+        mtx_.unlock();
+        return;
+      }
+      mtx_.unlock();
+
+      if (replyTerm == currentTerm){
+        m_peerDisconnected.erase(serverId); // Received 
+        mtx_.lock();
+        if (replySuccess){
+          // Received success signal. Either it's a heartbeat response or update log response.
+    
+          #pragma region DEBUG
+          int64_t savedNextIndex = m_nextIndex[serverId];
+          #pragma endregion
+          // Update follower nextIndex and matchIndex
+          int64_t newMatchIndex = prevLogIndex + sendLog.size();
+
+          m_nextIndex[serverId % m_NSERVERS] = std::max(m_nextIndex[serverId % m_NSERVERS], newMatchIndex + 1);
+          m_matchIndex[serverId % m_NSERVERS] = std::max(m_matchIndex[serverId % m_NSERVERS], newMatchIndex); // matchIndex increased monotonically
+          // m_nextIndex[serverId % m_NSERVERS] = m_matchIndex[serverId % m_NSERVERS] + 1;
+
+          #pragma region DEBUG
+          if (m_displayLog and peerNextIndex != m_nextIndex[serverId % m_NSERVERS]) Log_info("[INFO]  %s %d changed nextIndex of server %d: %d -&gt; %d", Role2String[m_currentRole].c_str(), site_id_, serverId, savedNextIndex, m_nextIndex[serverId % m_NSERVERS]);
+          #pragma endregion
+
+          if (peerNextIndex != m_nextIndex[serverId % m_NSERVERS]){
+            // Receiver added new log to its log -&gt; Check if there is any log to commit 
+            UpdateCommitIndex(leaderCommit); // Will update m_commitIndex
+            Coroutine::Sleep(rand() % 1000); // Ensure that commit cmd block won't kick up in the same time across 4 coroutines.
+            if (m_commitIndex &gt; leaderCommit){
+              int64_t savedLastApplied = m_lastApplied;
+              m_lastApplied = m_commitIndex; // Because of 1-indexed -&gt; Update first to prevent another coroutine start commiting
+              for (int i = savedLastApplied; i &lt; m_commitIndex; i++){
+                // m_lastApplied and m_commitIndex are 1-indexed
+                CommitCmd(m_log[i]);
+                #pragma region DEBUG
+                if (m_displayLog) Log_info("[WARN]  %s %d commit (index %d, term %d, cmd %s)", Role2String[m_currentRole].c_str(), site_id_, i, m_currentTerm, m_log[i].cmd.c_str());
+                #pragma endregion
+              }
+            }
+          }    
+        } else {
+          // Log inconsistent -&gt; reduce next index by one
+          // m_nextIndex[serverId % m_NSERVERS] = std::max((int64_t)0, m_nextIndex[serverId % m_NSERVERS] - 1);
+
+          // New part: Log inconsistency optimization
+          if (replyConflictTerm == 0){
+            // Indicating follower log is shorter than leader -&gt; Send up to the newest log
+            m_nextIndex[serverId % m_NSERVERS] = replyConflictIndex;
+          }
+
+          if (replyConflictTerm &gt; 0){
+            // There is a conflict in term 
+            // There are two cases:
+            // The conflictTerm is in current leader log -&gt; scan for it
+            int64_t index;
+            for (index = m_log.size() - 1; index &gt;= 0; index--){
+              // Scan backward to find the last log with conflicting term
+              // Last because the scenario is follower log with conflicting term is longer than leader log
+              if (m_log[index].term == replyConflictTerm) break;
+            }
+            if (index &gt; 0){
+              m_nextIndex[serverId % m_NSERVERS] = index + 1;
+            } else {
+            // or it's not -&gt; overwritten the whole log with conflict term
+              m_nextIndex[serverId % m_NSERVERS] = replyConflictIndex;
+            }
+          }
+          m_matchIndex[serverId % m_NSERVERS] = m_nextIndex[serverId % m_NSERVERS] - 1; 
+        }
+        mtx_.unlock();    
+      }
+    }
+  });
+}
+
+void RaftServer::CallRequestVote(uint64_t serverId, int64_t currentTerm, int64_t lastLogIndex, int64_t lastLogTerm){
+  Coroutine::CreateRun([this, serverId, currentTerm, lastLogIndex, lastLogTerm](){
+    uint64_t replyId;
+    int64_t replyTerm;
+    bool_t replyGranted;
+    bool_t resend = false;
+
+    #pragma region DEBUG
+    if (m_displayLog and not disconnected_) Log_info("[INFO]  SendRV: %s %d -&gt; %d, dis %d timer %d (term %d, lastLogIndex %d, lastLogTerm %d)", Role2String[m_currentRole].c_str(), site_id_, serverId, disconnected_, m_isTimerRunning, currentTerm, lastLogIndex, lastLogTerm);
+    #pragma endregion
+
+    // Check before sending Rpc 
+    mtx_.lock();
+    if (m_currentRole != Role::CANDIDATE or m_currentTerm != currentTerm){
+      mtx_.unlock();
+      return; // halt immediately
+    }
+    mtx_.unlock();
+
+    auto event = commo()-&gt;SendRequestVote(partition_id_, 
+                                          serverId, 
+                                          m_currentTerm, 
+                                          site_id_, 
+                                          lastLogIndex, 
+                                          lastLogTerm, 
+                                          &replyId, 
+                                          &replyTerm, 
+                                          &replyGranted);   
+    event-&gt;Wait(1000000);
+    // event-&gt;Wait(m_resendRVInterval);
+    if (event-&gt;status_ == Event::TIMEOUT) {
+      // resend = true;
+      // if (event) event-&gt;status_ = Event::DONE; // Cause segmentation fault because pointer is not valid?
+      return;
+    } else {
+      // * GET RESPONSE
+      #pragma region DEBUG
+      if (m_displayLog) {
+        int64_t savedDebugTerm = m_currentTerm; // maybe term changed when receive Rpc
+        if(m_displayLog) Log_info("[INFO]  ReceiveRV: term %d %s %d &lt;- %d response: (replyTerm: %d, replyGrant: %d)", savedDebugTerm, Role2String[m_currentRole].c_str(), site_id_, replyId, replyTerm, replyGranted);
+      }
+      #pragma endregion
+
+      if (replyTerm == -1){
+        // Resend RV Rpc with the same content until either get a valid response or timed out
+        resend = true; // signal to delay process after sleep
+        Coroutine::Sleep(m_resendRVInterval);
+      }
+      else {
+        // * GET VALID RESPONSE from a FOLLOWER
+        mtx_.lock();
+        if (m_currentRole != Role::CANDIDATE){
+          // First check again if a server is still a Candidate
+          mtx_.unlock();
+          return;
+        }
+
+        if (replyTerm &gt; currentTerm){
+          // * Received higher term response -&gt; Go back to a follower
+          BecomeFollower(replyTerm, Role::CANDIDATE);
+          if (m_displayLog) Log_info("[DEBUG] %s %d -&gt; %d received higher reply term, step down to a follower", Role2String[m_currentRole].c_str(), site_id_);
+          mtx_.unlock();
+          return;
+        }
+
+        if (m_currentTerm != currentTerm){ // compare with term when sending the Rpc
+          // In case term changed when processing vote
+          if (m_unrealiableLog) Log_info("[WARN] %s %d changed term while processing RV reply", Role2String[m_currentRole].c_str(), site_id_);
+          mtx_.unlock();
+          return;
+        }
+
+        if ((replyTerm == currentTerm) && (m_currentRole == Role::CANDIDATE) && replyGranted){
+          // * Received granted vote from a server
+          // Still need second check because server state can be changed anytime
+          m_receivedVote.insert(replyId);
+          if (m_receivedVote.size() &gt;= m_quorum){
+            // * Become leader
+            m_receivedVote.clear(); // Prevent other coroutines to begin leader
+            m_currentLeader = site_id_; // Assign itself as leader
+            #pragma region DEBUG
+            if (m_displayLog or m_KVLog) Log_info("[WARN]  %s %d won the election at term %d, m_log size %d", Role2String[m_currentRole].c_str(),site_id_, m_currentTerm, m_log.size());
+            #pragma endregion
+            StartLeader();
+            mtx_.unlock();
+            return;
+          }
+        }
+        mtx_.unlock();
+      }
+    }
+    if (resend and m_currentRole == Role::CANDIDATE){
+      auto now = std::chrono::high_resolution_clock::now();
+      auto elapsedTime = std::chrono::duration_cast&lt;std::chrono::milliseconds&gt;(now - m_currentTime).count();
+      if (elapsedTime &lt; m_tickerDuration){
+        #pragma region DEBUG
+        if (m_displayLog) Log_info("[INFO]  %s %d -&gt; %d run another RV Rpc round", Role2String[m_currentRole].c_str(), site_id_, serverId);
+        #pragma endregion
+        CallRequestVote(serverId, currentTerm, lastLogIndex, lastLogTerm);
+        return;
+      }
+    }
+  });
+}
+
+//===================================================================
+/* Event loop functions */
+void RaftServer::StartBackgroundTicker(){
+  if (!m_isTimerRunning){ // Ensure only 1 timer running at the same time
+    m_isTimerRunning = true;
+    #pragma region DEBUG
+    if (m_displayLog) Log_info("[WARN]  %s %d starts timer with duration %d, timer %d", Role2String[m_currentRole].c_str(), site_id_, m_tickerDuration, m_isTimerRunning);
+    #pragma endregion
+
+    Coroutine::CreateRun([this](){
+      uint64_t sleepTime = m_checkTimerInterval;
+      while (m_isTimerRunning){
+        if (m_currentRole != Role::LEADER){
+          Coroutine::Sleep(sleepTime); 
+          auto now = std::chrono::high_resolution_clock::now();
+          auto elapsedTime = std::chrono::duration_cast&lt;std::chrono::milliseconds&gt;(now - m_currentTime).count();
+          if ((m_tickerDuration - elapsedTime) * 1000 &lt;= m_checkTimerInterval){
+            sleepTime = 1000; // Down to 1ms to precise sleeping
+          } else {
+            sleepTime = m_checkTimerInterval; // Restore the old value
+          }
+          if (elapsedTime &gt; m_tickerDuration){
+            if (m_displayLog or m_unrealiableLog) Log_info("[WARN]  %s %d background timer timed out", Role2String[m_currentRole].c_str(), site_id_);
+            StartElection(); // Either start election from a follower or candidate starts another election round
+          }
+        } else { // Role is Leader
+          BroadcastAppendEntry();
+          Coroutine::Sleep(m_heartBeatInterval);
+        }
+      }
+      if (m_displayLog) Log_info("[DEBUG] %s %d exits background timer at term %d", Role2String[m_currentRole].c_str(), site_id_, m_currentTerm);
+    });
+  }
+};
+
+
+//===================================================================
+/* Helper functions */
+void RaftServer::UpdateCommitIndex(int64_t leaderCommit){
+  // Scan from leaderCommit to the end of log
+  // Run on Leader thread -&gt; Should be another background thread
+  for (int64_t N = leaderCommit; N &lt; m_log.size(); N++){
+    if (m_log[N].term == m_currentTerm){
+      // Check if majority of server in matchIndex &gt;= N
+      int matchedCnt = 1;
+      for (auto serverId: m_peerIds){
+        if (serverId == site_id_){
+          continue;
+        }
+        if (m_matchIndex[serverId % m_NSERVERS] &gt;= N){
+          matchedCnt ++;
+        }
+      }
+      mtx_.lock();
+      if (matchedCnt &gt;= m_quorum && N &gt; m_commitIndex - 1){
+        // A LogEntry that has majority of server committed -&gt; Update commitIndex
+        m_commitIndex = N + 1; 
+        #pragma region DEBUG
+        if (m_displayLog) Log_info("[WARN]  UpdateCommitIndex: %s %d updated commitIndex from %d -&gt; %d", Role2String[m_currentRole].c_str(), site_id_, leaderCommit, m_commitIndex);
+        #pragma endregion
+      }
+      mtx_.unlock();
+    }
+  }
+}
+  
+std::string RaftServer::GetCmd(shared_ptr&lt;Marshallable&gt;& cmd){
+  // For Lab1: Format is MarshallDeputy::CMD_TPC_COMMIT
+  // For Lab2: Format is MarshallDeputy::CMD_MULTI_STRING
+  Marshal mar;
+  cmd-&gt;ToMarshal(mar);
+  if (m_cmdType == MarshallDeputy::CMD_TPC_COMMIT){
+    int cmdData;
+    mar &gt;&gt; cmdData;
+    return std::to_string(cmdData);
+
+  } else if (m_cmdType == MarshallDeputy::CMD_MULTI_STRING){
+    int size;
+    mar &gt;&gt; size;
+    string cmdData;
+    string tmp;
+    for (int i = 0; i &lt; size; i++){
+      mar &gt;&gt; tmp;
+      cmdData += (tmp + " ");
+    }
+    cmdData.pop_back(); // remove trailing space
+    return cmdData;
+
+  } else if (m_cmdType == MarshallDeputy::CONTAINER_CMD){
+    // Marshallable object for Lab3. Store whole encoded string
+    string cmdData;
+    mar &gt;&gt; cmdData;
+    return cmdData;
+  }
+  return "";
+}
+
+std::vector&lt;std::string&gt; RaftServer::ComposeSendLog(int64_t beginIndex){
+  // Compose a string cmd for Rpc to send
+  std::vector&lt;std::string&gt; res;
+  for (int i = beginIndex; i &lt; m_log.size(); i++){
+    res.push_back(m_log[i].ToString());
+  }
+  return res;
+}
+
+std::vector&lt;LogEntry&gt; RaftServer::ParseReceivedLog(const std::vector&lt;std::string&gt; &sendLog){
+  // for followers to parse sent cmd in AE Rpc
+  // extract term
+  std::vector&lt;LogEntry&gt; res;
+  for (auto cmdstr: sendLog){
+    auto tokens = strsplit(cmdstr, ' ');
+    int64_t term = stoll(tokens[0]);
+    std::string cmd = tokens[1];
+    if (tokens.size() &gt; 2){
+      // In Lab2
+      for (int i = 2; i &lt; tokens.size(); i++){
+        cmd = cmd + " " + tokens[i];
+      }
+    }
+    res.push_back(LogEntry(term, cmd));
+  }
+  return res;
+}
+
+void RaftServer::CommitCmd(LogEntry &log){
+  // Mimic the function in testconf.cc
+  if (m_displayLog or m_KVLog) Log_info("[DEBUG] %s %d committed cmd \"%s\"", Role2String[m_currentRole].c_str(), site_id_, log.cmd.c_str());
+  
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match26-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  if (m_cmdType == MarshallDeputy::CMD_TPC_COMMIT){ // Lab 1
+    auto cmdptr = std::make_shared&lt;TpcCommitCommand&gt;();
+    auto vpd_p = std::make_shared&lt;VecPieceData&gt;();
+    vpd_p-&gt;sp_vec_piece_data_ = std::make_shared&lt;vector&lt;shared_ptr&lt;SimpleCommand&gt;&gt;&gt;();
+    cmdptr-&gt;tx_id_ = stoll(log.cmd);
+</FONT>    cmdptr-&gt;cmd_ = vpd_p;
+    
+    auto cmdptr_m = dynamic_pointer_cast&lt;Marshallable&gt;(cmdptr);
+    app_next_(*cmdptr_m);
+  }
+  else if (m_cmdType == MarshallDeputy::CMD_MULTI_STRING){ // Lab 2
+    auto tokens = strsplit(log.cmd, ' '); // op_id, op, k, v
+    // Construct MultiString marshallable object just like in KvServer
+    auto cmdptr = make_shared&lt;MultiStringMarshallable&gt;();
+    cmdptr-&gt;data_.push_back(tokens[0]);
+    cmdptr-&gt;data_.push_back(tokens[1]);
+    cmdptr-&gt;data_.push_back(tokens[2]);
+    cmdptr-&gt;data_.push_back(tokens[3]);
+    
+    auto cmdptr_m = dynamic_pointer_cast&lt;Marshallable&gt;(cmdptr);
+    app_next_(*cmdptr_m);
+  }
+
+  else if (m_cmdType == MarshallDeputy::CONTAINER_CMD){ // Lab 3
+    auto cmdptr = make_shared&lt;StringMarshallable&gt;();
+    cmdptr-&gt;data_ = log.cmd;
+
+    auto cmdptr_m = dynamic_pointer_cast&lt;Marshallable&gt;(cmdptr);
+    app_next_(*cmdptr_m);
+  }
+}
+
+bool_t RaftServer::IsInMajority(){
+  bool_t res = m_peerDisconnected.size() &lt; m_quorum;
+  if (m_KVLog) Log_info("[DEBUG] %s %d dis %d term %d is in majority? %d", Role2String[m_currentRole].c_str(), site_id_, disconnected_, m_currentTerm, res);
+  return res;
+}
+//===================================================================
+/* Debug functions */
+std::string RaftServer::PrintLog(){
+  string res = "";
+  if (m_printLogEntry){
+    for (auto e: m_log){
+      res = res + e.Print() + " ";
+    }
+    return res;
+  } 
+  return "N/A";
+}
+
+void RaftServer::SyncRpcExample() {
+  /* This is an example of synchronous RPC using coroutine; feel free to 
+     modify this function to dispatch/receive your own messages. 
+     You can refer to the other function examples in commo.h/cc on how 
+     to send/recv a Marshallable object over RPC. */
+  Coroutine::CreateRun([this](){
+    string res;
+    int des = 0;
+    auto event = commo()-&gt;SendString(0, /* partition id is always 0 for lab1 */
+                                     des, 0, "hello", &res);
+    event-&gt;Wait(1000000); //timeout after 1000000us=1s
+    if (event-&gt;status_ == Event::TIMEOUT) {
+    } else {
+    }
+  });
+}
+
+//===================================================================
+/* Do not modify any code below here */
+
+void RaftServer::Disconnect(const bool disconnect) {
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+  verify(disconnected_ != disconnect);
+  // global map of rpc_par_proxies_ values accessed by partition then by site
+  static map&lt;parid_t, map&lt;siteid_t, map&lt;siteid_t, vector&lt;SiteProxyPair&gt;&gt;&gt;&gt; _proxies{};
+  if (_proxies.find(partition_id_) == _proxies.end()) {
+    _proxies[partition_id_] = {};
+  }
+  RaftCommo *c = (RaftCommo*) commo();
+  if (disconnect) {
+    #pragma region DEBUG
+    if (m_disconnectLog) Log_info("[DEBUG] RaftServer::Disconnect -&gt; %s %d disconnected at term %d timer %d, m_log size %d", Role2String[m_currentRole].c_str(), site_id_, m_currentTerm, m_isTimerRunning, m_log.size());
+    #pragma endregion
+    verify(_proxies[partition_id_][site_id_].size() == 0);
+    verify(c-&gt;rpc_par_proxies_.size() &gt; 0);
+    auto sz = c-&gt;rpc_par_proxies_.size();
+    _proxies[partition_id_][site_id_].insert(c-&gt;rpc_par_proxies_.begin(), c-&gt;rpc_par_proxies_.end());
+    c-&gt;rpc_par_proxies_ = {};
+    verify(_proxies[partition_id_][site_id_].size() == sz);
+    verify(c-&gt;rpc_par_proxies_.size() == 0);
+  } else {
+    #pragma region DEBUG
+    if (m_disconnectLog) Log_info("[DEBUG] RaftServer::Reconnect  -&gt; %s %d reconnected at term %d timer %d, m_log size %d", Role2String[m_currentRole].c_str(), site_id_, m_currentTerm, m_isTimerRunning, m_log.size());
+    #pragma endregion
+    verify(_proxies[partition_id_][site_id_].size() &gt; 0);
+    auto sz = _proxies[partition_id_][site_id_].size();
+    c-&gt;rpc_par_proxies_ = {};
+    c-&gt;rpc_par_proxies_.insert(_proxies[partition_id_][site_id_].begin(), _proxies[partition_id_][site_id_].end());
+    _proxies[partition_id_][site_id_] = {};
+    verify(_proxies[partition_id_][site_id_].size() == 0);
+    verify(c-&gt;rpc_par_proxies_.size() == sz);
+  }
+  disconnected_ = disconnect;
+}
+
+bool RaftServer::IsDisconnected() {
+  return disconnected_;
+}
+
+} // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

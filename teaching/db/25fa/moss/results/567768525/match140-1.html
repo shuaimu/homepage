@@ -1,0 +1,658 @@
+<HTML>
+<HEAD>
+<TITLE>./spring19/vidhya-sri/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./spring19/vidhya-sri/src/shardkv/server.go<p><PRE>
+package shardkv
+
+import (
+	"bytes"
+	"fmt"
+	"labrpc"
+	"math"
+	"shardmaster"
+	"time"
+)
+import "raft"
+import "sync"
+import "labgob"
+
+type Op struct {
+	Key                string
+	Value              string
+	Op                 string
+	ClientNo           int
+	CmdNo              int
+	ShardNo            int
+	ClientConfigNo     int
+	Config             shardmaster.Config
+	ShardKeyValueStore map[string]string
+	ShardKeys          map[string]bool
+	DuplicateMap       map[int]int
+	LeaveShardConfigNo int
+}
+
+type ShardKV struct {
+	mu              sync.Mutex
+	me              int
+	rf              *raft.Raft
+	applyCh         chan raft.ApplyMsg
+	make_end        func(string) *labrpc.ClientEnd
+	gid             int
+	masters         []*labrpc.ClientEnd
+	maxraftstate    int                    // snapshot if log grows this big
+	channelMap      map[int]chan ChanReply //map used to store unique channel for every get/put/append request
+	duplicateCmdMap map[int]int            // to detect duplicate cmd for shards
+	keyvaluestore   map[string]string      //keyvalue store which hold all the committed key,value pairs
+	persister       *raft.Persister
+	mck             *shardmaster.Clerk
+	config          shardmaster.Config
+	shards          [10]bool // current shards
+	seqNo           int      // used for internal reqpropuest like Config/merge
+	shardKeys       map[int]map[string]bool
+	leaveShards     map[int]map[int]MergeRPCArgs
+	exitChan        chan bool
+}
+
+type Reply struct {
+	WrongLeader bool
+	Err         Err
+	Value       string
+}
+
+type ChanReply struct {
+	Term    int
+	ShardNo int
+}
+
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match140-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *ShardKV) checkDuplicateCmdFromClient(op Op) bool {
+	if lsn, ok := kv.duplicateCmdMap[op.ClientNo]; ok {
+		cmdNo := op.CmdNo
+		if cmdNo &lt;= lsn {
+</FONT>			return true
+		}
+	}
+	return false
+}
+
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match140-0.html#7" TARGET="0"><IMG SRC="../../bitmaps/tm_2_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *ShardKV) deleteCommittedIndexFromMap(index int) {
+	kv.mu.Lock()
+	delete(kv.channelMap, index)
+	kv.mu.Unlock()
+}
+
+func (kv *ShardKV) OpUtil(op Op, reply *Reply) {
+</FONT>	kv.mu.Lock()
+	_, isLeader := kv.rf.GetState()
+
+	if isLeader {
+		if op.ClientNo &gt;= 0 && !kv.shards[op.ShardNo] {
+			reply.Err = ErrWrongGroup
+			kv.mu.Unlock()
+			return
+		}
+
+		if kv.checkDuplicateCmdFromClient(op) {
+			reply.Value = kv.keyvaluestore[op.Key]
+			reply.WrongLeader = false
+			reply.Err = OK
+			kv.mu.Unlock()
+			return
+		} else {
+			kv.mu.Unlock()
+			index, currentTerm, isLeader := kv.rf.Start(op)
+
+			if isLeader {
+				receiverChan := make(chan ChanReply)
+
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match140-0.html#6" TARGET="0"><IMG SRC="../../bitmaps/tm_1_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				kv.mu.Lock()
+				kv.channelMap[index] = receiverChan
+				kv.mu.Unlock()
+
+				select {
+				case chanReply := &lt;-receiverChan:
+</FONT>					if op.ClientNo &gt;= 0 {
+						if chanReply.Term != currentTerm {
+							reply.WrongLeader = true
+							kv.deleteCommittedIndexFromMap(index)
+							return
+						}
+
+						kv.mu.Lock()
+						if !kv.shards[chanReply.ShardNo] {
+							reply.Err = ErrWrongGroup
+							kv.mu.Unlock()
+							kv.deleteCommittedIndexFromMap(index)
+							return
+						}
+						kv.mu.Unlock()
+					}
+					reply.WrongLeader = false
+					reply.Err = OK
+					if op.Op == Get {
+						kv.mu.Lock()
+						reply.Value = kv.keyvaluestore[op.Key]
+						kv.mu.Unlock()
+					}
+					break
+				case &lt;-time.After(time.Millisecond * 400):
+					//request timed out
+					reply.WrongLeader = true
+					break
+
+				case &lt;-kv.exitChan:
+					reply.WrongLeader = true
+					kv.deleteCommittedIndexFromMap(index)
+					return
+				}
+
+				kv.deleteCommittedIndexFromMap(index)
+			} else {
+				reply.WrongLeader = true
+				return
+			}
+		}
+	} else {
+		reply.WrongLeader = true
+		kv.mu.Unlock()
+		return
+	}
+}
+
+func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
+	kv.mu.Lock()
+	op := Op{Key: args.Key, Op: Get, ClientNo: args.ClientNo, CmdNo: args.CmdNo, ShardNo: args.ShardNo,
+		ClientConfigNo: args.ConfigNo, Config: kv.config}
+	kv.mu.Unlock()
+	response := Reply{}
+	kv.OpUtil(op, &response)
+	reply.WrongLeader = response.WrongLeader
+	reply.Value = response.Value
+	reply.Err = response.Err
+}
+
+func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	kv.mu.Lock()
+	op := Op{Key: args.Key, Value: args.Value, Op: args.Op, ClientNo: args.ClientNo, CmdNo: args.CmdNo, ShardNo: args.ShardNo,
+		ClientConfigNo: args.ConfigNo, Config: kv.config}
+	kv.mu.Unlock()
+	response := Reply{}
+	kv.OpUtil(op, &response)
+	reply.WrongLeader = response.WrongLeader
+	reply.Err = response.Err
+}
+
+func (kv *ShardKV) client(op Op) {
+	kv.mu.Lock()
+	op.CmdNo = kv.getUniqueCommandNo()
+	kv.rf.Start(op)
+	kv.mu.Unlock()
+}
+
+//this function makes sure whether our current Config has received all the data from respective groups.
+func (kv *ShardKV) canUpdateConfig() bool {
+	//very first Config of the server
+	if kv.config.Num == 0 {
+		return true
+	}
+	// check current shard match the shard in Config
+	for index, value := range kv.config.Shards {
+		//yet to receive shard data from other group
+		if value == kv.gid && !kv.shards[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func (kv *ShardKV) updateShards(config shardmaster.Config) {
+	var leavingShards [10]bool
+	var shards [10]bool
+
+	if kv.config.Num == 0 {
+		for index, value := range config.Shards {
+			if value == kv.gid {
+				shards[index] = true
+			}
+		}
+	} else {
+		for index, value := range config.Shards {
+			if kv.shards[index] {
+				if value != kv.gid {
+					leavingShards[index] = true
+					gid := config.Shards[index]
+					peers := config.Groups[gid]
+					data := MergeRPCArgs{ShardNo: index, ConfigNo: config.Num, ShardKeySet: kv.cloneKeysMap(kv.shardKeys[index]),
+						DuplicateMap: kv.cloneDupMap(), KeyValueStore: kv.getShardDataAsMap(index), ClientGid: kv.gid, Peers: peers}
+					if _, ok := kv.leaveShards[config.Num]; !ok {
+						shardInfo := make(map[int]MergeRPCArgs)
+						kv.leaveShards[config.Num] = shardInfo
+					}
+					kv.leaveShards[config.Num][index] = data
+				} else {
+					shards[index] = true
+				}
+			}
+		}
+	}
+	kv.shards = shards
+	kv.config = config
+}
+
+func (kv *ShardKV) getUniqueCommandNo() int {
+	kv.seqNo++
+	return kv.seqNo
+}
+
+func (kv *ShardKV) checkConfiguration() {
+	for {
+		select {
+		case &lt;-time.After(100 * time.Millisecond):
+			_, isLeader := kv.rf.GetState()
+			kv.mu.Lock()
+			canUpdate := kv.canUpdateConfig()
+
+			if isLeader && canUpdate {
+				config := kv.mck.Query(kv.config.Num + 1)
+				if config.Num &gt; kv.config.Num {
+
+					op := Op{Op: Config, ClientNo: -1, Config: config}
+					go kv.client(op)
+				}
+			}
+			kv.mu.Unlock()
+			break
+		case &lt;-kv.exitChan:
+			return
+		}
+	}
+}
+
+func (kv *ShardKV) handleConfig(config shardmaster.Config) {
+	kv.updateShards(config)
+}
+
+func (kv *ShardKV) handleMerge(op Op) {
+	if kv.shards[op.ShardNo] {
+		return
+	}
+
+	kv.shards[op.ShardNo] = true
+
+	shardStore := op.ShardKeyValueStore
+	for key, val := range shardStore {
+		kv.keyvaluestore[key] = val
+	}
+
+	keysMap := kv.cloneKeysMap(op.ShardKeys)
+	kv.shardKeys[op.ShardNo] = keysMap
+
+	dupMap := op.DuplicateMap
+
+	for key, val := range dupMap {
+		kv.duplicateCmdMap[key] = int(math.Max(float64(kv.duplicateCmdMap[key]), float64(val)))
+	}
+}
+
+func (kv *ShardKV) getShardDataAsMap(shardNo int) map[string]string {
+	resultMap := make(map[string]string)
+	keys := kv.shardKeys[shardNo]
+	for key := range keys {
+		resultMap[key] = kv.keyvaluestore[key]
+		delete(kv.keyvaluestore, key)
+		delete(kv.shardKeys[shardNo], key)
+	}
+	return resultMap
+}
+
+func (kv *ShardKV) cloneKeysMap(keys map[string]bool) map[string]bool {
+	resultMap := make(map[string]bool)
+	for key, val := range keys {
+		resultMap[key] = val
+	}
+	return resultMap
+}
+
+func (kv *ShardKV) cloneDupMap() map[int]int {
+	duplicateMap := kv.duplicateCmdMap
+	resultMap := make(map[int]int)
+	for key, val := range duplicateMap {
+		if key != -1 {
+			resultMap[key] = val
+		}
+	}
+	return resultMap
+}
+
+func (kv *ShardKV) sendLeavingShard(shardNo int, configNo int) {
+	_, isLeader := kv.rf.GetState()
+
+	if isLeader {
+		kv.mu.Lock()
+		shardInfo := kv.leaveShards[configNo][shardNo]
+		args := MergeRPCArgs{ShardNo: shardInfo.ShardNo, ConfigNo: shardInfo.ConfigNo, ShardKeySet: shardInfo.ShardKeySet,
+			DuplicateMap: shardInfo.DuplicateMap, KeyValueStore: shardInfo.KeyValueStore, ClientGid: shardInfo.ClientGid}
+		peers := shardInfo.Peers
+		kv.mu.Unlock()
+		for si := 0; si &lt; len(peers); si++ {
+			srv := kv.make_end(peers[si])
+			var reply MergeRPCReply
+			var ok bool
+			responseChan := make(chan bool)
+
+			go func() {
+				ok = srv.Call("ShardKV.MergeShardRPC", &args, &reply)
+				select {
+				case responseChan &lt;- true:
+					break
+				case &lt;-kv.exitChan:
+					return
+				}
+			}()
+
+			select {
+			case &lt;-responseChan:
+				if ok {
+					if reply.WrongLeader == false {
+						kv.mu.Lock()
+						op := Op{Op: Delete, LeaveShardConfigNo: args.ConfigNo, ShardNo: shardNo, ClientNo: -1, Config: kv.config}
+						//delete(kv.leaveShards[args.ConfigNo], shardNo)
+						kv.mu.Unlock()
+						kv.client(op)
+						return
+					} else if reply.Err == ErrRetry {
+						return
+					}
+				}
+				break
+			case &lt;-kv.exitChan:
+				return
+			}
+		}
+	}
+}
+
+func (kv *ShardKV) sendLeavingShards() {
+	for {
+		select {
+		case &lt;-time.After(100 * time.Millisecond):
+			kv.mu.Lock()
+			_, isLeader := kv.rf.GetState()
+			if isLeader {
+				for configNo, shardMap := range kv.leaveShards {
+					for shardIndex := range shardMap {
+						go kv.sendLeavingShard(shardIndex, configNo)
+					}
+				}
+			}
+			kv.mu.Unlock()
+		}
+	}
+}
+
+func (kv *ShardKV) MergeShardRPC(args *MergeRPCArgs, reply *MergeRPCReply) {
+	kv.mu.Lock()
+	_, isLeader := kv.rf.GetState()
+	kv.mu.Unlock()
+
+	if isLeader {
+		kv.mu.Lock()
+		configNum := kv.config.Num
+		kv.mu.Unlock()
+
+		if args.ConfigNo &gt; configNum {
+			reply.WrongLeader = true
+		} else if args.ConfigNo &lt; configNum {
+			reply.WrongLeader = false
+		} else {
+			kv.mu.Lock()
+			if kv.shards[args.ShardNo] {
+				reply.WrongLeader = false
+				kv.mu.Unlock()
+				return
+			}
+			op := Op{Op: Merge, ClientNo: -1, ShardNo: args.ShardNo, ShardKeyValueStore: args.KeyValueStore,
+				ShardKeys: args.ShardKeySet, DuplicateMap: args.DuplicateMap, Config: kv.config}
+			kv.mu.Unlock()
+			go kv.client(op)
+
+			kv.mu.Lock()
+			if kv.shards[args.ShardNo] {
+				reply.WrongLeader = false
+			} else {
+				reply.WrongLeader = true
+				reply.Err = ErrRetry
+			}
+			kv.mu.Unlock()
+		}
+	} else {
+		reply.WrongLeader = true
+	}
+}
+
+func (kv *ShardKV) processCommands(op Op) {
+	lsn, _ := kv.duplicateCmdMap[op.ClientNo]
+	if op.CmdNo &gt; lsn {
+		if op.Op == Config && op.Config.Num &gt; kv.config.Num {
+			kv.handleConfig(op.Config)
+		} else if op.Op == Merge && op.Config.Num == kv.config.Num {
+			kv.handleMerge(op)
+		} else if op.Op == Delete {
+			delete(kv.leaveShards[op.LeaveShardConfigNo], op.ShardNo)
+		} else if op.Op != Get {
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match140-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			if op.Op == "Put" {
+				kv.keyvaluestore[op.Key] = ""
+			}
+			kv.keyvaluestore[op.Key] = kv.keyvaluestore[op.Key] + op.Value
+			// mapping shard -&gt; keys
+			var keyMap map[string]bool
+</FONT>			if _, ok := kv.shardKeys[op.ShardNo]; !ok {
+				keyMap = make(map[string]bool)
+			} else {
+				keyMap = kv.shardKeys[op.ShardNo]
+			}
+			keyMap[op.Key] = true
+			kv.shardKeys[op.ShardNo] = keyMap
+		}
+		kv.duplicateCmdMap[op.ClientNo] = op.CmdNo
+	}
+}
+
+func (kv *ShardKV) receiveAppliedCommands() {
+	for {
+		select {
+		case msg := &lt;-kv.applyCh:
+			kv.mu.Lock()
+			var op Op
+
+			if msg.CommandIndex == -1 {
+				snapshot := msg.Command.([]byte)
+				kv.readSnapshot(snapshot)
+			} else {
+				op := msg.Command.(Op)
+				if op.ClientNo &lt; 0 || kv.shards[op.ShardNo] {
+					kv.processCommands(op)
+				}
+			}
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match140-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			raftStateSize := kv.persister.RaftStateSize()
+
+			if kv.maxraftstate &gt; 0 && raftStateSize &gt;= int(float64(kv.maxraftstate)*0.95) {
+				kv.rf.TrimLogAndSaveSnapshotWithState(msg.CommandIndex, kv.getSnapshotInBytes())
+</FONT>			}
+
+			sendReplyChan := kv.channelMap[msg.CommandIndex]
+			kv.mu.Unlock()
+
+			if sendReplyChan != nil {
+				term := msg.CommandTerm
+				select {
+				case sendReplyChan &lt;- ChanReply{term, op.ShardNo}:
+					break
+				case &lt;-kv.exitChan:
+					return
+				default:
+					break
+				}
+			}
+		}
+	}
+}
+
+func (kv *ShardKV) readSnapshot(data []byte) {
+	if data == nil || len(data) &lt; 1 {
+		return
+	}
+
+<A NAME="8"></A><FONT color = #00FFFF><A HREF="match140-0.html#8" TARGET="0"><IMG SRC="../../bitmaps/tm_3_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+
+	var snapshot map[string]string
+	var duplicate map[int]int
+</FONT>	var config shardmaster.Config
+	var shards [10]bool
+	var seqNo int
+	var shardKeys map[int]map[string]bool
+	var leaveShards map[int]map[int]MergeRPCArgs
+
+	if d.Decode(&snapshot) != nil ||
+		d.Decode(&duplicate) != nil ||
+		d.Decode(&config) != nil ||
+		d.Decode(&shards) != nil ||
+		d.Decode(&seqNo) != nil ||
+		d.Decode(&shardKeys) != nil ||
+		d.Decode(&leaveShards) != nil {
+		fmt.Println("Error while decoding")
+	} else {
+		kv.keyvaluestore = snapshot
+		kv.duplicateCmdMap = duplicate
+		kv.config = config
+		kv.shards = shards
+		kv.seqNo = seqNo
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match140-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		kv.shardKeys = shardKeys
+		kv.leaveShards = leaveShards
+	}
+}
+
+func (kv *ShardKV) getSnapshotInBytes() []byte {
+	x := new(bytes.Buffer)
+	f := labgob.NewEncoder(x)
+</FONT>	f.Encode(kv.keyvaluestore)
+	f.Encode(kv.duplicateCmdMap)
+	f.Encode(kv.config)
+	f.Encode(kv.shards)
+	f.Encode(kv.seqNo)
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match140-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	f.Encode(kv.shardKeys)
+	f.Encode(kv.leaveShards)
+	snapshot := x.Bytes()
+
+	return snapshot
+}
+
+//
+// the tester calls Kill() when a ShardKV instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *ShardKV) Kill() {
+	kv.rf.Kill()
+	//fmt.Println(kv.gid,"killed")
+	// Your code here, if desired.
+	close(kv.exitChan)
+}
+
+//
+// servers[] contains the ports of the servers in this group.
+//
+// me is the index of the current server in servers[].
+//
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+//
+// the k/v server should snapshot when Raft's saved state exceeds
+// maxraftstate bytes, in order to allow Raft to garbage-collect its
+// log. if maxraftstate is -1, you don't need to snapshot.
+//
+// gid is this group's GID, for interacting with the shardmaster.
+//
+// pass masters[] to shardmaster.MakeClerk() so you can send
+// RPCs to the shardmaster.
+//
+// make_end(servername) turns a server name from a
+// Config.Groups[gid][i] into a labrpc.ClientEnd on which you can
+// send RPCs. You'll need this to send RPCs to other groups.
+//
+// look at client.go for examples of how to use masters[]
+// and make_end() to send RPCs to the group owning a specific shard.
+//
+// StartServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int,
+</FONT>	gid int, masters []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *ShardKV {
+	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+
+	kv := new(ShardKV)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+	kv.make_end = make_end
+	kv.gid = gid
+	kv.masters = masters
+
+	// Use something like this to talk to the shardmaster:
+	kv.mck = shardmaster.MakeClerk(kv.masters)
+
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+
+	kv.duplicateCmdMap = make(map[int]int)
+	kv.keyvaluestore = make(map[string]string)
+	kv.persister = persister
+	kv.channelMap = make(map[int]chan ChanReply)
+	kv.config = shardmaster.Config{Num: 0}
+	kv.shardKeys = make(map[int]map[string]bool)
+	kv.leaveShards = make(map[int]map[int]MergeRPCArgs)
+	kv.seqNo = 1
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match140-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.exitChan = make(chan bool)
+	kv.rf.Mu.Lock()
+	snapshot := kv.rf.Persister.ReadSnapshot()
+	kv.rf.Mu.Unlock()
+
+	kv.mu.Lock()
+	kv.readSnapshot(snapshot)
+	kv.mu.Unlock()
+
+	go kv.receiveAppliedCommands()
+	go kv.checkConfiguration()
+</FONT>	go kv.sendLeavingShards()
+
+	return kv
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

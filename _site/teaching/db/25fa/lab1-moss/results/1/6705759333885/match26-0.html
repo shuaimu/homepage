@@ -1,0 +1,869 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-Sirneij/src/deptran/raft/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-Sirneij/src/deptran/raft/server.cc<p><PRE>
+
+
+#include "server.h"
+// #include "paxos_worker.h"
+#include "exec.h"
+#include "frame.h"
+#include "coordinator.h"
+#include "../classic/tpc_command.h"
+
+namespace janus
+{
+
+  RaftServer::RaftServer(Frame *frame)
+  {
+    frame_ = frame;
+    /* Your code here for server initialization. Note that this function is
+       called in a different OS thread. Be careful about thread safety if
+       you want to initialize variables here. */
+    peerIds = {0, 1, 2, 3, 4};
+    state = RaftState::FOLLOWER;
+    votedFor = -1;
+    votesReceived.clear();
+    commitIndex = -1;
+    lastApplied = -1;
+    nextIndex.clear();
+    matchIndex.clear();
+  }
+
+  RaftServer::~RaftServer()
+  {
+    /* Your code here for server teardown */
+  }
+
+  /**
+   * @brief Sets up the server.
+   *
+   * @return void
+   *
+   * @note This function is called in the same OS thread as the RPC handlers.
+   */
+  void RaftServer::Setup()
+  {
+    /* Your code here for server setup. Due to the asynchronous nature of the
+       framework, this function could be called after a RPC handler is triggered.
+       Your code should be aware of that. This function is always called in the
+       same OS thread as the RPC handlers. */
+    // Coroutine::Sleep(2000000);
+    Coroutine::CreateRun([this]()
+                         {
+  mtx_.lock();
+  electionResetEvent = std::chrono::high_resolution_clock::now();
+  mtx_.unlock();
+  RunElectionTimer(); });
+  }
+
+  /**
+   * @brief Receives client requests.
+   *
+   * @param cmd The client request.
+   * @param pointer to the index of the log entry.
+   * @param pointer to the term of the log entry.
+   *
+   * @return true if the server is the leader, false otherwise.
+   *
+   * @note This function is called in the another OS thread as the RPC handlers.
+   */
+  bool RaftServer::Start(shared_ptr&lt;Marshallable&gt; &cmd,
+                         uint64_t *index,
+                         uint64_t *term)
+  {
+
+    // Acquire the lock for the server's state.
+    mtx_.lock();
+    *index = 0;
+    *term = 0;
+    // Log_info("Start called with CMD: %s, Index: %d, Term: %d", cmd, *index, *term);
+    // If the server is not the leader, then return false.
+    if (state != RaftState::LEADER)
+    {
+      mtx_.unlock();
+      return false;
+    }
+    log.push_back(LogEntry{currentTerm, cmd});
+    // Get the index and term of the new log entry.
+    *term = currentTerm;
+    *index = log.size();
+    // Log a message indicating that the new log entry has been added to the server's log.
+    // Log_info("RaftServer::Start -&gt; {index: %d, term: %d}. Log: %s. Acknowledged by %s {ID: %d}", *index, *term, StringifyLogEntry(log).c_str(), StringifyServerStatus().c_str(), loc_id_);
+
+    // Release the lock for the server's state.
+    mtx_.unlock();
+    // Return true.
+    return true;
+  }
+
+  /**
+   * @brief Receives client requests.
+   *
+   * @param pointer to whether or not the server is the leader.
+   * @param pointer to the term of the server.
+   *
+   * @return void
+   *
+   * @note This function is called in the another OS thread as the RPC handlers.
+   */
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match26-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  void RaftServer::GetState(bool *is_leader, uint64_t *term)
+  {
+    /* Your code here. This function can be called from another OS thread. */
+    *is_leader = state == RaftState::LEADER;
+    *term = currentTerm;
+  }
+
+  /**
+   * @brief Runs the election timer.
+   *
+   * @return void
+   */
+  void RaftServer::RunElectionTimer()
+</FONT>  {
+    std::srand(static_cast&lt;unsigned int&gt;(std::chrono::high_resolution_clock::now().time_since_epoch().count()));
+    std::chrono::milliseconds timeoutDuration = ElectionTimeout();
+    mtx_.lock();
+    int64_t termStarted = currentTerm;
+    mtx_.unlock();
+
+    // Log_debug("RaftServer::RunElectionTimer -&gt; Election timer{TimeoutDuration: %d, Term: %d}", timeoutDuration, termStarted);
+
+    while (true)
+    {
+      Coroutine::Sleep(10000);
+      mtx_.lock();
+      if (state != RaftState::CANDIDATE && state != RaftState::FOLLOWER)
+      {
+        // Log_debug("RaftServer::RunElectionTimer -&gt; Election timer state: %s. Backing off.", StringifyServerStatus().c_str());
+        mtx_.unlock();
+        return;
+      }
+      if (termStarted != currentTerm)
+      {
+        // Log_debug("RaftServer::RunElectionTimer -&gt; Election timer term changed from %d to %d. Backing off.", termStarted, currentTerm);
+        mtx_.unlock();
+        return;
+      }
+      // Start an election if we haven't heard from a leader or haven't voted for
+      // someone for the duration of the timeout.
+      if ((std::chrono::high_resolution_clock::now() - electionResetEvent) &gt;= timeoutDuration)
+      {
+        StartElection();
+        mtx_.unlock();
+        return;
+      }
+      mtx_.unlock();
+    }
+  }
+
+  /**
+   * @brief Starts an election.
+   *
+   * @return void
+   */
+  void RaftServer::StartElection()
+  {
+    mtx_.lock();
+    state = RaftState::CANDIDATE;
+    votesReceived.clear();
+    currentTerm += 1;
+    int64_t savedCurrentTerm = currentTerm;
+    electionResetEvent = std::chrono::high_resolution_clock::now();
+    votedFor = loc_id_;
+
+    // Log_debug("RaftServer::StartElection -&gt; Candidate{term: %d, log: %s}", savedCurrentTerm, StringifyLogEntry(log).c_str());
+
+    votesReceived.insert(loc_id_);
+    mtx_.unlock();
+
+    // Calculate the number of batches needed to limit RPC count
+    int batchSize = 20;
+    int numBatches = (peerIds.size() + batchSize - 1) / batchSize;
+
+    // Send RequestVote RPCs in batches
+    for (int batchIndex = 0; batchIndex &lt; numBatches; ++batchIndex)
+    {
+      Coroutine::CreateRun([this, savedCurrentTerm, batchIndex, batchSize]()
+                           {
+                                 std::vector&lt;std::tuple&lt;int64_t, int64_t, int64_t&gt;&gt; rpcBatch;
+
+                                 // Collect RPCs for this batch
+                                 for (int i = batchIndex * batchSize; i &lt; (batchIndex + 1) * batchSize && i &lt; peerIds.size(); ++i)
+                                 {
+                                     int64_t peerId = peerIds[i];
+                                     if (peerId != loc_id_)
+                                     {
+                                         mtx_.lock();
+                                         int64_t savedLastLogIndex, savedLastLogTerm;
+                                         std::tie(savedLastLogIndex, savedLastLogTerm) = GetLastLogIndexAndTerm();
+                                         mtx_.unlock();
+
+                                         rpcBatch.emplace_back(peerId, savedLastLogIndex, savedLastLogTerm);
+                                     }
+                                 }
+
+                                 // Send RequestVote RPCs for this batch
+                                 for (const auto &rpcInfo : rpcBatch)
+                                 {
+                                     int64_t responseTerm;
+                                     bool_t responseVoteGranted;
+                                     int64_t peerId, lastLogIndex, lastLogTerm;
+
+                                     std::tie(peerId, lastLogIndex, lastLogTerm) = rpcInfo;
+
+                                     // Log_debug("RaftServer::StartElection -&gt; Sending RequestVote{To: %d, args: %s}", peerId, StringifyRequestVoteArgs(savedCurrentTerm, loc_id_, lastLogIndex, lastLogTerm).c_str());
+
+                                     auto event = commo()-&gt;SendRequestVote(0, peerId,
+                                                                           savedCurrentTerm,
+                                                                           loc_id_,
+                                                                           lastLogIndex,
+                                                                           lastLogTerm,
+                                                                           &responseTerm,
+                                                                           &responseVoteGranted);
+                                     // Wait for the RequestVote RPC to complete.
+                                     event-&gt;Wait(1000000);
+
+                                     if (event-&gt;status_ == Event::TIMEOUT)
+                                     {
+                                         return;
+                                     }
+
+                                     mtx_.lock();
+                                     if (state != RaftState::CANDIDATE)
+                                     {
+                                         // Log_info("RaftServer::StartElection -&gt; Server status is a %s while waiting for reply", StringifyServerStatus().c_str());
+                                         mtx_.unlock();
+                                         return;
+                                     }
+
+                                     if (responseTerm &gt; savedCurrentTerm)
+                                     {
+                                         // Log_debug("RaftServer::StartElection -&gt; Term out of date in RequestVoteReply");
+                                         BecomeFollower(responseTerm);
+                                         mtx_.unlock();
+                                         return;
+                                     }
+                                     else if (responseTerm == savedCurrentTerm)
+                                     {
+                                         if (responseVoteGranted)
+                                         {
+                                             votesReceived.insert(peerId);
+                                             if (votesReceived.size() &gt;= ceil((peerIds.size() + 1) / 2))
+                                             {
+                                                 // Log_debug("RaftServer::StartElection -&gt; Election won with %d votes", votesReceived.size());
+                                                 StartLeader();
+                                                 mtx_.unlock();
+                                                 return;
+                                             }
+                                         }
+                                     }
+                                     mtx_.unlock();
+                                 } });
+    }
+
+    // Run another election timer, in case this election is not successful.
+    Coroutine::CreateRun([this]()
+                         {
+                             // Coroutine::Sleep(10000);
+                             RunElectionTimer(); });
+  }
+
+  /**
+   * @brief Starts the leader.
+   *
+   * @return void
+   */
+  void RaftServer::StartLeader()
+  {
+    state = RaftState::LEADER;
+
+    for (auto peerId : peerIds)
+    {
+      nextIndex[peerId] = log.size();
+      matchIndex[peerId] = -1;
+    }
+
+    // Log_info("RaftServer::StartLeader -&gt; Leader{term: %d, log: %s}", currentTerm, StringifyLogEntry(log).c_str());
+
+    Coroutine::CreateRun([this]()
+                         {
+            while (true) {
+                InitiateAppendEntries();
+
+                Coroutine::Sleep(HEARTBEAT_INTERVAL);
+
+                mtx_.lock();
+                if (state != RaftState::LEADER) {
+                    mtx_.unlock();
+                    return;
+                }
+                mtx_.unlock();
+            } });
+  }
+
+  /**
+   * @brief Initiates an empty AppendEntries RPC.
+   *
+   * @return void
+   */
+  void RaftServer::InitiateEmptyAppendEntries()
+  {
+    mtx_.lock();
+    int64_t savedCurrentTerm = currentTerm;
+    mtx_.unlock();
+
+    for (auto const &peerId : peerIds)
+    {
+      if (peerId == loc_id_)
+      {
+        continue;
+      }
+      auto lambda = [this, peerId, savedCurrentTerm]()
+      {
+        int64_t responseTerm;
+        bool_t responseSuccess;
+
+        // Log_info("RaftServer::InitiateEmptyAppendEntries -&gt; %s (%d) -&gt; %d run AE Rpc", StringifyServerStatus().c_str(), loc_id_, peerId);
+
+        // Send the EmptyAppendEntry RPC.
+        auto event = commo()-&gt;SendEmptyAppendEntries(0, peerId,
+                                                     savedCurrentTerm,
+                                                     loc_id_,
+                                                     0,
+                                                     0,
+                                                     0,
+                                                     0,
+                                                     0,
+                                                     &responseTerm,
+                                                     &responseSuccess);
+        // Wait for the EmptyAppendEntry RPC to complete.
+        event-&gt;Wait();
+        // If the server is no longer the leader, then return.
+        if (state != RaftState::LEADER)
+        {
+          // Log_info("RaftServer::InitiateEmptyAppendEntries -&gt; %s (%d) -&gt; %d run AE Rpc. Server is no longer leader.", StringifyServerStatus().c_str(), loc_id_, peerId);
+          return;
+        }
+        // If the server's term is greater than the current term,
+        // then become a follower.
+        if (responseTerm &gt; savedCurrentTerm)
+        {
+          // Log_info("RaftServer::InitiateEmptyAppendEntries -&gt; %s (%d) -&gt; %d run AE Rpc. Term out of date.", StringifyServerStatus().c_str(), loc_id_, peerId);
+          BecomeFollower(responseTerm);
+          return;
+        }
+      };
+      // Create and start a coroutine to run the AppendEntry RPC.
+      Coroutine::CreateRun(lambda);
+    }
+  }
+
+  /**
+   * @brief Initiates an AppendEntries RPC. This function is called by the leader.
+   *
+   * @return void
+   */
+  void RaftServer::InitiateAppendEntries()
+  {
+    mtx_.lock();
+    int64_t savedCurrentTerm = currentTerm;
+    mtx_.unlock();
+
+    // Collect AppendEntries RPCs in batches
+    std::vector&lt;std::vector&lt;int64_t&gt;&gt; rpcBatches;
+    int batchSize = 10; // Adjust batch size as needed
+
+    for (size_t i = 0; i &lt; peerIds.size(); i += batchSize)
+    {
+      std::vector&lt;int64_t&gt; rpcBatch;
+      for (size_t j = i; j &lt; i + batchSize && j &lt; peerIds.size(); ++j)
+      {
+        int64_t peerId = peerIds[j];
+        if (peerId != loc_id_)
+        {
+          rpcBatch.push_back(peerId);
+        }
+      }
+      rpcBatches.push_back(rpcBatch);
+    }
+
+    // Send the AppendEntries RPC batches in separate Coroutines
+    for (const auto &rpcBatch : rpcBatches)
+    {
+      Coroutine::CreateRun([this, savedCurrentTerm, rpcBatch]()
+                           {
+                           for (const auto &peerId : rpcBatch)
+                           {
+                             int64_t ni = nextIndex[peerId];
+                             int64_t prevLogIndex = ni - 1;
+                             int64_t prevLogTerm = -1;
+                             if (prevLogIndex &gt;= 0)
+                             {
+                               prevLogTerm = log[prevLogIndex].term;
+                             }
+
+                             std::vector&lt;LogEntry&gt; entries(log.begin() + ni, log.end());
+
+                             std::vector&lt;int64_t&gt; terms;
+                             std::vector&lt;shared_ptr&lt;Marshallable&gt;&gt; cmds;
+                             std::tie(terms, cmds) = ExtractAndSplitLogsToTermsAndCommands(entries);
+
+                             vector&lt;MarshallDeputy&gt; commands;
+
+                             for (auto cmd : cmds)
+                             {
+                               MarshallDeputy *md = new MarshallDeputy(cmd);
+                               commands.push_back(*md);
+                             }
+
+                             int64_t leaderCommit = commitIndex;
+
+                             int64_t responseTerm;
+                             bool_t responseSuccess;
+                             int64_t conflictIndex;
+                             int64_t conflictTerm;
+
+                             auto event = commo()-&gt;SendAppendEntries(0, peerId,
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match26-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                                                     savedCurrentTerm,
+                                                                     loc_id_,
+                                                                     prevLogIndex,
+                                                                     prevLogTerm,
+                                                                     leaderCommit,
+                                                                     terms,
+                                                                     commands,
+                                                                     &responseTerm,
+                                                                     &responseSuccess,
+                                                                     &conflictIndex,
+                                                                     &conflictTerm);
+
+                             event-&gt;Wait(1000000);
+                             if (event-&gt;status_ == Event::TIMEOUT)
+</FONT>                             {
+                               return;
+                             }
+
+                             mtx_.lock();
+                             if (responseTerm &gt; currentTerm)
+                             {
+                               BecomeFollower(responseTerm);
+                               mtx_.unlock();
+                               return;
+                             }
+
+                             if (state == RaftState::LEADER && savedCurrentTerm == responseTerm)
+                             {
+                               if (responseSuccess)
+                               {
+                                 nextIndex[peerId] = ni + entries.size();
+                                 matchIndex[peerId] = nextIndex[peerId] - 1;
+
+                                 int64_t savedCommitIndex = commitIndex;
+                                 for (int64_t i = commitIndex + 1; i &lt; log.size(); i++)
+                                 {
+                                   if (log[i].term == currentTerm)
+                                   {
+                                     int64_t matchCount = 1;
+                                     for (const auto peerId : peerIds)
+                                     {
+                                       if (matchIndex[peerId] &gt;= i)
+                                       {
+                                         matchCount++;
+                                       }
+                                     }
+                                     if (matchCount * 2 &gt;= peerIds.size() + 1)
+                                     {
+                                       commitIndex = i;
+                                     }
+                                   }
+                                 }
+
+                                 if (commitIndex != savedCommitIndex)
+                                 {
+                                  // Log_info("RaftServer::InitiateAppendEntries -&gt; Leader{ID: %d, term: %d, commitIndex: %d}", loc_id_,currentTerm, commitIndex);
+                                   int64_t savedLastApplied = lastApplied;
+                                   std::vector&lt;LogEntry&gt; newEntries;
+                                   if (commitIndex &gt; lastApplied)
+                                   {
+                                     newEntries = std::vector&lt;LogEntry&gt;(log.begin() + lastApplied + 1, log.begin() + commitIndex + 1);
+                                     lastApplied = commitIndex;
+                                   }
+
+                                   for (int i = 0; i &lt; newEntries.size(); i++)
+                                   {
+                                     app_next_(*newEntries[i].command);
+                                   }
+                                 }
+                               }
+                               else
+                               {
+                                 if (conflictTerm &gt;= 0)
+                                 {
+                                   int64_t lastIndexOfTerm = -1;
+                                   for (int64_t i = log.size() - 1; i &gt;= 0; i--)
+                                   {
+                                     if (log[i].term == conflictTerm)
+                                     {
+                                       lastIndexOfTerm = i;
+                                       break;
+                                     }
+                                   }
+                                   if (lastIndexOfTerm &gt;= 0)
+                                   {
+                                     nextIndex[peerId] = lastIndexOfTerm + 1;
+                                   }
+                                   else
+                                   {
+                                     nextIndex[peerId] = conflictIndex;
+                                   }
+                                 }
+                                 else
+                                 {
+                                   nextIndex[peerId] = conflictIndex;
+                                 }
+                               }
+                             }
+                             mtx_.unlock();
+                           } });
+    }
+  }
+
+  /**
+   * @brief Makes the server a follower.
+   *
+   * @param term The term of the server.
+   *
+   * @return void
+   *
+   * @note This function is used to make the server a follower.
+   */
+  void RaftServer::BecomeFollower(int64_t term)
+  {
+    // Log_info("RaftServer::BecomeFollower -&gt; Follower{term: %d, log: %s}", term, StringifyLogEntry(log).c_str());
+    state = RaftState::FOLLOWER;
+    currentTerm = term;
+    votedFor = -1;
+    electionResetEvent = std::chrono::high_resolution_clock::now();
+
+    // Run an election timer.
+    Coroutine::CreateRun([this]()
+                         { RunElectionTimer(); });
+  }
+
+  /**
+   * @brief Returns a random timeout duration between 500ms and 1000ms.
+   *
+   * @return A random timeout duration between 500ms and 1000ms.
+   *
+   * @note This function is used to set the election timeout duration.
+   */
+  std::chrono::milliseconds RaftServer::ElectionTimeout()
+  {
+    return std::chrono::milliseconds(500 + (std::rand() % 100));
+  }
+
+  /**
+   * @brief Extracts terms and commands from log entries and returns them as separate vectors.
+   *
+   * @param entries A vector of LogEntry objects.
+   * @return A pair of vectors, where the first vector contains terms and the second vector contains commands.
+   */
+  std::pair&lt;std::vector&lt;int64_t&gt;, std::vector&lt;shared_ptr&lt;Marshallable&gt;&gt;&gt; RaftServer::ExtractAndSplitLogsToTermsAndCommands(std::vector&lt;LogEntry&gt; &entries)
+  {
+    std::vector&lt;int64_t&gt; terms;
+    std::vector&lt;shared_ptr&lt;Marshallable&gt;&gt; commands;
+    for (auto &log : entries)
+    {
+      terms.emplace_back(log.term);
+      commands.emplace_back(log.command);
+    }
+    verify(terms.size() == commands.size());
+
+    return std::make_pair(terms, commands);
+  }
+
+  /**
+   * @brief Merges terms and commands into a vector of LogEntry objects.
+   *
+   * @param terms A vector of terms.
+   * @param commands A vector of commands.
+   * @return A vector of LogEntry objects.
+   */
+  std::vector&lt;LogEntry&gt; RaftServer::MergeTermsAndCommandsToLogEntry(const std::vector&lt;int64_t&gt; &terms, const std::vector&lt;shared_ptr&lt;Marshallable&gt;&gt; &commands)
+  {
+    std::vector&lt;LogEntry&gt; res;
+    verify(terms.size() == commands.size());
+    for (int i = 0; i &lt; terms.size(); i++)
+    {
+      res.emplace_back(LogEntry{terms[i], commands[i]});
+    }
+    return res;
+  }
+
+  /**
+   * @brief (NOT USED AGAIN) Extracts the command from a Marshallable object.
+   *
+   * @param cmd A Marshallable object.
+   *
+   * @return The command data.
+   */
+  int64_t RaftServer::ExtractCommand(shared_ptr&lt;Marshallable&gt; &cmd)
+  {
+    Marshal mar;
+    int cmdData;
+    cmd-&gt;ToMarshal(mar);
+    // Log_debug("ExtractCommand: %s", mar.c_str());
+    mar &gt;&gt; cmdData;
+    return cmdData;
+  }
+
+  /**
+   * @brief (NOT USED AGAIN) Commits a command to the state machine.
+   *
+   * @param commandValue The command to commit.
+   *
+   * @return void
+   */
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match26-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  void RaftServer::CommitCommand(int64_t commandValue)
+  {
+    auto cmdptr = std::make_shared&lt;TpcCommitCommand&gt;();
+    auto vpd_p = std::make_shared&lt;VecPieceData&gt;();
+    vpd_p-&gt;sp_vec_piece_data_ = std::make_shared&lt;vector&lt;shared_ptr&lt;SimpleCommand&gt;&gt;&gt;();
+    cmdptr-&gt;tx_id_ = commandValue;
+    cmdptr-&gt;cmd_ = vpd_p;
+</FONT>    auto cmdptr_m = dynamic_pointer_cast&lt;Marshallable&gt;(cmdptr);
+    app_next_(*cmdptr_m);
+  }
+
+  /**
+   * @brief Returns the index and term of the last log entry.
+   *
+   * @return A pair of integers, where the first integer is the index of the last log entry and the second integer is the term of the last log entry.
+   */
+  std::pair&lt;int64_t, uint64_t&gt; RaftServer::GetLastLogIndexAndTerm()
+  {
+    // If the log is not empty, then return the index
+    // and term of the last log entry.
+    if (log.size() &gt; 0)
+    {
+      return std::make_pair(log.size() - 1, log.back().term);
+    }
+    // If the log is empty, then return -1 for the index and 0 for the term.
+    else
+    {
+      return std::make_pair(-1, -1);
+    }
+  }
+
+  /* Methods for debugging purposes */
+
+  /**
+   * @brief Returns a string representation of the server's current RaftState.
+   *
+   * @return A string representation of the server's current RaftState.
+   *
+   * @note This function is used for debugging purposes.
+   */
+  std::string RaftServer::StringifyServerStatus()
+  {
+    // Switch on the server's current RaftState.
+    switch (state)
+    {
+    // If the server is the leader, return the string "LEADER".
+    case RaftState::LEADER:
+      return "LEADER";
+      break;
+
+    // If the server is a candidate, return the string "CANDIDATE".
+    case RaftState::CANDIDATE:
+      return "CANDIDATE";
+      break;
+
+    // If the server is a follower, return the string "FOLLOWER".
+    case RaftState::FOLLOWER:
+      return "FOLLOWER";
+      break;
+
+    // If the server is in an unknown RaftState, return the string "UNKNOWN RaftState".
+    default:
+      return "UNKNOWN RaftState";
+      break;
+    }
+  }
+
+  /**
+   * @brief Returns a string representation of a vector of LogEntry objects.
+   *
+   * @param entries A vector of LogEntry objects.
+   *
+   * @return A string representation of a vector of LogEntry objects.
+   *
+   * @note This function is used for debugging purposes.
+   */
+  std::string RaftServer::StringifyLogEntry(std::vector&lt;LogEntry&gt; &entries)
+  {
+    std::stringstream ss;
+    ss &lt;&lt; "[";
+    for (const auto &entry : entries)
+    {
+      ss &lt;&lt; "LogEntry{term: " &lt;&lt; entry.term &lt;&lt; ", command: " &lt;&lt; entry.command &lt;&lt; "} ";
+    }
+    ss &lt;&lt; "]";
+    return ss.str();
+  }
+
+  /**
+   * @brief Returns a string representation of the arguments of a RequestVote RPC.
+   *
+   * @param term The term of the RequestVote RPC.
+   * @param candidate_id The candidate_id of the RequestVote RPC.
+   * @param last_log_index The last_log_index of the RequestVote RPC.
+   * @param last_log_term The last_log_term of the RequestVote RPC.
+   *
+   * @return A string representation of the arguments of a RequestVote RPC.
+   *
+   * @note This function is used for debugging purposes.
+   */
+  std::string RaftServer::StringifyRequestVoteArgs(uint64_t term, uint64_t candidate_id, uint64_t last_log_index, uint64_t last_log_term)
+  {
+    return "{ term: " + std::to_string(term) + ", candidate_id: " + std::to_string(candidate_id) + ", last_log_index: " + std::to_string(last_log_index) + ", last_log_term: " + std::to_string(last_log_term) + " }";
+  }
+
+  /**
+   * @brief Returns a string representation of the reply of a RequestVote RPC.
+   *
+   * @param reply_term The reply_term of the RequestVote RPC.
+   * @param vote_granted The vote_granted of the RequestVote RPC.
+   *
+   * @return A string representation of the reply of a RequestVote RPC.
+   *
+   * @note This function is used for debugging purposes.
+   */
+  std::string RaftServer::StringifyRequestVoteReply(uint64_t reply_term, bool_t vote_granted)
+  {
+    return "{ reply_term: " + std::to_string(reply_term) + ", vote_granted: " + std::to_string(vote_granted) + " }";
+  }
+
+  /**
+   * @brief Returns a string representation of the arguments of a vector.
+   *
+   * @param vec The vector.
+   *
+   * @return A string representation of the arguments of a vector.
+   *
+   * @note This function is used for debugging purposes.
+   */
+  std::string RaftServer::StringifyVector(const std::vector&lt;int64_t&gt; &vec)
+  {
+    std::stringstream ss;
+    ss &lt;&lt; "[";
+    for (const auto &i : vec)
+    {
+      ss &lt;&lt; i &lt;&lt; " ";
+    }
+    ss &lt;&lt; "]";
+    return ss.str();
+  }
+
+  /**
+   * @brief Returns a string representation of the arguments of a map.
+   *
+   * @param map The map.
+   *
+   * @return A string representation of the arguments of a map.
+   *
+   * @note This function is used for debugging purposes.
+   */
+  std::string RaftServer::StringifyMap(std::map&lt;locid_t, int64_t&gt; &map)
+  {
+    std::stringstream ss;
+    ss &lt;&lt; "[";
+    for (const auto &pair : map)
+    {
+      std::string locid_str = std::to_string(pair.first);
+      ss &lt;&lt; "{" &lt;&lt; locid_str &lt;&lt; ": " &lt;&lt; pair.second &lt;&lt; "}, ";
+    }
+    std::string result = ss.str();
+    if (!result.empty())
+    {
+      // Remove the trailing comma and space
+      result.pop_back();
+      result.pop_back();
+    }
+    result += "]";
+    return result;
+  }
+
+  void RaftServer::SyncRpcExample()
+  {
+    /* This is an example of synchronous RPC using coroutine; feel free to
+       modify this function to dispatch/receive your own messages.
+       You can refer to the other function examples in commo.h/cc on how
+       to send/recv a Marshallable object over RPC. */
+    Coroutine::CreateRun([this]()
+                         {
+    string res;
+    auto event = commo()-&gt;SendString(0, /* partition id is always 0 for lab1 */
+                                     0, "hello", &res);
+    event-&gt;Wait(1000000); //timeout after 1000000us=1s
+    if (event-&gt;status_ == Event::TIMEOUT) {
+      Log_info("timeout happens");
+    } else {
+      Log_info("rpc response is: %s", res.c_str()); 
+    } });
+  }
+
+  /* Do not modify any code below here */
+
+  void RaftServer::Disconnect(const bool disconnect)
+  {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+    verify(disconnected_ != disconnect);
+    // global map of rpc_par_proxies_ values accessed by partition then by site
+    static map&lt;parid_t, map&lt;siteid_t, map&lt;siteid_t, vector&lt;SiteProxyPair&gt;&gt;&gt;&gt; _proxies{};
+    if (_proxies.find(partition_id_) == _proxies.end())
+    {
+      _proxies[partition_id_] = {};
+    }
+    RaftCommo *c = (RaftCommo *)commo();
+    if (disconnect)
+    {
+      verify(_proxies[partition_id_][loc_id_].size() == 0);
+      verify(c-&gt;rpc_par_proxies_.size() &gt; 0);
+      auto sz = c-&gt;rpc_par_proxies_.size();
+      _proxies[partition_id_][loc_id_].insert(c-&gt;rpc_par_proxies_.begin(), c-&gt;rpc_par_proxies_.end());
+      c-&gt;rpc_par_proxies_ = {};
+      verify(_proxies[partition_id_][loc_id_].size() == sz);
+      verify(c-&gt;rpc_par_proxies_.size() == 0);
+    }
+    else
+    {
+      verify(_proxies[partition_id_][loc_id_].size() &gt; 0);
+      auto sz = _proxies[partition_id_][loc_id_].size();
+      c-&gt;rpc_par_proxies_ = {};
+      c-&gt;rpc_par_proxies_.insert(_proxies[partition_id_][loc_id_].begin(), _proxies[partition_id_][loc_id_].end());
+      _proxies[partition_id_][loc_id_] = {};
+      verify(_proxies[partition_id_][loc_id_].size() == 0);
+      verify(c-&gt;rpc_par_proxies_.size() == sz);
+    }
+    disconnected_ = disconnect;
+  }
+
+  bool RaftServer::IsDisconnected()
+  {
+    return disconnected_;
+  }
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

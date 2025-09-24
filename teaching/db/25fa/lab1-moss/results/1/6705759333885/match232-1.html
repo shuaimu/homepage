@@ -1,0 +1,171 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-2108arunk/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-nitingss11/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+void RaftServiceImpl::HandleRequestVote(const uint64_t& cNodeId,
+                                        const uint64_t& cTerm,
+                                        const uint64_t& cLogLength,
+                                        const uint64_t& cLogTerm,
+                                        uint64_t *nodeId,
+                                        uint64_t *nodeTerm,
+                                        bool_t *vote_granted,
+                                        rrr::DeferredReply* defer) {
+  //Your code here
+  // Log_info("received a reqVote at node %d. %d, %d, %d, %d", svr_-&gt;loc_id_, cNodeId, cTerm, cLogLength, cLogTerm);
+  
+  if(cTerm &gt; svr_-&gt;currentTerm) {
+    svr_-&gt;currentTerm = cTerm;
+    svr_-&gt;currentRole = "follower";
+    svr_-&gt;votedFor = {};
+  }
+
+  bool termCheck = (cTerm == svr_-&gt;currentTerm);
+
+  int votedForSize = svr_-&gt;votedFor.size();
+  bool votedForCheck = (votedForSize==0 || (votedForSize==1 && svr_-&gt;votedFor.at(0)==cNodeId));
+
+  int lastLogTerm = 0;
+  int logEntriesSize = svr_-&gt;logEntries.size();
+  if(logEntriesSize &gt; 0) {
+    lastLogTerm = svr_-&gt;logEntries.at(logEntriesSize-1).term;
+  }
+
+  bool logCheck = (cLogTerm&gt;lastLogTerm || (cLogTerm==lastLogTerm && cLogLength&gt;=logEntriesSize));
+
+  if(termCheck && votedForCheck && logCheck) {
+    svr_-&gt;votedFor.push_back(cNodeId);
+    *vote_granted = true;
+  } else {
+    *vote_granted = false;
+  }
+
+  *nodeId = svr_-&gt;loc_id_;
+  *nodeTerm = svr_-&gt;currentTerm;
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleAppendEntries(const MarshallDeputy& md_cmd,
+                                          bool_t *followerAppendOK,
+                                          rrr::DeferredReply* defer) {
+  /* Your code here */
+  std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(md_cmd).sp_data_;
+  *followerAppendOK = false;
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match232-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  // Log_info("receive a hello rpc: %s in server %d", req.c_str(), svr_-&gt;loc_id_);
+  // svr_-&gt;heartBeatReceived = true;
+  *res = "world";
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleReplicateAppendEntries(const uint64_t& lNodeId,
+                                                   const uint64_t& lTerm,
+                                                   const uint64_t& prefixLength,
+                                                   const uint64_t& prefixTerm,
+</FONT>                                                   const uint64_t& commitLength,
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match232-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                                   const vector&lt;MarshallDeputy&gt;& suffixCommands,
+                                                   const vector&lt;uint64_t&gt;& suffixTerms,
+                                                   uint64_t *nodeId,
+                                                   uint64_t *nodeTerm,
+                                                   uint64_t *ackedLen,
+                                                   bool_t *success,
+                                                   rrr::DeferredReply* defer) {
+</FONT>  /* Your code here */
+  // Log_info("received an replicateAppendEntries in server %d", svr_-&gt;loc_id_);
+  if(lTerm &gt; svr_-&gt;currentTerm) {
+    svr_-&gt;currentTerm = lTerm;
+    svr_-&gt;votedFor = {};
+  }
+  if(lTerm == svr_-&gt;currentTerm) {
+    svr_-&gt;currentRole = "follower";
+    svr_-&gt;isLeader = false;
+    svr_-&gt;currentLeader = lNodeId;
+    svr_-&gt;heartBeatReceived = true;
+  }
+
+  bool termCheck = (lTerm == svr_-&gt;currentTerm);
+
+  // Log_info("term check %d", termCheck);
+
+  bool logCheck = (svr_-&gt;logEntries.size()&gt;=prefixLength && 
+                    (prefixLength==0 || svr_-&gt;logEntries.at(prefixLength-1).term==prefixTerm));
+
+  // Log_info("log check %d", logCheck);
+
+  if(termCheck && logCheck) {
+    int suffixLength = suffixCommands.size();
+    // Log_info("before availableTill");
+    if(suffixLength &gt; 0 && svr_-&gt;logEntries.size() &gt; prefixLength) {
+      // Log_info("inside availableTill if");
+      int availableTill = std::min((int) svr_-&gt;logEntries.size(), (int) prefixLength+suffixLength)-1;
+      // Log_info("availableTill calculated %d", availableTill);
+      if(svr_-&gt;logEntries.at(availableTill).term != suffixTerms.at(availableTill-prefixLength)) {
+        svr_-&gt;logEntries.resize(prefixLength);
+      }
+    }
+    // Log_info("before logEntries append");
+    if(prefixLength+suffixLength &gt; svr_-&gt;logEntries.size()) {
+      // Log_info("inside logEntries append if");
+      for(int i=svr_-&gt;logEntries.size()-prefixLength; i&lt;suffixLength; i++) {
+        std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(suffixCommands.at(i)).sp_data_;
+        LogEntry logEntry = LogEntry(cmd, suffixTerms.at(i));
+        svr_-&gt;logEntries.push_back(logEntry); 
+        // Log_info("pushed the logEntry in the follower logEntries size %d", svr_-&gt;logEntries.size());
+      }
+    }
+    // Log_info("before app_next_ of follower");
+    if(commitLength &gt; svr_-&gt;commitIdx) {
+      // Log_info("inside app_next_ if");
+      for(int i=svr_-&gt;commitIdx; i&lt;commitLength; i++) {
+        svr_-&gt;app_next_(*(svr_-&gt;logEntries.at(i).command));
+      }
+      svr_-&gt;commitIdx = commitLength;
+      // Log_info("Committed from follower %d, now commitIndex %d", svr_-&gt;loc_id_, svr_-&gt;commitLength);
+    }
+    // Log_info("all done from follower");
+    *ackedLen = prefixLength + suffixLength;
+    *success = true;
+  } else {
+    *ackedLen = 0;
+    *success = false;
+  }
+
+  *nodeId = svr_-&gt;loc_id_;
+  *nodeTerm = svr_-&gt;currentTerm;
+  // Log_info("returning from follower");
+  // Log_info("This thread id %lld", std::this_thread::get_id());
+
+  defer-&gt;reply();
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

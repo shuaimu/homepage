@@ -1,0 +1,55 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-AlexandraJeong/src/shardkv/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-AlexandraJeong/src/shardkv/service.cc<p><PRE>
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+class TxLogServer;
+class RaftServer;
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match138-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_18.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void ShardKvServiceImpl::Put(const uint64_t& opid,
+                             const string& k,
+                             const string& v,
+                             const shardid_t& shard,
+                             uint32_t* ret,
+                             rrr::DeferredReply* defer) {
+</FONT>  *ret = sp_svr_-&gt;Put(opid, k, v, shard);
+  defer-&gt;reply();
+}
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match138-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_18.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void ShardKvServiceImpl::Append(const uint64_t& opid, 
+                                const string& k,
+                                const string& v,
+                                const shardid_t& shard,
+                                uint32_t* ret,
+                                rrr::DeferredReply* defer) {
+</FONT>  *ret = sp_svr_-&gt;Append(opid, k, v, shard);
+  defer-&gt;reply();
+}
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match138-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_16.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void ShardKvServiceImpl::Get(const uint64_t& opid, 
+                             const string& k,
+                             const shardid_t& shard,
+                             uint32_t* ret,
+                             string* v,
+                             rrr::DeferredReply* defer) {
+</FONT>  *ret = sp_svr_-&gt;Get(opid, k, shard, v);
+  defer-&gt;reply();
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

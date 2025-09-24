@@ -1,0 +1,359 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-Apeksha115908828/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-MITsVision/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+namespace janus {
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match238-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+    // your code here
+    std::unique_lock&lt;std::recursive_mutex&gt; lock(mtx_);
+    Log_info("in Join");
+</FONT>    std::cout &lt;&lt; "gid_server_map contents: ";
+    for (const auto& entry : gid_server_map) {
+        std::cout &lt;&lt; "Key: " &lt;&lt; entry.first &lt;&lt; ", Value: [";
+        for (const auto& value : entry.second) {
+            std::cout &lt;&lt; value &lt;&lt; " ";
+        }
+        std::cout &lt;&lt; "]" &lt;&lt; std::endl;
+    }
+
+    uint32_t gid = gid_server_map.begin()-&gt;first;
+
+    // Ensure that configs_ is not empty
+    if (configs_.empty()) {
+        cout&lt;&lt;"Empty configs_"&lt;&lt;endl;
+        // Create the initial configuration with all shards assigned to GID zero
+        ShardConfig initialConfig;
+        initialConfig.number = gid;
+        
+        // Assign shards to the first group in gid_server_map
+        //uint32_t firstGroup = gid_server_map.begin()-&gt;first;
+        for (int shard = 1; shard &lt;= 10; ++shard) {
+            initialConfig.shard_group_map_[shard] = gid;
+        }
+
+        // Set the gid_server_map in the initial configuration
+        initialConfig.group_servers_map_[gid] = gid_server_map.begin()-&gt;second;
+
+        // Set the initial configuration with config number 0
+        configs_[gid] = initialConfig;
+
+        // Print the initial configuration
+        std::cout &lt;&lt; "Initial Configuration (0):" &lt;&lt; std::endl;
+        for (const auto& entry : initialConfig.group_servers_map_) {
+            std::cout &lt;&lt; "G" &lt;&lt; entry.first &lt;&lt; " -&gt; {";
+            for (uint32_t shard : entry.second) {
+                std::cout &lt;&lt; "S" &lt;&lt; shard &lt;&lt; " ";
+            }
+            std::cout &lt;&lt; "}" &lt;&lt; std::endl;
+        }
+
+    } else 
+    if(configs_.count(gid) &lt;= 0){
+        cout&lt;&lt;"Non Empty configs_"&lt;&lt;endl;
+        // Calculate the configuration number for the new configuration
+        // int32_t nGid = configs_.rbegin()-&gt;first + 1;
+        int32_t nGid;// = gid_server_map.begin()-&gt;first;
+
+        // Calculate the average number of shards per group
+        int totalShards = 10;//configs_.rbegin()-&gt;second.shard_group_map_.size();
+        Log_info("Total shards: %d", totalShards);
+
+        int totalGroups = gid_server_map.size() + configs_.rbegin()-&gt;second.group_servers_map_.size();
+        Log_info("Total groups: %d", totalGroups);
+
+        int avgShardsPerGroup = std::floor(static_cast&lt;double&gt;(totalShards) / totalGroups);
+        cout&lt;&lt; "TavgShardsPerGroup :" &lt;&lt; avgShardsPerGroup&lt;&lt;endl;
+
+        // Create a map to store the number of shards each group should have
+        std::map&lt;uint32_t, int&gt; targetShardsPerGroup;
+
+        // Initialize the target shard count for existing groups from the latest configuration
+        for (const auto& entry : configs_.rbegin()-&gt;second.group_servers_map_) {
+            targetShardsPerGroup[entry.first] = avgShardsPerGroup;
+        }
+
+        // Initialize the target shard count for the new group(s)
+        for (const auto& entry : gid_server_map) {
+            targetShardsPerGroup[entry.first] = avgShardsPerGroup;
+        }
+
+        // Distribute the remaining shards among the groups
+        int remainingShards = totalShards % totalGroups;
+
+        // Update the target shard count for each group with the remaining shards
+        for (auto& entry : targetShardsPerGroup) {
+            entry.second += std::min(remainingShards, 1);
+            remainingShards = std::max(0, remainingShards - 1);
+        }
+
+        int shrdCounter = 1;
+        int shrdCumCounter = 0;
+        map&lt;uint32_t, uint32_t&gt; sgmap;
+        map&lt;uint32_t, vector&lt;uint32_t&gt;&gt; gsmap;
+
+        //prepare: 1 newconfig
+        for (auto& entry : configs_) {
+            // auto tmpEntry = configs_[entry.first].shard_group_map_;
+            //cout&lt;&lt;"First: "&lt;&lt;entry.first&lt;&lt;" Second: "&lt;&lt;entry.second&lt;&lt;endl;
+
+            shrdCumCounter = shrdCumCounter + targetShardsPerGroup[entry.first];
+            cout&lt;&lt;"config shrdCumCounter: "&lt;&lt;shrdCumCounter&lt;&lt;endl;
+            gsmap[entry.first] = configs_[entry.first].group_servers_map_[entry.first];
+
+            while(shrdCounter &lt;= shrdCumCounter ){
+                // tmpEntry[shrdCounter] = entry.first;
+                sgmap[shrdCounter] = entry.first;
+                shrdCounter++;
+            }
+        }
+
+        //prepare: 2 newconfig
+        for (auto& entry : gid_server_map) {
+            shrdCumCounter = shrdCumCounter + targetShardsPerGroup[entry.first];
+            cout&lt;&lt;"new shrdCumCounter: "&lt;&lt;shrdCumCounter&lt;&lt;endl;
+            gsmap[entry.first] = entry.second;
+            while(shrdCounter &lt;= shrdCumCounter ){
+                // newConfig.shard_group_map_[shrdCounter] = entry.first;
+                sgmap[shrdCounter] = entry.first;
+                shrdCounter++;
+            }
+        }
+
+        //assign new config
+        // for (auto& entry : configs_) {
+        //     configs_[entry.first].shard_group_map_ = sgmap;
+        //     configs_[entry.first].group_servers_map_ = gsmap;
+        // }
+
+        for (auto& entry : gid_server_map) {
+            nGid = entry.first;
+
+            ShardConfig newConfig;
+            newConfig.number = nGid;
+            newConfig.group_servers_map_ = gsmap;
+            newConfig.shard_group_map_ = sgmap;
+
+            // Set the new configuration with the calculated configuration number
+            configs_[nGid] = newConfig;
+        }
+
+        // Print the new configuration
+        std::cout &lt;&lt; "New Configuration (" &lt;&lt; nGid &lt;&lt; "):" &lt;&lt; std::endl;
+        for (const auto& entry : configs_) {
+            const ShardConfig& shardConfig = entry.second; // Use a reference to avoid modifying the const map
+            std::cout &lt;&lt; "G" &lt;&lt; entry.first &lt;&lt; " -&gt; { ";
+            for (auto& pair : shardConfig.shard_group_map_) {
+                auto shard = pair.first;
+                auto group = pair.second;
+                std::cout &lt;&lt; "shard: "&lt;&lt; shard &lt;&lt; " group: "&lt;&lt; group &lt;&lt; " ";
+            }
+            //for (const auto& shard : shardConfig.shard_group_map_[entry.first]) {
+                //std::cout &lt;&lt; shardConfig.shard_group_map_;
+            //}
+            std::cout &lt;&lt; "}" &lt;&lt; std::endl;
+
+            shardConfig.printGroupServers();
+        }
+    }
+
+    // Simulate success, you need to modify based on your implementation
+    *ret = KV_SUCCESS;
+
+    defer-&gt;reply();
+  
+}
+
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  cout&lt;&lt; "in Leave: ";
+    for(const auto&a: gids){
+        cout&lt;&lt; a&lt;&lt; " ";
+    }
+    cout&lt;&lt;endl;
+
+    cout&lt;&lt;"before Current config: ";
+    for (const auto& entry : configs_){
+        cout&lt;&lt;entry.first&lt;&lt;" ";
+    }
+    cout&lt;&lt;endl;
+    
+    //get rid pf leave GIDs
+    for(auto& g: gids){
+        if(configs_.count(g) &gt; 0){
+            cout&lt;&lt;"Gid: "&lt;&lt;g&lt;&lt;" skipped"&lt;&lt;endl;
+            configs_.erase(g);
+        }
+    }
+
+    cout&lt;&lt;"Current config: ";
+    for (const auto& entry : configs_){
+        cout&lt;&lt;entry.first&lt;&lt;" ";
+    }
+    cout&lt;&lt;endl;
+
+    // Calculate the average number of shards per group
+    int totalShards = configs_.rbegin()-&gt;second.shard_group_map_.size();
+    Log_info("Total shards: %d", totalShards);
+
+    Log_info("Config size: %d gid size: %d", configs_.size(), gids.size());
+    int totalGroups = configs_.size();// - gids.size();
+    Log_info("Total groups: %d", totalGroups);
+
+    int avgShardsPerGroup;
+    if(totalGroups == 0){
+        avgShardsPerGroup = 0;
+    }else{
+        avgShardsPerGroup = std::ceil(static_cast&lt;double&gt;(totalShards) / totalGroups);
+    }
+    cout&lt;&lt; "TavgShardsPerGroup :" &lt;&lt; avgShardsPerGroup&lt;&lt;endl;
+
+    // Create a map to store the number of shards each group should have
+    std::map&lt;uint32_t, int&gt; targetShardsPerGroup;
+
+    // Initialize the target shard count for existing groups (0 for leaving gids) from the latest configuration
+    for (const auto& entry : configs_.rbegin()-&gt;second.group_servers_map_) {
+        if (std::find(gids.begin(), gids.end(), entry.first) != gids.end())
+        {
+            targetShardsPerGroup[entry.first] = 0;
+        }else{
+            targetShardsPerGroup[entry.first] = avgShardsPerGroup;
+        }
+    }
+
+    // Distribute the remaining shards among the groups
+    int remainingShards;
+    if(totalGroups == 0){
+        remainingShards = 0;
+    }else{
+        remainingShards = totalShards % totalGroups;;
+    }
+
+    // Update the target shard count for each group with the remaining shards
+    for (auto& entry : targetShardsPerGroup) {
+        entry.second += std::min(remainingShards, 1);
+        remainingShards = std::max(0, remainingShards - 1);
+    }
+
+    int shrdCounter = 1;
+    int shrdCumCounter = 0;
+    map&lt;uint32_t, uint32_t&gt; sgmap;
+    map&lt;uint32_t, vector&lt;uint32_t&gt;&gt; gsmap;
+
+    //prepare: 1 newconfig
+    for (auto& entry : configs_) {
+        if (std::find(gids.begin(), gids.end(), entry.first) != gids.end()){
+            cout&lt;&lt;"Gid: "&lt;&lt;entry.first&lt;&lt; " skipped"&lt;&lt;endl;
+        }else{
+            shrdCumCounter = shrdCumCounter + targetShardsPerGroup[entry.first];
+            gsmap[entry.first] = configs_[entry.first].group_servers_map_[entry.first];
+            while(shrdCounter &lt;= shrdCumCounter ){
+                sgmap[shrdCounter] = entry.first;
+                shrdCounter++;
+            }
+        }
+    }
+
+    //assign new config
+    for (auto& entry : configs_) {
+         cout&lt;&lt;"Processsing: "&lt;&lt;entry.first&lt;&lt;endl;
+        if (std::find(gids.begin(), gids.end(), entry.first) == gids.end()){
+            configs_[entry.first].shard_group_map_ = sgmap;
+            configs_[entry.first].group_servers_map_ = gsmap;
+            cout&lt;&lt;"Gid: "&lt;&lt;entry.first&lt;&lt; " reassigned"&lt;&lt;endl;
+        }
+    }
+    
+    // Print the new configuration
+    std::cout &lt;&lt; "New Configuration: " &lt;&lt; std::endl;
+    for (const auto& entry : configs_) {
+        const ShardConfig& shardConfig = entry.second; // Use a reference to avoid modifying the const map
+        std::cout &lt;&lt; "G" &lt;&lt; entry.first &lt;&lt; " -&gt; { ";
+        for (auto& pair : shardConfig.shard_group_map_) {
+            auto shard = pair.first;
+            auto group = pair.second;
+            std::cout &lt;&lt; "shard: "&lt;&lt; shard &lt;&lt; " group: "&lt;&lt; group &lt;&lt; " ";
+        }
+        std::cout &lt;&lt; "}" &lt;&lt; std::endl;
+    }
+
+  *ret = KV_SUCCESS;
+
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  Log_info("in Move");
+  std::cout &lt;&lt; "shard: " &lt;&lt; shard &lt;&lt; std::endl;
+  std::cout &lt;&lt; "gid: " &lt;&lt; gid &lt;&lt; std::endl;
+  *ret = KV_SUCCESS;
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match238-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+  // your code here
+  std::unique_lock&lt;std::recursive_mutex&gt; lock(mtx_);
+  Log_info("in Query");
+</FONT>  std::cout&lt;&lt;"Config no: "&lt;&lt; config_no&lt;&lt;endl;
+
+   // If config_no is -1 or greater than the latest known configuration, return the latest configuration
+    int32_t latestConfigNo = configs_.rbegin()-&gt;first;
+    cout&lt;&lt;"latestConfigNo: "&lt;&lt;latestConfigNo&lt;&lt;endl;
+    if (config_no == -1 || config_no &gt; latestConfigNo) {
+
+        cout&lt;&lt;"Returning from Query: "&lt;&lt;endl;
+        *config = configs_.rbegin()-&gt;second;
+    } else {
+        // Search for the requested configuration in the map
+        auto it = configs_.find(config_no);
+
+        // If found, return the requested configuration; otherwise, return an empty configuration
+        if (it != configs_.end()) {
+            *config = it-&gt;second;
+        } else {
+            // Handle the case when the requested configuration is not found
+            std::cerr &lt;&lt; "Requested configuration not found!" &lt;&lt; std::endl;
+            // You might want to set ret to an appropriate error code here
+        }
+    }
+
+    // Simulate success, you need to modify based on your implementation
+    *ret = KV_SUCCESS;
+
+    // Simulate replying with the requested configuration
+    defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  Log_info("in OnNextCommand");
+  // your code here
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  Log_info("Par id: %d", sp_log_svr_-&gt;partition_id_);
+  return cli;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,207 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-bnithish/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-bnithish/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+#include &lt;boost/serialization/map.hpp&gt;
+#include &lt;boost/serialization/vector.hpp&gt;
+
+namespace janus {
+
+class GidMap {
+  public:
+  map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt; gid_server_map;
+
+  template&lt;class Archive&gt;
+  void serialize(Archive & ar, const unsigned int version) {
+    ar & gid_server_map;
+  }
+
+  GidMap(map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt; gid_server_map) {
+    this-&gt;gid_server_map = gid_server_map;
+  }
+
+  GidMap() {
+
+  }
+
+};
+
+
+string serverMapSerialize(GidMap& gid_server_map) {
+  std::stringstream stringStream;
+  boost::archive::text_oarchive oArchive(stringStream);
+  oArchive &lt;&lt; gid_server_map;
+  return stringStream.str();
+}
+
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  bool_t success = -1;
+  string func_id = to_string(GetNextOpId());
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(func_id);
+  s-&gt;data_.push_back("join");
+  s-&gt;data_.push_back(serverMapSerialize(*(new GidMap(gid_server_map))));
+  auto m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match13-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  events[func_id] = ev;
+  Coroutine::CreateRun([this, &m, ev, &success]() {
+    uint64_t index, term;
+    success = this-&gt;GetRaftServer().Start(m, &index, &term);
+    if (success == false) ev-&gt;Set(1);
+  });
+  ev-&gt;Wait(2000000);
+  if (success == true && ev-&gt;status_ == Event::DONE) {
+</FONT>    *ret = 0;
+  } else if (success == false) {
+    *ret =  2;
+  } else if (ev-&gt;status_ != Event::DONE) {
+    *ret = 1;
+  }
+  //fprintf(stderr, "%d    %d\n", success, ev-&gt;status_);
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  bool_t success = -1;
+  string func_id = to_string(GetNextOpId());
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(func_id);
+  s-&gt;data_.push_back("leave");
+  s-&gt;data_.push_back(to_string(gids.size()));
+  for (auto gid: gids) {
+    s-&gt;data_.push_back(to_string(gid));
+  }
+  auto m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match13-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  events[func_id] = ev;
+  Coroutine::CreateRun([this, &m, ev, &success]() {
+    uint64_t index, term;
+    success = this-&gt;GetRaftServer().Start(m, &index, &term);
+    if (success == false) ev-&gt;Set(1);
+  });
+  ev-&gt;Wait(2000000);
+  if (success == true && ev-&gt;status_ == Event::DONE) {
+</FONT>    *ret = 0;
+  } else if (success == false) {
+    *ret =  2;
+  } else if (ev-&gt;status_ != Event::DONE) {
+    *ret = 1;
+  }
+  //fprintf(stderr, "%d    %d\n", success, ev-&gt;status_);
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  defer-&gt;reply();
+}
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  bool_t success = -1;
+  string func_id = to_string(GetNextOpId());
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(func_id);
+  s-&gt;data_.push_back("query");
+  auto m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match13-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  events[func_id] = ev;
+  Coroutine::CreateRun([this, &m, ev, &success]() {
+    uint64_t index, term;
+    success = this-&gt;GetRaftServer().Start(m, &index, &term);
+    if (success == false) ev-&gt;Set(1);
+  });
+  ev-&gt;Wait(2000000);
+  if (success == true && ev-&gt;status_ == Event::DONE) {
+</FONT>    if (config_no==-1) {
+      *config = configs_[config_id];
+    } else {
+      *config = configs_[config_no];
+    }
+    *ret = 0;
+  } else if (success == false) {
+    *ret =  2;
+  } else if (ev-&gt;status_ != Event::DONE) {
+    *ret = 1;
+  }
+  //fprintf(stderr, "%d    %d\n", success, ev-&gt;status_);
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  auto v = (MultiStringMarshallable*)(&m);
+  if (events.count(v-&gt;data_[0]) == 1) events[v-&gt;data_[0]]-&gt;Set(1);
+  
+    if (v-&gt;data_[1] == "join") {
+      GidMap* gidmap = new GidMap();
+      std::stringstream stringStream(v-&gt;data_[2]);
+      boost::archive::text_iarchive iArchive(stringStream);
+      iArchive &gt;&gt; *gidmap;
+      ShardConfig* s = new ShardConfig();
+      if (config_id&gt;0) {
+        *s = configs_[config_id];
+        s-&gt;group_servers_map_.insert(gidmap-&gt;gid_server_map.begin(), gidmap-&gt;gid_server_map.end());
+      } else {
+        s-&gt;group_servers_map_ = gidmap-&gt;gid_server_map;
+      }
+      vector&lt;uint32_t&gt; gidv{};
+      for (auto g: s-&gt;group_servers_map_) {
+        gidv.push_back(g.first);
+      }
+      for (int i = 1; i &lt;= 10; i++) {
+        if (s-&gt;shard_group_map_[i]==0) s-&gt;shard_group_map_[i] = gidv[i%s-&gt;group_servers_map_.size()];
+      }
+      s-&gt;number = ++config_id;
+      configs_[s-&gt;number] = *s;
+    } else if (v-&gt;data_[1] == "leave") {
+      vector&lt;uint32_t&gt; gids{};
+      for (int i = 3; i &lt; stoi(v-&gt;data_[2])+3; i++) {
+        gids.push_back(stoi(v-&gt;data_[i]));
+      }
+      ShardConfig* s = new ShardConfig();
+      s-&gt;group_servers_map_.clear();
+      if (config_id&gt;0) {
+        for (auto m: configs_[config_id].group_servers_map_) {
+          if (find(gids.begin(), gids.end(), m.first) == gids.end()) {
+            s-&gt;group_servers_map_[m.first] = m.second;
+          }
+        }
+        s-&gt;shard_group_map_ = configs_[config_id].shard_group_map_;
+      }
+      vector&lt;uint32_t&gt; gidv{};
+      for (auto g: s-&gt;group_servers_map_) {
+        gidv.push_back(g.first);
+      }
+      for (int i = 1; i &lt;= 10; i++) {
+        if (s-&gt;group_servers_map_.find(s-&gt;shard_group_map_[i])==s-&gt;group_servers_map_.end()) {
+          s-&gt;shard_group_map_[i] = gidv[i%(s-&gt;group_servers_map_.size())];
+        }
+      }
+      s-&gt;number = ++config_id;
+      configs_[s-&gt;number] = *s;
+    }
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  return cli;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,115 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-karthikbhata97/src/shardmaster/service.h</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-karthikbhata97/src/shardmaster/service.h<p><PRE>
+
+#pragma once
+
+#include "../deptran/__dep__.h"
+#include "../deptran/raft/server.h"
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/serialization/map.hpp&gt;
+#include &lt;boost/serialization/vector.hpp&gt;
+
+
+
+class ShardConfig {
+ public:
+  int32_t number{0};
+  map&lt;uint32_t, uint32_t&gt; shard_group_map_{{1,0},{2,0},{3,0},{4,0},{5,0},{6,0},{7,0},{8,0},{9,0},{10,0}};
+  map&lt;uint32_t, vector&lt;uint32_t&gt;&gt; group_servers_map_{};
+  // Lab Shard: you can add functions to this class but do not add/remove member variables
+
+  static ShardConfig add_group(ShardConfig sc, uint32_t group_id, vector&lt;uint32_t&gt; servers);
+  static ShardConfig remove_group(ShardConfig sc, uint32_t group_id);
+  static ShardConfig move_shard(ShardConfig sc, uint32_t shard, uint32_t gid);
+  std::string to_string() const;
+
+    static std::string to_string(ShardConfig cmd) {
+        std::stringstream ss;
+        boost::archive::text_oarchive to(ss);
+        to &lt;&lt; cmd;
+        return ss.str();
+    }
+
+    static ShardConfig from_string(const std::string& s) {
+        std::istringstream ss(s);
+        boost::archive::text_iarchive ti(ss);
+        ShardConfig cmd{};
+        ti &gt;&gt; cmd;
+        return cmd;
+    }
+
+    template&lt;class Archive&gt;
+    void serialize(Archive &ar, unsigned int) {
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match218-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        ar & number & shard_group_map_ & group_servers_map_;
+    }
+
+};
+
+inline Marshal& operator&gt;&gt;(Marshal& m, ShardConfig& rhs) {
+  m &gt;&gt; rhs.number &gt;&gt; rhs.shard_group_map_ &gt;&gt; rhs.group_servers_map_;
+</FONT>  return m;
+}
+
+inline Marshal& operator&lt;&lt;(Marshal& m, const ShardConfig& rhs) {
+  m &lt;&lt; rhs.number &lt;&lt; rhs.shard_group_map_ &lt;&lt; rhs.group_servers_map_;
+  return m;
+}
+
+#include "shardmaster_rpc.h"
+
+namespace janus {
+struct ShardReplicationResult {
+    int result;
+    ShardConfig config;
+};
+
+// class TxLogServer;
+// class KvServer;
+class ShardMasterClient;
+class ShardMasterServiceImpl : public ShardMasterService {
+ public:
+  shared_ptr&lt;TxLogServer&gt; sp_log_svr_{}; 
+  const uint64_t SM_TIMEOUT = 10000000; // 10s
+  map&lt;uint32_t, ShardConfig&gt; configs_{};
+
+  // add your own variables here if needed
+  int64_t latest_config_ = 0;
+  std::mutex mutex_;
+  uint64_t request_id_{};
+  std::map&lt;std::string, std::shared_ptr&lt;BoxEvent&lt;ShardConfig&gt;&gt;&gt; id_map_;
+
+  // add your own functions here if needed
+  ShardReplicationResult replcate(const std::string& op, const std::string& args);
+
+  // do not change anything below
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match218-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_9.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  RaftServer& GetRaftServer() {
+    auto p = dynamic_pointer_cast&lt;RaftServer&gt;(sp_log_svr_);
+    verify(p != nullptr);
+    return *p;
+  }
+  ShardMasterServiceImpl() {
+      configs_[0] = ShardConfig{};
+  }
+  virtual void Join(const std::map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) override;
+</FONT>  virtual void Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) override;
+  virtual void Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) override;
+  virtual void Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) override;
+  void OnNextCommand(Marshallable& m);
+  shared_ptr&lt;ShardMasterClient&gt; CreateClient();
+};
+
+} // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

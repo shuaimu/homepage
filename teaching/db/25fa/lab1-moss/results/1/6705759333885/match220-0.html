@@ -1,0 +1,225 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-SwethaSrilakshmi/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-SwethaSrilakshmi/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+
+void RaftServiceImpl::HandleRequestVote(const uint64_t& arg1,
+                                        const uint64_t& arg2,
+                                        const uint64_t& arg3,
+                                        const uint64_t& arg4,
+                                        uint64_t *ret1,
+                                        bool_t *vote_granted,
+                                        rrr::DeferredReply* defer) {
+  /* Your code here */
+  svr_-&gt;mtx_.lock();
+  Log_info("Candidate %d - requested for vote from %d, svr_-&gt;currentTerm: %d", arg2, svr_-&gt;site_id_, svr_-&gt;currentTerm); 
+ // Log_info("Candidate %d, candidateTerm %d, Follower %d, currentTerm %d, ", arg2, arg1, svr_-&gt;loc_id_, svr_-&gt;currentTerm);
+  *vote_granted = false;
+  if(svr_-&gt;currentTerm &gt; arg1)
+  {
+    *vote_granted = false;
+  }
+  else
+  {
+    uint64_t lastLogIndex = svr_-&gt;le.size();
+    uint64_t lastLogTerm = lastLogIndex &lt;= 0 ? 0 : svr_-&gt;le[lastLogIndex - 1].term;
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match220-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    if((svr_-&gt;currentTerm &lt; arg1 || svr_-&gt;votedFor == -1 || svr_-&gt;votedFor == arg2) && 
+    (lastLogTerm &lt; arg4 || (lastLogTerm == arg4 && lastLogIndex &gt;= arg3)))
+    {
+      svr_-&gt;votedFor = arg2;
+      *vote_granted = true;
+      svr_-&gt;electionTimerReset = true;
+</FONT>      // updating currentTerm to candidate's term and making it as follower
+      if(svr_-&gt;rs != Follower)
+      {
+          svr_-&gt;rs = Follower;
+      }
+      svr_-&gt;currentTerm = arg1;
+    }
+  }
+  *ret1 = svr_-&gt;currentTerm; // for candidate to update itself as candidate's term if it is not latest as currentTerm 
+  svr_-&gt;mtx_.unlock();
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleAppendEntries(const uint64_t& term,
+                                          const uint64_t& leaderId, 
+                                          const uint64_t& prevLogIndex, 
+                                          const uint64_t& prevLogTerm, 
+                                          const vector&lt;MarshallDeputy&gt;& appendEntriesMDCmds, 
+                                          const vector&lt;uint64_t&gt;& appendEntriesTerms, 
+                                          const uint64_t& leaderCommit,
+                                          uint64_t *retTerm,
+                                          bool_t *followerAppendOK,
+                                          rrr::DeferredReply* defer) {
+  /* Your code here */
+  svr_-&gt;mtx_.lock();
+  *retTerm = svr_-&gt;currentTerm; 
+  Log_info("Server %d - Leader %d, prevLogIndex : %d, svr_-&gt;lastApplied: %d, svr_-&gt;currentTerm: %d", svr_-&gt;site_id_, leaderId, prevLogIndex, svr_-&gt;lastApplied, svr_-&gt;currentTerm);
+  if(term &lt; svr_-&gt;currentTerm)
+  {
+    Log_info("Server %d - failing AE/heart beat sent from leader %d as server term %d is higher than leader current term %d", svr_-&gt;loc_id_, leaderId, svr_-&gt;currentTerm, term);
+    *followerAppendOK = false;
+  }
+  else if((prevLogIndex &gt; 0 && svr_-&gt;le[prevLogIndex - 1].term != prevLogTerm))
+  {
+    Log_info("Server %d - failing AE/heart beat sent from leader %d as term at prevLogIndex is not matching", svr_-&gt;loc_id_, leaderId);
+    *followerAppendOK = false;
+    for(auto index = prevLogIndex; index &lt;= svr_-&gt;lastApplied; index++)
+    {
+        svr_-&gt;le.pop_back();
+        svr_-&gt;lastApplied = svr_-&gt;lastApplied - 1;
+    }
+  }
+  else if(prevLogIndex &gt; svr_-&gt;lastApplied)
+  {
+    Log_info("Server %d - failing AE/heart beat sent from leader %d as prevLogIndex &gt; svr_-&gt;lastApplied", svr_-&gt;loc_id_, leaderId);
+    *followerAppendOK = false;
+  }
+  else
+  {
+    *followerAppendOK = true;
+    svr_-&gt;electionTimerReset = true;
+    svr_-&gt;currentTerm = term;
+    svr_-&gt;currentTermLeader = leaderId;
+    svr_-&gt;currentLeaderTerm = term;
+    Log_info("Server %d - Timer is reset as AE/heart beat is received from %d, raft state : %d, term: %d", svr_-&gt;loc_id_, leaderId, svr_-&gt;rs, term); 
+    if(svr_-&gt;rs != Follower)
+    {
+      svr_-&gt;rs = Follower;
+    }
+    //remove log entries from prevLogIndex + 1
+    // uint64_t svrLastApplied = svr_-&gt;lastApplied;
+    // for(auto index = prevLogIndex + 1; index &lt;= svrLastApplied; index++)
+    // {
+    //     svr_-&gt;le.pop_back();
+    //     svr_-&gt;lastApplied = svr_-&gt;lastApplied - 1;
+    // }
+    if(appendEntriesTerms.size() &gt; 0)
+    {
+      // add log entries from prevLogIndex + 1 to end of cmd vector
+      Log_info("Server %d - replicating AEs from %d index to %d", svr_-&gt;loc_id_, prevLogIndex + 1, appendEntriesTerms.size());
+      LogEntry l;
+      for(uint64_t index = 0; index &lt; appendEntriesTerms.size(); index++)
+      {
+        shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(appendEntriesMDCmds[index]).sp_data_;
+        if(svr_-&gt;lastApplied &gt; prevLogIndex + index) // if some log exists at prevLogIndex + 1
+        {
+          if(svr_-&gt;le[prevLogIndex + index].term != term) //term mismatch
+          {
+             uint64_t svrLastApplied = svr_-&gt;lastApplied;
+            for(auto popIndex = prevLogIndex + index; popIndex &lt; svrLastApplied; popIndex++)
+            {
+                svr_-&gt;le.pop_back();
+                svr_-&gt;lastApplied = svr_-&gt;lastApplied - 1;
+            }
+          }
+        }
+        else
+        {
+          l.term = appendEntriesTerms[index];
+          l.cmd = cmd;
+          svr_-&gt;le.push_back(l);
+          svr_-&gt;lastApplied = svr_-&gt;lastApplied + 1;
+        }
+      }
+      Log_info("Server %d - replicated AEs till %d index, num of log entries %d", svr_-&gt;loc_id_, svr_-&gt;lastApplied, svr_-&gt;le.size());
+    }
+    if(leaderCommit &gt; svr_-&gt;commitIndex)
+    {
+      uint64_t oldCommitIndex = svr_-&gt;commitIndex;
+      Log_info("Server %d - updating commit index, leaderCommit %d, svrCommitIndex %d lastApplied %d", svr_-&gt;loc_id_, leaderCommit, svr_-&gt;commitIndex, svr_-&gt;lastApplied); 
+      svr_-&gt;commitIndex = leaderCommit &lt; svr_-&gt;lastApplied ? leaderCommit : svr_-&gt;lastApplied;
+      Log_info("oldCommitIndex: %d,  svr_-&gt;commitIndex %d log size %d ", oldCommitIndex , svr_-&gt;commitIndex, svr_-&gt;le.size());
+      for(int cmtIndex = oldCommitIndex + 1; cmtIndex &lt;= svr_-&gt;commitIndex; cmtIndex++)
+      {
+        Log_info("code reached here. term %d", svr_-&gt;le[cmtIndex - 1].term);
+        shared_ptr&lt;Marshallable&gt; cmd = svr_-&gt;le[cmtIndex - 1].cmd;
+        svr_-&gt;app_next_(*cmd);
+        Log_info("Server : %d, committed cmd at index : %d", svr_-&gt;loc_id_, cmtIndex); 
+      }
+      Log_info("Server %d - svrCommitIndex updated to %d", svr_-&gt;loc_id_, svr_-&gt;commitIndex);
+    }
+  }
+  svr_-&gt;mtx_.unlock();
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match220-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t& leader_id,
+                                               const uint64_t& term,
+                                               const uint64_t& leaderCommit,
+                                               uint64_t *retTerm,
+                                               bool_t *followerEmptyAppendOK,
+</FONT>                                               rrr::DeferredReply* defer) {
+  //need to reset electionTimeout and make it follower if trying to become leader
+  svr_-&gt;mtx_.lock();
+  *retTerm = svr_-&gt;currentTerm; 
+  if(svr_-&gt;currentTerm &gt; term)
+  {
+    *followerEmptyAppendOK = false;
+  }
+  else
+  {
+    *followerEmptyAppendOK = true;
+    svr_-&gt;currentTermLeader = leader_id;
+    svr_-&gt;currentLeaderTerm = term;
+    svr_-&gt;electionTimerReset = true;
+    svr_-&gt;currentTerm = term;
+    Log_info("Server %d - Timer is reset as heart beat is received from %d, raft state : %d, term: %d", svr_-&gt;loc_id_, leader_id, svr_-&gt;rs, term); 
+    if(svr_-&gt;rs != Follower)
+    {
+      svr_-&gt;rs = Follower;
+    }
+    if(leaderCommit &gt; svr_-&gt;commitIndex)
+    {
+      uint64_t oldCommitIndex = svr_-&gt;commitIndex;
+      svr_-&gt;commitIndex = leaderCommit &lt; svr_-&gt;lastApplied ? leaderCommit : svr_-&gt;lastApplied;
+      Log_info("Server %d - updating commit index, leaderCommit %d, svrCommitIndex %d", svr_-&gt;loc_id_, leaderCommit, svr_-&gt;commitIndex);
+      svr_-&gt;commitIndex = leaderCommit &lt; svr_-&gt;lastApplied ? leaderCommit : svr_-&gt;lastApplied;
+      for(int cmtIndex = oldCommitIndex + 1; cmtIndex &lt;= svr_-&gt;commitIndex; cmtIndex++)
+      {
+        svr_-&gt;app_next_(*svr_-&gt;le[cmtIndex - 1].cmd);
+        Log_info("Server : %d, committed cmd at index : %d", svr_-&gt;loc_id_, svr_-&gt;commitIndex); 
+      }
+      Log_info("Server %d - svrCommitIndex updated to %d", svr_-&gt;loc_id_, svr_-&gt;commitIndex);
+    }
+  }
+  svr_-&gt;mtx_.unlock();
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("receive an rpc: %s", req.c_str());
+  *res = "world";
+  defer-&gt;reply();
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

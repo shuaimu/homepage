@@ -1,0 +1,591 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-vbelagali/src/shardmaster/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-vbelagali/src/shardmaster/service.cc<p><PRE>
+
+#include &lt;boost/archive/text_oarchive.hpp&gt;
+#include &lt;boost/archive/text_iarchive.hpp&gt;
+#include &lt;boost/serialization/map.hpp&gt;
+#include &lt;boost/serialization/vector.hpp&gt;
+#include "service.h"
+#include "client.h"
+#include "../kv/server.h"
+
+namespace janus {
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match26-1.html#3" TARGET="1"><IMG SRC="../../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void ShardMasterServiceImpl::Join(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  
+  // check if I'm a leader
+  RaftServer& raftServer = GetRaftServer();
+</FONT>  bool is_leader;
+  uint64_t term;
+
+  Log_debug("[%d] Received JOIN", raftServer.site_id_);
+
+  raftServer.GetState(&is_leader, &term);
+  if(!is_leader) {
+    Log_debug("[%d] Received JOIN but I'm not a leader", raftServer.site_id_);
+    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+    return;
+  }
+
+  int currOpIndex = opIndex_++;
+
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(currOpIndex));
+  s-&gt;data_.push_back("join");
+
+  stringstream ss;
+  boost::archive::text_oarchive oarch(ss);
+  oarch &lt;&lt; gid_server_map;
+  s-&gt;data_.push_back(ss.str());
+
+  Log_debug("[%d] send JOIN to RAFT %d", raftServer.site_id_, currOpIndex);
+  uint64_t index;
+  auto m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  if (!raftServer.Start(m, &index, &term)) {
+    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+    return;
+  }
+  // block here for onNextCommand
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  {
+    lock_guard&lt;mutex&gt; lg(event_mutex_);
+    event_map_[to_string(currOpIndex)] = ev;
+  }
+
+  ev-&gt;Wait(SM_TIMEOUT);
+
+  {
+    lock_guard&lt;mutex&gt; lg(event_mutex_);
+    event_map_.erase(to_string(currOpIndex));
+  }
+
+  if (ev-&gt;status_ == Event::DONE) {
+    Log_info("[%d, %d] JOIN successful %d", raftServer.partition_id_, raftServer.loc_id_, currOpIndex);
+    *ret = KV_SUCCESS;
+    defer-&gt;reply();
+    return;
+  }
+  Log_info("[%d, %d] JOIN timeout %d", raftServer.partition_id_, raftServer.loc_id_, currOpIndex);
+  *ret = KV_TIMEOUT;
+  defer-&gt;reply();
+}
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match26-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void ShardMasterServiceImpl::Leave(const std::vector&lt;uint32_t&gt;& gids, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  // check if I'm a leader
+  RaftServer& raftServer = GetRaftServer();
+</FONT>  bool is_leader;
+  uint64_t term;
+
+  Log_debug("[%d] Received :LEAVE", raftServer.site_id_);
+
+  raftServer.GetState(&is_leader, &term);
+  if(!is_leader) {
+    Log_debug("[%d] Received LEAVE but I'm not a leader", raftServer.site_id_);
+    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+    return;
+  }
+
+  int currOpIndex = opIndex_++;
+
+
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(currOpIndex));
+  s-&gt;data_.push_back("leave");
+
+  stringstream ss;
+  boost::archive::text_oarchive oarch(ss);
+  oarch &lt;&lt; gids;
+  s-&gt;data_.push_back(ss.str());
+
+  Log_debug("[%d] send LEAVE to RAFT %d", raftServer.site_id_, currOpIndex);
+  uint64_t index;
+  auto m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  if (!raftServer.Start(m, &index, &term)) {
+    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+    return;
+  }
+  // block here for onNextCommand
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  {
+    lock_guard&lt;mutex&gt; lg(event_mutex_);
+    event_map_[to_string(currOpIndex)] = ev;
+  }
+
+  ev-&gt;Wait(SM_TIMEOUT);
+
+  {
+    lock_guard&lt;mutex&gt; lg(event_mutex_);
+    event_map_.erase(to_string(currOpIndex));
+  }
+
+  if (ev-&gt;status_ == Event::DONE) {
+    Log_debug("[%d] LEAVE successful %d", raftServer.site_id_, currOpIndex);
+    *ret = KV_SUCCESS;
+    defer-&gt;reply();
+    return;
+  }
+  Log_debug("[%d] LEAVE timeout %d", raftServer.site_id_, currOpIndex);
+  *ret = KV_TIMEOUT;
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match26-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::Move(const int32_t& shard, const uint32_t& gid, uint32_t* ret, rrr::DeferredReply* defer) {
+  // your code here
+  // check if I'm a leader
+  RaftServer& raftServer = GetRaftServer();
+  bool is_leader;
+</FONT>  uint64_t term;
+
+  Log_debug("[%d] Received :MOVE", raftServer.site_id_);
+
+  raftServer.GetState(&is_leader, &term);
+  if(!is_leader) {
+    Log_debug("[%d] Received MOVE but I'm not a leader", raftServer.site_id_);
+    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+    return;
+  }
+
+  int currOpIndex = opIndex_++;
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match26-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(currOpIndex));
+  s-&gt;data_.push_back("move");
+  s-&gt;data_.push_back(to_string(shard));
+  s-&gt;data_.push_back(to_string(gid));
+</FONT>
+  Log_debug("[%d] send MOVE to RAFT %d", raftServer.site_id_, currOpIndex);
+  uint64_t index;
+  auto m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  if (!raftServer.Start(m, &index, &term)) {
+    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+    return;
+  }
+  // block here for onNextCommand
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  {
+    lock_guard&lt;mutex&gt; lg(event_mutex_);
+    event_map_[to_string(currOpIndex)] = ev;
+  }
+
+  ev-&gt;Wait(SM_TIMEOUT);
+
+  {
+    lock_guard&lt;mutex&gt; lg(event_mutex_);
+    event_map_.erase(to_string(currOpIndex));
+  }
+
+  if (ev-&gt;status_ == Event::DONE) {
+    Log_debug("[%d] MOVE successful %d", raftServer.site_id_, currOpIndex);
+    *ret = KV_SUCCESS;
+    defer-&gt;reply();
+    return;
+  }
+  Log_debug("[%d] MOVE timeout %d", raftServer.site_id_, currOpIndex);
+  *ret = KV_TIMEOUT;
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match26-1.html#4" TARGET="1"><IMG SRC="../../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  defer-&gt;reply();
+}
+
+void ShardMasterServiceImpl::Query(const int32_t& config_no, uint32_t* ret, ShardConfig* config, rrr::DeferredReply* defer) {
+  // your code here
+  // send through RAFT
+  // if specified config_no is -1 or greater than latest value, return latest value
+  // else return specified config_no version of config from configs_
+  
+  RaftServer& raftServer = GetRaftServer();
+</FONT>  bool is_leader;
+  uint64_t term;
+
+  Log_debug("[%d] Received :QUERY", raftServer.site_id_);
+
+  raftServer.GetState(&is_leader, &term);
+  if(!is_leader) {
+    Log_debug("[%d] Received QUERY but I'm not a leader", raftServer.site_id_);
+    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+    return;
+  }
+
+  int currOpIndex = opIndex_++;
+
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(currOpIndex));
+  s-&gt;data_.push_back("query");
+  
+  Log_debug("[%d] send QUERY to RAFT %d", raftServer.site_id_, currOpIndex);
+  uint64_t index;
+  auto m = dynamic_pointer_cast&lt;Marshallable&gt;(s);
+  if (!raftServer.Start(m, &index, &term)) {
+    *ret = KV_NOTLEADER;
+    defer-&gt;reply();
+    return;
+  }
+  // block here for onNextCommand
+  auto ev = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  {
+    lock_guard&lt;mutex&gt; lg(event_mutex_);
+    event_map_[to_string(currOpIndex)] = ev;
+  }
+
+  ev-&gt;Wait(SM_TIMEOUT);
+
+  {
+    lock_guard&lt;mutex&gt; lg(event_mutex_);
+    event_map_.erase(to_string(currOpIndex));
+  }
+
+  if (ev-&gt;status_ == Event::DONE) {
+    Log_debug("[%d] QUERY successful %d", raftServer.site_id_, currOpIndex);
+    // populate config to be returned here
+    if (config_no &lt; 0 || config_no &gt; config_id) {
+      // return latest
+      *config = configs_[config_id];
+    }
+    else {
+      *config = configs_[config_no];
+    }
+    *ret = KV_SUCCESS;
+    defer-&gt;reply();
+    return;
+  }
+  Log_debug("[%d] QUERY timeout %d", raftServer.site_id_, currOpIndex);
+  *ret = KV_TIMEOUT;
+  defer-&gt;reply();
+}
+
+int ShardMasterServiceImpl::doJoin(const map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;& gid_server_map)
+{
+  lock_guard&lt;mutex&gt; lg(update_mutex_);
+
+  map&lt;uint32_t, vector&lt;uint32_t&gt;&gt; new_group_shard_map;
+  uint32_t new_gid_count = 0;
+  for(
+    map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;::const_iterator itr=gid_server_map.begin();
+    itr != gid_server_map.end();
+    itr++
+  ) {
+    if (config_id &gt; 0) {
+      auto findItr = group_shard_map_.find(itr-&gt;first);
+      if (findItr != group_shard_map_.end()){
+        // gid already exists
+        continue;
+      }
+    }
+    new_group_shard_map[itr-&gt;first] = vector&lt;uint32_t&gt;();
+    total_groups += 1;
+    new_gid_count += 1;
+  }
+
+  uint32_t shard_count_per_gid = 10 / total_groups; // move this and put in next line so do not have to deal with total_groups = 0 ? But this case might not occur
+  uint32_t total_moves = shard_count_per_gid * new_gid_count;
+
+  vector&lt;uint32_t&gt; moving_shards = {};
+  if (0 == group_shard_map_.size()) {
+    moving_shards = {1,2,3,4,5,6,7,8,9,10};
+  }
+  else {
+    for(size_t i=0; i&lt;total_moves; i++) {
+      uint32_t max_count = 0;
+      uint32_t move_from_gid = 0;
+      for(
+        map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;::const_iterator itr=group_shard_map_.begin();
+        itr != group_shard_map_.end();
+        itr++
+      ) {
+        uint32_t count = itr-&gt;second.size();
+        if (count &gt; max_count) {
+          max_count = count;
+          move_from_gid = itr-&gt;first;
+        }
+      }
+      moving_shards.push_back(group_shard_map_[move_from_gid].back());
+      group_shard_map_[move_from_gid].pop_back();
+    }
+  }
+
+  for(
+    map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;::iterator itr=new_group_shard_map.begin();
+    itr != new_group_shard_map.end();
+    itr++
+  ) {
+    for (size_t i=0; i&lt;shard_count_per_gid; i++) {
+      itr-&gt;second.push_back(moving_shards.back());
+      moving_shards.pop_back();
+    }
+  }
+
+  for(
+    map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;::iterator itr=new_group_shard_map.begin();
+    itr != new_group_shard_map.end();
+    itr++
+  ) {
+    group_shard_map_[itr-&gt;first] = itr-&gt;second;
+  }
+
+  // Create new shard config
+  ShardConfig shard_config;
+  for (
+    map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;::iterator itr=group_shard_map_.begin();
+    itr != group_shard_map_.end();
+    itr++
+  ) {
+    for (auto shard: itr-&gt;second) {
+      shard_config.shard_group_map_[shard] = itr-&gt;first;
+    }
+  }
+
+  //copy previous group to server mapping
+  if (config_id &gt; 0){
+    for(
+      map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;::const_iterator itr=configs_[config_id].group_servers_map_.begin();
+      itr != configs_[config_id].group_servers_map_.end();
+      itr++
+    ){
+      shard_config.group_servers_map_[itr-&gt;first] = itr-&gt;second;
+    }
+  }
+  // add new gid to server mappings
+  for(
+    map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;::const_iterator itr=gid_server_map.begin();
+    itr != gid_server_map.end();
+    itr++
+  ) {
+    if (config_id &gt; 0){
+      auto findItr = shard_config.group_servers_map_.find(itr-&gt;first);
+      if (findItr != shard_config.group_servers_map_.end()){
+        continue;
+      }
+    }
+    shard_config.group_servers_map_[itr-&gt;first] = itr-&gt;second;
+  }
+  config_id++;
+  shard_config.number = config_id;
+  configs_[config_id] = shard_config;
+  return 0;  
+}
+
+int ShardMasterServiceImpl::doLeave(const std::vector&lt;uint32_t&gt;& gids)
+{
+  lock_guard&lt;mutex&gt; lg(update_mutex_);
+
+  vector&lt;uint32_t&gt; moving_shards = {};
+  for(auto leaving_gid: gids) {
+      auto findItr = group_shard_map_.find(leaving_gid);
+      if (findItr == group_shard_map_.end()) {
+        continue;
+      }
+    total_groups -= 1;
+    // put all shards of leaving gid into moving_shards, used itr2 for iterating
+    for(auto shard: group_shard_map_[leaving_gid]){
+      moving_shards.push_back(shard);
+    }
+    // delete gid
+    group_shard_map_.erase(leaving_gid);
+  }
+
+  while (moving_shards.size() &gt; 0) {
+    uint32_t min_count = 100; // max shards is 10, so for safety set min_count to 100
+    uint32_t move_to_gid = 0;
+    for(
+      map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;::const_iterator itr=group_shard_map_.begin();
+      itr != group_shard_map_.end();
+      itr++
+    ) {
+      uint32_t count = itr-&gt;second.size();
+      if (count &lt; min_count) {
+        min_count = count;
+        move_to_gid = itr-&gt;first;
+      }
+    }
+    group_shard_map_[move_to_gid].push_back(moving_shards.back());
+    moving_shards.pop_back();
+  }
+
+  ShardConfig shard_config;
+  for (
+    map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;::iterator itr=group_shard_map_.begin();
+    itr != group_shard_map_.end();
+    itr++
+  ) {
+    for (auto shard: itr-&gt;second) {
+      shard_config.shard_group_map_[shard] = itr-&gt;first;
+    }
+  }
+
+  //copy previous group_server mapping except the ones leaving
+  if (config_id &gt; 0){
+    for(
+      map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;::const_iterator itr=configs_[config_id].group_servers_map_.begin();
+      itr != configs_[config_id].group_servers_map_.end();
+      itr++
+    ){
+      auto itr2 = std::find(gids.begin(), gids.end(), itr-&gt;first);
+      // do not add gids which are leaving
+      if (itr2 == gids.end()){
+        shard_config.group_servers_map_[itr-&gt;first] = itr-&gt;second;
+      }
+    }
+  }
+  config_id++;
+  shard_config.number = config_id;
+  configs_[config_id] = shard_config;
+  return 0; 
+}
+
+int ShardMasterServiceImpl::doMove(const int32_t& shard, const uint32_t& gid)
+{
+  lock_guard&lt;mutex&gt; lg(update_mutex_);
+
+  for (
+    map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;::iterator itr=group_shard_map_.begin();
+    itr != group_shard_map_.end();
+    itr++
+  ){
+    // remove shard from all groups
+    vector&lt;uint32_t&gt; tmp_shards = {};
+    for (auto shardx: itr-&gt;second){
+      if (shardx != shard){
+        tmp_shards.push_back(shardx);
+      }
+    }
+    group_shard_map_[itr-&gt;first] = tmp_shards;
+  }
+
+  // add shard to target gid group
+  group_shard_map_[gid].push_back(shard);
+
+  ShardConfig shard_config;
+  for (
+    map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;::iterator itr=group_shard_map_.begin();
+    itr != group_shard_map_.end();
+    itr++
+  ) {
+    for (auto shard: itr-&gt;second) {
+      shard_config.shard_group_map_[shard] = itr-&gt;first;
+    }
+  }
+
+  //copy previous group_server mapping
+  if (config_id &gt; 0) {
+    for(
+      map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt;::const_iterator itr=configs_[config_id].group_servers_map_.begin();
+      itr != configs_[config_id].group_servers_map_.end();
+      itr++
+    ) {
+      shard_config.group_servers_map_[itr-&gt;first] = itr-&gt;second;
+    }
+  }
+  config_id++;
+  shard_config.number = config_id;
+  configs_[config_id] = shard_config;
+  return 0; 
+}
+
+void ShardMasterServiceImpl::OnNextCommand(Marshallable& m) {
+  // your code here
+  auto v = (MultiStringMarshallable*)(&m);
+
+  verify(2 &lt;= v-&gt;data_.size());
+  string currentIndexStr = v-&gt;data_.at(0);
+  string operation = v-&gt;data_.at(1);
+  
+
+  verify(operation.size() &gt; 0);
+
+  int rc = 0;
+
+  Log_debug("Current operation is %s", operation.c_str());
+
+  if ("join" == operation) {
+    verify(3 == v-&gt;data_.size());
+    map&lt;uint32_t, std::vector&lt;uint32_t&gt;&gt; gid_server_map;
+    stringstream ss(v-&gt;data_.at(2));
+    boost::archive::text_iarchive iarch(ss);
+    iarch &gt;&gt; gid_server_map;
+    rc = doJoin(gid_server_map);
+  }
+  else if ("leave" == operation) {
+    verify(3 == v-&gt;data_.size());
+    std::vector&lt;uint32_t&gt; gids;
+    stringstream ss(v-&gt;data_.at(2));
+    boost::archive::text_iarchive iarch(ss);
+    iarch &gt;&gt; gids;
+    rc = doLeave(gids);
+  }
+  else if ("move" == operation) {
+    verify(4 == v-&gt;data_.size());
+    int32_t shard = stoi(v-&gt;data_.at(2));
+    uint32_t gid = stoi(v-&gt;data_.at(3));
+    rc = doMove(shard, gid);
+  }
+  else if ("query" == operation) {
+    verify(2 == v-&gt;data_.size());
+    // no op
+  }
+  else {
+    // unknown operation
+    // assert or ignore this?
+    verify(false);
+  }
+
+  RaftServer& raftServer = GetRaftServer();
+  bool is_leader;
+  uint64_t term;
+
+  raftServer.GetState(&is_leader, &term);
+  if(!is_leader) {
+    return;
+  }
+
+  Log_info("OnNextCommand:: checking and setting event");
+
+  {
+    lock_guard&lt;mutex&gt; lg(event_mutex_);
+    auto itr = event_map_.find(currentIndexStr);
+    if (itr != event_map_.end()) {
+      if(!itr-&gt;second-&gt;IsTimeout()) { // May be should check this before executing join, leave, move ?
+        // only set if not timeout
+        itr-&gt;second-&gt;Set(1);
+      }
+    }
+    else {
+      Log_info("OnNextCommand:: event not found in event map");
+    }
+  }
+  // if not in map then its already removed because of timeout
+}
+
+// do not change anything below
+shared_ptr&lt;ShardMasterClient&gt; ShardMasterServiceImpl::CreateClient() {
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = sp_log_svr_-&gt;commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  return cli;
+}
+
+} </PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,192 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-4molybdenum2/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-4molybdenum2/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus {
+
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    : svr_((RaftServer*)sched) {
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+	srand(curr_time.tv_nsec);
+}
+
+
+void RaftServiceImpl::HandleRequestVote(const uint64_t& arg1,
+                                        const uint64_t& arg2,
+                                        const int64_t& arg3,
+                                        const int64_t& arg4,
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match136-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                        uint64_t *ret1,
+                                        bool_t *vote_granted,
+                                        rrr::DeferredReply* defer) {
+  /* Your code here */
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(svr_-&gt;mtx_);
+  //Log_info("Received request vote from %d on server: %d, with term number %d, current Term %d", arg2, svr_-&gt;loc_id_, arg1, svr_-&gt;currentTerm_);
+  
+  auto candidateTerm = arg1; // Term of the server sending RequestVoteRPC
+</FONT>  auto candidateId = arg2; // RequestVote sending the RequestVoteRPC
+  auto candidateLastLogIndex= arg3; // last index of the server log
+  auto candidateLastLogTerm = arg4; // term of the last log index
+
+ 
+  /* get server's last log index and term*/ 
+  auto pp = svr_-&gt;GetLastLogIndexAndTerm();
+  auto lastLogIndex = pp.first;
+  auto lastLogTerm = pp.second;
+
+  /* if requestTerm is greater than current Server term then update
+         current server term and return the request term as it is.
+         Convert server state to follower.
+
+
+         two cases might happen:
+
+         1. If the server has already voted for another server, then it
+         will not grant vote to the current server.
+
+         2. If the server has not voted for another server, then its votedFor_
+         variable is either -1 or it is equal to the candidateId (because it might
+         receive the vote twice from the same server due to loss of acknowledgement).
+         Then grant vote to the candidate server
+         */
+
+  if(candidateTerm &gt; svr_-&gt;currentTerm_) {
+      svr_-&gt;BecomeFollower(candidateTerm);
+      //svr_-&gt;RunElectionTimeout(); //why is this causing issue?
+    }
+  
+  if(svr_-&gt;log_.size() &gt; 0) {
+    lastLogTerm = svr_-&gt;log_[svr_-&gt;log_.size() - 1].logTerm;
+  }
+
+  auto logOk = (candidateLastLogTerm &gt; lastLogTerm) or (candidateLastLogTerm == lastLogTerm and candidateLastLogIndex &gt;= lastLogIndex);
+  
+  if(candidateTerm == svr_-&gt;currentTerm_ and logOk and (svr_-&gt;votedFor_ == -1 or svr_-&gt;votedFor_ == candidateId)) {
+      //Log_info("Service: convert server %d to follower and grant vote to server %d", svr_-&gt;loc_id_, candidateId);
+      svr_-&gt;votedFor_ = candidateId;
+      *ret1 = svr_-&gt;currentTerm_;
+      *vote_granted = true;
+
+      svr_-&gt;electionStartTime_ = std::chrono::system_clock::now();
+    }
+
+  else {
+    //Log_info("no vote granted from server %d to server %d", svr_-&gt;loc_id_, candidateId);
+    *ret1 = svr_-&gt;currentTerm_;
+    *vote_granted = false;
+  }
+    
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleAppendEntries(const uint64_t& arg1,
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match136-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                          const uint8_t& arg2,
+                                          const int64_t& arg3,
+                                          const int64_t& arg4,
+                                          const vector&lt;RaftLog&gt;& arg5,
+                                          const int64_t& arg6,
+                                          // const MarshallDeputy& md_cmd,
+                                          uint64_t *term,
+                                          bool_t *followerAppendOK, // sucess
+                                          rrr::DeferredReply* defer) {
+  /* Your code here */
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(svr_-&gt;mtx_); // lock this
+</FONT>
+
+  //std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy&&gt;(md_cmd).sp_data_;
+
+  // extract variables
+  auto leaderTerm = arg1;
+  auto leaderId = arg2;
+  auto prevLogIndex = arg3;
+  auto prevLogTerm = arg4;
+  auto entries = arg5;
+  auto leaderCommit  = arg6;
+
+  if (leaderTerm &gt; svr_-&gt;currentTerm_) {
+
+    Log_debug("received term is greater than current term, convert to follower...");
+    svr_-&gt;BecomeFollower(leaderTerm);
+  }
+
+  *followerAppendOK = false;
+  if(leaderTerm == svr_-&gt;currentTerm_) {
+    if(svr_-&gt;state_ != FOLLOWER) {
+      svr_-&gt;BecomeFollower(leaderTerm);
+    }
+
+    svr_-&gt;electionStartTime_ = std::chrono::system_clock::now();
+
+    /* Over here prevLogIndex = -1 indicates that nothing has been committed on the server
+    to which the leader sends the AppendEntries RPC to... which basically responds with a success
+    in any case
+    
+    
+    Else, we need to check if prevLogIndex is present in the receiver log (which means that it is less than
+    the receiver log size, along with the condition that the log terms match with prevLogTerm for the entry at
+    prevLogIndex)*/
+
+    if(prevLogIndex == -1 or (prevLogIndex &lt; svr_-&gt;log_.size() and prevLogTerm == svr_-&gt;log_[prevLogIndex].logTerm)) { // TODO: 1 base index
+      *followerAppendOK = true;
+
+
+      auto insertIndex = prevLogIndex + 1;
+      auto entriesIndex = 0;
+
+
+      while(true) {
+        /* This finds out the point of mismatch in the log terms for the entries sent by the leader to a follower */
+        if(insertIndex &gt;= svr_-&gt;log_.size() or entriesIndex &gt;= entries.size()) break;
+        if(svr_-&gt;log_[insertIndex].logTerm != entries[entriesIndex].logTerm) break;
+
+        insertIndex++;
+        entriesIndex++;
+      }
+
+      if(entriesIndex &lt; entries.size()) {
+        /* append entries from mismatch point*/
+        //Log_info("append entries from mismatch point..");
+        auto prefix = std::vector&lt;RaftLog&gt;(svr_-&gt;log_.begin(), svr_-&gt;log_.begin()+insertIndex);
+        auto suffix = std::vector&lt;RaftLog&gt;(entries.begin()+entriesIndex, entries.end());
+        prefix.insert(prefix.end(), suffix.begin(), suffix.end());
+        svr_-&gt;log_ = prefix;
+      }
+
+      if(leaderCommit &gt; svr_-&gt;commitIndex_) {
+        svr_-&gt;commitIndex_ = min(leaderCommit, (int64_t)svr_-&gt;log_.size()-1);
+        Log_debug("setting commit index = %d, log size %d", svr_-&gt;commitIndex_, svr_-&gt;log_.size());
+        /* start commit on cmd*/
+        svr_-&gt;CommitLogs();
+      }
+    }
+  }
+  *term = svr_-&gt;currentTerm_;
+  defer-&gt;reply();
+}
+
+void RaftServiceImpl::HandleHelloRpc(const string& req,
+                                     string* res,
+                                     rrr::DeferredReply* defer) {
+  /* Your code here */
+  Log_info("receive an rpc: %s", req.c_str());
+  *res = "world";
+  defer-&gt;reply();
+}
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,125 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-DeepshikaR/src/deptran/raft/commo.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-DeepshikaR/src/deptran/raft/commo.cc<p><PRE>
+
+#include "commo.h"
+#include "server.h"
+#include "../rcc/graph.h"
+#include "../rcc/graph_marshaler.h"
+#include "../command.h"
+#include "../procedure.h"
+#include "../command_marshaler.h"
+#include "raft_rpc.h"
+#include "macros.h"
+
+namespace janus {
+
+RaftCommo::RaftCommo(PollMgr* poll) : Communicator(poll) {
+}
+
+void RaftCommo::SendRequestVote(parid_t par_id,
+                                siteid_t site_id,
+                                uint64_t term,
+                                uint64_t candID,
+                                uint64_t lastLogIndex,
+                                uint64_t lastLogTerm,
+                                RaftServer* S) {
+
+  auto proxies = rpc_par_proxies_[par_id];
+  for (auto& p : proxies) {
+  
+    if (p.first == site_id) {
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match73-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      Log_debug("%d sending request vote to %d", candID ,site_id);
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [S](Future* fu) {
+        uint64_t retT;
+        bool_t vote_granted;
+</FONT>        fu-&gt;get_reply() &gt;&gt; retT;
+        fu-&gt;get_reply() &gt;&gt; vote_granted;
+        S-&gt;HandleVotes(vote_granted, retT);
+      };
+      Call_Async(proxy, RequestVote, term, candID, lastLogIndex, lastLogTerm, fuattr);
+      // Log_info("Req Vote RPC#:%d", rpc_count_);
+    }
+  }
+}
+
+void RaftCommo::SendAppendEntries(parid_t par_id,
+                                  siteid_t site_id,
+                                  uint64_t leaderTerm,
+                                  uint64_t leaderID,
+                                  uint64_t prevLogIndex,
+                                  uint64_t prevLogTerm,
+                                  vector&lt;shared_ptr&lt;Marshallable&gt;&gt; cmds,
+                                  vector&lt;uint64_t&gt; logTerms,
+                                  uint64_t leaderCmtIndex,
+                                  uint64_t leaderLogSize,
+                                  RaftServer *S ) {
+
+  auto proxies = rpc_par_proxies_[par_id];
+  for (auto& p : proxies) {
+    if (p.first == site_id) {
+      Log_debug("Commo: %d sending %d entries to %d",leaderID, cmds.size(),site_id);
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [S](Future* fu) {
+        int64_t retT, folID;
+        uint64_t prevIndex;
+        bool_t success;
+        fu-&gt;get_reply() &gt;&gt; retT;
+        fu-&gt;get_reply() &gt;&gt; success;
+        fu-&gt;get_reply() &gt;&gt; folID;
+        fu-&gt;get_reply() &gt;&gt; prevIndex;
+        S-&gt;HandleAppendEntry(retT,success,folID,prevIndex);
+      };
+      /* wrap Marshallable in a MarshallDeputy to send over RPC */
+      vector&lt;MarshallDeputy&gt; md_cmds;
+      for(auto i:cmds ){
+        MarshallDeputy md(i);
+        md_cmds.push_back(md);  
+      }      
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match73-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_7.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      Call_Async(proxy, AppendEntries, leaderTerm, leaderID, prevLogIndex, prevLogTerm, md_cmds, logTerms, leaderCmtIndex, leaderLogSize, fuattr);
+      // Log_info("AE RPC#:%d", rpc_count_);
+    }
+  }
+}
+
+void RaftCommo::SendHeartBeat(parid_t par_id, 
+                              siteid_t site_id, 
+</FONT>                              uint64_t leaderID, 
+                              uint64_t term,
+                              uint64_t cmtIndex,
+                              RaftServer* S) {
+  auto proxies = rpc_par_proxies_[par_id];
+  for (auto& p : proxies) {
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match73-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    if (p.first == site_id) {
+      RaftProxy *proxy = (RaftProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = [S](Future* fu) {
+        uint64_t retT;
+</FONT>        fu-&gt;get_reply() &gt;&gt; retT;
+        S-&gt;HandleHeartBeat(retT);      
+      };      
+      Call_Async(proxy, HeartBeat, leaderID, term, cmtIndex, fuattr);
+      // Log_info("HeartBeat RPC#:%d", rpc_count_);
+    }
+  }
+}
+
+
+} // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

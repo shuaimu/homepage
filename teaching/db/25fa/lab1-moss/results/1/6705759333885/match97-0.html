@@ -1,0 +1,699 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-Gillgamesh/src/deptran/raft/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-Gillgamesh/src/deptran/raft/server.cc<p><PRE>
+
+
+#include "server.h"
+// #include "paxos_worker.h"
+#include "exec.h"
+#include "frame.h"
+#include "coordinator.h"
+#include "../classic/tpc_command.h"
+
+
+namespace janus {
+RaftServer::RaftServer(Frame * frame) {
+  frame_ = frame ;
+  /* Your code here for server initialization. Note that this function is 
+     called in a different OS thread. Be careful about thread safety if 
+     you want to initialize variables here. */
+}
+
+RaftServer::~RaftServer() {
+  /* Your code here for server teardown */
+
+}
+
+void RaftServer::Setup() {
+  /* Your code here for server setup. Due to the asynchronous nature of the 
+     framework, this function could be called after a RPC handler is triggered. 
+     Your code should be aware of that. This function is always called in the 
+     same OS thread as the RPC handlers. */
+  // SyncRpcExample();
+
+
+  // TODO - schedule heartbeat typa thing
+  ScheduleElectionTimeouts();
+}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match97-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+bool RaftServer::Start(shared_ptr&lt;Marshallable&gt; &cmd,
+                       uint64_t *index,
+                       uint64_t *term) {
+  /* Your code here. This function can be called from another OS thread. */
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+</FONT>  if (this-&gt;currentType != serverType::leader) {
+    return false;
+  } else {
+    // physically add entry to your log:
+    this-&gt;log-&gt;push_back(std::tuple&lt;uint64_t, shared_ptr&lt;Marshallable&gt;&gt;(this-&gt;currentTerm, cmd));
+    // set the corresponding variables:
+    Log_debug("Server %d: pushing new req to log, now size=%d", this-&gt;site_id_, this-&gt;getLastLogIndex());
+    *index = this-&gt;getLastLogIndex();
+    *term = this-&gt;currentTerm;
+    // on new request, it's agreement time!!
+    // SIKE fake ass thread cant do it
+    // this-&gt;AttemptAgreement();
+    return true;
+  }
+}
+
+void RaftServer::AttemptElection() {
+  // in a seperate routine, try to send rpc requests to make yourself the leader
+  // you may or may not start answering rpc in the middle of this
+  Coroutine::CreateRun([this]() {
+    Log_debug("Server %d attempting leader election", this-&gt;site_id_);
+
+    // declare yourself a candidate unilaterally
+    // * ensure you have not already voted for someone in this term
+    this-&gt;mtx_.lock();
+    // Log_debug("Server %d assuming candidacy", this-&gt;site_id_);
+    auto becameCandidate = this-&gt;AssumeCandidacy();
+    if (becameCandidate)
+      Log_debug("Server %d assumed candidacy (term=%d)", this-&gt;site_id_, this-&gt;currentTerm);
+    else
+      Log_debug("Server %d could not become candidate", this-&gt;site_id_);
+    if (this-&gt;currentType == serverType::candidate)
+    {
+      // send out the rpc requests and await a response
+      Coroutine::CreateRun([this]()
+                           {
+        auto proxies = this-&gt;commo()-&gt;rpc_par_proxies_[0];
+        for (auto &p : proxies) {
+          auto otherSiteId = p.first;
+          // send the request vote. note this automaticlaly fires a coroutine anyway
+          // by design of sendrequestvote
+          // NOTE - no reason to vote for yourself
+          if (otherSiteId != this-&gt;site_id_)
+            SendRequestVote(otherSiteId);
+        } });
+    }
+    else {
+      Log_debug("FATAL ERROR server %d could not become candidate", this-&gt;site_id_);
+    }
+
+    this-&gt;mtx_.unlock(); });
+}
+
+void RaftServer::ScheduleElectionTimeouts()
+{
+  // TODO - ensure this approach doesn't lead to ugly stack smashing / stack overflow issues
+  // unless timeouts continue to happen, it likely wll not
+  // as long as there's traffic or leader-heartbeats going through, that should not be an issue
+  // launch a useless coroutine to ensure that ID=0 gets consumed
+  Coroutine::CreateRun([](){});
+
+  Coroutine::CreateRun([this]() {
+    auto timeoutInMillis = 825 + ( random() % 300);
+    this-&gt;mtx_.lock();
+    // make this the LIVE election timer
+    auto thisTimeoutId = ++(this-&gt;timeoutCoroutineId);
+    // Log_debug("Server %d: global id of coroutin: %d", this-&gt;site_id_, this-&gt;timeoutCoroutineId);
+    this-&gt;mtx_.unlock();
+    Coroutine::Sleep(timeoutInMillis * 1000);
+
+    // once u awake, check that you are in fact still the lock owner
+    this-&gt;mtx_.lock();
+    bool isStillLeadingTimer = (this-&gt;timeoutCoroutineId == thisTimeoutId);
+    if (isStillLeadingTimer) {
+      this-&gt;AttemptElection();
+      // TODO - make sure this is actually the correct way to turn the timer back on...
+      // if we turn the timer back on immedietely, for instance, that could cause problems
+      // actually this is correct based off the simulation
+      this-&gt;ScheduleElectionTimeouts();
+      // this scheduled election timeout can be turned off by leader declaration, heartbeats, etc...
+    }
+    else {
+      // TODO - see if there is any handling to do in this case.
+    }
+    this-&gt;mtx_.unlock();
+  });
+}
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match97-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+void RaftServer::GetState(bool *is_leader, uint64_t *term) {
+  /* Your code here. This function can be called from another OS thread. */
+  // TODO restore the mutex once problems get found
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+  *is_leader = currentType == serverType::leader;
+</FONT>  *term = currentTerm;
+}
+
+void RaftServer::ApplyCommitedMessages() {
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+  bool_t applied = false;
+  while (this-&gt;lastApplied &lt; this-&gt;commitIndex) {
+    applied = true;
+    ++(this-&gt;lastApplied);
+    auto next = this-&gt;app_next_;
+    next(*(std::get&lt;1&gt;(this-&gt;log-&gt;at(this-&gt;lastApplied - 1))));
+  }
+  if (applied) {
+    Log_debug("Server %d: applied some changes to log...", this-&gt;site_id_);
+  }
+}
+
+
+void RaftServer::ScheduleLeaderHeartbeats() {
+  Coroutine::CreateRun([](){});
+
+  Coroutine::CreateRun([this]() {
+    auto heartbeatTimeout = 118;
+    this-&gt;mtx_.lock();
+    // make a new heartbeat id that is different from the previous
+    auto thisHeartbeatId = ++(this-&gt;leaderHeartbeatCoroutineId);
+    this-&gt;mtx_.unlock();
+    Coroutine::Sleep(heartbeatTimeout * 1000);
+
+    // once u awake, check that you are in fact still the lock owner
+    // by validating that no one else has set up a new heartbeat
+    this-&gt;mtx_.lock();
+    bool isStillLeadingTimer = (this-&gt;leaderHeartbeatCoroutineId == thisHeartbeatId);
+    if (isStillLeadingTimer) {
+      // send heartbeats
+      this-&gt;AttemptHeartbeats();
+      // if necessary, send syncing rpcs NOTE this need not go through
+      this-&gt;AttemptAgreement();
+      this-&gt;ScheduleLeaderHeartbeats();
+    }
+    else {
+      // TODO - see if there is any handling to do in this case.
+    }
+    this-&gt;mtx_.unlock();
+  });
+}
+
+void RaftServer::AttemptHeartbeats() {
+  Coroutine::CreateRun([this]() {
+    // Log_debug("Server %d: attempting to send heartbeats ", this-&gt;site_id_);
+    this-&gt;mtx_.lock();
+    if (this-&gt;currentType != serverType::leader)
+    {
+      Log_debug("Server %d: no longer believes it is a leader, no heartbeat", this-&gt;site_id_);
+    }
+    else
+    {
+      // send out the rpc requests and await a response
+      Coroutine::CreateRun([this]()
+                           {
+        auto proxies = this-&gt;commo()-&gt;rpc_par_proxies_[0];
+        for (auto &p : proxies) {
+          auto otherSiteId = p.first;
+          // send out all the heartbeats to not yourself
+          // by design of sendrequestvote
+          if (otherSiteId != this-&gt;site_id_)
+            SendHeartbeat(otherSiteId);
+        } });
+    }
+
+    this-&gt;mtx_.unlock(); });
+}
+
+void RaftServer::SendHeartbeat(siteid_t siteId) {
+  Coroutine::CreateRun([this, siteId](){
+    // Log_debug("Server %d: sending heartbeat to %d", this-&gt;site_id_, siteId);
+    uint64_t term;
+    bool_t success;
+    this-&gt;mtx_.lock();
+
+    auto nextIndex = nextIndexMap[siteId];
+    auto matchIndex = matchIndexMap[siteId];
+
+    // prev log term
+    uint64_t prevLogTerm = 0;
+    if (this-&gt;log-&gt;size() &gt; 1 && nextIndex &gt;= 2)
+      prevLogTerm = std::get&lt;0&gt;(this-&gt;log-&gt;at(nextIndex - 2));
+
+
+    auto event = commo()-&gt;SendEmptyAppendEntries(
+      0,
+      siteId,
+      this-&gt;currentTerm, //leaderTerm
+      this-&gt;site_id_, // leaderId
+      nextIndex-1, // prev LOG INDEX
+      prevLogTerm, // prev log term
+      this-&gt;commitIndex, // commitIndex
+      &term,
+      &success
+    );
+    this-&gt;mtx_.unlock();
+
+    event-&gt;Wait(100000);
+    if (event-&gt;status_ == Event::TIMEOUT) {
+      Log_debug("Server %d: heartbeat to %d timed out", this-&gt;site_id_, siteId);
+    } else {
+      /* Logic on Reply!!! */
+      // Log_debug("%d: %u", siteId, term);
+
+      // &lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt; grab the lock &gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;
+      this-&gt;mtx_.lock();
+      if (!success) {
+        // TODO - this may not be a real case
+        Log_debug("Server %d: logsize inconsistency with %d", this-&gt;site_id_, this-&gt;currentTerm);
+        // decrease counter OR wait until the other call goes through
+        // if we dont do anything and theres a repeated call, it doesnt actually break anything
+        if (nextIndexMap[siteId] &gt; 1)
+          (this-&gt;nextIndexMap[siteId]) = max(min(this-&gt;nextIndexMap[siteId], nextIndex-1), (uint64_t) 1);
+      }
+      else if (this-&gt;currentTerm &lt; term) {
+        // if your term is outdated, step down to a follower...
+        Log_debug("Server %d: outdated term (%u vs %u), stepping down as leader", this-&gt;site_id_, this-&gt;currentTerm, term);
+        this-&gt;AssumeFollowership(term);
+        // AND restart your follower election heartbeat
+        this-&gt;ScheduleElectionTimeouts();
+      }
+
+      this-&gt;mtx_.unlock();
+      // &lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt; ungrab the lock &gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;
+    }
+  });  
+}
+
+void RaftServer::SendRequestVote(siteid_t siteId) {
+  // fire a coroutine to send a vote request to the given server.
+  Coroutine::CreateRun([this, siteId](){
+    // ie only one request received/sent...
+    
+    // FOR NOW - only perform a single request. if it fails it is what it is
+    // TODO - double check RAFT documentation on retries
+    this-&gt;mtx_.lock();
+
+    uint64_t currentTerm;
+    bool_t voteGranted;
+    Log_debug("Server %d: Requesting vote from %d", this-&gt;site_id_, siteId);
+    if (this-&gt;currentType != serverType::candidate) {
+      Log_debug("Server %d: No longer candidate. canceling votereq to %d", this-&gt;site_id_, siteId);
+      return;
+    }
+
+    auto event = commo()-&gt;SendRequestVote(0, // partition id is always 0 for lab1
+                                          siteId,
+                                          this-&gt;currentTerm, // candTerm
+                                          this-&gt;site_id_, // cand id
+                                          this-&gt;getLastLogIndex(), // last log index,
+                                          this-&gt;getLastLogTerm(), // last log term
+                                          &currentTerm,
+                                          &voteGranted);
+    this-&gt;mtx_.unlock();
+
+    event-&gt;Wait(1000000); // wait for timeout
+    if (event-&gt;status_ == Event::TIMEOUT) {
+      // TODO
+      Log_debug("Server %d: vote from %d timed out", this-&gt;site_id_, siteId);
+    } else {
+      // &lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt; grab the lock &gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;
+      this-&gt;mtx_.lock();
+      Log_debug("Server %d: vote granted by %d: %d", this-&gt;site_id_, siteId, voteGranted);
+      Log_debug("sru %d: %u", siteId, currentTerm);
+      if (this-&gt;currentType == serverType::candidate) {
+        if (voteGranted) {
+          (this-&gt;votesGranted)++;
+          // TODO - perform actions if you now have a majority.
+          auto numberOfSites = this-&gt;commo()-&gt;rpc_par_proxies_[0].size();
+          Log_debug("Server %d: numberOfSites: %d", this-&gt;site_id_, numberOfSites);
+          if (this-&gt;votesGranted &gt;= numberOfSites/2 + 1) {
+            /*
+              CASE -- A majority of votes has now been gained.
+            */
+            // unilaterlaly assume leadership
+            this-&gt;AssumeLeadership();
+            // do first round of heartgbeats
+            this-&gt;AttemptHeartbeats();
+
+            // schedule heartbee
+            this-&gt;ScheduleLeaderHeartbeats();
+
+            // TODO - handle any calls here that may be related to entry syncing
+            Log_debug("Server %d: declaring leadership....", this-&gt;site_id_);
+          }
+        }
+        // TODO - see what to do with the currentTerm information
+        else if (currentTerm &gt; this-&gt;currentTerm)
+        {
+          // TODO - see if this usage of recursive mutexes is permissible
+          // there's a nonzero chance that it isn't....
+          this-&gt;AssumeFollowership(currentTerm);
+        }
+      }
+
+      else {
+        // IF you received a vote but you are no longer a candidate, ignore it
+        // for now, a debug log message
+        Log_debug("server %d: votes from %d granted too late/not at all", this-&gt;site_id_, siteId);
+        // TOOD - ensure that this is not received when it is possible to be in a new 
+        // eleciton or something like that...
+      }
+      // &lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt; ungrab the lock &gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;
+      this-&gt;mtx_.unlock();
+    }
+  });
+}
+
+
+void RaftServer::SendAppendEntries(siteid_t siteId) {
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+  uint64_t nextIndex; 
+  uint64_t matchIndex;
+  if (
+      nextIndexMap.find(siteId) == nextIndexMap.end() || matchIndexMap.find(siteId) == matchIndexMap.end())
+  {
+    Log_debug("beeeeg problem - matchIndex/nextIndex out of wack");
+    return;
+  }
+  nextIndex = nextIndexMap[siteId];
+  matchIndex = matchIndexMap[siteId];
+  uint64_t lastLogIndex = this-&gt;getLastLogIndex();
+  if (lastLogIndex &gt;= nextIndex) {
+    // Log_debug("Server %d: lastLogIndex &gt;= nextIndex for %d (%d vs. %d)", this-&gt;site_id_, siteId, lastLogIndex, nextIndex);
+    // send an RPC with log entries starting at nextIndex and ending at lastlogindex
+
+    // TODO - see if we need to deal with other cases
+
+    uint64_t term;
+    bool_t success;
+    // STORE THE CURRENT STATE OF LASTLOGINDEX AND LASTLOGTERM
+    // THIS IS IMPORTANT SO THAT WE DO NOT GET DESYNC'D WITH WHAT WE SENT THE SERVER
+
+    uint64_t lastLogTerm = this-&gt;getLastLogTerm();
+
+    // note there is no non-trivial prevlogetrm on the first run
+    uint64_t prevLogTerm = 0;
+    if (this-&gt;log-&gt;size() &gt; 1 && nextIndex &gt;= 2)
+      prevLogTerm = std::get&lt;0&gt;(this-&gt;log-&gt;at(nextIndex - 2));
+    Log_debug("Server %d: sending append to %d...", this-&gt;site_id_, siteId);
+    auto event = commo()-&gt;SendAppendEntries(
+        0,
+        siteId,
+        this-&gt;currentTerm, // leaderTerm
+        this-&gt;site_id_,    // leaderId
+        nextIndex-1,      // prev log INDEX
+        prevLogTerm, // prev log term
+        this-&gt;commitIndex, // commitIndex
+        this-&gt;getLogSlice(nextIndex - 1),
+        &term,
+        &success);
+    event-&gt;Wait(1000000);
+    if (event-&gt;status_ == Event::TIMEOUT) {
+      Log_debug("Server %d: appendentries to %d timed out", this-&gt;site_id_, siteId);
+    }
+    else {
+      if (!success) {
+        // check the term and get ready to step down if invalid
+        // Log_debug("Server %d: %d couldnt appendentries ", this-&gt;site_id_, siteId);
+        if (term &gt; this-&gt;currentTerm) {
+          // step down as leader...
+          this-&gt;AssumeFollowership(term);
+          // TODO see if there is more
+        }
+        else {
+          // in this case, retry with a decremented nextIndex for the given site
+
+          // make sure u do not decrement this to below 1
+          if (nextIndexMap[siteId] &gt; 1)
+            (this-&gt;nextIndexMap[siteId]) = max(min(this-&gt;nextIndexMap[siteId], nextIndex - 1), (uint64_t)1);
+          // DO NOT MANUALLY RESEND append entries. this is an rpc nightmare in disconnect cases
+          // on second thought, send it with a 50ms delay to slow down a LITTLE bit
+          // if the server has some fundamental issue, like network reliability, this delay means it
+          // doesnt entirely own the network
+          // simply perform a check that you're sitll a leader afterward
+          // also check term=0 to ignore disconnected servers. an append shouldnt be happening to any
+          // server where term=0, and even if it is, just wait out the heartbeat
+          if (
+              this-&gt;currentType == serverType::leader && this-&gt;nextIndexMap[siteId] &gt; 1 && term !=0)
+            Coroutine::CreateRun([this, siteId]
+                                 {
+                                 std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+                                 auto delayInMillis = 15;
+                                 Coroutine::Sleep(delayInMillis * 1000);
+                                 if (this-&gt;currentType==serverType::leader && this-&gt;nextIndexMap[siteId] &gt; 1) {
+                                   this-&gt;SendAppendEntries(siteId);
+                                 } });
+        }
+      }
+      else {
+        Log_debug("Server %d: %d appendentries successful. updating state", this-&gt;site_id_, siteId);
+        // if successfully appended, update nextIndex and matchIndex
+        // nextIndex on success should become whatever lastLogTerm was
+        // (make sure an old operation doesnt screw up )
+        // this should also probably just be lastLogIndex+1 again
+        // because in theory all previous messages were sent
+        this-&gt;nextIndexMap[siteId] = max(this-&gt;nextIndexMap[siteId], lastLogIndex+1);
+
+
+        // matchIndex = highes tlog entry known to be replicated
+        // in success case this should be whatever lastLogIndex was previously
+        this-&gt;matchIndexMap[siteId] = max(this-&gt;matchIndexMap[siteId], lastLogIndex);
+
+        // check to see if we can move commitmessage forward
+        this-&gt;LeaderCheckCommits();
+
+        // if any newly commited messages, apply them
+        this-&gt;ApplyCommitedMessages();
+
+      }
+    }
+  }
+}
+
+void RaftServer::LeaderCheckCommits() {
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+  // if there exists an N such that N &gt; commitIndex, a majority of matchIndex[i] &gt;= N, and log[N].term == currentTerm,
+  // set commitIndex = N
+
+  // iterate checking for the largest possible N first. this will be the current last log index
+  uint64_t N;
+  Log_debug("Server %d: Checking if commitIndex can move into [%d, %d]", this-&gt;site_id_, this-&gt;commitIndex+1, this-&gt;getLastLogIndex());
+  for (N = this-&gt;getLastLogIndex(); N &gt; commitIndex; N-- ) {
+    // FIRST enforce that term = current term
+    auto term = std::get&lt;0&gt;(this-&gt;log-&gt;at(N-1));
+    if (term != this-&gt;currentTerm)
+      continue;
+    // TODO - performance optimize later
+    // enforce that all smaller non-commitedones also meet the term requirement
+    // bool belowValid = true;
+    // for (auto j=commitIndex+1; j &lt; N; j++)  {
+    //   auto termOfPrev = std::get&lt;0&gt;(this-&gt;log-&gt;at(j-1));
+    //   if (termOfPrev != this-&gt;currentTerm) {
+    //     belowValid = false;
+    //     break;
+    //   }
+    // }
+    // if (!belowValid)
+    //   continue; 
+
+    uint64_t conditionMetCount = 1; // automatically include yourself but do not check against yourself
+    auto proxies = this-&gt;commo()-&gt;rpc_par_proxies_[0];
+    for (auto &p : proxies)
+    {
+      auto otherSiteId = p.first;
+      if (otherSiteId != this-&gt;site_id_) {
+        if (this-&gt;matchIndexMap[otherSiteId] &gt;= N )
+          conditionMetCount++; 
+      }
+    }
+    // check to see if you have a majority
+    auto numberOfSites = this-&gt;commo()-&gt;rpc_par_proxies_[0].size();
+    if (conditionMetCount &gt;= numberOfSites/2 + 1) {
+      Log_debug("Server %d: moving commitIndex to %d", this-&gt;site_id_, N);
+      this-&gt;commitIndex = N;
+      return;
+    }
+  }
+}
+
+void RaftServer::AttemptAgreement()
+{
+  Coroutine::CreateRun([this]()
+                       {
+    // Log_debug("Server %d: attempting to start agreement", this-&gt;site_id_);
+    this-&gt;mtx_.lock();
+    if (this-&gt;currentType != serverType::leader)
+    {
+      Log_debug("Server %d: no longer believes it is a leader, no agreement", this-&gt;site_id_);
+    }
+    else
+    {
+      // send out the rpc requests and await a response
+      Coroutine::CreateRun([this]()
+                           {
+        auto proxies = this-&gt;commo()-&gt;rpc_par_proxies_[0];
+        for (auto &p : proxies) {
+          auto otherSiteId = p.first;
+          // send out all the heartbeats to not yourself
+          // by design of sendrequestvote
+          if (otherSiteId != this-&gt;site_id_)
+            SendAppendEntries(otherSiteId);
+        } });
+    }
+    this-&gt;mtx_.unlock(); });
+}
+
+void RaftServer::AssumeLeadership() {
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+  // TOOD - see if it makes sense to make this return/check
+  /* Unilaterally assume leadership */
+
+  this-&gt;currentType = serverType::leader;
+
+  // stop election heartbeats from running (in case this slipped through elsewhere)
+  // TODO - this might actually cause some undefined/bad behavior
+  this-&gt;timeoutCoroutineId = 0;
+
+  std::map&lt;siteid_t, uint64_t&gt; newNextIndexMap;
+  this-&gt;nextIndexMap = newNextIndexMap;
+
+
+  std::map&lt;siteid_t, uint64_t&gt; newMatchIndexMap;
+  this-&gt;matchIndexMap = newMatchIndexMap;
+
+  // repopulate the maps with the correct values
+  auto proxies = this-&gt;commo()-&gt;rpc_par_proxies_[0];
+  for (auto &p : proxies)
+  {
+    auto otherSiteId = p.first;
+    this-&gt;matchIndexMap[otherSiteId] = 0; // set this to zero
+    this-&gt;nextIndexMap[otherSiteId] = log-&gt;size()+1; // set this to last log index + 1
+  }
+}
+
+shared_ptr&lt;raftlog_t&gt; RaftServer::getLogSlice(uint64_t start, uint64_t end) {
+  // return a slice that is exclusive of last
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+  auto first = this-&gt;log-&gt;begin() + start;
+  auto last = this-&gt;log-&gt;begin() + end;
+  return std::make_shared&lt;raftlog_t&gt;(first, last);
+}
+
+shared_ptr&lt;raftlog_t&gt; RaftServer::getLogSlice(uint64_t start) {
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+  return this-&gt;getLogSlice(start, this-&gt;log-&gt;size());
+}
+
+uint64_t RaftServer::getLastLogIndex() {
+  /* Get last log index (1-indexed)*/
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+  return this-&gt;log-&gt;size();
+}
+
+uint64_t RaftServer::getLastLogTerm() {
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+  if (this-&gt;log-&gt;size() != 0) {
+    return std::get&lt;0&gt;(this-&gt;log-&gt;at(this-&gt;getLastLogIndex() - 1));
+  }
+  else {
+    return 0;
+  }
+}
+
+
+
+bool RaftServer::AssumeCandidacy() {
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+  /* Assume candidacy unilaterally, set up variables, etc...*/
+
+  // THIS FUNCTION MANAGES STATE CHANGES -- everything but
+  // async communication
+
+  //  you should be allowed to reassume candidacy
+  Log_debug("Server %d assuming candidacy (currently term=%d)", this-&gt;site_id_, this-&gt;currentTerm);
+  // if (this-&gt;currentType == serverType::candidate) {
+  //   return false;
+  // }
+  // else {
+  // vote for yourself, increment your currentTerm
+  // and carry the hell on...
+  this-&gt;currentTerm++;
+
+  this-&gt;votedFor = this-&gt;site_id_;
+  this-&gt;votesGranted = 1;
+
+  this-&gt;currentType = serverType::candidate;
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match97-1.html#2" TARGET="1"><IMG SRC="../../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  return true;
+  // }
+}
+
+void RaftServer::AssumeFollowership(uint64_t newTermNumber) {
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(this-&gt;mtx_);
+
+  // IF you are entering a new turn as a result, restore your ability to vote freely
+  if (newTermNumber &gt; this-&gt;currentTerm) {
+</FONT>    this-&gt;votedFor = -1;
+  }
+  this-&gt;currentType = serverType::follower;
+  this-&gt;votesGranted = 0;
+  // TODO - see if its worth doing some osrt of validation
+  this-&gt;currentTerm = newTermNumber;
+  // stop any leader heartbeats from completing
+  this-&gt;leaderHeartbeatCoroutineId = 0;
+}
+
+
+
+void RaftServer::SyncRpcExample() {
+  /* This is an example of synchronous RPC using coroutine; feel free to 
+     modify this function to dispatch/receive your own messages. 
+     You can refer to the other function examples in commo.h/cc on how 
+     to send/recv a Marshallable object over RPC. */
+  Coroutine::CreateRun([this](){
+    string res;
+    auto event = commo()-&gt;SendString(0, /* partition id is always 0 for lab1 */
+                                     0, "hello", &res);
+    event-&gt;Wait(1000000); //timeout after 1000000us=1s
+    if (event-&gt;status_ == Event::TIMEOUT) {
+      Log_debug("timeout happens");
+    } else {
+      Log_debug("rpc response is: %s", res.c_str()); 
+    }
+  });
+}
+
+/* Do not modify any code below here */
+
+void RaftServer::Disconnect(const bool disconnect) {
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+  verify(disconnected_ != disconnect);
+  // global map of rpc_par_proxies_ values accessed by partition then by site
+  static map&lt;parid_t, map&lt;siteid_t, map&lt;siteid_t, vector&lt;SiteProxyPair&gt;&gt;&gt;&gt; _proxies{};
+  if (_proxies.find(partition_id_) == _proxies.end()) {
+    _proxies[partition_id_] = {};
+  }
+  RaftCommo *c = (RaftCommo*) commo();
+  if (disconnect) {
+    verify(_proxies[partition_id_][loc_id_].size() == 0);
+    verify(c-&gt;rpc_par_proxies_.size() &gt; 0);
+    auto sz = c-&gt;rpc_par_proxies_.size();
+    _proxies[partition_id_][loc_id_].insert(c-&gt;rpc_par_proxies_.begin(), c-&gt;rpc_par_proxies_.end());
+    c-&gt;rpc_par_proxies_ = {};
+    verify(_proxies[partition_id_][loc_id_].size() == sz);
+    verify(c-&gt;rpc_par_proxies_.size() == 0);
+  }
+  else
+  {
+    verify(_proxies[partition_id_][loc_id_].size() &gt; 0);
+    auto sz = _proxies[partition_id_][loc_id_].size();
+    c-&gt;rpc_par_proxies_ = {};
+    c-&gt;rpc_par_proxies_.insert(_proxies[partition_id_][loc_id_].begin(), _proxies[partition_id_][loc_id_].end());
+    _proxies[partition_id_][loc_id_] = {};
+    verify(_proxies[partition_id_][loc_id_].size() == 0);
+    verify(c-&gt;rpc_par_proxies_.size() == sz);
+  }
+  disconnected_ = disconnect;
+}
+
+bool RaftServer::IsDisconnected() {
+  return disconnected_;
+}
+
+} // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

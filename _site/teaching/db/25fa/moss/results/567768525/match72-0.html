@@ -1,0 +1,1306 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/KrishnaDonkada/src/shardkv/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/KrishnaDonkada/src/shardkv/server.go<p><PRE>
+package shardkv
+
+
+//import "shardmaster"
+import (
+	"bytes"
+	"labrpc"
+	"log"
+	"shardmaster"
+	"time"
+)
+import "raft"
+import "sync"
+import "labgob"
+
+
+
+type Op struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+	Op string
+	Key string
+	Value string
+	SequenceNum int
+	ClerkID int
+	Num int
+	Groups map[int][]string
+	ShardValues map[string]string
+	SequenceValues map[int]int
+	Shards [shardmaster.NShards] int
+	ISMigrationRequired bool
+	InvalidShard bool
+
+
+}
+
+type ShardKV struct {
+	mu           sync.Mutex
+	me           int
+	rf           *raft.Raft
+	applyCh      chan raft.ApplyMsg
+	make_end     func(string) *labrpc.ClientEnd
+	gid          int
+	masters      []*labrpc.ClientEnd
+	maxraftstate int // snapshot if log grows this big
+	KVStore map[string]string
+	OpMap map[int]Op // This is used to verify the desired index has appeared for the given client , no need to persist this as client call will timeout and request will come again.. so
+	SeqMap map[int]int
+	Killed chan bool
+	IsKilled bool
+	GetMap map[int]string
+	CurrConfig shardmaster.Config
+	//TempConfig shardmaster.Config
+    mck *shardmaster.Clerk
+	//mck1 *shardmaster.Clerk
+	LastApplied int
+	LastAppliedTerm int
+	LastSnapShot int
+	Received  map[string]string
+	ReceiveSeq map[int]int
+	Migrated map[int]bool // mapping from config num to migrated value ...
+	MigratingShards map[int] int // 0 - means incoming shard , 1 means leaving shard
+
+	ConfigChange bool
+	Done chan bool
+
+
+
+	// Your definitions here.
+}
+
+
+func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
+	// Your code here.
+	_,isLeader := kv.rf.GetState()
+	if !isLeader {
+		reply.WrongLeader = true
+		return
+	}
+	kv.mu.Lock()
+	var MyConfig shardmaster.Config
+	MigratingShards := map[int]int{}
+	MyConfig.Groups=map[int][]string{}
+
+	MyConfig.Num = kv.CurrConfig.Num
+	for m,v := range kv.CurrConfig.Shards {
+		MyConfig.Shards[m]=v
+	}
+
+	for m,v := range kv.CurrConfig.Groups {
+		MyConfig.Groups[m]=v
+	}
+
+	for m,v := range kv.MigratingShards {
+		MigratingShards[m]=v
+	}
+
+	MyGid := kv.gid
+	Configchange := kv.ConfigChange
+
+	kv.mu.Unlock()
+
+	shard := key2shard(args.Key)
+
+	//fmt.Println("Inside kv",kv.me,"gid",kv.gid,"Get called for shard:",shard,"My config Num",kv.CurrConfig.Num,"client config num",args.Num)
+	if args.Num &gt; MyConfig.Num {
+		reply.WrongLeader = false
+		reply.Err = ErrWrongGroup
+		//fmt.Println("Inside kv for get",kv.me,"gid",kv.gid,"Returning as old config request","shard requested",shard,"client config num",args.Num,"My config Num",kv.CurrConfig.Num)
+		//kv.mu.Unlock()
+		return
+	}
+
+	for Myshard,GID := range MyConfig.Shards {
+		//fmt.Println("Inside of for loop get",Myshard,GID,kv.gid,"mY Migating shards",kv.MigratingShards)
+		if Myshard == shard && GID != MyGid  {
+			reply.WrongLeader = false
+			reply.Err = ErrWrongGroup
+			//fmt.Println("Inside kv",kv.me,"gid",kv.gid,"Returning as wrong group @",Myshard)
+			return
+		} else if Myshard == shard && GID == MyGid {
+			if Configchange == true {
+
+				_,IsKeyExist  := MigratingShards[shard]
+				if IsKeyExist {
+					reply.WrongLeader = false
+					reply.Err = ErrWrongGroup
+					return
+				} else {
+					break
+				}
+			} else {
+				break
+			}
+
+		}
+	}
+
+
+
+	// call the start and wait on the channel
+	var op Op
+	op.Op="Get"
+	op.Key=args.Key
+	op.Value=""
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match72-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	op.ClerkID=args.ClerkID
+	op.SequenceNum=args.SequenceNum
+	op.InvalidShard=false
+	if isLeader {
+		index,_,isLeader := kv.rf.Start(op)
+		if !isLeader {
+			reply.WrongLeader = true
+			return
+		}
+
+		for {
+
+			kv.mu.Lock()
+			opToCompare,isKeyExist := kv.OpMap[index]
+			s,GetValueExist := kv.GetMap[index]
+</FONT>			kv.mu.Unlock()
+			if isKeyExist && op.ClerkID == opToCompare.ClerkID {
+				// s := &lt;- kv.GetChan
+
+				if opToCompare.InvalidShard {
+					reply.WrongLeader = false
+					reply.Err = ErrWrongGroup
+					return
+				}
+
+
+				if GetValueExist {
+					//fmt.Println("Get success for index",index,"operation details","key",op.Key,"value",s,"sequence num",op.SequenceNum,"clerk id",op.ClerkID,"Inside kv",kv.me,"gid",kv.gid,"Get called for shard:",shard,"My config Num",kv.CurrConfig.Num,"client config num",args.Num)
+					reply.Value = s
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match72-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+					reply.WrongLeader = false
+					reply.Err = OK
+					return
+				}
+
+
+			}
+
+			if isKeyExist && op.ClerkID != opToCompare.ClerkID{
+				reply.WrongLeader = true
+				return
+			}
+
+			_,Leadership := kv.rf.GetState()
+
+			if !Leadership  {
+				reply.WrongLeader = true
+				return
+			}
+
+			kv.mu.Lock()
+			kvKilled := kv.IsKilled
+			kv.mu.Unlock()
+
+			if kvKilled {
+				reply.WrongLeader = true
+				return
+			}
+
+
+
+		}
+	}
+}
+
+func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	// Your code here.
+	_,isLeader := kv.rf.GetState()
+</FONT>	if !isLeader {
+		reply.WrongLeader = true
+		return
+	}
+
+	/*shard := key2shard(args.Key)
+	kv.mu.Lock()
+	//fmt.Println("Inside kv",kv.me,"gid",kv.gid,"put called for shard:",shard,"My config Num",kv.CurrConfig.Num,"client config num",args.Num,"Key",args.Key,"VALUE",args.Value)
+	if args.Num &gt; kv.CurrConfig.Num {
+		reply.WrongLeader = false
+		reply.Err = ErrWrongGroup
+		//fmt.Println("Inside kv for put",kv.me,"gid",kv.gid,"Returning as old config request","shard requested",shard,"client config num",args.Num,"My config Num",kv.CurrConfig.Num)
+		kv.mu.Unlock()
+		return
+	}
+
+	for Myshard,GID := range kv.CurrConfig.Shards {
+		//fmt.Println("Inside of for loop put append",Myshard,GID,kv.gid,"mY Migating shards",kv.MigratingShards,"kv.ConfigChange",kv.ConfigChange)
+		if Myshard == shard && GID != kv.gid  {
+			 	reply.WrongLeader = false
+			 	reply.Err = ErrWrongGroup
+				//fmt.Println("Inside kv",kv.me,"gid",kv.gid,"Returning as wrong group @",Myshard)
+			 	kv.mu.Unlock()
+			 	return
+			 } else if Myshard == shard && GID == kv.gid {
+			 	 if kv.ConfigChange == true {
+
+			 	 	 _,IsKeyExist  := kv.MigratingShards[shard]
+
+			 	 	 if IsKeyExist {
+						 reply.WrongLeader = false
+						 reply.Err = ErrWrongGroup
+						 kv.mu.Unlock()
+						 return
+					 } else {
+					 	break
+					 }
+				 } else {
+				 	break
+				 }
+
+			 }
+		}
+	kv.mu.Unlock() */
+
+	kv.mu.Lock()
+	var MyConfig shardmaster.Config
+	MigratingShards := map[int]int{}
+	MyConfig.Groups=map[int][]string{}
+
+	MyConfig.Num = kv.CurrConfig.Num
+	for m,v := range kv.CurrConfig.Shards {
+		MyConfig.Shards[m]=v
+	}
+
+	for m,v := range kv.CurrConfig.Groups {
+		MyConfig.Groups[m]=v
+	}
+
+	for m,v := range kv.MigratingShards {
+		MigratingShards[m]=v
+	}
+
+	MyGid := kv.gid
+	ConfigChange := kv.ConfigChange
+
+	kv.mu.Unlock()
+
+	shard := key2shard(args.Key)
+
+	//fmt.Println("Inside kv",kv.me,"gid",kv.gid,"Get called for shard:",shard,"My config Num",kv.CurrConfig.Num,"client config num",args.Num)
+	if args.Num &gt; MyConfig.Num {
+		reply.WrongLeader = false
+		reply.Err = ErrWrongGroup
+	//	fmt.Println("Inside kv for get",kv.me,"gid",kv.gid,"Returning as old config request","shard requested",shard,"client config num",args.Num,"My config Num",kv.CurrConfig.Num)
+		//kv.mu.Unlock()
+		return
+	}
+
+	for Myshard,GID := range MyConfig.Shards {
+		//fmt.Println("Inside of for loop get",Myshard,GID,kv.gid,"mY Migating shards",kv.MigratingShards)
+		if Myshard == shard && GID != MyGid  {
+			reply.WrongLeader = false
+			reply.Err = ErrWrongGroup
+			//fmt.Println("Inside kv",kv.me,"gid",kv.gid,"Returning as wrong group @",Myshard)
+			return
+		} else if Myshard == shard && GID == MyGid {
+			if ConfigChange == true {
+
+				_,IsKeyExist  := MigratingShards[shard]
+				if IsKeyExist {
+					reply.WrongLeader = false
+					reply.Err = ErrWrongGroup
+					return
+				} else {
+					break
+				}
+			} else {
+				break
+			}
+
+		}
+	}
+
+
+	var op Op
+	op.Op=args.Op
+	op.Key=args.Key
+	op.Value=args.Value
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match72-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	op.ClerkID=args.ClerkID
+	op.SequenceNum=args.SequenceNum
+	op.InvalidShard=false
+	if isLeader{
+
+		index,_,isLeader := kv.rf.Start(op)
+		if !isLeader {
+			reply.WrongLeader = true
+			return
+		}
+		for {
+			kv.mu.Lock()
+			opToCompare,isKeyExist := kv.OpMap[index]
+			kv.mu.Unlock()
+</FONT>			if isKeyExist && op.ClerkID == opToCompare.ClerkID {
+				//fmt.Println("in",kv.me,"Put append success for index",index,"operation details","key",op.Key,"value",op.Value,"sequence num",op.SequenceNum,"clerk id",op.ClerkID)
+				if opToCompare.InvalidShard {
+					reply.WrongLeader = false
+					reply.Err = ErrWrongGroup
+					return
+				}
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match72-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				reply.WrongLeader = false
+				reply.Err = OK
+				return
+
+			}
+			if isKeyExist && op.ClerkID != opToCompare.ClerkID{
+				reply.WrongLeader = true
+				return
+			}
+			_,Leadership := kv.rf.GetState()
+			if !Leadership  {
+				reply.WrongLeader = true
+				return
+			}
+
+			kv.mu.Lock()
+			kvKilled := kv.IsKilled
+			kv.mu.Unlock()
+
+			if kvKilled {
+				reply.WrongLeader = true
+				return
+			}
+		}
+	}
+}
+
+//
+// the tester calls Kill() when a ShardKV instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *ShardKV) Kill() {
+</FONT>	kv.rf.Kill()
+	//kv.Killed&lt;-true
+	//kv.mu.Lock()
+	//kv.IsKilled = true
+	//kv.mu.Unlock()
+	// Your code here, if desired.
+}
+
+
+//
+// servers[] contains the ports of the servers in this group.
+//
+// me is the index of the current server in servers[].
+//
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+//
+// the k/v server should snapshot when Raft's saved state exceeds
+// maxraftstate bytes, in order to allow Raft to garbage-collect its
+// log. if maxraftstate is -1, you don't need to snapshot.
+//
+// gid is this group's GID, for interacting with the shardmaster.
+//
+// pass masters[] to shardmaster.MakeClerk() so you can send
+// RPCs to the shardmaster.
+//
+// make_end(servername) turns a server name from a
+// Config.Groups[gid][i] into a labrpc.ClientEnd on which you can
+// send RPCs. You'll need this to send RPCs to other groups.
+//
+// look at client.go for examples of how to use masters[]
+// and make_end() to send RPCs to the group owning a specific shard.
+//
+// StartServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int, gid int, masters []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *ShardKV {
+	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+
+	kv := new(ShardKV)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+	kv.make_end = make_end
+	kv.gid = gid
+	kv.masters = masters
+
+	// Your initialization code here.
+
+	// Use something like this to talk to the shardmaster:
+	kv.mck = shardmaster.MakeClerk(kv.masters)
+	//kv.mck1 = shardmaster.MakeClerk(kv.masters)
+	kv.KVStore = make(map[string]string)
+	//kv.GetChan = make(chan string)
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match72-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.OpMap = make(map[int]Op)
+	kv.SeqMap = make(map[int]int)
+	kv.GetMap = make(map[int]string)
+	kv.Killed = make(chan bool)
+	kv.Received =  make(map[string]string) // mapping from key to value .. when rececing the sahrds
+</FONT>
+	kv.Migrated =  make(map[int]bool)
+	kv.ReceiveSeq = make(map[int]int)
+	kv.MigratingShards=  make(map[int]int)
+	kv.IsKilled=false
+
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.CurrConfig.Num=0 // start from zero config
+	kv.CurrConfig.Groups= map[int][]string{}
+	for i :=0;i&lt;shardmaster.NShards;i++ {
+		kv.CurrConfig.Shards[i]=0
+		//kv.TempConfig.Shards[i]=0// need to create shards[] .....?
+	}
+	kv.KVReadsnapshot(persister)
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+
+
+
+	 go kv.ListenOnApplyCh()
+	 if kv.maxraftstate != -1 {
+		go kv.CheckRaftSize()
+	 }
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match72-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	go kv.PollMaster()
+
+	return kv
+}
+
+func (kv *ShardKV) ListenOnApplyCh() {
+	for {
+		select {
+		case applyMsg := &lt;- kv.applyCh:
+			if applyMsg.CommandValid == false {
+
+			} else if !applyMsg.SnapshotIncluded {
+				op := (applyMsg.Command).(Op)
+				//fmt.Println("Message appeared on kv",kv.me, "applyMsg channel",applyMsg.CommandIndex,applyMsg.CommandValid,"op details operation",op.Op,"key",op.Key,"value",op.Value,"sequence num",op.SequenceNum,"clerk id",op.ClerkID)
+				if op.Op == "Get" {
+					kv.ApplyGet(applyMsg,op)
+
+					// do not launch a go routine as this will alter the order of applying
+				} else if op.Op == "Put" {
+					kv.ApplyPut(applyMsg,op)
+				} else if op.Op == "Append" {
+					kv.ApplyAppend(applyMsg,op)
+
+				} else if op.Op == "ConfigUpdate" {
+					kv.UpdateConfig(applyMsg,op)
+</FONT>				} else if op.Op == "Data" {
+					kv.UpdateData(applyMsg,op)
+				}
+
+			} else if applyMsg.SnapshotIncluded {
+<A NAME="8"></A><FONT color = #00FFFF><A HREF="match72-1.html#8" TARGET="1"><IMG SRC="../../bitmaps/tm_3_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				kv.ApplySnapshot(applyMsg)
+			}
+		case &lt;-kv.Killed:
+			return
+
+		}
+
+
+	}
+}
+
+func (kv *ShardKV) ApplyGet(applyMsg raft.ApplyMsg,op Op) {
+	kv.mu.Lock()
+
+	shard := key2shard(op.Key)
+</FONT>
+	CurrConfig := kv.CurrConfig
+
+	for Myshard,GID := range CurrConfig.Shards {
+		//fmt.Println("Inside of for loop get",Myshard,GID,kv.gid,"mY Migating shards",kv.MigratingShards)
+		if Myshard == shard && GID != kv.gid {
+			//reply.WrongLeader = false
+			op.InvalidShard = true
+			//fmt.Println("while reading on channel kv", kv.me, "gid", kv.gid, "Returning as wrong group @", Myshard)
+			//return
+		}
+	}
+
+
+
+	if !op.InvalidShard {
+		value,isKeyExist := kv.KVStore[op.Key]
+		if !isKeyExist {
+			value=""
+		}
+		kv.GetMap[applyMsg.CommandIndex]=value
+		kv.SeqMap[op.ClerkID]=op.SequenceNum
+		kv.SeqMap[op.ClerkID]=op.SequenceNum
+
+	}
+
+	//kv.GetMap[applyMsg.CommandIndex]=value
+	kv.OpMap[applyMsg.CommandIndex]=op
+	//kv.SeqMap[op.ClerkID]=op.SequenceNum
+	kv.LastApplied=applyMsg.CommandIndex
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match72-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.LastAppliedTerm=applyMsg.CommandTerm
+	//fmt.Println(kv.me,"LastAppliedIndex",kv.LastApplied-1,"Last Applied term",kv.LastAppliedTerm)
+	kv.mu.Unlock()
+}
+
+func (kv *ShardKV) ApplyPut(applyMsg raft.ApplyMsg,op Op) {
+	kv.mu.Lock()
+	SequenceNum,isClientExist := kv.SeqMap[op.ClerkID]
+</FONT>	CurrConfig := kv.CurrConfig
+	if isClientExist {
+		if   op.SequenceNum &gt; SequenceNum {
+
+			shard := key2shard(op.Key)
+
+			for Myshard,GID := range CurrConfig.Shards {
+				//fmt.Println("Inside of for loop get",Myshard,GID,kv.gid,"mY Migating shards",kv.MigratingShards)
+				if Myshard == shard && GID != kv.gid {
+					//reply.WrongLeader = false
+					op.InvalidShard = true
+					//fmt.Println("Inside kv", kv.me, "gid", kv.gid, "Returning as wrong group @", Myshard)
+					//return
+				}
+			}
+           if !op.InvalidShard {
+			   kv.KVStore[op.Key] = op.Value
+			   kv.SeqMap[op.ClerkID]=op.SequenceNum
+		   }
+
+
+		}
+	} else {
+
+		shard := key2shard(op.Key)
+
+		for Myshard,GID := range CurrConfig.Shards {
+			//fmt.Println("Inside of for loop get",Myshard,GID,kv.gid,"mY Migating shards",kv.MigratingShards)
+			if Myshard == shard && GID != kv.gid {
+				//reply.WrongLeader = false
+				op.InvalidShard = true
+				//fmt.Println("Inside kv", kv.me, "gid", kv.gid, "Returning as wrong group @", Myshard)
+				//return
+			}
+		}
+
+		if !op.InvalidShard {
+			kv.KVStore[op.Key] = op.Value
+			kv.SeqMap[op.ClerkID]=op.SequenceNum
+		}
+	}
+	kv.OpMap[applyMsg.CommandIndex]=op
+	kv.LastApplied=applyMsg.CommandIndex
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match72-1.html#7" TARGET="1"><IMG SRC="../../bitmaps/tm_2_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.LastAppliedTerm=applyMsg.CommandTerm
+	//fmt.Println(kv.me,"LastAppliedIndex",kv.LastApplied-1,"Last Applied term",kv.LastAppliedTerm)
+	kv.mu.Unlock()
+
+}
+
+func (kv *ShardKV) ApplyAppend(applyMsg raft.ApplyMsg,op Op) {
+	kv.mu.Lock()
+	SequenceNum,isClientExist := kv.SeqMap[op.ClerkID]
+</FONT>	CurrConfig := kv.CurrConfig
+	if isClientExist {
+		if   op.SequenceNum &gt; SequenceNum {
+			//fmt.Println("Inside lock ",SequenceNum,op.SequenceNum)
+
+			shard := key2shard(op.Key)
+
+			for Myshard,GID := range CurrConfig.Shards {
+				//fmt.Println("Inside of for loop get",Myshard,GID,kv.gid,"mY Migating shards",kv.MigratingShards)
+				if Myshard == shard && GID != kv.gid {
+					//reply.WrongLeader = false
+					op.InvalidShard = true
+					//fmt.Println("Inside kv", kv.me, "gid", kv.gid, "Returning as wrong group @", Myshard)
+					//return
+				}
+			}
+
+
+
+			if !op.InvalidShard {
+				value,isKeyExist := kv.KVStore[op.Key]
+
+				if isKeyExist {
+					kv.KVStore[op.Key]=value+op.Value
+				} else {
+					kv.KVStore[op.Key]=op.Value
+				}
+				kv.SeqMap[op.ClerkID]=op.SequenceNum
+
+			}
+
+
+		}
+	} else {
+
+
+		shard := key2shard(op.Key)
+
+		for Myshard,GID := range CurrConfig.Shards {
+			//fmt.Println("Inside of for loop get",Myshard,GID,kv.gid,"mY Migating shards",kv.MigratingShards)
+			if Myshard == shard && GID != kv.gid {
+				//reply.WrongLeader = false
+				op.InvalidShard = true
+				//fmt.Println("Inside kv", kv.me, "gid", kv.gid, "Returning as wrong group @", Myshard)
+				//return
+			}
+		}
+
+		if !op.InvalidShard {
+
+			value,isKeyExist := kv.KVStore[op.Key]
+			if isKeyExist {
+				kv.KVStore[op.Key]=value+op.Value
+			} else {
+				kv.KVStore[op.Key]=op.Value
+			}
+			kv.SeqMap[op.ClerkID]=op.SequenceNum
+
+		}
+
+
+	}
+	kv.OpMap[applyMsg.CommandIndex]=op
+	kv.LastApplied=applyMsg.CommandIndex
+	kv.LastAppliedTerm=applyMsg.CommandTerm
+	//fmt.Println(kv.me,"LastAppliedIndex",kv.LastApplied-1,"Last Applied term",kv.LastAppliedTerm)
+	kv.mu.Unlock()
+}
+
+func (kv *ShardKV) ApplySnapshot(applyMsg raft.ApplyMsg){
+
+	snapshot := applyMsg.Snapshot
+
+	//fmt.Println("Inside kv server ApplySnapshot",kv.me,"SnapshotLength",len(snapshot))
+	if snapshot == nil || len(snapshot) &lt; 1 { // bootstrap without any state?
+		//fmt.Println("Returning from readPersist because there is no data to read")
+		return
+	}
+
+	r := bytes.NewBuffer(snapshot)
+	d := labgob.NewDecoder(r)
+	var SnapshotLastLogIndex int
+	var SnapshotLastLogTerm int
+	var KVStore map[string]string
+	//KVStore = make(map[string]string)
+	var SeqMap  map[int]int
+	var CurrConfig shardmaster.Config
+	CurrConfig.Groups= map[int][]string{}
+
+	//SeqMap = make(map[int]int)
+
+	//fmt.Println("Inside kv server ApplySnapshot",kv.me)
+	if d.Decode(&SnapshotLastLogIndex) != nil ||
+		d.Decode(&SnapshotLastLogTerm) != nil || d.Decode(&KVStore) != nil || d.Decode(&SeqMap) != nil || d.Decode(&CurrConfig) != nil {
+		//fmt.Println("Error while reading the persisted data")
+		log.Fatal("Error while reading the persisted data inside read snapshot",SnapshotLastLogIndex,SnapshotLastLogTerm,kv.KVStore,kv.SeqMap)
+	} else {
+		kv.mu.Lock()
+
+		kv.KVStore = KVStore
+		kv.SeqMap = SeqMap
+		kv.LastApplied=SnapshotLastLogIndex
+		kv.LastAppliedTerm=SnapshotLastLogTerm
+		kv.CurrConfig=CurrConfig
+
+
+
+
+
+		kv.mu.Unlock()
+
+	}
+
+
+}
+
+func (kv *ShardKV) CheckRaftSize() {
+
+	for {
+
+
+		result := kv.rf.CheckSateSize(kv.maxraftstate)
+		if result {
+			//fmt.Println("Reached maxraft state",kv.maxraftstate,"for kv",kv.me)
+			kv.SaveKVState()
+			// fmt.Println("Done with taking snapshot for kv",kv.me)
+		}
+
+
+		kv.mu.Lock()
+		kvKilled := kv.IsKilled
+		kv.mu.Unlock()
+
+		if kvKilled {
+			return
+		}
+	}
+
+}
+func (kv *ShardKV) SaveKVState()  {
+
+
+	//kv.rf.Snapshot(maxraftstate)
+	//fmt.Println("Reached before the lock in saveKVstate",kv.me)
+	kv.rf.Mu.Lock()
+	kv.mu.Lock()
+	//fmt.Println("Inside Save KV State")
+	LastSnapShot := kv.LastSnapShot
+	LastApplied := kv.LastApplied
+	LastAppliedTerm:=kv.LastAppliedTerm
+	//var LastConfig
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+
+	e.Encode(kv.LastApplied)
+	e.Encode(kv.LastAppliedTerm)
+	e.Encode(kv.KVStore)
+	e.Encode(kv.SeqMap)
+	e.Encode(kv.CurrConfig)
+
+	//e.Encode(rf.Log)
+	Snapshot := w.Bytes()
+	//fmt.Println("Before calling SaveStateSnapshot and waiting",kv.me)
+	//kv.rf.SaveStateSnapshot(Snapshot,LastApplied-1,LastAppliedTerm)
+	//fmt.Println("returned from calling SaveStateSnapshot and releasing the kv lock from saveKVstate",kv.me)
+	//kv.mu.Unlock()
+	//fmt.Println("Before calling Save state snapshot")
+	//fmt.Println(kv.me,"calling raft","LastApplied",LastApplied-1,"Last Applied term",LastAppliedTerm,"SnapshotLength",len(Snapshot))
+	if(LastSnapShot != LastApplied-1 ) {
+		kv.rf.SaveStateSnapshot(Snapshot,LastApplied-1,LastAppliedTerm)
+	}
+
+	//kv.mu.Lock()
+	kv.LastSnapShot=LastApplied-1
+	kv.mu.Unlock()
+	kv.rf.Mu.Unlock()
+	//kv.rf.SaveStateSnapshot(Snapshot)
+	//return KVState, LastApplied-1
+
+
+}
+func (kv *ShardKV) KVReadsnapshot(persister *raft.Persister) {
+	snapshot := persister.ReadSnapshot()
+
+	if snapshot == nil || len(snapshot) &lt; 1 { // bootstrap without any state?
+		//fmt.Println("Returning from readPersist because there is no data to read")
+		return
+	}
+
+	r := bytes.NewBuffer(snapshot)
+	d := labgob.NewDecoder(r)
+	var SnapshotLastLogIndex int
+	var SnapshotLastLogTerm int
+	var KVStore map[string]string
+	var SeqMap  map[int]int
+	var CurrConfig shardmaster.Config
+	CurrConfig.Groups= map[int][]string{}
+
+
+	if d.Decode(&SnapshotLastLogIndex) != nil ||
+		d.Decode(&SnapshotLastLogTerm) != nil || d.Decode(&KVStore) != nil || d.Decode(&SeqMap) != nil || d.Decode(&CurrConfig) != nil  {
+		//fmt.Println("Error while reading the persisted data")
+		log.Fatal("Error while reading the persisted data inside read snapshot")
+	} else {
+		kv.mu.Lock()
+
+		kv.KVStore = KVStore
+		kv.SeqMap = SeqMap
+		kv.LastApplied=SnapshotLastLogIndex
+		kv.LastAppliedTerm=SnapshotLastLogTerm
+		kv.CurrConfig=CurrConfig
+
+
+
+		//fmt.Println("Inside persister term:",currentTerm,votedFor)
+		//fmt.Println("updated current term and voted for:",rf.me,rf.CurrentTerm,rf.VotedFor)
+		kv.mu.Unlock()
+
+	}
+
+}
+
+func (kv *ShardKV) PollMaster() {
+	for {
+
+		_,isLeader := kv.rf.GetState()
+		if isLeader {
+
+			QueryConfig := kv.mck.Query(-1)
+			kv.mu.Lock()
+			CurrConfigNum := kv.CurrConfig.Num
+			ISMigrationGoing := kv.ConfigChange
+			kv.mu.Unlock()
+			if CurrConfigNum+1 &lt;= QueryConfig.Num && !ISMigrationGoing  {
+
+				    //fmt.Println("Inside of polling for",kv.me,"for group id",kv.gid,"Calling to Add to raft for",CurrConfigNum+1,"Query Config Num:",QueryConfig.Num,"IsMigration Going",ISMigrationGoing)
+					//kv.mu.Lock()
+				    NextConfig := kv.mck.Query(CurrConfigNum+1)
+				    //kv.mu.Unlock()
+					kv.AddConfigToRaft(NextConfig)
+				    //fmt.Println("Done calling  AddConfig To",kv.me,"for group id",kv.gid,"Calling to Add to raft for",CurrConfigNum+1,"Query Config Num:",QueryConfig.Num,"IsMigration Going updated?",ISMigrationGoing)
+				    }
+		}
+		time.Sleep(100 * time.Millisecond)
+		}
+
+
+}
+
+func (kv *ShardKV) AddConfigToRaft(NextConfig shardmaster.Config) {
+
+	_,isLeader := kv.rf.GetState()
+	if !isLeader {
+		return
+	}
+
+	var op Op
+	op.Op="ConfigUpdate"
+	op.Num=NextConfig.Num
+	op.Groups=map[int][]string{}
+	//var a [shardmaster.NShards]int
+	//op.Shards=a
+
+
+	/*for i :=0;i&lt;len(NextConfig.Shards);i++ {
+		op.Shards[i]=0
+		//kv.TempConfig.Shards[i]=0// need to create shards[] .....?
+	} */
+
+	op.ClerkID=-2 // to identify the leader  as himself
+
+	kv.mu.Lock()
+	var MyConfig shardmaster.Config
+	MyConfig.Groups=map[int][]string{}
+	MyConfig.Num = kv.CurrConfig.Num
+	for m,v := range kv.CurrConfig.Shards {
+		MyConfig.Shards[m]=v
+	}
+
+	for m,v := range kv.CurrConfig.Groups {
+		MyConfig.Groups[m]=v
+	}
+	MyGid := kv.gid
+	kv.mu.Unlock()
+
+	MyOldShards := make(map[int]int)
+	LostShards := make(map[int]int)  // mapping from lost shard to whom we lost it.
+	GainedShards := make(map[int]int) // mapping from shard to Gid.
+	Migrating := make(map[int]int)
+
+	for m,v := range MyConfig.Shards {
+		if v == MyGid {
+			MyOldShards[m]=1
+		}
+	}
+	for m,v := range NextConfig.Shards {
+		_, isShardExist := MyOldShards[m]
+		if isShardExist {
+			if v != MyGid {
+				LostShards[m]=v
+				Migrating[m]=0
+			}
+		} else {
+			if v == MyGid {
+				//oldGid,isShardExist1 := MyConfig.Shards[m]
+				GainedShards[m]=MyConfig.Shards[m]
+				Migrating[m]=1
+			}
+		}
+	}
+
+	kv.mu.Lock()
+	for m,v := range Migrating {
+		kv.MigratingShards[m]=v
+	}
+	kv.mu.Unlock()
+
+	if len(GainedShards) &gt; 0 && NextConfig.Num &gt; 1{
+		op.ISMigrationRequired=true
+	} else {
+		op.ISMigrationRequired=false
+	}
+
+	//kv.CurrConfig.Num=ConifgToUpdate.Num
+
+	for m, v := range NextConfig.Groups {
+		op.Groups[m] = v
+	}
+
+	for m,v := range NextConfig.Shards {
+		op.Shards[m]=v
+	}
+
+	// Estimate the lost shards and Gained shards , in this configuration
+
+
+	//fmt.Println("Inside",kv.me,"gid:",kv.gid,"for Adding config to Raft","lost shards length",len(LostShards),"Gained shards length",len(GainedShards),"My current config num",MyConfig.Num,"Next Config",NextConfig.Num)
+	index,_,isLeader := kv.rf.Start(op)
+	//fmt.Println("Called added to raft for kv:",kv.me,"gid:",kv.gid,"My current config num",MyConfig.Num,"Next Config",NextConfig.Num)
+	if !isLeader {
+			//reply.WrongLeader = true
+			return
+	}
+
+	 for {
+			kv.mu.Lock()
+			opToCompare,isKeyExist := kv.OpMap[index]
+			kv.mu.Unlock()
+			if isKeyExist && op.Num == opToCompare.Num && opToCompare.ClerkID == -2 {
+
+				//fmt.Println("Raft commited afor kv:",kv.me,"gid:",kv.gid,"My current config num",MyConfig.Num,"Next Config",NextConfig.Num)
+				var wg sync.WaitGroup
+				if len(GainedShards) &gt; 0 && NextConfig.Num &gt; 1 {
+
+					 for m,v := range GainedShards {
+					 	wg.Add(1)
+					 	//fmt.Println("Calling for fetching shards:",kv.me,"gid:",kv.gid,"My current config num",MyConfig.Num,"Next Config",NextConfig.Num,"Shard Number",m,"Group id to fetch from",v)
+					 	go kv.RequestShards(&wg,m,v,MyConfig)
+					 }
+
+					 wg.Wait()
+					 //fmt.Println("kv",kv.me,"gid",kv.gid,"After done waiting for goroutines to finish")
+					 var op1 Op
+					 op1.Op="Data"
+					 op1.Num=NextConfig.Num
+					 op1.Groups=map[int][]string{}
+
+					for m, v := range NextConfig.Groups {
+						op1.Groups[m] = v
+					}
+
+					for m,v := range NextConfig.Shards {
+						op1.Shards[m]=v
+					}
+
+
+					op1.ClerkID=-2 // to identify the leader  as himself
+					op1.ShardValues= map[string]string{}
+					op1.SequenceValues= map[int]int{}
+
+					kv.mu.Lock()
+					for k,_:= range kv.Received {
+						op1.ShardValues[k]=kv.Received[k]
+
+					}
+					for k,v := range kv.ReceiveSeq {
+						op1.SequenceValues[k]=v
+					}
+					kv.Received= make(map[string]string)
+					kv.ReceiveSeq= make(map[int]int)
+					kv.mu.Unlock()
+
+					_,isLeader1:=kv.rf.GetState()
+
+					if isLeader1 {
+						kv.rf.Start(op1)
+					}
+
+					//fmt.Println("kv",kv.me,"gid",kv.gid,"called start for Data")
+
+				}
+				return
+
+			}
+		 	if isKeyExist && (op.ClerkID != opToCompare.ClerkID || op.Num != opToCompare.Num) {
+		 		return
+			}
+			_,Leadership := kv.rf.GetState()
+			if !Leadership  {
+				return
+			}
+
+			kv.mu.Lock()
+			kvKilled := kv.IsKilled
+			kv.mu.Unlock()
+
+			if kvKilled {
+				return
+			}
+		}
+
+}
+func (kv *ShardKV) UpdateConfig(applyMsg raft.ApplyMsg,op Op) {
+
+	// any duplication detection needed here ?
+	//ConifgToUpdate := kv.mck1.Query(op.Num)
+	kv.mu.Lock()
+
+	kv.ConfigChange = true
+
+	if op.ISMigrationRequired == false {
+
+
+
+
+		kv.CurrConfig.Num=op.Num
+
+		for m, v := range op.Groups {
+			kv.CurrConfig.Groups[m] = v
+		}
+
+		for m,v := range op.Shards {
+			kv.CurrConfig.Shards[m]=v
+		}
+		kv.ConfigChange=false
+		kv.MigratingShards= make(map[int]int)
+
+		//fmt.Println("Updated config to",kv.CurrConfig.Num,"for", kv.me,"gid:",kv.gid,"Done Inside UpdateConfig","Ismigrated",op.ISMigrationRequired)
+	}
+
+
+
+
+	kv.OpMap[applyMsg.CommandIndex]=op
+	//kv.SeqMap[op.ClerkID]=op.SequenceNum
+	kv.LastApplied=applyMsg.CommandIndex
+	kv.LastAppliedTerm=applyMsg.CommandTerm
+
+	//fmt.Println("Config change detected on",kv.me,"gid",kv.gid,"op.num",op.Num,"updated ConfigChange variable",kv.ConfigChange)
+
+
+	kv.mu.Unlock()
+
+}
+
+func (kv *ShardKV) UpdateData(applyMsg raft.ApplyMsg,op Op) {
+
+	// any duplication detection needed here ?
+
+	kv.mu.Lock()
+	// Update current configuration but wait untill sharding of all the required shards is completed ..
+	// updation of config state should happen atomically ...
+	//fmt.Println("kv",kv.me,"gid",kv.gid,"Inside to update data")
+	KeyVlaueCopy := make(map[string]string)
+	SeqValueCopy := make(map[int]int)
+
+
+	for m,_ := range op.ShardValues {
+		KeyVlaueCopy[m]=op.ShardValues[m]
+	}
+
+	for m,v := range op.SequenceValues {
+		SeqValueCopy[m]=v
+	}
+
+	for m,v := range KeyVlaueCopy {
+		//op.Groups[m] = v
+		kv.KVStore[m]=v
+	}
+
+	for m,v := range SeqValueCopy {
+
+		SeqNo,Clerkexist := kv.SeqMap[m]
+
+		if Clerkexist {
+			if v &gt; SeqNo {
+				kv.SeqMap[m]=v
+			}
+		} else {
+			kv.SeqMap[m]=v
+		}
+	}
+	kv.CurrConfig.Num=op.Num
+	for m, v := range op.Groups {
+		kv.CurrConfig.Groups[m] = v
+	}
+
+	for m,v := range op.Shards {
+		kv.CurrConfig.Shards[m]=v
+	}
+    kv.ConfigChange=false
+    kv.MigratingShards= make(map[int]int)
+
+	kv.OpMap[applyMsg.CommandIndex]=op
+	kv.LastApplied=applyMsg.CommandIndex
+	kv.LastAppliedTerm=applyMsg.CommandTerm
+
+	kv.mu.Unlock()
+
+}
+
+func (kv *ShardKV) RequestShards(wg *sync.WaitGroup,ShardNo int,GID int,MyOldConifg shardmaster.Config) {
+    defer wg.Done()
+
+	n := len(MyOldConifg.Groups[GID])
+	//output := map
+	//fmt.Println("Inside",kv.me,"gid:",kv.gid,"Here to Request shards from",GID,"Shard No:",ShardNo,"no of servers in GID",n)
+	i := 0
+   for {
+   	  var RequestShardArgs RequestShard
+
+   	 // RequestShardArgs.GID=GID
+   	  RequestShardArgs.Shard=ShardNo
+   	  RequestShardArgs.Num=MyOldConifg.Num
+
+   	  var ReplyShard ReplyShard
+   	  ReplyShard.KVValues= map[string]string{}
+   	  ReplyShard.SeqValues= map[int]int{}
+       //fmt.Println("Inside",kv.me,"gid:",kv.gid,"Here to Request shards from Calling Server",MyOldConifg.Groups[GID][i])
+	   srv := kv.make_end(MyOldConifg.Groups[GID][i])
+	   ok := srv.Call("ShardKV.SendShards", &RequestShardArgs, &ReplyShard)
+	   //fmt.Println("output of the rpc for Get from",i,"to Clerk",ck.ClerkID,"Sequence num:",ck.SequenceNum,"Current leader",ck.CurrentLeader,"output ok?",ok,"wrong leader?",reply.WrongLeader,"Err",reply.Err)
+	   // if rpc timed out or rpc succeded but wrong leader ..
+	   if !ok || (ok && ReplyShard.WrongLeader) {
+		   i++
+		   if i == n {
+			   i = 0
+		   }
+		//   fmt.Println("Inside",kv.me,"gid:",kv.gid,"Here to Request shards from Calling Server","He is a wrong leader, let me try with:",i)
+		   time.Sleep(100 * time.Millisecond)
+	   } else if ok && !ReplyShard.WrongLeader && ReplyShard.Migrated == false {
+	   	// continue
+	   	 time.Sleep(100 * time.Millisecond)
+	   } else if ok && !ReplyShard.WrongLeader && ReplyShard.Err == OK  && ReplyShard.Migrated == true { //if RPC succeeded and operation is also succeeded
+		   //ck.CurrentLeader = i // remember the leader id
+		   kv.mu.Lock()
+		   //fmt.Println("Inside",kv.me,"gid:",kv.gid,"Here to Request shards from Calling Server","Shard No:",ShardNo,"He replied",i)
+		   for m,_ := range ReplyShard.KVValues {
+		   	kv.Received[m]=ReplyShard.KVValues[m]
+		   }
+		   for m,v := range ReplyShard.SeqValues {
+		   	kv.ReceiveSeq[m]=v
+		   }
+		   kv.mu.Unlock()
+		  //fmt.Println("Inside",kv.me,"gid:",kv.gid,"Done with request for shard","Shard No:",ShardNo,"He replied",i)
+		   //fmt.Println("Got update for the get operation by the server",i,"to Clerk",ck.ClerkID,"Sequence num:",ck.SequenceNum,"ck current leader:",ck.CurrentLeader,"return string is:",output)
+		   break
+	   }
+
+
+   }
+}
+
+func (kv *ShardKV) SendShards(RequestShardArgs *RequestShard,ReplyShard *ReplyShard){
+
+	kv.mu.Lock()
+
+
+    //fmt.Println("Inside send shards",kv.me,"gid:",kv.gid,"to give shard",RequestShardArgs.Shard)
+	MyCurrConfig := kv.CurrConfig
+    kv.mu.Unlock()
+	//Migrated := kv.Migrated[MyCurrConfig.Num]
+
+	_,isLeader := kv.rf.GetState()
+
+	if !isLeader {
+		ReplyShard.WrongLeader=true
+		//fmt.Println("Inside send shards",kv.me,"gid:",kv.gid,"to give shard",RequestShardArgs.Shard,"He is not leader")
+
+	} else if RequestShardArgs.Num &gt; MyCurrConfig.Num {
+		ReplyShard.WrongLeader=false
+		ReplyShard.Migrated=false
+		//fmt.Println("Inside send shards",kv.me,"gid:",kv.gid,"to give shard",RequestShardArgs.Shard,"Can not service the request as request config number is greater")
+	} else {
+		//fmt.Println("Inside send shards",kv.me,"gid:",kv.gid,"to give shard",RequestShardArgs.Shard,"Requester config",RequestShardArgs.Num,"My config",MyCurrConfig.Num)
+		KeyValueCopy := make(map[string]string)
+		SeqValueCopy := make(map[int]int)
+
+		kv.mu.Lock()
+		for k,_ := range kv.KVStore {
+			shard := key2shard(k)
+			if RequestShardArgs.Shard == shard {
+				KeyValueCopy[k]=kv.KVStore[k]
+			}
+		}
+		for k,v := range kv.SeqMap {
+			SeqValueCopy[k]=v
+		}
+
+		kv.mu.Unlock()
+
+		ReplyShard.KVValues= map[string]string{}
+		ReplyShard.SeqValues= map[int]int{}
+
+		for k,v := range KeyValueCopy {
+			ReplyShard.KVValues[k]=v
+		}
+
+		for k,v := range SeqValueCopy {
+			ReplyShard.SeqValues[k]=v
+		}
+		ReplyShard.Migrated=true
+		ReplyShard.WrongLeader=false
+		ReplyShard.Err=OK
+	}
+
+  /*
+	kv.mu.Lock()
+
+
+	    //fmt.Println("Inside send shards",kv.me,"gid:",kv.gid,"to give shard",RequestShardArgs.Shard)
+		MyCurrConfig := kv.CurrConfig
+		ConfigChange := kv.ConfigChange
+	    kv.mu.Unlock()
+		//Migrated := kv.Migrated[MyCurrConfig.Num]
+
+		_,isLeader := kv.rf.GetState()
+
+		if !isLeader {
+			ReplyShard.WrongLeader=true
+			//fmt.Println("Inside send shards",kv.me,"gid:",kv.gid,"to give shard",RequestShardArgs.Shard,"He is not leader")
+
+		} else if RequestShardArgs.Num &gt; MyCurrConfig.Num || (RequestShardArgs.Num == MyCurrConfig.Num && !ConfigChange){
+			ReplyShard.WrongLeader=false
+			ReplyShard.Migrated=false
+			//fmt.Println("Inside send shards",kv.me,"gid:",kv.gid,"to give shard",RequestShardArgs.Shard,"Can not service the request as request config number is greater")
+		} else   {
+			//fmt.Println("Inside send shards",kv.me,"gid:",kv.gid,"to give shard",RequestShardArgs.Shard,"Requester config",RequestShardArgs.Num,"My config",MyCurrConfig.Num)
+			KeyValueCopy := make(map[string]string)
+			SeqValueCopy := make(map[int]int)
+
+			kv.mu.Lock()
+			for k,_ := range kv.KVStore {
+				shard := key2shard(k)
+				if RequestShardArgs.Shard == shard {
+					KeyValueCopy[k]=kv.KVStore[k]
+				}
+			}
+			for k,v := range kv.SeqMap {
+				SeqValueCopy[k]=v
+			}
+
+			kv.mu.Unlock()
+
+			ReplyShard.KVValues= map[string]string{}
+			ReplyShard.SeqValues= map[int]int{}
+
+			for k,v := range KeyValueCopy {
+				ReplyShard.KVValues[k]=v
+			}
+
+			for k,v := range SeqValueCopy {
+				ReplyShard.SeqValues[k]=v
+			}
+			ReplyShard.Migrated=true
+			ReplyShard.WrongLeader=false
+			ReplyShard.Err=OK
+		}
+		*/
+
+
+}</PRE>
+</PRE>
+</BODY>
+</HTML>

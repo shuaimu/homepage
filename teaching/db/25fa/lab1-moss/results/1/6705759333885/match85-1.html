@@ -1,0 +1,393 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-gaurav-aggarwall/src/deptran/raft/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-smeshah/src/deptran/raft/server.cc<p><PRE>
+
+
+#include "server.h"
+// #include "paxos_worker.h"
+#include "exec.h"
+#include "frame.h"
+#include "coordinator.h"
+#include "../classic/tpc_command.h"
+
+
+namespace janus {
+
+RaftServer::RaftServer(Frame * frame) {
+  frame_ = frame ;
+  /* Your code here for server initialization. Note that this function is 
+     called in a different OS thread. Be careful about thread safety if 
+     you want to initialize variables here. */
+  currentTerm = 1;    
+  votedFor = -1;
+  currentState="follower";
+  receivedHeartbeat=false;
+  std::fill(std::begin(nextIndex), std::end(nextIndex), 1);
+}
+
+RaftServer::~RaftServer() {
+  /* Your code here for server teardown */
+  
+  currentState="follower";
+  currentTerm = 1;    
+  votedFor = -1;
+  receivedHeartbeat=false;
+  
+}
+
+void RaftServer::Setup() {
+  /* Your code here for server setup. Due to the asynchronous nature of the 
+     framework, this function could be called after a RPC handler is triggered. 
+     Your code should be aware of that. This function is always called in the 
+     same OS thread as the RPC handlers. */
+  // Running code on test server  
+  SyncRpcExample();
+}
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match85-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+bool RaftServer::Start(shared_ptr&lt;Marshallable&gt; &cmd,
+                       uint64_t *index,
+                       uint64_t *term) {
+
+  // submit to lab1 - attempt 7
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+
+  if (currentState!="leader") {
+</FONT>    return false; 
+  }  
+  shared_ptr&lt;TpcCommitCommand&gt; tpcCmd=std::dynamic_pointer_cast&lt;TpcCommitCommand&gt;(cmd);
+  Log_info("**************New entry arrived %d at %d for term %d******************", tpcCmd-&gt;tx_id_,loc_id_, currentTerm);
+  cmdLogEntries.push_back(cmd);
+  termLogEntries.push_back(currentTerm);
+  *index=cmdLogEntries.size();
+  *term=currentTerm;
+  return true;
+
+}
+
+void RaftServer::GetState(bool *is_leader, uint64_t *term) {
+  /* Your code here. This function can be called from another OS thread. */
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+  *is_leader=false;
+  if(currentState=="leader"){
+    *is_leader=true;
+  }
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match85-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  *term=currentTerm;
+}
+
+
+void RaftServer::RequestVote(const uint64_t &candidateTerm, const uint64_t &candidateId, const uint64_t &candidatelastLogIndex, const uint64_t &candidatelastLogTerm, uint64_t *term, bool_t *voteGranted) {
+  
+  
+   std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_); 
+ 
+  *voteGranted=false;
+  if(candidateTerm&gt;currentTerm) {
+</FONT>      currentTerm=candidateTerm;
+      votedFor=-1; 
+      currentState="follower";
+  }
+
+  *term=currentTerm;
+   
+  if(candidateTerm&lt;currentTerm) {
+      *voteGranted=false;
+  } 
+  else {
+      if (votedFor==-1 || votedFor==candidateId) {
+          uint64_t lastLogTerm=0;
+          if(termLogEntries.size()&gt;0){
+            lastLogTerm=termLogEntries[termLogEntries.size()-1];
+          }
+          uint64_t lastLogIndex=cmdLogEntries.size();
+          Log_info("%d %d", candidatelastLogTerm, lastLogTerm);
+          if (candidatelastLogTerm&gt;lastLogTerm || (candidatelastLogTerm==lastLogTerm && candidatelastLogIndex&gt;=lastLogIndex)) {
+              votedFor=candidateId;
+              *voteGranted=true;
+          } else {
+              *voteGranted=false;
+          }
+      } else {
+          *voteGranted=false;
+      }
+  }
+  
+}
+
+void RaftServer::AppendEntriesHandler(const uint64_t &leaderTerm, const uint64_t &leaderId, const uint64_t &prevLogIndex, const uint64_t &prevLogTerm, const vector&lt;shared_ptr&lt;Marshallable&gt;&gt; &leaderCmdLogEntries, const vector&lt;uint64_t&gt; &leaderTermLogEntries, const uint64_t &leaderCommit, uint64_t *term, bool_t *success){
+  
+     std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_); 
+ 
+  Log_info("Append entries RPC CALLed from %d to %d lastlogterm is %d lastlogindex is %d", leaderId, loc_id_, prevLogTerm, prevLogIndex);
+  
+  receivedHeartbeatTime=std::time(nullptr);
+  receivedHeartbeat=true;
+   
+
+  if (leaderTerm&gt;currentTerm) {
+    currentTerm=leaderTerm;
+    currentState="follower";
+    votedFor=-1;
+  }
+  if(leaderTerm&lt;currentTerm){
+    *term=currentTerm;
+    *success=false;
+    return;
+  }
+
+  if (prevLogIndex&gt;termLogEntries.size() ||  (prevLogTerm&gt;0 && prevLogIndex&gt;0 && prevLogIndex &lt; cmdLogEntries.size() && termLogEntries[prevLogIndex-1] != prevLogTerm)){
+    *term=currentTerm;
+    *success=false;
+    return;
+  }
+  Log_info("TermLogEntries size is %d, prevLogIndex is %d", termLogEntries.size(), prevLogIndex);
+  while(leaderCmdLogEntries.size()&gt;0 && termLogEntries.size()&gt;prevLogIndex){
+    shared_ptr&lt;TpcCommitCommand&gt; tpcCmd=std::dynamic_pointer_cast&lt;TpcCommitCommand&gt;(cmdLogEntries[cmdLogEntries.size()-1]);
+    Log_info("Removing unwanted entry %d at %d",tpcCmd-&gt;tx_id_ ,loc_id_);
+    cmdLogEntries.pop_back();
+    termLogEntries.pop_back();
+  }
+
+  for(int i=0; i&lt;leaderCmdLogEntries.size(); i++) {
+    int logIndex=prevLogIndex+i+1;
+    if(logIndex&lt;cmdLogEntries.size() && termLogEntries[logIndex]!=leaderTermLogEntries[i]){
+        cmdLogEntries.erase(cmdLogEntries.begin()+logIndex, cmdLogEntries.end());
+        termLogEntries.erase(termLogEntries.begin()+logIndex, termLogEntries.end());
+        Log_info("Erasing entries -------------------------");
+        break;  
+    }
+  }
+  int start=cmdLogEntries.size();
+  for (size_t i = 0; i &lt; leaderCmdLogEntries.size(); i++) {
+      shared_ptr&lt;TpcCommitCommand&gt; tpcCmd=std::dynamic_pointer_cast&lt;TpcCommitCommand&gt;(leaderCmdLogEntries[i]);
+      Log_info("Pushing entry %d at %d",tpcCmd-&gt;tx_id_ ,loc_id_);
+      cmdLogEntries.push_back(leaderCmdLogEntries[i]);
+      termLogEntries.push_back(leaderTermLogEntries[i]);
+  }
+  // Log_info("Size of command entry at server %d is %d commit index is %d", loc_id_, leaderCmdLogEntries.size(), commitIndex);
+  if(leaderCommit&gt;commitIndex ){
+      commitIndex=min(leaderCommit,cmdLogEntries.size());
+  }
+  for (uint64_t i = lastApplied ; i &lt; commitIndex; i++){
+      Log_info("Applying follower entries at lastApplied %d commitIndex %d cmd entries size is %d", lastApplied, commitIndex,cmdLogEntries.size());
+      app_next_(*cmdLogEntries[i]);
+  }
+  
+  lastApplied=commitIndex;
+  *term=currentTerm;
+  *success=true;
+}
+
+void RaftServer::EmptyAppendEntriesHandler(const uint64_t &term) {
+    std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_); 
+    
+    if (term&lt;currentTerm) {
+        return;
+    }
+    
+    if (term&gt;currentTerm) {
+        currentTerm=term;
+        currentState="follower";
+        votedFor=-1;
+    }
+    receivedHeartbeatTime=std::time(nullptr);
+    receivedHeartbeat=true;
+
+}
+
+
+void RaftServer::SyncRpcExample() {
+  /* This is an example of synchronous RPC using coroutine; feel free to 
+     modify this function to dispatch/receive your own messages. 
+     You can refer to the other function examples in commo.h/cc on how 
+     to send/recv a Marshallable object over RPC. */
+  Coroutine::CreateRun([this](){
+    string res;
+    auto event = commo()-&gt;SendString(0, /* partition id is always 0 for lab1 */
+                                     0, "hello", &res);
+    event-&gt;Wait(1000000); //timeout after 1000000us=1s
+    if (event-&gt;status_ == Event::TIMEOUT) {
+      Log_info("timeout happens sample");
+    } else {
+      Log_info("rpc response is: %s", res.c_str()); 
+    }
+  });
+
+  Coroutine::CreateRun([this](){
+    
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution&lt;&gt; dis(1000000, 2000000);
+    int coroutine_timeout = dis(gen);
+  //  Coroutine sleep
+    Coroutine::Sleep(coroutine_timeout);
+
+    while(true){
+
+      // Election
+      std::time_t curTime = std::time(nullptr);
+      std::random_device rd;
+      std::mt19937 gen(rd());
+      std::uniform_int_distribution&lt;&gt; dis(1000000, 2000000);
+      int election_timeout = dis(gen);
+      Coroutine::Sleep(election_timeout);
+
+
+      if((receivedHeartbeat==true && curTime-receivedHeartbeatTime&lt;0.5) || currentState=="leader"){
+        continue;
+      }      
+
+      bool_t voteGranted=false;
+      uint64_t term=-1;
+      uint64_t voteCount = 1;
+
+      currentState="candidate";
+      currentTerm+=1;
+      Log_info("trying for leader election at term: %d for server %d", currentTerm, loc_id_);
+      for (int i = 0; i &lt; 5; i++) { 
+        if(i==loc_id_)
+        continue;
+        uint64_t lastLogTerm=0;
+        if(termLogEntries.size()&gt;0){
+          lastLogTerm=termLogEntries[termLogEntries.size()-1];
+        }
+        uint64_t lastLogIndex=cmdLogEntries.size();
+        auto event = commo()-&gt;SendRequestVote(0, i, currentTerm, loc_id_, lastLogIndex, lastLogTerm, &term, &voteGranted);
+        event-&gt;Wait(1000000);
+        if (event-&gt;status_ == Event::TIMEOUT) {
+            continue;
+        } 
+        if(term&gt;currentTerm) {
+            currentState="follower";
+            currentTerm=term;
+            votedFor=-1; 
+            break;
+        }
+        if (voteGranted) {
+            voteCount+=1;
+        }
+      }
+      if (voteCount&gt;(5/2)) {
+        Log_info("Leader elected for term %d is %d",currentTerm,loc_id_);
+        currentState="leader";
+        std::fill(std::begin(nextIndex), std::end(nextIndex), cmdLogEntries.size()+1);
+      }
+
+
+      // While leader send append entries
+      while(currentState=="leader"){
+      Coroutine::Sleep(100000);  
+        for (int i = 0; i &lt; 5; i++) {
+          if(loc_id_==i || currentState!="leader")
+          continue;
+          uint64_t resTerm=0;
+          bool_t resSuccess=-1;   
+          std::vector&lt;shared_ptr&lt;Marshallable&gt;&gt; slicedCmdLogEntries;
+          std::vector&lt;uint64_t&gt; slicedTermLogEntries;
+
+          uint64_t prevLogIndex=nextIndex[i]-1;
+          uint64_t prevLogTerm=0;
+          if(termLogEntries.size()&gt;0 && nextIndex[i]-1&lt;termLogEntries.size()){
+            prevLogTerm=termLogEntries[nextIndex[i]-1];
+          }
+          for(int k=nextIndex[i]-1;k&lt;cmdLogEntries.size();k++){
+            slicedCmdLogEntries.push_back(cmdLogEntries[k]);
+            slicedTermLogEntries.push_back(termLogEntries[k]);
+          }
+          Log_info("Next index value at %d is %d from %d at term %d leader %d commit is %d",i,nextIndex[i], loc_id_, currentTerm, loc_id_, commitIndex );
+          auto event2 =commo()-&gt;SendAppendEntries(0,i,currentTerm, loc_id_, prevLogIndex, prevLogTerm, slicedCmdLogEntries, slicedTermLogEntries, commitIndex,&resTerm,&resSuccess); 
+          event2-&gt;Wait(100000); 
+          if (event2-&gt;status_ == Event::TIMEOUT) {
+            Log_info("Failed to connect to server %d from %d", i, loc_id_);
+          }
+          if(resSuccess!=-1){
+            if(resTerm&gt;currentTerm){
+              currentState="follower";
+              currentTerm=resTerm;
+              break;
+            }
+            if(resSuccess==true){
+              nextIndex[i]=cmdLogEntries.size()+1;
+              matchIndex[i]=cmdLogEntries.size();
+            }
+            else if(resSuccess==false){
+              nextIndex[i]=nextIndex[i]-1&gt;0 ? nextIndex[i]-1 : 1;
+            }
+          }
+        }
+        
+      for (int index=commitIndex+1; index&lt;=cmdLogEntries.size(); index++) {        
+         int replicatedCount=1; 
+          for (int i = 0; i &lt; 5; ++i) {
+              if (i != loc_id_ && matchIndex[i] &gt;= index) {
+                  replicatedCount++;
+              }
+          }
+          Log_info("inside for loop Replicated count: %d", replicatedCount);
+          if (replicatedCount &gt; 5/2) {
+            if (termLogEntries[index-1] == currentTerm) {
+              commitIndex = index;  
+              for (int j =lastApplied+1; j&lt;=commitIndex; j++) {
+                  Log_info("Applied Log entry at leader: %d last applied is %d commit index is %d cmd entries size is %d", loc_id_, lastApplied, commitIndex, cmdLogEntries.size());
+                  app_next_(*cmdLogEntries[j-1]);
+                  lastApplied+=1;
+              }
+            }
+        } 
+      }
+      
+    }	         
+  }
+
+  });
+ 
+}
+
+
+/* Do not modify any code below here */
+
+void RaftServer::Disconnect(const bool disconnect) {
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+  verify(disconnected_ != disconnect);
+  // global map of rpc_par_proxies_ values accessed by partition then by site
+  static map&lt;parid_t, map&lt;siteid_t, map&lt;siteid_t, vector&lt;SiteProxyPair&gt;&gt;&gt;&gt; _proxies{};
+  if (_proxies.find(partition_id_) == _proxies.end()) {
+    _proxies[partition_id_] = {};
+  }
+  RaftCommo *c = (RaftCommo*) commo();
+  if (disconnect) {
+    verify(_proxies[partition_id_][loc_id_].size() == 0);
+    verify(c-&gt;rpc_par_proxies_.size() &gt; 0);
+    auto sz = c-&gt;rpc_par_proxies_.size();
+    _proxies[partition_id_][loc_id_].insert(c-&gt;rpc_par_proxies_.begin(), c-&gt;rpc_par_proxies_.end());
+    c-&gt;rpc_par_proxies_ = {};
+    verify(_proxies[partition_id_][loc_id_].size() == sz);
+    verify(c-&gt;rpc_par_proxies_.size() == 0);
+  } else {
+    verify(_proxies[partition_id_][loc_id_].size() &gt; 0);
+    auto sz = _proxies[partition_id_][loc_id_].size();
+    c-&gt;rpc_par_proxies_ = {};
+    c-&gt;rpc_par_proxies_.insert(_proxies[partition_id_][loc_id_].begin(), _proxies[partition_id_][loc_id_].end());
+    _proxies[partition_id_][loc_id_] = {};
+    verify(_proxies[partition_id_][loc_id_].size() == 0);
+    verify(c-&gt;rpc_par_proxies_.size() == sz);
+  }
+  disconnected_ = disconnect;
+}
+
+bool RaftServer::IsDisconnected() {
+  return disconnected_;
+}
+
+} // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

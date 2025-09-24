@@ -1,0 +1,210 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab2/dslabs-cpp-akashpatil-219/src/kv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab2/dslabs-cpp-upuneetu/src/kv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+#include &lt;boost/lexical_cast.hpp&gt;
+
+#define KV_TIMEOUT_INTERVAL 3000001
+
+enum indices{INDEX_OP_ID=0, INDEX_OP_TYPE, INDEX_KEY, INDEX_VALUE};
+
+namespace janus {
+
+static int volatile x1 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_MULTI_STRING,
+                                     [] () -&gt; Marshallable* {
+                                       return new MultiStringMarshallable;
+                                     });
+
+int64_t KvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match52-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int KvServer::Put(const uint64_t& op_id, 
+                  const string& k,
+                  const string& v) {
+  /* 
+  Your are recommended to use MultiStringMarshallable as the format 
+  for the log entries. Here is an example how you can use it.
+  auto s = make_shared&lt;MultiStringMarshallable&gt;();
+  s-&gt;data_.push_back(to_string(op_id));
+  s-&gt;data_.push_back("put");
+  s-&gt;data_.push_back(k);
+  s-&gt;data_.push_back(v);
+  */
+  /* your code here */
+
+  Log_debug("put: op id:%lld k:%s v:%s server:%d", op_id, k.c_str(), v.c_str(), this-&gt;GetRaftServer().loc_id_);
+</FONT>  auto multiStringLog = make_shared&lt;MultiStringMarshallable&gt;();
+  multiStringLog-&gt;data_.push_back(to_string(op_id));
+  multiStringLog-&gt;data_.push_back("put");
+  multiStringLog-&gt;data_.push_back(k);
+  multiStringLog-&gt;data_.push_back(v);
+
+  shared_ptr&lt;Marshallable&gt; log = multiStringLog;
+  uint64_t *index = new uint64_t, *term=new uint64_t;
+  *index = *term = std::numeric_limits&lt;uint64_t&gt;::max();
+  
+  bool result = this-&gt;GetRaftServer().Start(log, index, term);
+
+  if(result == false /*|| this-&gt;GetRaftServer().IsDisconnected()*/)
+    return KV_NOTLEADER;
+  
+  auto timeoutEvent = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  opEvents[op_id] = timeoutEvent;
+  timeoutEvent-&gt;Wait(KV_TIMEOUT_INTERVAL);
+  
+  if(timeoutEvent-&gt;status_ == Event::TIMEOUT)
+  {
+    opEvents.erase(op_id);
+    Log_debug("[KVPutTimeout] op id:%lld k:%s v:%s", op_id, k.c_str(), v.c_str());
+    
+    return KV_TIMEOUT;
+  }
+  
+  //this-&gt;m_KVStore[k] = v; //"put" is this correct?
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match52-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  Log_debug("[KVPutDone] KV_SUCESS op id:%lld k:%s v:%s",op_id, k.c_str(), this-&gt;m_KVStore[k].c_str());
+  return KV_SUCCESS;
+}
+
+int KvServer::Append(const uint64_t& op_id, 
+                     const string& k,
+                     const string& v) {
+  /* your code here */
+
+  Log_debug("append: op id:%lld k:%s v:%s server:%d", op_id, k.c_str(), v.c_str(), this-&gt;GetRaftServer().loc_id_);
+</FONT>  auto multiStringLog = make_shared&lt;MultiStringMarshallable&gt;();
+  multiStringLog-&gt;data_.push_back(to_string(op_id));
+  multiStringLog-&gt;data_.push_back("append");
+  multiStringLog-&gt;data_.push_back(k);
+  multiStringLog-&gt;data_.push_back(v);
+
+  shared_ptr&lt;Marshallable&gt; log = multiStringLog;
+  uint64_t *index = new uint64_t, *term=new uint64_t;
+  *index = *term = std::numeric_limits&lt;uint64_t&gt;::max();
+
+  bool result = this-&gt;GetRaftServer().Start(log, index, term);
+
+  if(result == false || this-&gt;GetRaftServer().IsDisconnected())
+    return KV_NOTLEADER;
+  
+  auto timeoutEvent = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  opEvents[op_id] = timeoutEvent;
+  timeoutEvent-&gt;Wait(KV_TIMEOUT_INTERVAL);
+  
+  if(timeoutEvent-&gt;status_ == Event::TIMEOUT)
+  {
+    opEvents.erase(op_id);
+    Log_debug("[KVAppendTimeout] op id:%lld k:%s v:%s server:%d", op_id, k.c_str(), v.c_str(), GetRaftServer().loc_id_);
+    return KV_TIMEOUT;
+  }
+  
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match52-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  Log_debug("[KVAppendDone] KV_SUCESS op id:%lld k:%s v:%s",op_id, k.c_str(), this-&gt;m_KVStore[k].c_str());
+  return KV_SUCCESS;
+}
+
+int KvServer::Get(const uint64_t& op_id, 
+                  const string& k,
+                  string* v) {
+  /* your code here */
+  Log_debug("get: op id:%lld k:%s server:%d", op_id, k.c_str(), this-&gt;GetRaftServer().loc_id_);
+</FONT>  auto multiStringLog = make_shared&lt;MultiStringMarshallable&gt;();
+  multiStringLog-&gt;data_.push_back(to_string(op_id));
+  multiStringLog-&gt;data_.push_back("get");
+  multiStringLog-&gt;data_.push_back(k);
+  
+  ostringstream get_the_address; 
+  get_the_address &lt;&lt; v;
+  string vAddress =  get_the_address.str(); 
+  multiStringLog-&gt;data_.push_back(vAddress);// TODO: is this required?
+
+  shared_ptr&lt;Marshallable&gt; log = multiStringLog;
+  uint64_t *index = new uint64_t, *term=new uint64_t;
+  *index = *term = std::numeric_limits&lt;uint64_t&gt;::max();
+
+  bool result = this-&gt;GetRaftServer().Start(log, index, term);
+  
+  if(result == false /*|| this-&gt;GetRaftServer().IsDisconnected()*/)
+    return KV_NOTLEADER;
+
+  auto timeoutEvent = Reactor::CreateSpEvent&lt;IntEvent&gt;();
+  opEvents[op_id] = timeoutEvent;
+  timeoutEvent-&gt;Wait(KV_TIMEOUT_INTERVAL);
+  
+  if(timeoutEvent-&gt;status_ == Event::TIMEOUT)
+  {
+    opEvents.erase(op_id);
+    Log_debug("[KVGetTimeout] op id:%lld k:%s", op_id, k.c_str());
+    return KV_TIMEOUT;
+  }
+
+  *v = this-&gt;m_KVStore[k]; //"get" is this correct?
+  Log_debug("[KVGetDone] KV_SUCESS op id:%lld k:%s v:%s", op_id, k.c_str(), this-&gt;m_KVStore[k].c_str());
+  return KV_SUCCESS;
+  
+}
+
+void KvServer::OnNextCommand(Marshallable& m) {
+  auto commitedLog = (MultiStringMarshallable*)(&m);
+  string k = commitedLog-&gt;data_[INDEX_KEY], 
+          v = commitedLog-&gt;data_[INDEX_VALUE], 
+          opType = commitedLog-&gt;data_[INDEX_OP_TYPE];
+  
+  uint64_t op_id = boost::lexical_cast&lt;uint64_t&gt;(commitedLog-&gt;data_[INDEX_OP_ID]);
+  Log_debug("commitcb: op id:%lld at server:%d", op_id, GetRaftServer().loc_id_);
+  if(opType == "get")
+  {
+    ;// need to signal to store in mentioned value, can do some memory manip if required
+  }
+  else if(opType == "put")
+  {
+    this-&gt;m_KVStore[k] = v;
+    Log_debug("[KVPutDone] APPLIED server:%d op id:%lld k:%s v:%s", GetRaftServer().loc_id_, op_id, k.c_str(), this-&gt;m_KVStore[k].c_str());
+  }
+  else if(opType == "append")
+  {
+    if(m_KVStore.find(k) != m_KVStore.end())
+      this-&gt;m_KVStore[k] += v; //"append" is this correct?
+    else
+      this-&gt;m_KVStore[k] = v;
+    Log_debug("[KVAppendDone] APPLIED server:%d op id:%lld k:%s v:%s", GetRaftServer().loc_id_, op_id, k.c_str(), this-&gt;m_KVStore[k].c_str());
+  }
+  // send signal to return
+  if(this-&gt;GetRaftServer().serverState == ServerState::LEADER && this-&gt;opEvents.find(op_id) != this-&gt;opEvents.end())
+      this-&gt;opEvents[op_id]-&gt;Set(1);
+    else if(this-&gt;GetRaftServer().serverState == ServerState::LEADER)
+      Log_info("PNDBG: op id:%lld Event doesn't exist in server:%d, already timed out. Consider increasing timeout.", op_id, GetRaftServer().loc_id_);
+}
+
+shared_ptr&lt;KvClient&gt; KvServer::CreateClient() {
+  /* don't change this function */
+  auto cli = make_shared&lt;KvClient&gt;();
+  verify(commo_ != nullptr);
+  cli-&gt;commo_ = commo_;
+  uint32_t id = sp_log_svr_-&gt;site_id_;
+  id = id &lt;&lt; 16;
+  cli-&gt;cli_id_ = id+cli_cnt_++; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

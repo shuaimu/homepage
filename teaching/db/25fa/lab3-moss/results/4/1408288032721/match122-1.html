@@ -1,0 +1,134 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-Sirneij/src/shardkv/client.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-js0753/src/shardkv/client.cc<p><PRE>
+
+
+#include "client.h"
+#include "server.h"
+
+namespace janus {
+
+ShardConfig ShardKvClient::GetConfig(int32_t config_no){
+    auto shard_master = (ShardMasterProxy*)this-&gt;commo_-&gt;rpc_proxies_.at(0);
+    uint32_t ret;
+    ShardConfig config;
+   //Log_info("CALLING QUERY NOW FROM KV SERVER CLIENT");
+    auto x = shard_master-&gt;Query(config_no, &ret, &config);
+   //Log_info("x is %d", x);
+    return config; 
+}
+
+
+int ShardKvClient::FindShardGroup(string k){
+ //Log_info("GOT CONFIG : %d ", config_.number);
+  auto shard = this-&gt;Key2Shard(k);
+ //Log_info("shards is : %d map size : %d group_servers size :  %d", shard, config_.shard_group_map_.size(), config_.group_servers_map_.size());
+ //Log_info("GROUP IS : %d", config_.shard_group_map_[shard]);
+  return config_.group_servers_map_[config_.shard_group_map_[shard]][0];
+}
+
+void ShardKvClient::PollMaster(){
+  Coroutine::CreateRun([this](){
+    while(true){
+     //Log_info("POLLING MASTER...");
+      auto conf = GetConfig(-1);
+      int x = -1;
+      if(this-&gt;config_.number!= conf.number){
+        this-&gt;config_ = conf;
+       //Log_info("SENDING RECONFIG REQUEST TO KVSERVER");
+        x = Reconfig(this-&gt;config_.number,  this-&gt;config_.shard_group_map_, this-&gt;config_.group_servers_map_);
+      }
+      Coroutine::Sleep(90000); // 100000us = 100ms
+     //Log_info("x is %d", x);
+    }
+  });
+}
+
+
+int ShardKvClient::Op(string key, function&lt;int(uint32_t*)&gt; func) {
+
+    if(leader_idx_==0) {
+    PollMaster();
+    leader_idx_base = FindShardGroup(key);
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match122-0.html#2" TARGET="0"><IMG SRC="../../../bitmaps/tm_2_5.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    leader_idx_ = leader_idx_base;
+    }
+  uint64_t t1 = Time::now();
+  while (true) {
+    uint64_t t2 = Time::now();
+    if (t2 - t1 &gt; 10000000) {
+      return KV_TIMEOUT;
+    }
+    uint32_t ret = 0;
+</FONT>    int r1; 
+   //Log_info("CALLING FUNC");
+    r1 = func(&ret);
+   //Log_info("DONE WITH FUNC CALL");
+    if (r1 == ETIMEDOUT || ret == KV_TIMEOUT) {
+     //Log_info("GOT KV_TIMEOUT");
+      leader_idx_ = leader_idx_base + (leader_idx_+1) % 5;
+      return KV_TIMEOUT;
+    }
+    if (ret == KV_SUCCESS) {
+     //Log_info("GOT KV_SUCCESS");
+      return KV_SUCCESS;
+    }
+    if (ret == KV_NOTLEADER) {
+     //Log_info("GOT KV_NOTLEADER");
+      leader_idx_ = leader_idx_base + (leader_idx_+1) % 5;
+    }
+    if (ret == KV_NOTSHARDOWNER){
+     //Log_info("GOT KV_NOTSHARDOWNER");
+      leader_idx_base = FindShardGroup(key);
+      leader_idx_ = leader_idx_base;
+    }
+    }
+
+}
+
+int ShardKvClient::Reconfig(const int32_t& number,
+  const map&lt;uint32_t, uint32_t&gt;& shard_group_map_,
+  const map&lt;uint32_t, vector&lt;uint32_t&gt;&gt;& group_servers_map_){
+  return Op("r",[&](uint32_t* r)-&gt;int{
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match122-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    return Proxy(leader_idx_).Reconfig(number, shard_group_map_, group_servers_map_, r);
+  });
+}
+
+
+int ShardKvClient::Put(const string& k, const string& v) {
+  return Op(k, [&](uint32_t* r)-&gt;int{
+</FONT>    return Proxy(leader_idx_).Put(GetNextOpId(), k, v, r);
+  });
+}
+
+ShardKvProxy& ShardKvClient::Proxy(siteid_t site_id) {
+  verify(commo_);
+  auto p = (ShardKvProxy*)commo_-&gt;rpc_proxies_.at(site_id);
+  return *p; 
+}
+
+int ShardKvClient::Append(const string& k, const string& v) {
+  return Op(k, [&](uint32_t* r)-&gt;int{
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match122-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_6.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    return Proxy(leader_idx_).Append(GetNextOpId(), k, v, r);
+  });
+}
+
+int ShardKvClient::Get(const string& k, string* v) {
+  return Op(k,[&](uint32_t* r)-&gt;int{
+</FONT>    return Proxy(leader_idx_).Get(GetNextOpId(), k, r, v);
+  });
+}
+
+} // namesapce janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,330 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-Surabhi-Gogte/src/deptran/raft/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-Surabhi-Gogte/src/deptran/raft/service.cc<p><PRE>
+
+#include "../marshallable.h"
+#include "service.h"
+#include "server.h"
+
+namespace janus
+{
+
+  std::mutex mtx;
+
+  RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+      : svr_((RaftServer *)sched)
+  {
+    struct timespec curr_time;
+    clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+    srand(curr_time.tv_nsec);
+  }
+
+  void RaftServiceImpl::HandleRequestVote(
+      const uint64_t &term,
+      const uint32_t &candidateId,
+      const uint64_t &lastLogIndex,
+      const uint64_t &lastLogTerm,
+      uint64_t *curr_Term,
+      bool_t *vote_granted,
+      rrr::DeferredReply *defer)
+  {
+    /* Your code here */
+    // std::lock_guard&lt;std::mutex&gt; lock(mtx);
+    if (!svr_-&gt;IsDisconnected())
+    {
+      Log_debug("Request vote rpcreceived in server %d for candidate %d and term %d and current tterm of server is %d", svr_-&gt;site_id_, candidateId, term, svr_-&gt;currentTerm);
+      if (term &gt; svr_-&gt;currentTerm)
+      {
+        Log_info("server %d satisfies cTerm&gt;currTerm for candidate %d for term %d  while its term is %d", svr_-&gt;site_id_, candidateId, term, svr_-&gt;currentTerm);
+        svr_-&gt;currentTerm = term;
+        svr_-&gt;votedFor = 100;
+        svr_-&gt;state = RaftServer::FOLLOWER;
+        svr_-&gt;electionTimer.start(); // extra in mine
+      }
+      auto lastTerm = 0;
+      if (svr_-&gt;logs.size() &gt; 0)
+      {
+        lastTerm = svr_-&gt;logs[svr_-&gt;logs.size() - 1].term;
+      }
+      
+      auto logOk = (lastLogTerm &gt; lastTerm) || (lastLogTerm == lastTerm && lastLogIndex + 1 &gt;= svr_-&gt;logs.size());
+      Log_info("%d term is %d, servers curr tem is %d, servers voted for is %d", svr_-&gt;site_id_, term, svr_-&gt;currentTerm, svr_-&gt;votedFor);
+      if (term == svr_-&gt;currentTerm && logOk && (svr_-&gt;votedFor == candidateId || svr_-&gt;votedFor == 100))
+      {
+        svr_-&gt;votedFor = candidateId;
+        // svr_-&gt;state = RaftServer::FOLLOWER;
+        *vote_granted = 1;
+        *curr_Term = svr_-&gt;currentTerm;
+        // svr_-&gt;electionTimer.start();
+        Log_info("Server %d voted for candidate %d for Term %d with vote granted value %d ", svr_-&gt;site_id_, candidateId, term, *vote_granted);
+        // std::unique_lock&lt;std::mutex&gt; lock(mtx);
+
+        // Log_info("%d voted for %d for term %d and vote granted is %d", svr_-&gt;site_id_, candidateId, *curr_Term, *vote_granted);
+        //  cout &lt;&lt; svr_-&gt;site_id_ &lt;&lt; " voted "
+        //       &lt;&lt; " for " &lt;&lt; candidateId &lt;&lt; "and curr_terrm iis " &lt;&lt; *curr_Term &lt;&lt; " votes till now " &lt;&lt; *vote_granted &lt;&lt; endl;
+        //  Log_info()
+        //   std::lock_guard&lt;std::mutex&gt; lock(mtx);
+        //   *totalVotes+=1;
+        //  lock.unlock();
+      }
+      else
+      {
+        Log_info("Server %d did not vote for candidate %d for Term %d with vote granted value %d ", svr_-&gt;site_id_, candidateId, term, *vote_granted);
+        *vote_granted = 0;
+        *curr_Term = svr_-&gt;currentTerm;
+      }
+    }
+
+    defer-&gt;reply();
+  }
+
+  // void RaftServiceImpl::HandleAppendEntries(const MarshallDeputy &md_cmd,
+  //                                           bool_t *followerAppendOK,
+  //                                           rrr::DeferredReply *defer)
+  // {
+  //   /* Your code here */
+  //   std::shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy &&gt;(md_cmd).sp_data_;
+  //   *followerAppendOK = false;
+  //   defer-&gt;reply();
+  // }
+
+  void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t &term,
+                                                 const uint32_t &leaderId,
+                                                 const uint64_t &prevLogIndex,
+                                                 const uint64_t &prevLogTerm,
+                                                 const uint64_t &leaderCommit,
+                                                 uint64_t *curr_Term,
+                                                 bool_t *followerAppendOK,
+                                                 rrr::DeferredReply *defer)
+  {
+    /* Your code here */
+    Log_info("Received  heart beat from leader %d with term %d  for server %d with term %d", leaderId, term, svr_-&gt;site_id_, svr_-&gt;currentTerm);
+    // if (!svr_-&gt;IsDisconnected())
+    // {
+    // std::lock_guard&lt;std::recursive_mutex&gt; lock(svr_-&gt;mtx_);
+    if (term &gt; svr_-&gt;currentTerm)
+    {
+      Log_info("Server %d with curr term %d accepted heart beat from leader %d for term %d ", svr_-&gt;site_id_, svr_-&gt;currentTerm, leaderId, term);
+      svr_-&gt;currentTerm = term;
+      // svr_-&gt;ElectionTimeout();
+
+      //*followerAppendOK = true;
+      // svr_-&gt;state = RaftServer::FOLLOWER;
+      // svr_-&gt;electionTimer.reset();
+      svr_-&gt;votedFor = 100;
+    }
+    if (term == svr_-&gt;currentTerm)
+    {
+      svr_-&gt;state = RaftServer::FOLLOWER;
+      // svr_-&gt;lastHeartBeat = chrono::steady_clock::now();
+      // svr_-&gt;currentTerm = term;
+      *followerAppendOK = true;
+      svr_-&gt;electionTimer.start();
+      *curr_Term = svr_-&gt;currentTerm;
+    }
+    bool tempp = true;
+    if (svr_-&gt;logs.size() &gt; 0)
+    {
+      Log_info("last log term of server %d is %d", svr_-&gt;site_id_, svr_-&gt;logs[prevLogIndex].term);
+      tempp = svr_-&gt;logs[prevLogIndex].term == prevLogTerm;
+      Log_info("tempp for server  %d is %d", svr_-&gt;site_id_, tempp);
+    }
+    auto logCheck = (svr_-&gt;logs.size() - 1 &gt;= prevLogIndex) && (prevLogIndex == 0 || tempp);
+    Log_info("log check for server %d is %d", svr_-&gt;site_id_, logCheck);
+    if (term == svr_-&gt;currentTerm && logCheck)
+    // auto tempp = true;
+    // if (svr_-&gt;logs.size() &gt; 0)
+    // {
+    //   tempp = svr_-&gt;logs[prevLogIndex].term == prevLogTerm;
+    //   cout &lt;&lt; tempp &lt;&lt; endl;
+    // }
+    // auto logCheck = (svr_-&gt;logs.size() - 1 &gt;= prevLogIndex) && (prevLogIndex == 0 || tempp);
+    {
+      Log_info("Server %d accepted heart beat from leader %d for term %d", svr_-&gt;site_id_, leaderId, term);
+      //  if(svr_-&gt;state == RaftServer::CANDIDATE){
+      // svr_-&gt;state = RaftServer::FOLLOWER;
+      // svr_-&gt;lastHeartBeat = chrono::steady_clock::now();
+      // svr_-&gt;currentTerm = term;
+      // *followerAppendOK = true;
+      // svr_-&gt;electionTimer.start();
+      // *curr_Term = svr_-&gt;currentTerm;
+      // Log_info("converted to follower %d", svr_-&gt;site_id_);
+      //}
+      // svr_-&gt;electionTimer.reset();
+      Log_info("time elased after reset %f millisecs for server %d", svr_-&gt;electionTimer.elapsed() * 1000, svr_-&gt;site_id_);
+      // todo svr.currleader = leaderid;
+      // Log_info("time elased after start %d millis", svr_-&gt;electionTimer.elapsed()*1000);
+
+      // svr_-&gt;ElectionTimeout();
+      // Log_info("Server %d is in state %s",svr_-&gt;site_id_, svr_-&gt;state);
+      if (leaderCommit &gt; svr_-&gt;commitIndex && prevLogIndex &gt; svr_-&gt;commitIndex)
+      {
+        Log_info("some commits can happen");
+        for (auto j = svr_-&gt;commitIndex + 1; j &lt;= leaderCommit; j++)
+        {
+          // svr_-&gt;app_next_ = (function&lt;void(Marshallable*)&gt;)(svr_-&gt;logs[j].cmd);
+          svr_-&gt;app_next_(*svr_-&gt;logs[j].cmd);
+          svr_-&gt;commitIndex++;
+          Log_info("comitted log entry for server %d, commit indeex is", svr_-&gt;site_id_, svr_-&gt;commitIndex);
+        }
+      }
+    }
+    else
+    {
+      *followerAppendOK = false;
+      *curr_Term = svr_-&gt;currentTerm;
+      Log_info("Server %d is in state %d in term %d and voted for %d and success of heartbeat is failed %d", svr_-&gt;site_id_, svr_-&gt;state, svr_-&gt;currentTerm, svr_-&gt;votedFor, *followerAppendOK);
+    }
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match79-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    Log_info("Server %d is in state %d in term %d and voted for %d and success of heartbeat is %d for leader %d with term %d", svr_-&gt;site_id_, svr_-&gt;state, svr_-&gt;currentTerm, svr_-&gt;votedFor, *followerAppendOK, leaderId, term);
+
+    defer-&gt;reply();
+  }
+
+  void RaftServiceImpl::HandleHelloRpc(const string &req,
+                                       string *res,
+                                       rrr::DeferredReply *defer)
+  {
+    /* Your code here */
+    Log_info("receive an rpc: %s", req.c_str());
+    *res = "world";
+    defer-&gt;reply();
+  }
+
+  void RaftServiceImpl::HandleAppendEntries(const uint64_t &term,
+                                            const uint32_t &leaderId,
+                                            const uint64_t &prevLogIndex,
+</FONT>                                            const uint64_t &prevLogTerm,
+                                            const uint64_t &leaderCommit,
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match79-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                                            const vector&lt;uint64_t&gt; &pendingTerms,
+                                            const vector&lt;MarshallDeputy&gt; &md_cmds,
+                                            uint64_t *curr_Term,
+                                            uint64_t *ack_len,
+                                            bool_t *followerAppendOK,
+                                            rrr::DeferredReply *defer)
+</FONT>  {
+    Log_info("Received  append entry from leader %d with term %d  for server %d with term %d", leaderId, term, svr_-&gt;site_id_, svr_-&gt;currentTerm);
+    if (!svr_-&gt;IsDisconnected())
+    {
+      // std::lock_guard&lt;std::recursive_mutex&gt; lock(svr_-&gt;mtx_);
+      if (term &gt; svr_-&gt;currentTerm)
+      {
+        Log_info("Server %d with curr term %d accepted append entry from leader %d for term %d ", svr_-&gt;site_id_, svr_-&gt;currentTerm, leaderId, term);
+        svr_-&gt;currentTerm = term;
+        // svr_-&gt;ElectionTimeout();
+
+        //*followerAppendOK = true;
+        // svr_-&gt;state = RaftServer::FOLLOWER;
+        // svr_-&gt;electionTimer.reset();
+        svr_-&gt;votedFor = 100;
+      }
+      if (term == svr_-&gt;currentTerm)
+      {
+        Log_info("Server %d accepted append entry  from leader %d for term %d", svr_-&gt;site_id_, leaderId, term);
+        //  if(svr_-&gt;state == RaftServer::CANDIDATE){
+        svr_-&gt;state = RaftServer::FOLLOWER;
+        svr_-&gt;lastHeartBeat = chrono::steady_clock::now();
+        svr_-&gt;currentTerm = term;
+        *followerAppendOK = true;
+        svr_-&gt;electionTimer.start();
+        *curr_Term = svr_-&gt;currentTerm;
+        // Log_info("converted to follower %d", svr_-&gt;site_id_);
+        //}
+        // svr_-&gt;electionTimer.reset();
+        Log_info("time elapsed after reset %f millisecs for server %d", svr_-&gt;electionTimer.elapsed() * 1000, svr_-&gt;site_id_);
+      }
+      auto tempp = true;
+      if (svr_-&gt;logs.size() &gt; 0)
+      {
+        tempp = svr_-&gt;logs[prevLogIndex].term == prevLogTerm;
+        //cout &lt;&lt; "tempp "&lt;&lt; tempp &lt;&lt; endl;
+        Log_info("tempp for serverr %d and leader %d is %d",svr_-&gt;site_id_, leaderId,tempp);
+      }
+      Log_info("Server %d prevLogTerm is %d ,lastTerm is %d,prevLogIndex is %d, server log size is %d",svr_-&gt;site_id_,prevLogTerm,svr_-&gt;logs[prevLogIndex].term,prevLogIndex, svr_-&gt;logs.size());
+      auto logCheck = (svr_-&gt;logs.size() - 1 &gt;= prevLogIndex) && (prevLogIndex == 0 || tempp);
+      Log_info("did log condition satisy for leader %d in server %d : %d", leaderId, svr_-&gt;site_id_, logCheck);
+      if (term == svr_-&gt;currentTerm && logCheck)
+      {
+        // shared_ptr&lt;Marshallable&gt; cmd = const_cast&lt;MarshallDeputy &&gt;(md_cmd).sp_data_;
+        Log_info("pending logs size %d", md_cmds.size());
+        if (md_cmds.size() &gt; 0 && svr_-&gt;logs.size() &gt; prevLogIndex + 1)
+        // if (cmd.get() != nullptr && svr_-&gt;logs.size() &gt; prevLogIndex + 1)
+        {
+          auto lastCommonIndex = std::min(svr_-&gt;logs.size(), prevLogIndex + 1 + md_cmds.size()) - 1;
+          // auto lastCommonIndex
+          Log_info("lastCommon index : %d", lastCommonIndex);
+          // if (svr_-&gt;logs[lastCommonIndex].term != prevLogTerm)
+          if (svr_-&gt;logs[lastCommonIndex].term != pendingTerms[lastCommonIndex - (prevLogIndex + 1)])
+          {
+
+            svr_-&gt;logs.erase(svr_-&gt;logs.begin() + lastCommonIndex, svr_-&gt;logs.end());
+            Log_info("Clearing unsure log entriess");
+          }
+        }
+
+        if (prevLogIndex + 1 + md_cmds.size() &gt; svr_-&gt;logs.size())
+        {
+          // log_abc entr;
+          // entr.term = term;
+          // entr.cmd = cmd;
+          // svr_-&gt;logs.push_back(entr);
+          for (int i = svr_-&gt;logs.size() - 1 - prevLogIndex; i &lt; md_cmds.size(); i++)
+          {
+            Log_info("pushing log at index %d to server %d", i, svr_-&gt;site_id_);
+            svr_-&gt;logs.push_back({pendingTerms[i], const_cast&lt;MarshallDeputy &&gt;(md_cmds[i]).sp_data_});
+          }
+          
+          Log_info("Pushed log entry for sever %d", svr_-&gt;site_id_);
+        }
+        // if (leaderCommit &gt; svr_-&gt;commitIndex)
+        // {
+        //   for (auto j = svr_-&gt;commitIndex + 1; j &lt;= leaderCommit; j++)
+        //   {
+        //     // svr_-&gt;app_next_ = (function&lt;void(Marshallable*)&gt;)(svr_-&gt;logs[j].cmd);
+        //     svr_-&gt;app_next_(*svr_-&gt;logs[j].cmd);
+        //     Log_info("comitted log entry for sever %d", svr_-&gt;site_id_);
+        //   }
+        // }
+        if (leaderCommit &gt; svr_-&gt;commitIndex && prevLogIndex &gt; svr_-&gt;commitIndex)
+        {
+          Log_info("some commits can happen");
+          for (auto j = svr_-&gt;commitIndex + 1; j &lt;= leaderCommit; j++)
+          {
+            // svr_-&gt;app_next_ = (function&lt;void(Marshallable*)&gt;)(svr_-&gt;logs[j].cmd);
+            svr_-&gt;app_next_(*svr_-&gt;logs[j].cmd);
+            svr_-&gt;commitIndex++;
+            Log_info("comitted log entry for server %d, commit indeex is", svr_-&gt;site_id_, svr_-&gt;commitIndex);
+          }
+        }
+        *ack_len = prevLogIndex + md_cmds.size();
+        Log_info("ack_len in server is  %d", *ack_len);
+      }
+      else
+      {
+        *followerAppendOK = false;
+        *curr_Term = svr_-&gt;currentTerm;
+        *ack_len = 0;
+        Log_info("Server %d is in state %d in term %d and voted for %d and rejected of append entry %d", svr_-&gt;site_id_, svr_-&gt;state, svr_-&gt;currentTerm, svr_-&gt;votedFor, *followerAppendOK);
+      }
+     }
+    Log_info("Server %d is in state %d in term %d and voted for %d and success of append entry is %d with ack len %d for leader %d with term %d", svr_-&gt;site_id_, svr_-&gt;state, svr_-&gt;currentTerm, svr_-&gt;votedFor, *followerAppendOK, *ack_len, leaderId, term);
+
+    defer-&gt;reply();
+  }
+  // void RaftServiceImpl::SavingLogs(){
+
+  // }
+
+} // namespace janus;
+</PRE>
+</PRE>
+</BODY>
+</HTML>

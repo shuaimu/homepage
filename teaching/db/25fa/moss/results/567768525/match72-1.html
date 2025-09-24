@@ -1,0 +1,997 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/KrishnaDonkada/src/shardkv/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/KrishnaDonkada/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+import (
+	"raft"
+)
+import "labrpc"
+import "sync"
+import "labgob"
+
+
+type ShardMaster struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+	OpMap map[int]Op // This is used to verify the desired index has appeared for the given client , no need to persist this as client call will timeout and request will come again.. so
+	SeqMap map[int]int // Need to persist this so that I will remember the last processed command for that each client ..
+	//GetChan chan string
+	GetMap map[int]Config
+	//Configurations map[int] Config
+	ClientInput map[int]Input // mapping from client ID to Input
+	GrpShard map[int][]int // Current group to shards mapping
+	Killed        chan bool
+	IsKilled bool
+	//GetMap map[int]string
+
+
+	// Your data here.
+
+	configs []Config // indexed by config num
+}
+
+
+type Op struct {
+	// Your data here.
+	Op string
+	ClerkID int
+	SequenceNum int
+	Inputs Input
+	//Servers map[int][]string //join
+	//GIDs []int //leave
+	//Shard int //move
+	//GID   int //move
+	//Num int // query
+
+}
+
+type Input struct {
+	// Your data here.
+
+	Servers map[int][]string //join
+	GIDs []int //leave
+	Shard int //move
+	GID   int //move
+	Num int // query
+
+}
+
+
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+	// Your code here.
+
+	_,isLeader := sm.rf.GetState()
+	if !isLeader {
+		reply.WrongLeader = true
+		return
+	}
+
+	// call the start and wait on the channel
+	var op Op
+	op.Op="Join"
+	op.ClerkID=args.ClerkID
+	op.SequenceNum=args.SequenceNum
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match72-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	var clientinput Input
+	clientinput.Servers=args.Servers
+	op.Inputs=clientinput
+
+
+	if isLeader {
+		index,_,isLeader := sm.rf.Start(op)
+		if !isLeader {
+			reply.WrongLeader = true
+			return
+		}
+
+		for {
+			sm.mu.Lock()
+			opToCompare,isKeyExist := sm.OpMap[index]
+			sm.mu.Unlock()
+</FONT>			if isKeyExist && op.ClerkID == opToCompare.ClerkID {
+				//fmt.Println("in",kv.me,"Put append success for index",index,"operation details","key",op.Key,"value",op.Value,"sequence num",op.SequenceNum,"clerk id",op.ClerkID)
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match72-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				reply.WrongLeader = false
+				reply.Err = OK
+				//sm.ClientInput[]
+				return
+
+			}
+			if isKeyExist && op.ClerkID != opToCompare.ClerkID{
+				reply.WrongLeader = true
+				return
+			}
+			_,Leadership := sm.rf.GetState()
+			if !Leadership  {
+				reply.WrongLeader = true
+				return
+			}
+
+			sm.mu.Lock()
+			smKilled := sm.IsKilled
+			sm.mu.Unlock()
+
+			if smKilled {
+				reply.WrongLeader = true
+				return
+			}
+		}
+	}
+
+
+
+}
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+	// Your code here.
+
+	_,isLeader := sm.rf.GetState()
+</FONT>	if !isLeader {
+		reply.WrongLeader = true
+		return
+	}
+
+	// call the start and wait on the channel
+	var op Op
+	op.Op="Leave"
+	op.ClerkID=args.ClerkID
+	op.SequenceNum=args.SequenceNum
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match72-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	var clientinput Input
+	clientinput.GIDs=args.GIDs
+
+	op.Inputs=clientinput
+
+
+	if isLeader {
+		index,_,isLeader := sm.rf.Start(op)
+		if !isLeader {
+			reply.WrongLeader = true
+			return
+		}
+
+		for {
+			sm.mu.Lock()
+			opToCompare,isKeyExist := sm.OpMap[index]
+			sm.mu.Unlock()
+</FONT>			if isKeyExist && op.ClerkID == opToCompare.ClerkID {
+				//fmt.Println("in",kv.me,"Put append success for index",index,"operation details","key",op.Key,"value",op.Value,"sequence num",op.SequenceNum,"clerk id",op.ClerkID)
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match72-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				reply.WrongLeader = false
+				reply.Err = OK
+				return
+
+			}
+			if isKeyExist && op.ClerkID != opToCompare.ClerkID{
+				reply.WrongLeader = true
+				return
+			}
+			_,Leadership := sm.rf.GetState()
+			if !Leadership  {
+				reply.WrongLeader = true
+				return
+			}
+
+			sm.mu.Lock()
+			smKilled := sm.IsKilled
+			sm.mu.Unlock()
+
+			if smKilled {
+				reply.WrongLeader = true
+				return
+			}
+		}
+	}
+
+}
+
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+</FONT>	// Your code here.
+	_,isLeader := sm.rf.GetState()
+	if !isLeader {
+		reply.WrongLeader = true
+		return
+	}
+
+	// call the start and wait on the channel
+	var op Op
+	op.Op="Move"
+	op.ClerkID=args.ClerkID
+	op.SequenceNum=args.SequenceNum
+	var clientinput Input
+	clientinput.GID=args.GID
+	clientinput.Shard=args.Shard
+	op.Inputs=clientinput
+	/*sm.mu.Lock()
+	sm.ClientInput[args.ClerkID]=clientinput
+	sm.mu.Unlock() */
+	//op.Key=args.Key
+	//op.Value=""
+	//op.ClerkID=args.ClerkID
+	//op.SequenceNum=args.SequenceNum
+	if isLeader {
+		index,_,isLeader := sm.rf.Start(op)
+		if !isLeader {
+			reply.WrongLeader = true
+			return
+		}
+
+		for {
+			sm.mu.Lock()
+			opToCompare,isKeyExist := sm.OpMap[index]
+			sm.mu.Unlock()
+			if isKeyExist && op.ClerkID == opToCompare.ClerkID {
+				//fmt.Println("in",kv.me,"Put append success for index",index,"operation details","key",op.Key,"value",op.Value,"sequence num",op.SequenceNum,"clerk id",op.ClerkID)
+				reply.WrongLeader = false
+				reply.Err = OK
+				return
+
+			}
+			if isKeyExist && op.ClerkID != opToCompare.ClerkID{
+				reply.WrongLeader = true
+				return
+			}
+			_,Leadership := sm.rf.GetState()
+			if !Leadership  {
+				reply.WrongLeader = true
+				return
+			}
+
+			sm.mu.Lock()
+			smKilled := sm.IsKilled
+			sm.mu.Unlock()
+
+			if smKilled {
+				reply.WrongLeader = true
+				return
+			}
+		}
+	}
+}
+
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+	// Your code here.
+	_,isLeader := sm.rf.GetState()
+	if !isLeader {
+		reply.WrongLeader = true
+		return
+	}
+
+	// call the start and wait on the channel
+
+	var op Op
+	op.Op="Query"
+	op.ClerkID=args.ClerkID
+	op.SequenceNum=args.SequenceNum
+	var clientinput Input
+	clientinput.Num=args.Num
+	op.Inputs=clientinput
+	//fmt.Println("I am the leader",sm.me,"op",op.Op,"Clerk id:",op.ClerkID,"input query number",clientinput.Num)
+
+	//op.SequenceNum=args.SequenceNum
+	if isLeader {
+		//fmt.Println("I am the leader",sm.me)
+		index,_,isLeader := sm.rf.Start(op)
+		//fmt.Println("Leader",sm.me,"for Query operation called raft start return values are",index,isLeader,"operation",op.Op,"key:",op.ClerkID)
+		if !isLeader {
+			reply.WrongLeader = true
+			return
+		}
+
+		for {
+
+			sm.mu.Lock()
+			opToCompare,isKeyExist := sm.OpMap[index]
+			s,GetValueExist := sm.GetMap[index]
+			sm.mu.Unlock()
+
+			if isKeyExist && op.ClerkID == opToCompare.ClerkID {
+				//fmt.Println("I am the leader",sm.me,"The op's match")
+				// s := &lt;- kv.GetChan
+
+				if GetValueExist {
+					//fmt.Println("Get success for index",index,"operation details","key",op.Key,"value",s,"sequence num",op.SequenceNum,"clerk id",op.ClerkID)
+					//fmt.Println("I am the leader",sm.me,"Inside Get value, retuned config is",s.Num)
+					reply.Config = s
+					reply.WrongLeader = false
+					reply.Err = OK
+					return
+				}
+
+
+			}
+
+			if isKeyExist && op.ClerkID != opToCompare.ClerkID{
+				reply.WrongLeader = true
+				return
+			}
+
+			_,Leadership := sm.rf.GetState()
+
+			if !Leadership  {
+				reply.WrongLeader = true
+				return
+			}
+
+			sm.mu.Lock()
+			smKilled := sm.IsKilled
+			sm.mu.Unlock()
+
+			if smKilled {
+				reply.WrongLeader = true
+				return
+			}
+
+
+
+		}
+	}
+}
+
+
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+	sm.Killed&lt;-true
+	sm.mu.Lock()
+	sm.IsKilled = true
+	sm.mu.Unlock()
+	// Your code here, if desired.
+}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+	return sm.rf
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	sm := new(ShardMaster)
+	sm.me = me
+
+	sm.configs = make([]Config, 1)
+	sm.configs[0].Groups = map[int][]string{}
+	sm.configs[0].Num=0
+	//sm.configs[0].Shards = make([]int,NShards)
+	for i :=0;i&lt;NShards;i++ {
+		sm.configs[0].Shards[i]=0  // need to create shards[] .....?
+	}
+
+	labgob.Register(Op{})
+	sm.applyCh = make(chan raft.ApplyMsg)
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+
+
+	//kv.GetChan = make(chan string)
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match72-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	sm.OpMap = make(map[int]Op)
+	sm.SeqMap = make(map[int]int)
+	//kv.GetMap = make(map[int]string)
+	sm.GetMap = make(map[int]Config)
+	sm.Killed = make(chan bool)
+	//ClientInput map[int]Input
+	sm.ClientInput = make(map[int]Input)
+</FONT>	sm.GrpShard= make(map[int][]int)
+	sm.IsKilled=false
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match72-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	go sm.ListenOnApplyCh()
+	//sm.Configurations = make(map[int]Config)
+	//configs
+
+
+
+
+	// Your code here.
+
+	return sm
+}
+
+
+func (sm *ShardMaster) ListenOnApplyCh() {
+	for {
+		select {
+		case applyMsg := &lt;- sm.applyCh:
+			//fmt.Println("Recived something on the channel")
+			if applyMsg.CommandValid == false {
+
+			} else if !applyMsg.SnapshotIncluded {
+				op := (applyMsg.Command).(Op)
+				//fmt.Println("Message appeared on kv",sm.me, "applyMsg channel",applyMsg.CommandIndex,applyMsg.CommandValid,"op details operation",op.Op,"clerk id",op.ClerkID)
+				if op.Op == "Join" {
+					sm.ApplyJoin(applyMsg,op)
+
+					// do not launch a go routine as this will alter the order of applying
+				} else if op.Op == "Leave" {
+					sm.ApplyLeave(applyMsg,op)
+				} else if op.Op == "Move" {
+					sm.ApplyMove(applyMsg,op)
+
+				} else if op.Op == "Query" {
+					//fmt.Println("Calling Query from channel")
+					sm.ApplyQuery(applyMsg,op)
+</FONT><A NAME="8"></A><FONT color = #00FFFF><A HREF="match72-0.html#8" TARGET="0"><IMG SRC="../../bitmaps/tm_3_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+				}
+
+			}
+		case &lt;-sm.Killed:
+			return
+
+		}
+
+
+	}
+}
+
+
+func (sm *ShardMaster) ApplyQuery(applyMsg raft.ApplyMsg,op Op) {
+	sm.mu.Lock()
+
+	//QueryInput := sm.ClientInput[op.ClerkID]
+	QueryInput := op.Inputs
+</FONT>	Num := QueryInput.Num
+
+	Configlen := len(sm.configs)
+
+	if Num == -1 || Num &gt; Configlen-1 {
+		//fmt.Println(sm.me,"returning current configuration")
+		sm.GetMap[applyMsg.CommandIndex] = sm.configs[Configlen-1]
+	} else {
+		sm.GetMap[applyMsg.CommandIndex] = sm.configs[Num]
+	}
+
+
+	sm.OpMap[applyMsg.CommandIndex]=op
+	//fmt.Println(sm.me,"done with apply Query")
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match72-0.html#6" TARGET="0"><IMG SRC="../../bitmaps/tm_1_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	sm.SeqMap[op.ClerkID]=op.SequenceNum
+	sm.mu.Unlock()
+}
+
+func (sm *ShardMaster) ApplyJoin(applyMsg raft.ApplyMsg,op Op) {
+	sm.mu.Lock()
+	SequenceNum,isClientExist := sm.SeqMap[op.ClerkID]
+</FONT>
+	if !isClientExist || (isClientExist && op.SequenceNum &gt; SequenceNum) {
+
+		configlen := len(sm.configs)
+		//fmt.Println("In side",sm.me,"config array length",configlen)
+		var newConfig Config
+		newConfig.Num = configlen
+		newConfig.Groups = map[int][]string{}
+
+		// copy old groups to new config... groups to servers ..
+		for m, v := range sm.configs[configlen-1].Groups {
+			newConfig.Groups[m] = v
+		}
+
+		//newgroups := sm.ClientInput[op.ClerkID]
+		// from the index of the client ... , get the input , remove this input once processed ...
+		// it contains groups to servers map...
+
+		newgroups := op.Inputs
+		//fmt.Println(sm.me,"len sm.ClientInput[op.ClerkID]",len(sm.ClientInput[op.ClerkID].Servers),"len newgroups",len(newgroups.Servers))
+		//fmt.Println(sm.me,"len sm.ClientInput[op.ClerkID]",len(sm.ClientInput[op.ClerkID].Servers),"len newgroups",len(newgroups.Servers))
+		newgroupmap := newgroups.Servers
+
+		// here assigning would be a problem ..?
+		// intialize this ..?
+
+		newGrpCount := len(newgroupmap)
+		olDgrpCount := len(sm.GrpShard)
+
+		//fmt.Println(sm.me,"newGrpCount is",newGrpCount,"oldGrpcount is",olDgrpCount)
+		Q := NShards / (newGrpCount + olDgrpCount)
+		R := NShards % (newGrpCount + olDgrpCount)
+
+		//fmt.Println("In side",sm.me,"Quotient ",Q,"Reminder:",R)
+
+		//add new groups to the grpshard and newconfig ...
+		for k, v := range newgroupmap {
+			sm.GrpShard[k] = make([]int, 0)
+			newConfig.Groups[k] = v
+			//iterate
+		}
+		shardsToMove := make([]int, 0)
+
+		if olDgrpCount == 0 {
+			//sm.GrpShard[]
+			//fmt.Println("In side",sm.me,"Old Group count is zero")
+			//iterate := 0;
+			shardno := 0
+
+			// distribute according to q
+			if Q != 0 {
+				for k1, _ := range sm.GrpShard {
+					//? do we need to check for shard no limit
+					for i := 0; i &lt; Q; i++ {
+						sm.GrpShard[k1] = append(sm.GrpShard[k1], shardno)
+						shardno++
+					}
+				}
+			}
+
+			// distribute if any left out to each group
+			if R != 0 {
+
+				j := 0
+
+				for k2, _ := range sm.GrpShard {
+
+					if j == R {
+						break
+					}
+
+					sm.GrpShard[k2] = append(sm.GrpShard[k2], shardno)
+					shardno++
+					j++
+
+				}
+			}
+
+		} else {
+
+			if Q == 0 {
+				for k, v := range sm.GrpShard {
+					if len(v) &gt; 1 {
+						//temp := make([]int,0)
+						temp := v[0]   //take only the first shard.
+						temp1 := v[1:] // take the rest to shards To move
+						shardsToMove = append(shardsToMove, temp1[0:len(temp1)]...)
+						sm.GrpShard[k] = make([]int, 0)               // make it's length to "0"
+						sm.GrpShard[k] = append(sm.GrpShard[k], temp) // append only the frist value.
+
+					}
+
+				}
+
+				if R != 0 && len(shardsToMove) &gt; 0 {
+
+					j := 0
+
+					for k2, _ := range sm.GrpShard {
+
+						if j == len(shardsToMove) {
+							break
+						}
+
+						if len(sm.GrpShard[k2]) == 0 {
+							sm.GrpShard[k2] = append(sm.GrpShard[k2], shardsToMove[j])
+							j++
+						}
+
+					}
+				}
+
+			}
+
+			if Q != 0 && R != 0 {
+				reminder := R
+				for k, v := range sm.GrpShard {
+					if len(v) &gt; Q+1 && reminder &gt; 0 {
+						temp := make([]int, 0)
+						temp = append(temp, v[0:Q+1]...)                            //take only the first Q+1.
+						temp1 := v[Q+1:]                                            // take the rest to shards To move
+						shardsToMove = append(shardsToMove, temp1[0:len(temp1)]...) // rest of the shards
+						sm.GrpShard[k] = make([]int, 0)                             // make it's length to "0"
+						sm.GrpShard[k] = append(sm.GrpShard[k], temp[0:len(temp)]...)
+						reminder-- // append only the first value. , keep only those
+					} else if len(v) &gt; Q && reminder == 0 {
+						temp := make([]int, 0)
+						temp = append(temp, v[0:Q]...)                              //take only the first Q+1.
+						temp1 := v[Q:]                                              // take the rest to shards To move
+						shardsToMove = append(shardsToMove, temp1[0:len(temp1)]...) // rest of the shards
+						sm.GrpShard[k] = make([]int, 0)                             // make it's length to "0"
+						sm.GrpShard[k] = append(sm.GrpShard[k], temp[0:len(temp)]...)
+
+					}
+
+				}
+
+				j := 0
+
+				for k, v := range sm.GrpShard {
+
+					if j &gt;= len(shardsToMove) {
+						break
+					}
+
+					if len(v) &lt; Q {
+						diff := (Q) - len(v)
+
+						for l := 0; l &lt; diff; l++ {
+							if j &gt;= len(shardsToMove) {
+								break
+							}
+
+							sm.GrpShard[k] = append(sm.GrpShard[k], shardsToMove[j])
+							j++
+						}
+
+					}
+
+				}
+
+				if reminder &gt; 0 {
+					for k, v := range sm.GrpShard {
+
+						if j &gt;= len(shardsToMove) || reminder &lt;= 0 {
+							break
+						}
+
+						if len(v) &lt; Q+1 && reminder &gt; 0 {
+							diff := (Q + 1) - len(v)
+
+							for l := 0; l &lt; diff; l++ {
+								if j &gt;= len(shardsToMove) {
+									break
+								}
+
+								sm.GrpShard[k] = append(sm.GrpShard[k], shardsToMove[j])
+								j++
+								reminder--
+							}
+
+						}
+
+					}
+				}
+
+			}
+
+			if Q != 0 && R == 0 {
+				for k, v := range sm.GrpShard {
+					if len(v) &gt; Q {
+						temp := make([]int, 0)
+						temp = append(temp, v[0:Q]...)                                //take only the first Q+1.
+						temp1 := v[Q:]                                                // take the rest to shards To move
+						shardsToMove = append(shardsToMove, temp1[0:len(temp1)]...)   // rest of the shards
+						sm.GrpShard[k] = make([]int, 0)                               // make it's length to "0"
+						sm.GrpShard[k] = append(sm.GrpShard[k], temp[0:len(temp)]...) // append only the first value. , keep only those
+					}
+
+				}
+
+				j := 0
+
+				for k, v := range sm.GrpShard {
+
+					if j &gt;= len(shardsToMove) {
+						break
+					}
+
+					if len(v) &lt; Q {
+						diff := (Q) - len(v)
+
+						for l := 0; l &lt; diff; l++ {
+							if j &gt;= len(shardsToMove) {
+								break
+							}
+
+							sm.GrpShard[k] = append(sm.GrpShard[k], shardsToMove[j])
+							j++
+						}
+
+					}
+
+				}
+
+			}
+
+		}
+
+		// update config...
+		for k, v := range sm.GrpShard {
+			for _, v1 := range v {
+				newConfig.Shards[v1] = k
+			}
+		}
+		//updated newconfig ...
+		//sm.configs[configlen]=newConfig
+
+		sm.configs = append(sm.configs, newConfig)
+		sm.SeqMap[op.ClerkID]=op.SequenceNum
+	}
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match72-0.html#7" TARGET="0"><IMG SRC="../../bitmaps/tm_2_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	sm.OpMap[applyMsg.CommandIndex]=op
+	sm.mu.Unlock()
+
+}
+
+func (sm *ShardMaster) ApplyLeave(applyMsg raft.ApplyMsg,op Op) {
+	sm.mu.Lock()
+
+	SequenceNum,isClientExist := sm.SeqMap[op.ClerkID]
+</FONT>	if !isClientExist || (isClientExist && op.SequenceNum &gt; SequenceNum) {
+
+		configlen := len(sm.configs)
+		var newConfig Config
+		newConfig.Num = configlen
+		newConfig.Groups = map[int][]string{}
+
+		// copy old groups to new config... groups to servers ..
+		for m, v := range sm.configs[configlen-1].Groups {
+			newConfig.Groups[m] = v
+		}
+
+		shardsToMove := make([]int, 0)
+
+		//LeaveInput := sm.ClientInput[op.ClerkID] // from the index of the client ... , get the input , remove this input once processed ...
+		// it contains groups to servers map...
+		LeaveInput := op.Inputs
+		LeavingGroups := LeaveInput.GIDs
+
+		// collect all the shards and remove the Gid mapping to shards and servers from grpshard and newconfig
+		for _, GID := range LeavingGroups {
+
+			for _, shards := range sm.GrpShard[GID] {
+				shardsToMove = append(shardsToMove, shards)
+			}
+			delete(sm.GrpShard, GID)
+			delete(newConfig.Groups, GID)
+		}
+
+		//LeavingGrpCount := len(newgroupmap)
+		NewGrpCount := len(sm.GrpShard)
+
+		if NewGrpCount == 0 {
+
+			for i, _ := range newConfig.Shards {
+				newConfig.Shards[i] = 0
+			}
+
+		} else {
+
+			Q := NShards / (NewGrpCount)
+			R := NShards % (NewGrpCount)
+
+			if Q == 0 {
+				for k, v := range sm.GrpShard {
+					if len(v) &gt; 1 {
+						//temp := make([]int,0)
+						temp := v[0]   //take only the first shard.
+						temp1 := v[1:] // take the rest to shards To move
+						shardsToMove = append(shardsToMove, temp1[0:len(temp1)]...)
+						sm.GrpShard[k] = make([]int, 0)               // make it's length to "0"
+						sm.GrpShard[k] = append(sm.GrpShard[k], temp) // append only the frist value.
+
+					}
+
+				}
+
+				if R != 0 && len(shardsToMove) &gt; 0 {
+
+					j := 0
+
+					for k2, _ := range sm.GrpShard {
+
+						if j == len(shardsToMove) {
+							break
+						}
+
+						if len(sm.GrpShard[k2]) == 0 {
+							sm.GrpShard[k2] = append(sm.GrpShard[k2], shardsToMove[j])
+							j++
+						}
+
+					}
+				}
+
+			}
+
+			if Q != 0 && R != 0 {
+				reminder := R
+				for k, v := range sm.GrpShard {
+					if len(v) &gt; Q+1 && reminder &gt; 0 {
+						temp := make([]int, 0)
+						temp = append(temp, v[0:Q+1]...)                            //take only the first Q+1.
+						temp1 := v[Q+1:]                                            // take the rest to shards To move
+						shardsToMove = append(shardsToMove, temp1[0:len(temp1)]...) // rest of the shards
+						sm.GrpShard[k] = make([]int, 0)                             // make it's length to "0"
+						sm.GrpShard[k] = append(sm.GrpShard[k], temp[0:len(temp)]...)
+						reminder-- // append only the first value. , keep only those
+					} else if len(v) &gt; Q && reminder == 0 {
+						temp := make([]int, 0)
+						temp = append(temp, v[0:Q]...)                              //take only the first Q+1.
+						temp1 := v[Q:]                                              // take the rest to shards To move
+						shardsToMove = append(shardsToMove, temp1[0:len(temp1)]...) // rest of the shards
+						sm.GrpShard[k] = make([]int, 0)                             // make it's length to "0"
+						sm.GrpShard[k] = append(sm.GrpShard[k], temp[0:len(temp)]...)
+
+					}
+
+				}
+
+				j := 0
+
+				for k, v := range sm.GrpShard {
+
+					if j &gt;= len(shardsToMove) {
+						break
+					}
+
+					if len(v) &lt; Q {
+						diff := (Q) - len(v)
+
+						for l := 0; l &lt; diff; l++ {
+							if j &gt;= len(shardsToMove) {
+								break
+							}
+
+							sm.GrpShard[k] = append(sm.GrpShard[k], shardsToMove[j])
+							j++
+						}
+
+					}
+
+				}
+
+				if reminder &gt; 0 {
+					for k, v := range sm.GrpShard {
+
+						if j &gt;= len(shardsToMove) || reminder &lt;= 0 {
+							break
+						}
+
+						if len(v) &lt; Q+1 && reminder &gt; 0 {
+							diff := (Q + 1) - len(v)
+
+							for l := 0; l &lt; diff; l++ {
+								if j &gt;= len(shardsToMove) {
+									break
+								}
+
+								sm.GrpShard[k] = append(sm.GrpShard[k], shardsToMove[j])
+								j++
+								reminder--
+							}
+
+						}
+
+					}
+				}
+
+			}
+
+			if Q != 0 && R == 0 {
+				for k, v := range sm.GrpShard {
+					if len(v) &gt; Q {
+						temp := make([]int, 0)
+						temp = append(temp, v[0:Q]...)                                //take only the first Q+1.
+						temp1 := v[Q:]                                                // take the rest to shards To move
+						shardsToMove = append(shardsToMove, temp1[0:len(temp1)]...)   // rest of the shards
+						sm.GrpShard[k] = make([]int, 0)                               // make it's length to "0"
+						sm.GrpShard[k] = append(sm.GrpShard[k], temp[0:len(temp)]...) // append only the first value. , keep only those
+					}
+
+				}
+
+				j := 0
+
+				for k, v := range sm.GrpShard {
+
+					if j &gt;= len(shardsToMove) {
+						break
+					}
+
+					if len(v) &lt; Q {
+						diff := (Q) - len(v)
+
+						for l := 0; l &lt; diff; l++ {
+							if j &gt;= len(shardsToMove) {
+								break
+							}
+
+							sm.GrpShard[k] = append(sm.GrpShard[k], shardsToMove[j])
+							j++
+						}
+
+					}
+
+				}
+
+			}
+
+			for k, v := range sm.GrpShard {
+				for _, v1 := range v {
+					newConfig.Shards[v1] = k
+				}
+			}
+		}
+
+		sm.configs = append(sm.configs, newConfig)
+		sm.SeqMap[op.ClerkID]=op.SequenceNum
+	}
+	sm.OpMap[applyMsg.CommandIndex]=op
+
+	sm.mu.Unlock()
+
+}
+
+func (sm *ShardMaster) ApplyMove(applyMsg raft.ApplyMsg,op Op) {
+	sm.mu.Lock()
+
+	SequenceNum,isClientExist := sm.SeqMap[op.ClerkID]
+	if !isClientExist || (isClientExist && op.SequenceNum &gt; SequenceNum) {
+
+		configlen := len(sm.configs)
+
+		var newConfig Config
+		newConfig.Num = configlen
+		newConfig.Groups = map[int][]string{}
+		for m, v := range sm.configs[configlen-1].Groups {
+			newConfig.Groups[m] = v
+		}
+
+		//MoveInput := sm.ClientInput[op.ClerkID]
+		MoveInput := op.Inputs
+		// from the index of the client ... , get the input , remove this input once processed ...
+		// it contains groups to servers map...
+		GID := MoveInput.GID
+		Shard := MoveInput.Shard
+
+		OldGid := sm.configs[configlen-1].Shards[Shard]
+		newConfig.Shards = sm.configs[configlen-1].Shards
+		newConfig.Shards[Shard] = GID // updated shard to new Gid
+
+		//for k,_ := range sm.GrpShard {
+
+		//if k == OldGid {
+		for i := 0; i &lt; len(sm.GrpShard[OldGid]); i++ {
+
+			if sm.GrpShard[OldGid][i] == Shard {
+				temp := sm.GrpShard[OldGid][len(sm.GrpShard[OldGid])-1]
+				sm.GrpShard[OldGid][i] = temp
+
+				temp1 := make([]int, 0)
+				temp1 = append(temp1, sm.GrpShard[OldGid][0:len(sm.GrpShard[OldGid])-1]...)
+				sm.GrpShard[OldGid] = temp1
+				//sm.
+			}
+
+		}
+		//}
+
+		//if k == GID {
+		sm.GrpShard[GID] = append(sm.GrpShard[GID], Shard)
+		//}
+
+		//}
+
+		sm.configs = append(sm.configs, newConfig)
+		sm.SeqMap[op.ClerkID]=op.SequenceNum
+	}
+	sm.OpMap[applyMsg.CommandIndex]=op
+
+	sm.mu.Unlock()
+
+}</PRE>
+</PRE>
+</BODY>
+</HTML>

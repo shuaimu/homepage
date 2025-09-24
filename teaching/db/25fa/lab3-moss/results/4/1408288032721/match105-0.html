@@ -1,0 +1,69 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-raycursive/src/shardkv/service.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-raycursive/src/shardkv/service.cc<p><PRE>
+#include "service.h"
+#include "server.h"
+#include &lt;sys/types.h&gt;
+
+namespace janus {
+
+class TxLogServer;
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match105-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_30.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+class RaftServer;
+
+void ShardKvServiceImpl::Put(const uint64_t& opid,
+                             const string& k,
+                             const string& v,
+                             const int32_t& skip_check,
+                             uint32_t* ret,
+                             rrr::DeferredReply* defer) {
+  *ret = sp_svr_-&gt;Put(opid, k, v, skip_check);
+  defer-&gt;reply();
+}
+
+void ShardKvServiceImpl::Append(const uint64_t& opid, 
+                                const string& k,
+                                const string& v,
+</FONT>                                uint32_t* ret,
+                                rrr::DeferredReply* defer) {
+  *ret = sp_svr_-&gt;Append(opid, k, v);
+  defer-&gt;reply();
+}
+
+void ShardKvServiceImpl::Get(const uint64_t& opid, 
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match105-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_11.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                             const string& k,
+                             uint32_t* ret,
+                             string* v,
+                             rrr::DeferredReply* defer) {
+  *ret = sp_svr_-&gt;Get(opid, k, v);
+</FONT>  defer-&gt;reply();
+}
+
+void ShardKvServiceImpl::Remove(const uint64_t& opid,
+                                const string& k,
+                                uint32_t* ret,
+                                rrr::DeferredReply* defer) {
+  *ret = sp_svr_-&gt;Remove(opid, k);
+}
+
+void ShardKvServiceImpl::Transfer(const uint64_t& opid,
+                                  const int32_t& shard,
+                                  const MarshallDeputy& cmd,
+                                  uint32_t* ret,
+                                  rrr::DeferredReply* defer) {
+  *ret = sp_svr_-&gt;Transfer(opid, shard, cmd);
+  defer-&gt;reply();
+}
+
+} // namespace janus
+</PRE>
+</PRE>
+</BODY>
+</HTML>

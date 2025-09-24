@@ -1,0 +1,356 @@
+<HTML>
+<HEAD>
+<TITLE>./github-lab1/dslabs-cpp-shrh18/src/deptran/raft/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./github-lab1/dslabs-cpp-shrh18/src/deptran/raft/server.cc<p><PRE>
+
+
+#include "server.h"
+// #include "paxos_worker.h"
+#include "exec.h"
+#include "frame.h"
+#include "coordinator.h"
+#include "../classic/tpc_command.h"
+
+
+namespace janus {
+
+RaftServer::RaftServer(Frame * frame) {
+  frame_ = frame ;
+  /* Your code here for server initialization. Note that this function is 
+     called in a different OS thread. Be careful about thread safety if 
+     you want to initialize variables here. */
+
+  electionTimeout = (1200 + 200*loc_id_); // multiplied by 1000 to make milliseconds to microseconds 
+  heartbeatTimeout = 100;
+
+  serverState = 2; // 1 for leader, 2 for follower
+  voteCount = 0;
+
+  currentTerm = 0; // server term
+  votedFor = -1;
+
+  commitIndex = 0;
+  lastApplied = 0;
+  repCount = 0;
+  newCmd = 0;
+
+}
+
+RaftServer::~RaftServer() {
+  /* Your code here for server teardown */
+
+}
+
+void RaftServer::Setup() {
+  /* Your code here for server setup. Due to the asynchronous nature of the 
+     framework, this function could be called after a RPC handler is triggered. 
+     Your code should be aware of that. This function is always called in the 
+     same OS thread as the RPC handlers. */
+
+  electionTimeout = (1200 + 200*loc_id_); // multiplied by 1000 to make milliseconds to microseconds 
+  heartbeatTimeout = 100;
+
+  serverState = 2; // 1 for leader, 2 for follower
+  voteCount = 0;
+
+  currentTerm = 0; // server term
+  votedFor = -1;
+
+  commitIndex = 0;
+  lastApplied = 0;
+  repCount = 0;
+  newCmd = 0;
+
+  Coroutine::Sleep(1500000);
+
+  electionTimer.reset();
+  electionTimer.start();
+  heartbeatTimer.reset();
+  heartbeatTimer.start();
+
+  Coroutine::CreateRun([this](){
+
+    Coroutine::CurrentCoroutine()-&gt;Sleep(electionTimeout*1000);
+
+    while(true){
+      if(serverState == 2){
+
+        if(electionTimer.elapsed()*1000 &gt;= electionTimeout){
+          sendRequestVoteRPC();
+          // Log_info("Election Started by server - %d", loc_id_);
+        }
+      } 
+      
+      else if(serverState == 1){
+        if(heartbeatTimer.elapsed()*1000 &gt;= heartbeatTimeout){
+          if(newCmd == 1){
+            sendAppendEntryRPC();
+            newCmd = 0;
+          }
+          if(serverState == 1){
+            sendHeartbeatsRPC();
+            heartbeatTimer.stop();
+            heartbeatTimer.reset();
+            heartbeatTimer.start();  
+          }
+        }
+        
+      }
+      Coroutine::CurrentCoroutine()-&gt;Sleep(1000);
+
+
+    }
+  });
+  
+}
+
+bool RaftServer::Start(shared_ptr&lt;Marshallable&gt; &cmd,
+                       uint64_t *index,
+                       uint64_t *term) {
+  /* Your code here. This function can be called from another OS thread. */
+  this-&gt;mtx_.lock();
+  if(serverState == 1){
+    Log_info("Starting recieving commands by svr %d", loc_id_);
+    newCmd = 1;
+    MarshallDeputy md(cmd);
+    logTerm.push_back(currentTerm);
+    logCommand.push_back(md);   
+    *index = logCommand.size();
+    *term = currentTerm;
+    this-&gt;mtx_.unlock();
+    return true;
+  } 
+  
+  else{
+    *index = logCommand.size();
+    *term = currentTerm;
+    Log_info("Commands not accepted in this state of the server %d", loc_id_);
+    this-&gt;mtx_.unlock();
+    return false;
+  }
+
+
+}
+
+void RaftServer::GetState(bool *is_leader, uint64_t *term) {
+  /* Your code here. This function can be called from another OS thread. */
+  *is_leader = serverState == 1;
+  *term = currentTerm;
+}
+
+
+// my funtion
+void RaftServer::sendHeartbeatsRPC(){
+  Coroutine::CreateRun([this](){
+
+    for(int i=0; i&lt;5; i++){
+      if(serverState == 1){
+        if(i != loc_id_){
+          bool_t heartbeatRecieved;
+          uint64_t returnTerm;
+          auto eventHbt = commo()-&gt;SendHeartbeats(0,i, commitIndex, currentTerm, &returnTerm, &heartbeatRecieved);
+          eventHbt-&gt;Wait(500000); 
+          if(eventHbt-&gt;status_ == Event::TIMEOUT){
+            // Log_info("Hbt timeout happens");
+          }
+          else{
+            if(returnTerm &gt; currentTerm){
+              currentTerm = returnTerm;
+              serverState = 2;
+              votedFor = -1;
+              electionTimer.stop();
+              electionTimer.reset();
+              electionTimer.start();
+            }
+          }
+
+        }
+      }
+      else{
+        break;
+      }  
+    }
+  });
+}
+
+uint64_t RaftServer::getPreviousLogTerm() {
+  int64_t previousIndex = logCommand.size() - 1;
+  if (previousIndex == -1) {
+    return 0;
+  } else {
+    return logTerm[static_cast&lt;uint64_t&gt;(previousIndex)];
+  }
+}
+
+uint64_t RaftServer::getLastLogTerm() {
+  int64_t lastLogIndex = logCommand.size() - 1;
+  if (lastLogIndex == -1) {
+    return 0;
+  }
+  else{
+    return logTerm[static_cast&lt;uint64_t&gt;(lastLogIndex)];
+  }
+}
+
+
+
+// my funtion
+void RaftServer::sendAppendEntryRPC(){
+  Coroutine::CreateRun([this](){
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match93-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    repCount = 1;
+    for(int j=0; j&lt;5; j++){
+      if(j == loc_id_) continue;
+        bool_t response;
+        uint64_t returnTerm;
+        auto eventApp = commo()-&gt;SendAppendEntry(0,j,loc_id_, currentTerm, logTerm, logCommand, logCommand.size() - 1, getPreviousLogTerm(), &response, &returnTerm);
+</FONT>        eventApp-&gt;Wait(1000000); 
+        if (eventApp-&gt;status_ == Event::TIMEOUT) {
+            // Log_info("timeout happens");
+        }
+        else{
+          if(returnTerm &gt; currentTerm){
+            serverState = 2;
+            votedFor = -1;
+            currentTerm = returnTerm;
+            electionTimer.stop();
+            electionTimer.reset();
+            electionTimer.start();
+          }
+          if(response == 1){
+            repCount += 1;
+          }
+          
+        }  
+       
+    }
+
+    if(repCount &gt;= 3){
+      int xx = commitIndex;
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match93-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      for(int i = xx; i&lt;logCommand.size(); i++){
+        app_next_(*const_cast&lt;MarshallDeputy&&gt;(logCommand[i]).sp_data_);
+        commitIndex += 1;
+      }
+    }
+  }); 
+} 
+
+
+// my function
+void RaftServer::sendRequestVoteRPC(){
+    Coroutine::CreateRun([this](){
+</FONT>      
+      serverState = 2;
+      currentTerm = currentTerm + 1;
+      electionTimer.stop();
+      electionTimer.reset();
+      electionTimer.start();
+
+      voteCount = 1;
+      votedFor = loc_id_;
+
+      for(int i=0; i&lt;5; i++){
+      
+        if(i != loc_id_){
+          uint64_t returnTerm;
+          bool_t voteGranted;
+          auto eventReq = commo()-&gt;SendRequestVote(0,i,currentTerm,loc_id_, logCommand.size() - 1, getLastLogTerm(), &returnTerm, &voteGranted);
+          eventReq-&gt;Wait(500000); // in microseconds
+          if (eventReq-&gt;status_ == Event::TIMEOUT) {
+            // Log_info("Req Vote timeout happens");
+          }
+          else{
+            if(voteGranted == 1){
+              voteCount += 1;
+              // Log_info("vote true from %d", i);
+            }
+            if(returnTerm&gt;currentTerm){
+              // Log_info("vote false from %d", i);
+              currentTerm = returnTerm;
+              serverState = 2;
+              votedFor = -1;
+              voteCount = 0;
+            }
+
+          }
+          
+        }    
+      }
+  
+      if(voteCount&gt;2){
+        Log_info("Vote Count is %d, Leader is %d", voteCount, loc_id_);
+        voteCount = 0;
+        serverState = 1;
+      }
+      else{
+        serverState = 2;
+      }
+
+    });
+   
+}
+
+void RaftServer::SyncRpcExample() {
+  /* This is an example of synchronous RPC using coroutine; feel free to 
+     modify this function to dispatch/receive your own messages. 
+     You can refer to the other function examples in commo.h/cc on how 
+     to send/recv a Marshallable object over RPC. */
+  Coroutine::CreateRun([this](){
+    string res;
+    int8_t id;
+    auto event = commo()-&gt;SendString(0, /* partition id is always 0 for lab1 */
+                                     3, "hello", &res, &id);
+    event-&gt;Wait(1000000); //timeout after 1000000us=1s
+    if (event-&gt;status_ == Event::TIMEOUT) {
+      // Log_info("timeout happens");
+    } else {
+      Log_info("rpc response is: %s from %d", res.c_str(), id); 
+    }
+  });
+}
+
+/* Do not modify any code below here */
+
+void RaftServer::Disconnect(const bool disconnect) {
+  std::lock_guard&lt;std::recursive_mutex&gt; lock(mtx_);
+  verify(disconnected_ != disconnect);
+  // global map of rpc_par_proxies_ values accessed by partition then by site
+  static map&lt;parid_t, map&lt;siteid_t, map&lt;siteid_t, vector&lt;SiteProxyPair&gt;&gt;&gt;&gt; _proxies{};
+  if (_proxies.find(partition_id_) == _proxies.end()) {
+    _proxies[partition_id_] = {};
+  }
+  RaftCommo *c = (RaftCommo*) commo();
+  if (disconnect) {
+    verify(_proxies[partition_id_][loc_id_].size() == 0);
+    verify(c-&gt;rpc_par_proxies_.size() &gt; 0);
+    auto sz = c-&gt;rpc_par_proxies_.size();
+    _proxies[partition_id_][loc_id_].insert(c-&gt;rpc_par_proxies_.begin(), c-&gt;rpc_par_proxies_.end());
+    c-&gt;rpc_par_proxies_ = {};
+    verify(_proxies[partition_id_][loc_id_].size() == sz);
+    verify(c-&gt;rpc_par_proxies_.size() == 0);
+  } else {
+    verify(_proxies[partition_id_][loc_id_].size() &gt; 0);
+    auto sz = _proxies[partition_id_][loc_id_].size();
+    c-&gt;rpc_par_proxies_ = {};
+    c-&gt;rpc_par_proxies_.insert(_proxies[partition_id_][loc_id_].begin(), _proxies[partition_id_][loc_id_].end());
+    _proxies[partition_id_][loc_id_] = {};
+    verify(_proxies[partition_id_][loc_id_].size() == 0);
+    verify(c-&gt;rpc_par_proxies_.size() == sz);
+  }
+  disconnected_ = disconnect;
+}
+
+bool RaftServer::IsDisconnected() {
+  return disconnected_;
+}
+
+} // namespace janus</PRE>
+</PRE>
+</BODY>
+</HTML>

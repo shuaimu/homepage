@@ -1,0 +1,87 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-raunaqpahwa/src/shardkv/client.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-ojasdeshpande10-1/src/shardkv/client.cc<p><PRE>
+
+
+#include "client.h"
+#include "server.h"
+#include "shardmaster/service.h"
+#include "shardmaster/client.h"
+
+namespace janus {
+
+int ShardKvClient::Op(function&lt;int(uint32_t*)&gt; func, std::string k) {
+  uint64_t t1 = Time::now();
+  //Log_info("Creating client");
+  auto cli = make_shared&lt;ShardMasterClient&gt;();
+  cli-&gt;commo_ = commo_;
+  ShardConfig config_ ;
+  cli-&gt;Query(-1,&config_);
+  shardid_t shardId = Key2Shard(k);
+  int leader_idx_temp = config_.group_servers_map_[config_.shard_group_map_[shardId]][0];
+  //Log_info("the temp leader is %d ",leader_idx_temp);
+  int i=0;
+  while (true) {
+    uint64_t t2 = Time::now();
+    //Log_info("the leader_idx is %d", leader_idx_);
+    if(i==0) {
+      leader_idx_ = leader_idx_temp;
+      i++;
+    } 
+    if (t2 - t1 &gt; 10000000) {
+      return KV_TIMEOUT;
+    }
+    uint32_t ret = 0;
+    int r1; 
+    r1 = func(&ret);
+    if (r1 == ETIMEDOUT || ret == KV_TIMEOUT) {
+      leader_idx_ = ((leader_idx_+1) % 5)+leader_idx_temp;
+      return KV_TIMEOUT;
+    }
+    if (ret == KV_SUCCESS) {
+      return KV_SUCCESS;
+    }
+    if (ret == KV_NOTLEADER) {
+      leader_idx_ = ((leader_idx_+1) % 5)+leader_idx_temp;
+    }
+  }
+
+}
+
+int ShardKvClient::Put(const string& k, const string& v) {
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match241-0.html#0" TARGET="0"><IMG SRC="../../../bitmaps/tm_0_11.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  return Op([&](uint32_t* r)-&gt;int{
+    return Proxy(leader_idx_).Put(GetNextOpId(), k, v, r);
+  }, k);
+}
+
+ShardKvProxy& ShardKvClient::Proxy(siteid_t site_id) {
+  //Log_info("The site_id in proxy is %d",site_id);
+  verify(commo_);
+  auto p = (ShardKvProxy*)commo_-&gt;rpc_proxies_.at(site_id);
+</FONT>  return *p; 
+}
+
+int ShardKvClient::Append(const string& k, const string& v) {
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match241-0.html#1" TARGET="0"><IMG SRC="../../../bitmaps/tm_1_11.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  return Op([&](uint32_t* r)-&gt;int{
+    return Proxy(leader_idx_).Append(GetNextOpId(), k, v, r);
+  }, k);
+}
+
+int ShardKvClient::Get(const string& k, string* v) {
+  return Op([&](uint32_t* r)-&gt;int{
+</FONT>    return Proxy(leader_idx_).Get(GetNextOpId(), k, r, v);
+  }, k);
+}
+
+} // namesapce janus;</PRE>
+</PRE>
+</BODY>
+</HTML>

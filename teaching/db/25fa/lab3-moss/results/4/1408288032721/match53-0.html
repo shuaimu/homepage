@@ -1,0 +1,73 @@
+<HTML>
+<HEAD>
+<TITLE>/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-akashpatil-219/src/shardkv/server.cc</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+/root/ds-labs-ta/github-lab3/shuai-teaching/dslabs-cpp-akashpatil-219/src/shardkv/server.cc<p><PRE>
+#include "../deptran/__dep__.h"
+#include "server.h"
+#include "../deptran/raft/server.h"
+#include "client.h"
+
+namespace janus {
+
+int64_t ShardKvServer::GetNextOpId() {
+  verify(sp_log_svr_);
+  int64_t ret = sp_log_svr_-&gt;site_id_;
+  ret = ret &lt;&lt; 32;
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match53-1.html#1" TARGET="1"><IMG SRC="../../../bitmaps/tm_1_27.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+  ret = ret + op_id_cnt_++; 
+  return ret;
+}
+
+int ShardKvServer::Put(const uint64_t& oid, 
+                  const string& k,
+                  const string& v) {
+    // lab_shard: fill in your code
+    kv_store_[k] = v;
+    return KV_SUCCESS;
+}
+
+int ShardKvServer::Append(const uint64_t& oid, 
+                     const string& k,
+                     const string& v) {
+    // lab_shard: fill in your code
+    if(kv_store_[k] == ""){
+</FONT><A NAME="0"></A><FONT color = #FF0000><A HREF="match53-1.html#0" TARGET="1"><IMG SRC="../../../bitmaps/tm_0_36.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+      kv_store_[k] = v;
+    }
+    else{
+      kv_store_[k] += v;
+    }
+    return KV_SUCCESS;
+}
+
+int ShardKvServer::Get(const uint64_t& oid, 
+                  const string& k,
+                  string* v) {
+    // lab_shard: fill in your code
+    *v = kv_store_[k];
+    return KV_SUCCESS; 
+}
+
+void ShardKvServer::OnNextCommand(Marshallable& m) {
+    // lab_shard: fill in your code
+}
+
+shared_ptr&lt;ShardKvClient&gt; ShardKvServer::CreateClient(Communicator* comm) {
+  auto cli = make_shared&lt;ShardKvClient&gt;();
+</FONT>  cli-&gt;commo_ = comm;
+  verify(cli-&gt;commo_ != nullptr);
+  static uint32_t id = 0;
+  id++;
+  cli-&gt;cli_id_ = id; 
+  return cli;
+}
+
+} // namespace janus;</PRE>
+</PRE>
+</BODY>
+</HTML>
