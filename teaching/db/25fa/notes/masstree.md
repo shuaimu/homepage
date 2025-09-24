@@ -27,12 +27,36 @@
 
 ## Cache-Crafty Optimizations
 
+### Integer Key Comparison (IntCmp)
+* Store 8-byte key slices as 64-bit integers
+* Single CPU integer comparison vs byte-by-byte loops
+* 15-24% performance improvement
+* Little-endian challenge:
+  * String "ABCDEFGH" in memory: `41 42 43 44 45 46 47 48`
+  * Loaded as int: `0x4847464544434241` (reversed!)
+  * Solution: byte-swap to `0x4142434445464748`
+  * Now integer `<` gives same result as string comparison
+
 ### Wide Fanout (4-tree → B+ tree)
 * 4-tree: fanout 4, one cache line per node
   * ½ levels vs binary tree → ½ DRAM latencies
   * Problem: unbalanced for sequential inserts
 * B+ tree: fanout 15, balanced
   * 4 cache lines per node (256 bytes)
+
+### Why 256 Bytes (4 Cache Lines)?
+* Hardware constraints:
+  * CPU loads in 64-byte cache lines
+  * Limited prefetch queue (4-16 outstanding requests)
+  * L1 cache only 32KB (512 lines total)
+* Tradeoffs:
+  * 128 bytes → fanout 7 → deeper tree
+  * 256 bytes → fanout 15 → optimal balance
+  * 512 bytes → fanout 31 → wastes cache (nodes 75% full)
+* Performance impact:
+  * 256 bytes = 0.78% of L1 cache
+  * Can prefetch all 4 lines in parallel
+  * Balances tree depth vs cache pollution
 
 ### Prefetching
 * Software prefetch all cache lines of a node
