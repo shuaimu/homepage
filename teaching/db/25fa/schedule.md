@@ -40,20 +40,20 @@ table td:first-child {
 | Sep 15 | Raft (cont'd)<br>[Raft](readings/raft.pdf) |
 | Sep 17 | Recitation: Raft lab |
 | Sep 22 | MongoDB Replication<br>[Fault-Tolerant Replication with Pull-Based Consensus in MongoDB](readings/mongodb-nsdi.pdf) |
-|        | Session II: Index and Storage                                             |
+|        | Session III: Index and Storage                                             |
 | Sep 24 | Masstree <br>[Cache Craftiness for Fast Multicore Key-Value Storage](readings/masstree.pdf) |
-| Sep 29 | PebblesDB<br>[Building Key-Value Stores using Fragmented Log-Structured Merge Trees](readings/pebblesdb.pdf) |
-| Oct 01 | TBD |
-| Oct 06 | No class (Fall break) |
+| Sep 29 | RocksDB<br>[Evolution of Development Priorities in Key-value Stores Serving Large-scale Applications: The RocksDB Experience](readings/rocksdb.pdf) |
+| Oct 01 | PebblesDB<br>[Building Key-Value Stores using Fragmented Log-Structured Merge Trees](readings/pebblesdb.pdf) |
+|        | Session IV: Transaction |
+| Oct 06 | Serializability<br>[Concurrency control](readings/franklin97concurrency.pdf) |
 | Oct 08 | TBD |
-|        | Session III: Transaction |
-| Oct 13 | Serializability<br>[Concurrency control](readings/franklin97concurrency.pdf) |
+| Oct 13 | No class (Fall break) |
 | Oct 15 | 2PL and 2PC<br>[Spanner](readings/spanner.pdf) |
 | Oct 20 | Speculation and cascade rollback<br>[Mako: Speculative Distributed Transactions with Geo-Replication](readings/mako.pdf) |
-|        | Session IV: Weaker Isolation and Consistency |
+|        | Session V: Weaker Isolation and Consistency |
 | Oct 22 | OCC and Snapshot Isolation<br>[Percolator](readings/percolator.pdf) |
 | Oct 27 | More Isolation Levels<br>[Critique](readings/si.pdf) |
-|        | Session V: Cloud, SQL, and Data Platform |
+|        | Session VI: Cloud, SQL, and Data Platform |
 | Oct 29 | MapReduce<br>[Simplified Data Processing on Large Clusters](readings/mapreduce.pdf) |
 | Nov 03 | Spark<br>[Resilient Distributed Datasets: A Fault-Tolerant Abstraction for In-Memory Cluster Computing](readings/spark.pdf) |
 | Nov 05 | [The Snowflake Elastic Data Warehouse](readings/snowflake.pdf) |

@@ -1,5 +1,8 @@
 ---
-layout: page
+layout: calendar
+title: CSE 535 Schedule (2019 Spring, Jan 28 -- May 10)
+permalink: /schedule/
+calendar_events: site.data.cse535_19sp_schedule
 ---
 
 [Home](.) &nbsp; &nbsp; &nbsp;
