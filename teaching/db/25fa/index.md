@@ -17,7 +17,8 @@ permalink: /teaching/db/25fa/
 <!-- * (Apr 15, 2019) Final exam date: May 20, 2:15pm, Humanities 1003 -->
 <!-- * (Aug 22, 2020) We will use this [Zoom meeting room](https://stonybrook.zoom.us/j/97748330819?pwd=UWhITE1qcTE1T0Rwc2RXTXlKeWR3Zz09) for our lectures.  -->
 <!-- * (Aug 22, 2022) First day! Please read the grading information in lecture 1's [notes](notes/overview.md). -->
-(Aug 25, 2025) First day! Please join [Piazza](https://piazza.com/stonybrook/fall2025/cse532) for class notifications and discussions.
+* (Oct 22, 2025) Please read the [project ideas](./project.html) for the final project.
+* (Aug 25, 2025) First day! Please join [Piazza](https://piazza.com/stonybrook/fall2025/cse532) for class notifications and discussions.
 
 ## IMPORTANT information for course selection
 Although sharing the same class code, this course is not the same course of the past 532 Theory of Database. This is a more systems course on the database topic emphasizing on systems design and implementation. It has a very different focus and interest on the goals and requirements. Please be aware of this before you sign up the class.  

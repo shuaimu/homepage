@@ -38,7 +38,7 @@ Some general tips:
 
 First make sure you are working on the right branch, make sure you use `lab-raft-solution` as the branch name.
 ```bash
-$ git checkout -b lab-raft-solution upstream/lab-raft-23
+$ git checkout -b lab-raft-solution upstream/lab-25
 $ git submodule update --init
 $ git push -u origin lab-raft-solution
 ```
@@ -49,8 +49,8 @@ To get up and running, execute the following commands:
 
 ```
 $ cd your_labs_directory
-$ python3 waf configure build --enable-raft-test # compile
-$ build/deptran_server -f config/raft_lab_test.yml # test
+$ make labtest # compile
+$ ./build/labtest -f config/raft_lab_test.yml # test
 TEST 1: Initial election
 TEST 1 Failed: waited too long for leader election
 TESTS FAILED
@@ -201,12 +201,12 @@ TEST 11 Passed
 ALL TESTS PASSED
 Total RPC count: 6609
 ```
-The source for the tests is in `src/deptran/raft/test.cc` and `src/deptran/raft/testconf.cc`.
+The source for the tests is in `test/labtest.cc` and `test/labtestconf.cc`.
 
 
 ## Submit
 
-Please refer to Piazza for submission guidelines.
+Commit your code to the `lab-raft-solution` branch, with a message starting with "submit" (lower case).
 
 ## DO NOT
 

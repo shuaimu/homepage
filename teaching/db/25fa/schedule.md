@@ -36,8 +36,8 @@ table td:first-child {
 | Sep 03 | Architecture II<br>[TiDB: A Raft-based HTAP Database](readings/tidb.pdf) |
 |        | Session II: Replication                                             |
 | Sep 08 | Primary-Backup Replication<br>[The Dangers of Replication and a Solution](readings/replication.pdf) |
-| Sep 10 | Raft<br>[Raft](readings/raft.pdf) |
-| Sep 15 | Raft (cont'd)<br>[Raft](readings/raft.pdf) |
+| Sep 10 | Raft<br>[In Search of an Understandable Consensus Algorithm](readings/raft.pdf) |
+| Sep 15 | Raft (cont'd)|
 | Sep 17 | Recitation: Raft lab |
 | Sep 22 | MongoDB Replication<br>[Fault-Tolerant Replication with Pull-Based Consensus in MongoDB](readings/mongodb-nsdi.pdf) |
 |        | Session III: Index and Storage                                             |
@@ -45,26 +45,26 @@ table td:first-child {
 | Sep 29 | RocksDB<br>[Evolution of Development Priorities in Key-value Stores Serving Large-scale Applications: The RocksDB Experience](readings/rocksdb.pdf) |
 | Oct 01 | PebblesDB<br>[Building Key-Value Stores using Fragmented Log-Structured Merge Trees](readings/pebblesdb.pdf) |
 |        | Session IV: Transaction |
-| Oct 06 | Serializability<br>[Concurrency control](readings/franklin97concurrency.pdf) |
-| Oct 08 | TBD |
+| Oct 06 | Serializability<br>[Concurrency Control and Recovery](readings/franklin97concurrency.pdf) |
+| Oct 08 | Silo<br>[Speedy Transactions in Multicore In-Memory Databases](readings/silo.pdf) |
 | Oct 13 | No class (Fall break) |
-| Oct 15 | 2PL and 2PC<br>[Spanner](readings/spanner.pdf) |
-| Oct 20 | Speculation and cascade rollback<br>[Mako: Speculative Distributed Transactions with Geo-Replication](readings/mako.pdf) |
+| Oct 15 | Discussion: C++ Memory Safety |
+| Oct 20 | Spanner<br>[Spanner: Google’s Globally-Distributed Database](readings/spanner.pdf) |
+| Oct 22 | Speculation and cascade rollback<br>[Mako: Speculative Distributed Transactions with Geo-Replication](readings/mako.pdf) |
 |        | Session V: Weaker Isolation and Consistency |
-| Oct 22 | OCC and Snapshot Isolation<br>[Percolator](readings/percolator.pdf) |
-| Oct 27 | More Isolation Levels<br>[Critique](readings/si.pdf) |
+| Oct 27 | Percolator<br>[Large-scale Incremental Processing Using Distributed Transactions and Notifications](readings/percolator.pdf) |
+| Oct 29 | More Isolation Levels<br>[A Critique of ANSI SQL Isolation Levels](readings/si.pdf) |
 |        | Session VI: Cloud, SQL, and Data Platform |
-| Oct 29 | MapReduce<br>[Simplified Data Processing on Large Clusters](readings/mapreduce.pdf) |
-| Nov 03 | Spark<br>[Resilient Distributed Datasets: A Fault-Tolerant Abstraction for In-Memory Cluster Computing](readings/spark.pdf) |
-| Nov 05 | [The Snowflake Elastic Data Warehouse](readings/snowflake.pdf) |
-| Nov 10 | [Velox: Meta's Unified Execution Engine](readings/velox.pdf) |
-| Nov 12 | [Spanner: Becoming a SQL System](readings/spanner-sql.pdf) |
-| Nov 17 | TBD |
+| Nov 03 | MapReduce<br>[Simplified Data Processing on Large Clusters](readings/mapreduce.pdf) |
+| Nov 05 | Spark<br>[Resilient Distributed Datasets: A Fault-Tolerant Abstraction for In-Memory Cluster Computing](readings/spark.pdf) |
+| Nov 10 | [The Snowflake Elastic Data Warehouse](readings/snowflake.pdf) |
+| Nov 12 | [Velox: Meta's Unified Execution Engine](readings/velox.pdf) |
+| Nov 17 | [Spanner: Becoming a SQL System](readings/spanner-sql.pdf) |
 | Nov 19 | TBD |
-| Nov 24 | TBD |
+| Nov 24 | Student Project Presentations |
 | Nov 26 | No class (Thanksgiving break) |
 | Dec 01 | Student Project Presentations  |
 | Dec 03 | Student Project Presentations |
-| Dec 08 | Student Project Presentations |
+| Dec 08 | Poster Presentations |
 
 [SBU calendar](https://www.stonybrook.edu/commcms/registrar/calendars/)

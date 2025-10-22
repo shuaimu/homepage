@@ -9,23 +9,14 @@ layout: page
 [Policy](./policy.html)
 ]
 
-# Note
-
-This page currently contains content from a past course for you to get information. It is pending update. 
-In this year's course, you are only required to finish the Raft part (Lab 1). You can use the other parts to get more familiar with the codebase, but you won't get bonus credits for doing it. 
 
 #  Labs
-
-Distributed systems labs for C++ lovers. 
 
 ## Lab assignments
 
 <!-- [Lab 1 - MapReduce](labs/lab1.html) -->
 
-- [Lab 1 - Replicated State Machine](labs/lab1.html) (Due Oct 8 23:59pm)
-- [Lab 2 - Fault-tolerant Key-value](labs/lab2.html) (Due Oct 29 23:59pm)
-- [Lab 3 - Sharded Key-value Store](labs/lab3) (Due Nov 19 23:59pm)
-- [Lab 4 - Distributed Transactions](labs/lab4) (Due Dec 13 23:59pm)
+- [Lab 1 - Replicated State Machine](labs/lab1.html) (Due Oct 14 23:59pm)
 
 <!-- [Lab 2 - Fault-tolerant Key-value Store](labs/lab2.html)  -->
 
@@ -38,10 +29,8 @@ See [here](policy.html).
 
 ## Lab Environment
 
-A Ubuntu 20.04 amd64 environment is recommended for the labs. 
-The labs do not require a lot of CPU/memory resources, but to avoid weird errors it is better to have more than 4 cores and 8G memory.
-If you do not have access to this, consider using a virtual machine (on cloud). 
-We do not provide machines.  
+A Ubuntu 22.04 x86-64 environment is needed for the labs. The labs do not require a lot of CPU/memory resources, but to avoid weird errors it is better to have more than 8 cores and 16G memory.
+If you do not have access to this, consider using a virtual machine (on cloud). We do not provide machines. The labs may work on other architectures, but it is not tested.
 <!-- If you use a different distribution, it is possible you run into some compilation errors  -->
 <!-- such as missing include files. Usually fixing these errors does not affect the grading process.   -->
 
@@ -52,7 +41,7 @@ installed dependencies. But this is not thoroughly tested.) -->
 
 Our labs are distributed and submitted through Github. Sign up an account if you
 don't yet have one. Then join the labs assignment system via this
-[link](https://classroom.github.com/a/3HAMvwwX). Choose your student ID in the 
+[link](https://classroom.github.com/a/0foOcUZ2). Choose your student ID in the 
 next page. If you don't see your ID there, stop (don't click skip) and contact the lecturer. 
 Then follow the hints on the next page for initial setup of your private labs repo.
 (Github sometimes fails this step. Retry after a few minutes if it happens.)
@@ -68,13 +57,12 @@ resources [here](https://try.github.io) to get started.
 Clone your repo by typing the following in a terminal:
 
 ``` 
-$ git clone git@github.com:shuai-teaching/dslabs-cpp-<YourGithubUsername>.git  
-$ cd dslabs-cpp-<YourGithubUsername>
+$ git clone git@github.com:shuai-teaching/raftlab25-<YourGithubUsername>.git  
+$ cd raftlab25-<YourGithubUsername>
 ```
 
-You will see that a directory named dslabs-cpp-\<YourGithubUsername\> has
-been created under your home directory. This is the git repo for your lab
-assignments throughout the semester. -->
+You will see that a directory named raftlab25-\<YourGithubUsername\> has
+been created under your home directory. 
 
 ## Setting up the upstream repo
 
@@ -88,33 +76,31 @@ $ git fetch upstream
 Next you will checkout the branch for the lab you are going to solve. For example, for lab 1:
 
 ```bash
-$ git checkout -b lab-raft-solution upstream/lab-raft-23 
+$ git checkout -b lab-raft-solution upstream/lab-25 
 $ git submodule update --init
 $ git push -u origin lab-raft-solution
 ```
 
 Before compile, you need to install needed software dependencies.
 
-```
-sudo apt-get update
-sudo apt-get install -y \
-    git \
-    pkg-config \
-    build-essential \
-    clang \
-    libapr1-dev libaprutil1-dev \
-    libboost-all-dev \
-    libyaml-cpp-dev \
-    libjemalloc-dev \
-    python3-dev \
-    python3-pip \
-    python3-wheel \
-    python3-setuptools \
-    libgoogle-perftools-dev
-sudo pip3 install -r requirements.txt
+```bash
+bash apt_packages.sh
 ```
 
-Refer to each lab assignment for compiling commands.
+Compile commands
+``` bash
+make clean
+make labtest
+```
+
+Test commands
+``` bash
+./build/labtest -f config/raft_lab_test.yml
+```
+
+## Submit
+
+Commit your code to the `lab-raft-solution` branch, with a message starting with "submit" (lower case).
 
 <!-- Immediately, you should check if the upstream ds20spring-labs repo has additional -->
 <!-- changes not present in your repo. You can check for and merge in those changes -->

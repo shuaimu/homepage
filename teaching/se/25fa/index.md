@@ -14,13 +14,23 @@ permalink: /teaching/se/25fa/
 ## Announcements
 
 <!-- * (Apr 15, 2019) Final exam date: May 20, 2:15pm, Humanities 1003 -->
-* Please join [Zulip](https://brooknet.zulipchat.com/join/f3jj4k2okvlfpu5vykz5kkk5/) for class notifications and discussions. 
-* Notes/slides are in this [folder](https://drive.google.com/drive/folders/1imZgiq2q5rvcrOs336eLrBWOLXWCp07o?usp=sharing) (requires SBU login). 
+<!-- * Please join [Zulip](https://brooknet.zulipchat.com/join/f3jj4k2okvlfpu5vykz5kkk5/) for class notifications and discussions.  -->
+<!-- * Notes/slides are in this [folder](https://drive.google.com/drive/folders/1imZgiq2q5rvcrOs336eLrBWOLXWCp07o?usp=sharing) (requires SBU login).  -->
 <!-- * (Jan 17, 2022) Please read the [collaboration and academic integrity
 policy](policy.html); Enrollment in this class suggests you have accepted the
 policy. -->
 
-## Schedule
+## Quick links (requires SBU login):
+* [Zulip](https://brooknet.zulipchat.com/join/f3jj4k2okvlfpu5vykz5kkk5/)
+* [Notes/slides](https://drive.google.com/drive/folders/1imZgiq2q5rvcrOs336eLrBWOLXWCp07o?usp=sharing) 
+* [Voluntary Presentation](https://drive.google.com/drive/folders/1ZsE4_GKKfu02G8XZLIav1vYzxvrpRZnu?usp=sharing)
+* [Progress Review](https://drive.google.com/drive/folders/1fappfUmtHpRLG_EL6RjSTqLdpl9Ki5JV?usp=sharing)
+    * iris, walrus, pandas, cactus, totoro, eagles
+    * hawks, orca, whales, turtle, potato
+    * Note for skipping progress review: You don't have to request permission to skip progress reviews, but it would be better if you notify me in advance. If you want to make up for the missed progress review, we can try to schedule one if other teams skip their slots. Otherwise, you will need to wait for your next turn. 
+
+
+## Schedule 
 
 - **Aug 25**: Course Overview (Syllabus)
 - **Aug 27**: Lecture: Bitcoin
@@ -38,19 +48,19 @@ policy. -->
 - **Oct 8**: Progress Review (Oct 9 Due first peer review)
 - **Oct 13**: No class (Fall Break)
 - **Oct 15**: Progress Review
-- **Oct 20**: Lecture: Programming Patterns
-- **Oct 22**: Progress Review
-- **Oct 27**: 
-- **Oct 29**: Presentation: Testing
-- **Nov 3**: Progress Review
-- **Nov 5**: Discussion: Boeing 
-- **Nov 10**: Progress Review
-- **Nov 12**: Lecture: Relational Database
-- **Nov 17**: Progress Review
-- **Nov 19**: Presentation: Debugging
-- **Nov 24**: Presentation: Debugging (Cont.)
+- **Oct 20**: Progress Review (pandas, iris, totoro, eagles)
+- **Oct 22**: Progress Review (hawks, orca, whales, turtle, potato)
+- **Oct 27**: Presentation: Testing (eagles, hawks)
+- **Oct 29**: Progress Review (iris, walrus, pandas, cactus, totoro, eagles)
+- **Nov 3**: Discussion: Boeing
+- **Nov 5**: Progress Review (Nov 6 Due second peer review)
+- **Nov 10**: TBD
+- **Nov 12**: Progress Review
+- **Nov 17**: Presentation: Debugging (Pandas)
+- **Nov 19**: Progress Review
+- **Nov 24**: TBD
 - **Nov 26**: No class (Thanksgiving Break)
-- **Dec 1**: Progress Review
+- **Dec 1**: Progress Review (Dec 2 Due final peer review)
 - **Dec 3**: Presentation: "Fake it until you make it"
 - **Dec 8**: Last day (TBD, posters?)
 

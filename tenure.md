@@ -9,7 +9,7 @@ layout: home
   <div class="row">
     <div class="col-sm" >
 <h1>Shuai Mu</h1>
-Assistant Professor <br>
+Associate Professor <br>
 Department of Computer Science <br>
 Stony Brook University <br>
     </div>

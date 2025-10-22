@@ -46,24 +46,14 @@
 <a href="./policy.html">Policy</a>
 ]</p>
 
-<h1 id="note">Note</h1>
-
-<p>This page currently contains content from a past course for you to get information. It is pending update. 
-In this year’s course, you are only required to finish the Raft part (Lab 1). You can use the other parts to get more familiar with the codebase, but you won’t get bonus credits for doing it.</p>
-
 <h1 id="labs">Labs</h1>
-
-<p>Distributed systems labs for C++ lovers.</p>
 
 <h2 id="lab-assignments">Lab assignments</h2>
 
 <!-- [Lab 1 - MapReduce](labs/lab1.html) -->
 
 <ul>
-  <li><a href="labs/lab1.html">Lab 1 - Replicated State Machine</a> (Due Oct 8 23:59pm)</li>
-  <li><a href="labs/lab2.html">Lab 2 - Fault-tolerant Key-value</a> (Due Oct 29 23:59pm)</li>
-  <li><a href="labs/lab3">Lab 3 - Sharded Key-value Store</a> (Due Nov 19 23:59pm)</li>
-  <li><a href="labs/lab4">Lab 4 - Distributed Transactions</a> (Due Dec 13 23:59pm)</li>
+  <li><a href="labs/lab1.html">Lab 1 - Replicated State Machine</a> (Due Oct 14 23:59pm)</li>
 </ul>
 
 <!-- [Lab 2 - Fault-tolerant Key-value Store](labs/lab2.html)  -->
@@ -77,10 +67,8 @@ In this year’s course, you are only required to finish the Raft part (Lab 1). 
 
 <h2 id="lab-environment">Lab Environment</h2>
 
-<p>A Ubuntu 20.04 amd64 environment is recommended for the labs. 
-The labs do not require a lot of CPU/memory resources, but to avoid weird errors it is better to have more than 4 cores and 8G memory.
-If you do not have access to this, consider using a virtual machine (on cloud). 
-We do not provide machines.<br />
+<p>A Ubuntu 22.04 x86-64 environment is needed for the labs. The labs do not require a lot of CPU/memory resources, but to avoid weird errors it is better to have more than 8 cores and 16G memory.
+If you do not have access to this, consider using a virtual machine (on cloud). We do not provide machines. The labs may work on other architectures, but it is not tested.
 <!-- If you use a different distribution, it is possible you run into some compilation errors  -->
 <!-- such as missing include files. Usually fixing these errors does not affect the grading process.   --></p>
 
@@ -91,7 +79,7 @@ installed dependencies. But this is not thoroughly tested.) -->
 
 <p>Our labs are distributed and submitted through Github. Sign up an account if you
 don’t yet have one. Then join the labs assignment system via this
-<a href="https://classroom.github.com/a/3HAMvwwX">link</a>. Choose your student ID in the 
+<a href="https://classroom.github.com/a/0foOcUZ2">link</a>. Choose your student ID in the 
 next page. If you don’t see your ID there, stop (don’t click skip) and contact the lecturer. 
 Then follow the hints on the next page for initial setup of your private labs repo.
 (Github sometimes fails this step. Retry after a few minutes if it happens.)</p>
@@ -106,13 +94,12 @@ resources <a href="https://try.github.io">here</a> to get started.</p>
 
 <p>Clone your repo by typing the following in a terminal:</p>
 
-<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>$ git clone git@github.com:shuai-teaching/dslabs-cpp-&lt;YourGithubUsername&gt;.git  
-$ cd dslabs-cpp-&lt;YourGithubUsername&gt;
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>$ git clone git@github.com:shuai-teaching/raftlab25-&lt;YourGithubUsername&gt;.git  
+$ cd raftlab25-&lt;YourGithubUsername&gt;
 </code></pre></div></div>
 
-<p>You will see that a directory named dslabs-cpp-&lt;YourGithubUsername&gt; has
-been created under your home directory. This is the git repo for your lab
-assignments throughout the semester. –&gt;</p>
+<p>You will see that a directory named raftlab25-&lt;YourGithubUsername&gt; has
+been created under your home directory.</p>
 
 <h2 id="setting-up-the-upstream-repo">Setting up the upstream repo</h2>
 
@@ -124,32 +111,28 @@ assignments throughout the semester. –&gt;</p>
 
 <p>Next you will checkout the branch for the lab you are going to solve. For example, for lab 1:</p>
 
-<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span>git checkout <span class="nt">-b</span> lab-raft-solution upstream/lab-raft-23 
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span>git checkout <span class="nt">-b</span> lab-raft-solution upstream/lab-25 
 <span class="nv">$ </span>git submodule update <span class="nt">--init</span>
 <span class="nv">$ </span>git push <span class="nt">-u</span> origin lab-raft-solution
 </code></pre></div></div>
 
 <p>Before compile, you need to install needed software dependencies.</p>
 
-<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>sudo apt-get update
-sudo apt-get install -y \
-    git \
-    pkg-config \
-    build-essential \
-    clang \
-    libapr1-dev libaprutil1-dev \
-    libboost-all-dev \
-    libyaml-cpp-dev \
-    libjemalloc-dev \
-    python3-dev \
-    python3-pip \
-    python3-wheel \
-    python3-setuptools \
-    libgoogle-perftools-dev
-sudo pip3 install -r requirements.txt
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>bash apt_packages.sh
 </code></pre></div></div>
 
-<p>Refer to each lab assignment for compiling commands.</p>
+<p>Compile commands</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>make clean
+make labtest
+</code></pre></div></div>
+
+<p>Test commands</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>./build/labtest <span class="nt">-f</span> config/raft_lab_test.yml
+</code></pre></div></div>
+
+<h2 id="submit">Submit</h2>
+
+<p>Commit your code to the <code class="language-plaintext highlighter-rouge">lab-raft-solution</code> branch, with a message starting with “submit” (lower case).</p>
 
 <!-- Immediately, you should check if the upstream ds20spring-labs repo has additional -->
 <!-- changes not present in your repo. You can check for and merge in those changes -->
