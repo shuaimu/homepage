@@ -28,6 +28,7 @@ policy. -->
     * iris, walrus, pandas, cactus, totoro, eagles
     * hawks, orca, whales, turtle, potato
     * Note for skipping progress review: You don't have to request permission to skip progress reviews, but it would be better if you notify me in advance. If you want to make up for the missed progress review, we can try to schedule one if other teams skip their slots. Otherwise, you will need to wait for your next turn. 
+    * If you would like to add slides links in the following schedule list, please send pull request to [this page on github](https://github.com/shuaimu/homepage/blob/master/teaching/se/25fa/index.md).
 
 
 ## Schedule 
