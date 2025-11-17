@@ -50,23 +50,27 @@ policy. -->
 - **Oct 13**: No class (Fall Break)
 - **Oct 15**: Progress Review
 - **Oct 20**: Progress Review (pandas, iris, totoro, eagles)
-- **Oct 22**: Progress Review (hawks, orca, whales, turtle, potato)
+- **Oct 22**: Progress Review (hawks, orca, potato)
 - **Oct 27**: Presentation: Testing (eagles, hawks)
 - **Oct 29**: Progress Review (iris, walrus, pandas, cactus, totoro, eagles)
 - **Nov 3**: Discussion: Boeing
-- **Nov 5**: Progress Review (Nov 6 Due second peer review)
-- **Nov 10**: TBD
-- **Nov 12**: Progress Review
+- **Nov 5**: Progress Review (orca, whales, turtle, potato)
+- **Nov 10**: (Extra) Progress Review (hawks, potato, cactus)
+- **Nov 12**: Progress Review (iris, walrus, pandas, eagles, Nov ~~13~~ 16 Due second peer review)
 - **Nov 17**: Presentation: Debugging (Pandas)
 - **Nov 19**: Progress Review
 - **Nov 24**: TBD
 - **Nov 26**: No class (Thanksgiving Break)
-- **Dec 1**: Progress Review (Dec 2 Due final peer review)
-- **Dec 3**: Presentation: "Fake it until you make it"
-- **Dec 8**: Last day (TBD, posters?)
+- **Dec 1**: Presentation: "Fake it until you make it"
+- **Dec 3**: Progress Review 
+- **Dec 8**: Last day (Dec 9 Due final peer review, posters?)
 
 * [SBU Academic Calendar](https://www.stonybrook.edu/commcms/registrar/calendars/academic_calendars)
 
+
+## Office hours
+
+MW noon-2pm NCS 351 (Please [book a GCal meeting](https://calendar.app.google/5fEbJJZW86Gcgije6) at least a day before)
 
 ## Course information
 

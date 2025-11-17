@@ -12,7 +12,7 @@ layout: page
 # Schedule 
 Lecture: MW 3:30-4:50pm (Aug 25 -- Dec 8) Location: JAVITS LECTR 103 WESTCAMPUS
 
-Office hour: MW noon-2pm NCS 351 (Please book a GCal meeting a day before)
+Office hour: MW noon-2pm NCS 351 (Please [book a GCal meeting](https://calendar.app.google/5fEbJJZW86Gcgije6) a day before)
 
 <!-- Office hour: T 3-5pm in this [Zoom meeting room](https://stonybrook.zoom.us/j/94704333277?pwd=NFhrbGYzUW50ZSt5R0Z3d3hobk54Zz09). Please book a meeting before 6pm using this [link](https://calendly.com/shuaimu/officehour). Each slot is 15 minutes. You can book 2 slots for 30 minutes, 3 slots for 45 minutes, etc. -->
 
@@ -57,9 +57,9 @@ table td:first-child {
 |        | Session VI: Cloud, SQL, and Data Platform |
 | Nov 03 | MapReduce<br>[Simplified Data Processing on Large Clusters](readings/mapreduce.pdf) |
 | Nov 05 | Spark<br>[Resilient Distributed Datasets: A Fault-Tolerant Abstraction for In-Memory Cluster Computing](readings/spark.pdf) |
-| Nov 10 | [The Snowflake Elastic Data Warehouse](readings/snowflake.pdf) |
+| Nov 10 | [Spanner: Becoming a SQL System](readings/spanner-sql.pdf) |
 | Nov 12 | [Velox: Meta's Unified Execution Engine](readings/velox.pdf) |
-| Nov 17 | [Spanner: Becoming a SQL System](readings/spanner-sql.pdf) |
+| Nov 17 | [The Snowflake Elastic Data Warehouse](readings/snowflake.pdf) |
 | Nov 19 | TBD |
 | Nov 24 | Student Project Presentations |
 | Nov 26 | No class (Thanksgiving break) |
