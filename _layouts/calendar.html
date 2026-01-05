@@ -1,0 +1,179 @@
+---
+layout: default
+---
+
+<!-- FullCalendar CSS -->
+<link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.css" rel="stylesheet">
+
+<!-- FullCalendar JavaScript -->
+<script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js"></script>
+
+<div class="container">
+  <div class="row">
+    <div class="col-12">
+      <h1>{{ page.title }}</h1>
+      
+      <!-- Toggle buttons for view switching -->
+      <div class="mb-3">
+        <div class="btn-group" role="group" aria-label="View toggle">
+          <button type="button" class="btn btn-outline-primary active" id="calendar-view-btn">
+            <i class="fas fa-calendar-alt"></i> Calendar View
+          </button>
+          <button type="button" class="btn btn-outline-primary" id="list-view-btn">
+            <i class="fas fa-list"></i> List View
+          </button>
+        </div>
+      </div>
+
+      <!-- Calendar View -->
+      <div id="calendar-container">
+        <div id="calendar"></div>
+      </div>
+
+      <!-- List View (original content) -->
+      <div id="list-container" style="display: none;">
+        {{ content }}
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+/* Calendar styling */
+#calendar {
+  max-width: 100%;
+  margin: 0 auto;
+  font-family: inherit;
+}
+
+.fc-event {
+  border-radius: 4px;
+  border: none;
+  font-size: 0.85em;
+  padding: 2px 4px;
+}
+
+.fc-event-title {
+  font-weight: 500;
+}
+
+/* Event type colors */
+.fc-event.lecture {
+  background-color: #007bff;
+  border-color: #007bff;
+}
+
+.fc-event.presentation {
+  background-color: #28a745;
+  border-color: #28a745;
+}
+
+.fc-event.review {
+  background-color: #ffc107;
+  border-color: #ffc107;
+  color: #212529;
+}
+
+.fc-event.workshop {
+  background-color: #17a2b8;
+  border-color: #17a2b8;
+}
+
+.fc-event.discussion {
+  background-color: #6f42c1;
+  border-color: #6f42c1;
+}
+
+.fc-event.holiday {
+  background-color: #dc3545;
+  border-color: #dc3545;
+}
+
+.fc-event.tbd {
+  background-color: #6c757d;
+  border-color: #6c757d;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .fc-toolbar {
+    flex-direction: column;
+  }
+  
+  .fc-toolbar-chunk {
+    margin-bottom: 0.5rem;
+  }
+  
+  .fc-event {
+    font-size: 0.75em;
+  }
+}
+
+/* View toggle styling */
+.btn-group .btn.active {
+  background-color: #007bff;
+  border-color: #007bff;
+  color: white;
+}
+
+.btn-group .btn:not(.active) {
+  color: #007bff;
+  border-color: #007bff;
+}
+
+.btn-group .btn:not(.active):hover {
+  background-color: #007bff;
+  color: white;
+}
+</style>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  // Initialize FullCalendar
+  var calendarEl = document.getElementById('calendar');
+  var calendar = new FullCalendar.Calendar(calendarEl, {
+    initialView: 'dayGridMonth',
+    headerToolbar: {
+      left: 'prev,next today',
+      center: 'title',
+      right: 'dayGridMonth,listWeek'
+    },
+    height: 'auto',
+    events: {{ page.calendar_events | jsonify }},
+    eventClick: function(info) {
+      // Optional: Add click functionality
+      if (info.event.extendedProps.description) {
+        alert(info.event.title + '\n\n' + info.event.extendedProps.description);
+      }
+    },
+    eventDidMount: function(info) {
+      // Add tooltip functionality
+      if (info.event.extendedProps.description) {
+        info.el.setAttribute('title', info.event.extendedProps.description);
+      }
+    }
+  });
+  
+  calendar.render();
+
+  // View toggle functionality
+  const calendarViewBtn = document.getElementById('calendar-view-btn');
+  const listViewBtn = document.getElementById('list-view-btn');
+  const calendarContainer = document.getElementById('calendar-container');
+  const listContainer = document.getElementById('list-container');
+
+  calendarViewBtn.addEventListener('click', function() {
+    calendarContainer.style.display = 'block';
+    listContainer.style.display = 'none';
+    calendarViewBtn.classList.add('active');
+    listViewBtn.classList.remove('active');
+  });
+
+  listViewBtn.addEventListener('click', function() {
+    calendarContainer.style.display = 'none';
+    listContainer.style.display = 'block';
+    listViewBtn.classList.add('active');
+    calendarViewBtn.classList.remove('active');
+  });
+});
+</script>
