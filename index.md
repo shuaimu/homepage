@@ -16,7 +16,9 @@ Office: New Computer Science RM-351 <br>
 Email: shuai at cs stonybrook edu<br>
 Links: 
 <!-- <a href="cv.pdf">CV</a>,  -->
-<a href="https://scholar.google.com/citations?user=wcbyR5UAAAAJ&hl=en">Google Scholar</a>, <a href="https://calendar.google.com/calendar/embed?src=shuai%40cs.stonybrook.edu&ctz=America%2FNew_York">Calendar</a>
+<a href="./blog.html">Blog</a>, 
+<a href="https://scholar.google.com/citations?user=wcbyR5UAAAAJ&hl=en">Google Scholar</a>, 
+<a href="https://calendar.google.com/calendar/embed?src=shuai%40cs.stonybrook.edu&ctz=America%2FNew_York">Calendar</a>
     </div>
     <div class="col-sm">
       <img src="./photo/photo-19-small.png" height="150" class="img-thumbnail float-right">
@@ -37,8 +39,7 @@ I'm particularly interested in:
 If you are interested, email me a brief resume.
 
 ## News ([see all](news.html))
-* Sep 2025, AutoMan accepted to SOSP '25!
-* Sep 2025, Tiga accepted to SOSP '25!
+* Sep 2025, AutoMan and Tiga accepted to SOSP '25!
 * Jul 2025, Mako appeared at OSDI '25!
 * Dec 2024, Received SBU Research Excellence Award. Thank you Seawolves!
 * Jun 2024, CausalMesh accepted to PVLDB 24 (VLDB '25)!
@@ -56,6 +57,7 @@ If you are interested, email me a brief resume.
 ## Recent courses ([see all](teaching))
 * [CSE-532, Database Systems, Fall 2025](./teaching/db/25fa/)
 * [CSE-416, Software Engineering, Fall 2025](./teaching/se/25fa/)
+* [CSE-590, Reliable System Programming, Spring 2025](./teaching/sf/25sp/)
 * [CSE-416, Software Engineering, Fall 2024](./teaching/se/24fa/) 
 <!-- * CSE-59X: Building Reliable Distributed Systems with Dafny, Spring 2023 -->
 * CSE-416, Software Engineering, Spring 2024 
@@ -154,7 +156,7 @@ If you are interested, email me a brief resume.
 ## Students ([see alumni](alumni))
 
 <!-- * Reza Alimadadi (PhD, with Mike Ferdman) -->
-* Zihao Zhang (Post-doc)
+* [Zihao Zhang](https://zhangzihao270.github.io/) (Post-doc)
 * [Jinkun Geng](https://www.gengjinkun.com/) (Post-doc, co-advised with Anirudh Sivaraman)
 * [Weihai Shen](https://shenweihai1.github.io/) (PhD)
 * [Santa Shithil](https://sites.google.com/grad.cse.buet.ac.bd/santa-maria-shithil/about) (PhD)
@@ -175,9 +177,10 @@ I am also privileged to work closely with other great students including:
 ## Program committees 
 <!-- * APSys 2019, 2020, 2021 -->
 * ASPLOS 2022 (ERC)
-* EuroSys 2025
+* EuroSys 2025, 2026
 * ICDCS 2023
-* NSDI 2021, 2023
+* NSDI 2021, 2023, 2026
+* OSDI 2026
 * SIGCOMM 2023
 * SOSP 2024 
 * USENIX ATC 2020, 2024, 2025

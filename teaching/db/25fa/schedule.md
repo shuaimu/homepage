@@ -60,8 +60,8 @@ table td:first-child {
 | Nov 10 | [Spanner: Becoming a SQL System](readings/spanner-sql.pdf) |
 | Nov 12 | [Velox: Meta's Unified Execution Engine](readings/velox.pdf) |
 | Nov 17 | [The Snowflake Elastic Data Warehouse](readings/snowflake.pdf) |
-| Nov 19 | TBD |
-| Nov 24 | Student Project Presentations |
+| Nov 19 | Guest speaker: Jinkun Geng, Santa Shithil |
+| Nov 24 | Guest speaker: Zihao Zhang, Ze Tang |
 | Nov 26 | No class (Thanksgiving break) |
 | Dec 01 | Student Project Presentations  |
 | Dec 03 | Student Project Presentations |

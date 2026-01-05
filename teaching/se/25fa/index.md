@@ -56,14 +56,14 @@ policy. -->
 - **Nov 3**: Discussion: Boeing
 - **Nov 5**: Progress Review (orca, whales, turtle, potato)
 - **Nov 10**: (Extra) Progress Review (hawks, potato, cactus)
-- **Nov 12**: Progress Review (iris, walrus, pandas, eagles, Nov ~~13~~ 16 Due second peer review)
+- **Nov 12**: Progress Review (walrus, pandas, eagles, Nov ~~13~~ 16 Due second peer review)
 - **Nov 17**: Presentation: Debugging (Pandas)
-- **Nov 19**: Progress Review
-- **Nov 24**: TBD
+- **Nov 19**: Progress Review (orca, turtle, potato, iris, totoro)
+- **Nov 24**: Workshop
 - **Nov 26**: No class (Thanksgiving Break)
-- **Dec 1**: Presentation: "Fake it until you make it"
-- **Dec 3**: Progress Review 
-- **Dec 8**: Last day (Dec 9 Due final peer review, posters?)
+- **Dec 1**: Progress Review (hawks, whales, walrus, pandas, cactus, eagles)
+- **Dec 3**: Presentation: "Fake it until you make it" (potato-Theranos, volunteers?)
+- **Dec 8**: Progress Review (orca, turtle, potato, iris, totoro)
 
 * [SBU Academic Calendar](https://www.stonybrook.edu/commcms/registrar/calendars/academic_calendars)
 
