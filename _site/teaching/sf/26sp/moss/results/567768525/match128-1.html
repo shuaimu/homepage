@@ -1,0 +1,822 @@
+<HTML>
+<HEAD>
+<TITLE>./spring19/naveenanto-stonybrook/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./spring19/naveenanto-stonybrook/src/shardkv/server.go<p><PRE>
+package shardkv
+
+// import "shardmaster"
+// Discussed Config replication in log and Garbage collection cloning with Vidhya Sri Pandurangan (112025461)
+import (
+	"bytes"
+	"fmt"
+	"labrpc"
+	"shardmaster"
+	"time"
+)
+import "raft"
+import "sync"
+import "labgob"
+
+const WAIT_TIME int = 400
+const MASTER_POLL_TIME int = 90
+const INTERNAL_CLIENT_RETRY_TIMEOUT int = 10
+const CONFIG_OP = "ConfigChange"
+const DELETE_OP = "Delete_op"
+const INCOMING_SHARD_OP = "IncomingShard"
+
+const (
+	RETRY      = "retry"
+	DIE        = "die"
+	SET_DIE    = "set_die"
+	SUCCESS    = "success"
+	NOT_LEADER = "not_leader"
+)
+
+type ShardData struct {
+	Store           map[string]Value
+	LastSeenRequest map[int64]int
+}
+
+type TransferDataArgs struct {
+	TargetGroupNo int
+	Servers       []string
+	ShardNo       int
+	Config        int
+	Data          []byte
+}
+
+type TransferDataReply struct {
+	Status string
+}
+
+type Op struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+	Op             string
+	UID            int
+	ClientNo       int64
+	ShardNo        int
+	ClientConfigNo int
+
+	//Put/Append/Get requests
+	Key   string
+	Value string
+
+	//Union/Config request
+	Config    shardmaster.Config
+	ConfigNo  int
+	ShardData ShardData
+}
+
+type Value struct {
+	Value   string
+	ShardNo int
+}
+
+type ShardKV struct {
+	mu           sync.Mutex
+	me           int
+	rf           *raft.Raft
+	applyCh      chan raft.ApplyMsg
+	make_end     func(string) *labrpc.ClientEnd
+	gid          int
+	masters      []*labrpc.ClientEnd
+	maxraftstate int // snapshot if log grows this big
+
+	// Your definitions here.
+	Store             map[string]Value
+	LastSeenRequest   map[int64]int
+	receivedCommands  sync.Map
+	LastAppliedIndex  int
+	quit              chan bool
+	CurrentShards     []bool
+	LeftOverShards    []bool
+	LeftOverShardData map[int]map[int]TransferDataArgs
+	CurrentConfig     shardmaster.Config
+	persistor         *raft.Persister
+
+	mck *shardmaster.Clerk
+	Sno int
+}
+
+type ApplyResponseMessage struct {
+	config shardmaster.Config
+	msg    raft.ApplyMsg
+	value  string
+	err    Err
+	term   int
+}
+
+func (kv *ShardKV) LockMe() {
+	kv.mu.Lock()
+}
+
+func (kv *ShardKV) UnlockMe() {
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match128-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.mu.Unlock()
+}
+
+func (kv *ShardKV) isDuplicateRequest(op Op) bool {
+	id, ok := kv.LastSeenRequest[op.ClientNo]
+	return ok && op.UID &lt;= id
+}
+
+func (kv *ShardKV) isAcceptableShard(op Op, lock bool) bool {
+</FONT>	if op.Op == INCOMING_SHARD_OP || op.Op == CONFIG_OP || op.Op == DELETE_OP {
+		return true
+	}
+	if lock {
+		kv.mu.Lock()
+		defer kv.mu.Unlock()
+	}
+	return kv.CurrentShards[op.ShardNo]
+}
+
+func (kv *ShardKV) handleRPC(op Op) (wrongLeader bool, nextLeader int, err Err, value string, configNo int) {
+	nextLeader = -1
+	_, isLeader := kv.rf.GetState()
+	kv.LockMe()
+
+	if isLeader && !kv.isAcceptableShard(op, false) {
+
+		wrongLeader = false
+		err = ErrWrongGroup
+		kv.UnlockMe()
+		return
+	}
+
+	if isLeader && kv.isDuplicateRequest(op) {
+		wrongLeader = false
+		value = kv.Store[op.Key].Value
+		err = OK
+		kv.UnlockMe()
+		return
+	}
+	index, term, isLeader := kv.rf.Start(op)
+	kv.UnlockMe()
+	//NOTE: Remove this later
+	if !isLeader {
+		wrongLeader = true
+		return
+	}
+
+	wrongLeader = false
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match128-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	err = OK
+	//kv.receivedCommands[index] = make(chan ApplyResponseMessage)
+	channel := make(chan ApplyResponseMessage)
+	kv.LockMe()
+	_, ok := kv.receivedCommands.Load(index)
+	if ok {
+		fmt.Println("Duplicate received")
+	}
+	kv.receivedCommands.Store(index, channel)
+	kv.UnlockMe()
+</FONT>
+	select {
+	case appliedMessage := &lt;-channel:
+		kv.LockMe()
+		currentTerm := appliedMessage.term
+		if currentTerm == term {
+			wrongLeader = false
+			if kv.isAcceptableShard(op, false) {
+				err = OK
+				value = appliedMessage.value
+			} else {
+				configNo = kv.CurrentConfig.Num
+				err = ErrWrongGroup
+			}
+		} else {
+			wrongLeader = true
+		}
+		kv.receivedCommands.Delete(index)
+		kv.UnlockMe()
+	case &lt;-time.After(time.Duration(WAIT_TIME) * time.Millisecond):
+		kv.LockMe()
+		//fmt.Println("Timedout!")
+		err = ErrTimedOut
+		kv.receivedCommands.Delete(index)
+		kv.UnlockMe()
+	case &lt;-kv.quit:
+		kv.LockMe()
+		//fmt.Println("Dead!")
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match128-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		err = ErrTimedOut
+		kv.receivedCommands.Delete(index)
+		kv.UnlockMe()
+	}
+	return
+}
+
+func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
+	// Your code here.
+	op := Op{Key: args.Key, Op: "Get", UID: args.UID, ClientNo: args.ClientNo, ShardNo: args.ShardNo, ClientConfigNo: args.ConfigNo}
+</FONT><A NAME="2"></A><FONT color = #0000FF><A HREF="match128-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	reply.WrongLeader, _, reply.Err, reply.Value, reply.CurrentConfigNo = kv.handleRPC(op)
+
+}
+
+func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	// Your code here.
+	op := Op{Key: args.Key, Value: args.Value, Op: args.Op, UID: args.UID, ClientNo: args.ClientNo, ShardNo: args.ShardNo, ClientConfigNo: args.ConfigNo}
+</FONT>	reply.WrongLeader, _, reply.Err, _, reply.CurrentConfigNo = kv.handleRPC(op)
+	return
+}
+
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match128-0.html#7" TARGET="0"><IMG SRC="../../bitmaps/tm_2_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *ShardKV) applierLoop() {
+	for {
+		select {
+		case msg := &lt;-kv.applyCh:
+
+			responseMessage := ApplyResponseMessage{msg: msg, value: "", term: msg.Term}
+</FONT>
+			kv.LockMe()
+			if msg.UseSnapshot {
+				kv.DecodeSnapshot(msg.Command.([]byte))
+				kv.LastAppliedIndex = msg.CommandIndex
+				kv.UnlockMe()
+			} else {
+				if kv.LastAppliedIndex &gt;= msg.CommandIndex {
+					//fmt.Println("Mummy index!!")
+					kv.UnlockMe()
+					continue
+				}
+				kv.LastAppliedIndex = msg.CommandIndex
+				op := msg.Command.(Op)
+				if kv.isDuplicateRequest(op) {
+					if op.Op == "Get" {
+						responseMessage.value = kv.Store[op.Key].Value
+					}
+				} else {
+					if kv.isAcceptableShard(op, false) {
+						kv.applyToStateMachine(op, &responseMessage)
+					}
+				}
+				channel, ok := kv.receivedCommands.Load(msg.CommandIndex)
+				kv.takeSnapshotIfNeeded(msg, false)
+				kv.UnlockMe()
+				if ok {
+					channel.(chan ApplyResponseMessage) &lt;- responseMessage
+				}
+			}
+			//
+		case &lt;-kv.quit:
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match128-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			return
+		}
+	}
+}
+
+func (kv *ShardKV) applyToStateMachine(op Op, responseMessage *ApplyResponseMessage) {
+	switch op.Op {
+	case "Get":
+		value, ok := kv.Store[op.Key]
+		if ok {
+			responseMessage.value = value.Value
+</FONT>		}
+		break
+	case "Put":
+		kv.Store[op.Key] = Value{Value: op.Value, ShardNo: op.ShardNo}
+<A NAME="8"></A><FONT color = #00FFFF><A HREF="match128-0.html#8" TARGET="0"><IMG SRC="../../bitmaps/tm_3_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		break
+	case "Append":
+		value := ""
+		key, ok := kv.Store[op.Key]
+		if ok {
+			value = key.Value
+</FONT>		}
+		kv.Store[op.Key] = Value{Value: value + op.Value, ShardNo: op.ShardNo}
+		break
+	case CONFIG_OP:
+		//NOTE: check if condition required
+		if op.Config.Num &gt; kv.CurrentConfig.Num && kv.checkCompleteness(false) {
+			kv.applyConfig(op.Config)
+		}
+		break
+	case INCOMING_SHARD_OP:
+		if op.ConfigNo == kv.CurrentConfig.Num {
+			kv.updateDataStoreWithIncomingData(op.ShardNo, op.ShardData)
+		}
+		break
+	case DELETE_OP:
+		kv.LeftOverShards[op.ShardNo] = false
+		delete(kv.LeftOverShardData[op.ConfigNo], op.ShardNo)
+		if len(kv.LeftOverShardData[op.ConfigNo]) == 0 {
+			delete(kv.LeftOverShardData, op.ConfigNo)
+		}
+	default:
+		fmt.Errorf("Incorrect operation\n")
+	}
+	//fmt.Println("Processing ", op.ClientNo,"-",op.UID,"-", kv.me, kv.LastSeenRequest[-1])
+	kv.LastSeenRequest[op.ClientNo] = op.UID
+}
+
+func (kv *ShardKV) updateDataStoreWithIncomingData(shardNo int, shardData ShardData) {
+	for key, value := range shardData.Store {
+		kv.Store[key] = value
+	}
+	for key, value := range shardData.LastSeenRequest {
+		// if I've not seen this clientId or if this request no is greater than what I've seen
+		if myValue, ok := kv.LastSeenRequest[key]; !ok || myValue &lt; value {
+			kv.LastSeenRequest[key] = value
+		}
+	}
+	kv.CurrentShards[shardNo] = true
+}
+
+func (kv *ShardKV) EncodeSnapshot() []byte {
+	snapBuffer := new(bytes.Buffer)
+	snapEncoder := labgob.NewEncoder(snapBuffer)
+	snapEncoder.Encode(kv.Store)
+	snapEncoder.Encode(kv.LastSeenRequest)
+	snapEncoder.Encode(kv.LastAppliedIndex)
+	snapEncoder.Encode(kv.CurrentShards)
+	snapEncoder.Encode(kv.CurrentConfig)
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match128-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	snapEncoder.Encode(kv.Sno)
+	snapEncoder.Encode(kv.LeftOverShards)
+	snapEncoder.Encode(kv.LeftOverShardData)
+	return snapBuffer.Bytes()
+}
+
+func (kv *ShardKV) DecodeSnapshot(data []byte) {
+	if data == nil || len(data) &lt; 1 { // bootstrap without any state?
+		return
+</FONT>	}
+	//fmt.Println("Reading from snapshot", kv.me)
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var kvstate map[string]Value
+	var lastSeenRequest map[int64]int
+	var lastAppliedIndex int
+	var currentShards []bool
+	var currentConfig shardmaster.Config
+	var sno int
+	var leftOverShards []bool
+	var leftOverData map[int]map[int]TransferDataArgs
+	if d.Decode(&kvstate) != nil ||
+		d.Decode(&lastSeenRequest) != nil ||
+		d.Decode(&lastAppliedIndex) != nil ||
+		d.Decode(&currentShards) != nil ||
+		d.Decode(&currentConfig) != nil ||
+		d.Decode(&sno) != nil ||
+		d.Decode(&leftOverShards) != nil ||
+		d.Decode(&leftOverData) != nil {
+		fmt.Println("Error decoding from persistent state-kv")
+	} else {
+		kv.Store = kvstate
+		kv.LastSeenRequest = lastSeenRequest
+		kv.LastAppliedIndex = lastAppliedIndex
+		kv.CurrentShards = currentShards
+		kv.CurrentConfig = currentConfig
+		kv.Sno = sno
+		kv.LeftOverShards = leftOverShards
+		kv.LeftOverShardData = leftOverData
+	}
+}
+
+func (kv *ShardKV) takeSnapshotIfNeeded(msg raft.ApplyMsg, lock bool) {
+	if lock {
+		kv.LockMe()
+		defer kv.UnlockMe()
+	}
+	index := msg.CommandIndex
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match128-0.html#6" TARGET="0"><IMG SRC="../../bitmaps/tm_1_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	raftSize := kv.persistor.RaftStateSize()
+	if kv.maxraftstate &gt; 0 && raftSize &gt;= int(float64(kv.maxraftstate)*0.9) {
+		kv.rf.SaveSnapshot(index, kv.EncodeSnapshot())
+</FONT>	} else if kv.maxraftstate &gt; 0 && msg.Command.(Op).Op == CONFIG_OP {
+		kv.rf.SaveSnapshot(index, kv.EncodeSnapshot())
+	}
+}
+
+/**
+New functions
+*/
+
+func (kv *ShardKV) initializeCurrentShard(newShard [shardmaster.NShards]int) {
+	for i, gid := range newShard {
+		if gid == kv.gid {
+			kv.CurrentShards[i] = true
+		}
+	}
+}
+
+func (kv *ShardKV) findLeavingShards(oldShard [shardmaster.NShards]int, newShard [shardmaster.NShards]int) []int {
+	var leavingShards []int
+	for index, oldShardGid := range oldShard {
+		if oldShardGid == kv.gid && newShard[index] != kv.gid {
+			leavingShards = append(leavingShards, index)
+		}
+	}
+	return leavingShards
+}
+
+func (kv *ShardKV) applyConfig(newConfig shardmaster.Config) {
+	defer func() {
+		kv.CurrentConfig = newConfig.Clone()
+	}()
+
+	if kv.CurrentConfig.Num == 0 {
+		//NOTE: Initial configuration
+		kv.initializeCurrentShard(newConfig.Shards)
+		return
+	}
+
+	leavingShards := kv.findLeavingShards(kv.CurrentConfig.Shards, newConfig.Shards)
+
+	//fmt.Println(kv.gid, leavingShards)
+	for _, leavingShardIndex := range leavingShards {
+		kv.CurrentShards[leavingShardIndex] = false
+		kv.LeftOverShards[leavingShardIndex] = true
+		kv.prepareDataToSend(leavingShardIndex, newConfig)
+		//go kv.transferData(leavingShardIndex, newConfig.Groups[receivingGrpId])
+		kv.clearStore(leavingShardIndex)
+	}
+}
+
+func (kv *ShardKV) prepareDataToSend(shardNo int, newConfig shardmaster.Config) {
+	kvstore := kv.getEntriesOf(shardNo)
+	//duplicateMapClone := kv.cloneDuplicateMap()
+	receivingGrpId := newConfig.Shards[shardNo]
+	servers := newConfig.Groups[receivingGrpId]
+	data := kv.EncodeOutgoingData(ShardData{Store: kvstore})
+	transferDataArg := TransferDataArgs{TargetGroupNo: receivingGrpId, ShardNo: shardNo, Data: data, Servers: servers, Config: newConfig.Num}
+	if _, ok := kv.LeftOverShardData[newConfig.Num]; !ok {
+		kv.LeftOverShardData[newConfig.Num] = make(map[int]TransferDataArgs)
+	}
+	//fmt.Println("Sending ", shardNo, "because of conf:", newConfig.Num)
+	kv.LeftOverShardData[newConfig.Num][shardNo] = transferDataArg
+	//fmt.Println(kv.LeftOverShardData)
+}
+
+func (kv *ShardKV) checkCompleteness(lock bool) bool {
+	if lock {
+		kv.LockMe()
+		defer kv.UnlockMe()
+	}
+
+	//fmt.Println("Before")
+
+	for index, gid := range kv.CurrentConfig.Shards {
+		if gid == kv.gid && kv.CurrentShards[index] == false {
+			return false
+		}
+		//if kv.LeftOverShards[index] {
+		//	return false
+		//}
+	}
+
+	return true
+}
+
+func (kv *ShardKV) getEntriesOf(shardNo int) (preciseKvStore map[string]Value) {
+	//kv.LockMe()
+	//defer kv.UnlockMe()
+	preciseKvStore = make(map[string]Value)
+
+	for key, value := range kv.Store {
+		if value.ShardNo == shardNo {
+			preciseKvStore[key] = value
+		}
+	}
+	return
+}
+
+func (kv *ShardKV) cloneDuplicateMap() (clonedMap map[int64]int) {
+	clonedMap = make(map[int64]int)
+
+	for key, value := range kv.LastSeenRequest {
+		if key == -1 {
+			continue
+		}
+		clonedMap[key] = value
+	}
+	return
+}
+
+func (kv *ShardKV) transferData(arg TransferDataArgs) {
+	if _, leader := kv.rf.GetState(); !leader {
+		return
+	}
+	//for {
+	select {
+	case &lt;-kv.quit:
+		return
+	default:
+		for _, server := range arg.Servers {
+			srv := kv.make_end(server)
+			var reply TransferDataReply
+			ok := srv.Call("ShardKV.ProcessIncomingShard", &arg, &reply)
+
+			if ok {
+				switch reply.Status {
+				case NOT_LEADER:
+					//time.Sleep(10 * time.Millisecond)
+					break
+				case RETRY:
+					//time.Sleep(10 * time.Millisecond)
+					return
+				case DIE:
+					//WARNING: This might be old reply so don't change LeftOverShards
+					//WARNING: because that could be unreachable in current config too
+					//WARNING: old request
+					fmt.Println("DIE")
+					return
+
+				case SUCCESS:
+					go kv.internalClient(Op{Op: DELETE_OP, ConfigNo: arg.Config, ShardNo: arg.ShardNo})
+					//fmt.Println(kv.gid, "Has the sender completed for conf", kv.CurrentConfig.Num, "?", kv.checkCompleteness(false))
+					return
+				}
+			}
+		}
+	}
+	//}
+}
+func (kv *ShardKV) clearStore(shardNo int) {
+	if kv.CurrentShards[shardNo] == false {
+		var toBeRemovedKey []string
+		for k, v := range kv.Store {
+			if v.ShardNo == shardNo {
+				toBeRemovedKey = append(toBeRemovedKey, k)
+			}
+		}
+		for _, v := range toBeRemovedKey {
+			delete(kv.Store, v)
+		}
+	}
+}
+
+func (kv *ShardKV) ProcessIncomingShard(args *TransferDataArgs, reply *TransferDataReply) {
+	incomingConfig := args.Config
+
+	if _, leader := kv.rf.GetState(); !leader {
+		reply.Status = NOT_LEADER
+		return
+	}
+	kv.LockMe()
+	if incomingConfig &gt; kv.CurrentConfig.Num {
+		reply.Status = RETRY
+		kv.UnlockMe()
+		return
+	}
+
+	if incomingConfig &lt; kv.CurrentConfig.Num {
+		reply.Status = SUCCESS
+		kv.UnlockMe()
+		return
+	}
+
+	// 1 -&gt; 2
+	shardStatus := kv.CurrentShards[args.ShardNo]
+	kv.UnlockMe()
+	if shardStatus == false {
+		//TODO: Call internal client for union
+		kv.internalClient(Op{Op: INCOMING_SHARD_OP, ShardData: kv.DecodeIncomingData(args.Data), ShardNo: args.ShardNo, ConfigNo: incomingConfig})
+		kv.LockMe()
+		if kv.CurrentShards[args.ShardNo] {
+			reply.Status = SUCCESS
+		} else {
+			reply.Status = RETRY
+		}
+		kv.UnlockMe()
+
+	} else {
+		reply.Status = SUCCESS
+	}
+
+}
+
+func (kv *ShardKV) EncodeOutgoingData(shardData ShardData) (data []byte) {
+	snapBuffer := new(bytes.Buffer)
+	snapEncoder := labgob.NewEncoder(snapBuffer)
+	snapEncoder.Encode(shardData)
+	return snapBuffer.Bytes()
+}
+
+func (kv *ShardKV) DecodeIncomingData(data []byte) (shardData ShardData) {
+	if data == nil || len(data) &lt; 1 { // bootstrap without any state?
+		return
+	}
+	//fmt.Println("Reading from snapshot", kv.me)
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	if d.Decode(&shardData) != nil {
+		fmt.Println("Error decoding from persistent state-kv")
+		return shardData
+	} else {
+		return shardData
+	}
+}
+
+func (kv *ShardKV) getSerialNo() int {
+	kv.LockMe()
+	defer kv.UnlockMe()
+	kv.Sno += 1
+	return kv.Sno
+}
+
+//func (kv *ShardKV) internalClient(op Op) bool {
+//	var clientNo int64 = -1
+//	sno := kv.getSerialNo()
+//	op.ClientNo = clientNo
+//	op.UID = sno
+//	kv.LockMe()
+//	op.ClientConfigNo = kv.CurrentConfig.Num
+//	kv.UnlockMe()
+//
+//	//for {
+//	select {
+//	case &lt;-kv.quit:
+//		return false
+//	default:
+//		wrongLeader, _, err, _, _ := kv.handleRPC(op)
+//		if wrongLeader {
+//			return false
+//		}
+//
+//		switch err {
+//		case ErrWrongGroup:
+//			fmt.Errorf("Not expecting wrong group during internal client call\n")
+//			return false
+//		case ErrTimedOut:
+//			time.Sleep(time.Duration(INTERNAL_CLIENT_RETRY_TIMEOUT) * time.Millisecond)
+//			break
+//		case OK:
+//			//fmt.Println("Ok command received after ",op)
+//			return true
+//		default:
+//			return true
+//		}
+//	}
+//	//}
+//	return false
+//}
+
+func (kv *ShardKV) internalClient(op Op) {
+	sno := kv.getSerialNo()
+	op.ClientNo = -1
+	op.UID = sno
+	kv.LockMe()
+	op.ClientConfigNo = kv.CurrentConfig.Num
+	kv.rf.Start(op)
+	kv.UnlockMe()
+	//if _, leader := kv.rf.GetState(); leader {
+	//}
+}
+
+func (kv *ShardKV) checkMasterForUpdate() {
+	for {
+		select {
+		case &lt;-kv.quit:
+			return
+		case &lt;-time.After(time.Duration(MASTER_POLL_TIME) * time.Millisecond):
+			_, leader := kv.rf.GetState()
+			kv.LockMe()
+			currentConfig := kv.CurrentConfig
+			kv.UnlockMe()
+			if leader {
+				if kv.checkCompleteness(true) {
+					newConfig := kv.mck.Query(currentConfig.Num + 1)
+					if newConfig.Num &gt; currentConfig.Num {
+						op := Op{Op: CONFIG_OP, Config: newConfig.Clone()}
+						go kv.internalClient(op)
+					}
+				}
+				kv.LockMe()
+				for _, shardsWithData := range kv.LeftOverShardData {
+					for _, transferDataArgs := range shardsWithData {
+						//fmt.Println("Data yet to be sent from ", kv.gid, "to", transferDataArgs.TargetGroupNo, "on config:", transferDataArgs.Config.Num, "for shard:", transferDataArgs.ShardNo)
+						shardData := kv.DecodeIncomingData(transferDataArgs.Data)
+						shardData.LastSeenRequest = kv.cloneDuplicateMap()
+						transferDataArgs.Data = kv.EncodeOutgoingData(shardData)
+						go kv.transferData(transferDataArgs)
+					}
+				}
+				kv.UnlockMe()
+			}
+		}
+	}
+}
+
+func (kv *ShardKV) sendLeftOverData() {
+	for {
+		select {
+		case &lt;-kv.quit:
+			return
+		case &lt;-time.After(100 * time.Millisecond):
+			if _, leader := kv.rf.GetState(); !leader {
+				break
+			}
+			kv.LockMe()
+			for _, shardsWithData := range kv.LeftOverShardData {
+				for _, transferDataArgs := range shardsWithData {
+					//fmt.Println("Data yet to be sent from ", kv.gid, "to", transferDataArgs.TargetGroupNo, "on config:", transferDataArgs.Config.Num, "for shard:", transferDataArgs.ShardNo)
+					shardData := kv.DecodeIncomingData(transferDataArgs.Data)
+					shardData.LastSeenRequest = kv.cloneDuplicateMap()
+					transferDataArgs.Data = kv.EncodeOutgoingData(shardData)
+					go kv.transferData(transferDataArgs)
+				}
+			}
+
+			kv.UnlockMe()
+		}
+
+	}
+}
+
+//
+// the tester calls Kill() when a ShardKV instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *ShardKV) Kill() {
+	kv.rf.Kill()
+	// Your code here, if desired.
+	//fmt.Println(kv.gid, "is shutting down")
+	close(kv.quit)
+}
+
+//
+// servers[] contains the ports of the servers in this group.
+//
+// me is the index of the current server in servers[].
+//
+// the k/v server should Store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+//
+// the k/v server should snapshot when Raft's saved state exceeds
+// maxraftstate bytes, in order to allow Raft to garbage-collect its
+// log. if maxraftstate is -1, you don't need to snapshot.
+//
+// gid is this group's GID, for interacting with the shardmaster.
+//
+// pass masters[] to shardmaster.MakeClerk() so you can send
+// RPCs to the shardmaster.
+//
+// make_end(servername) turns a server name from a
+// Config.Groups[gid][i] into a labrpc.ClientEnd on which you can
+// send RPCs. You'll need this to send RPCs to other groups.
+//
+// look at client.go for examples of how to use masters[]
+// and make_end() to send RPCs to the group owning a specific shard.
+//
+// StartServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int, gid int, masters []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *ShardKV {
+	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+
+	kv := new(ShardKV)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+	kv.make_end = make_end
+	kv.gid = gid
+	kv.masters = masters
+	kv.persistor = persister
+
+	// Your initialization code here.
+
+	// Use something like this to talk to the shardmaster:
+	kv.mck = shardmaster.MakeClerk(kv.masters)
+	kv.CurrentConfig = shardmaster.Config{Num: 0}
+	kv.CurrentShards = make([]bool, shardmaster.NShards)
+	kv.LeftOverShards = make([]bool, shardmaster.NShards)
+	kv.LastSeenRequest = make(map[int64]int)
+	kv.Store = make(map[string]Value)
+	kv.LeftOverShardData = make(map[int]map[int]TransferDataArgs)
+	kv.quit = make(chan bool)
+	kv.Sno = 1
+	kv.DecodeSnapshot(kv.persistor.ReadSnapshot())
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+	kv.rf.Gid = kv.gid
+	go kv.applierLoop()
+	go kv.checkMasterForUpdate()
+	//go kv.sendLeftOverData()
+
+	return kv
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

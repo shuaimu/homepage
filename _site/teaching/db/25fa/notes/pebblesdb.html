@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>PebblesDB | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="PebblesDB" />
+<meta property="og:locale" content="en_US" />
+<link rel="canonical" href="http://localhost:4000/teaching/db/25fa/notes/pebblesdb.html" />
+<meta property="og:url" content="http://localhost:4000/teaching/db/25fa/notes/pebblesdb.html" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="PebblesDB" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"PebblesDB","url":"http://localhost:4000/teaching/db/25fa/notes/pebblesdb.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"><link type="application/atom+xml" rel="alternate" href="http://localhost:4000/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>PebblesDB</h1>
+         </header> -->
+
+  <section>
+    <h1 id="pebblesdb">PebblesDB</h1>
+<h2 id="goals">Goals</h2>
+<ul>
+  <li>Reduce write amplification in key-value stores
+    <ul>
+      <li>LSM trees (LevelDB, RocksDB) suffer from high write amplification</li>
+      <li>Write amplification = Total write IO / User data written</li>
+      <li>Critical for SSDs with limited write cycles</li>
+    </ul>
+  </li>
+  <li>Maintain high performance
+    <ul>
+      <li>High write throughput</li>
+      <li>Good read throughput</li>
+      <li>Support range queries</li>
+    </ul>
+  </li>
+  <li>Work with existing infrastructure
+    <ul>
+      <li>API-compatible with LevelDB family</li>
+      <li>Drop-in replacement for applications</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="problem-lsm-write-amplification">Problem: LSM Write Amplification</h2>
+<ul>
+  <li>Root cause: maintaining sorted order requires rewriting data
+    <ul>
+      <li>Compaction merges overlapping sstables</li>
+      <li>Data rewritten multiple times as it moves through levels</li>
+      <li>Example: 500M key-value pairs (45GB) → 1868GB write IO (42× amplification)</li>
+    </ul>
+  </li>
+  <li>Impact on SSDs:
+    <ul>
+      <li>Limited write cycles (P/E cycles)</li>
+      <li>Device wear-out and replacement costs</li>
+      <li>Reduced write throughput (10% of read throughput in RocksDB)</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="key-design-fragmented-lsm-trees-flsm">Key Design: Fragmented LSM Trees (FLSM)</h2>
+<ul>
+  <li>Core insight: Don’t rewrite data in the same level
+    <ul>
+      <li>Fragment sstables into smaller units</li>
+      <li>Append new fragments instead of merging</li>
+      <li>Organize with guards (inspired by skip lists)</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="guards-organizing-fragmented-data">Guards: Organizing Fragmented Data</h3>
+<ul>
+  <li>What are guards?
+    <ul>
+      <li>Keys selected from inserted data that divide key space</li>
+      <li>Each guard has associated sstables</li>
+      <li>Guards form a skip-list-like structure across levels</li>
+    </ul>
+  </li>
+  <li>Guard selection:
+    <ul>
+      <li>Probabilistically chosen from inserted keys</li>
+      <li>If key K is guard at level i, also guard at levels &gt; i</li>
+      <li>More guards at deeper levels (progressively finer-grained)</li>
+    </ul>
+  </li>
+  <li>Example structure:
+    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Level 1: Guard 5 ──────────────────────────
+Level 2: Guard 5 ────── Guard 375 ─────────
+Level 3: Guard 5 ─ Guard 100 ─ Guard 375 ─ Guard 1023
+</code></pre></div>    </div>
+  </li>
+</ul>
+
+<h3 id="flsm-compaction">FLSM Compaction</h3>
+<ul>
+  <li>Instead of merging sstables:
+    <ol>
+      <li>Sort sstables in guard</li>
+      <li>Fragment (partition) based on child guards</li>
+      <li>Append fragments to child guards in next level</li>
+    </ol>
+  </li>
+  <li>Benefits:
+    <ul>
+      <li>Data written once per level (except highest)</li>
+      <li>Compaction is parallelizable (guards are independent)</li>
+      <li>2.5× faster compaction than LSM</li>
+    </ul>
+  </li>
+  <li>Example: Guard with keys {1, 20, 45, 101, 245}
+    <ul>
+      <li>Next level has guards 1, 40, 200</li>
+      <li>Partitioned into: {1, 20}, {45, 101}, {245}</li>
+      <li>Fragments appended to respective guards</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="lookup-complexity-flsm-vs-lsm">Lookup Complexity: FLSM vs LSM</h2>
+
+<h3 id="normal-lsm">Normal LSM</h3>
+<ul>
+  <li><strong>O(L)</strong> disk accesses where L = number of levels
+    <ul>
+      <li>Exactly 1 sstable per level examined (disjoint key ranges)</li>
+      <li>Binary search to find right sstable, then search within</li>
+    </ul>
+  </li>
+  <li>With bloom filters: Often just 1 disk access in practice</li>
+</ul>
+
+<h3 id="pebblesdb-flsm">PebblesDB (FLSM)</h3>
+<ul>
+  <li><strong>O(L × G)</strong> disk accesses worst case
+    <ul>
+      <li>L = number of levels</li>
+      <li>G = number of sstables per guard</li>
+      <li>Must examine all sstables within one guard per level</li>
+    </ul>
+  </li>
+  <li>With bloom filters: <strong>O(L)</strong> disk accesses
+    <ul>
+      <li>Bloom filters eliminate ~99% of unnecessary reads</li>
+      <li>Usually examining 1+o(1) sstables per level</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="theoretical-analysis-disk-access-model">Theoretical Analysis (Disk Access Model)</h3>
+<ul>
+  <li>Assumptions: Block size B, n total items</li>
+  <li>FLSM with bloom filters:
+    <ul>
+      <li>O(log₂n × logᵦn) in-memory operations for finding guards</li>
+      <li>O(1) amortized disk reads (bloom filters indicate ~1 sstable)</li>
+    </ul>
+  </li>
+  <li>LSM with bloom filters: Also O(1) disk reads</li>
+</ul>
+
+<h3 id="practical-impact">Practical Impact</h3>
+<ul>
+  <li>Without bloom filters: FLSM has significant overhead</li>
+  <li>With bloom filters: Comparable complexity
+    <ul>
+      <li>PebblesDB achieves 27% better read throughput than RocksDB</li>
+      <li>Larger sstables = better cache utilization</li>
+    </ul>
+  </li>
+  <li><strong>Key insight</strong>: Bloom filters are critical for FLSM performance</li>
+</ul>
+
+<h2 id="optimizations-for-read-performance">Optimizations for Read Performance</h2>
+
+<h3 id="sstable-bloom-filters">Sstable Bloom Filters</h3>
+<ul>
+  <li>Problem: FLSM reads multiple sstables per guard</li>
+  <li>Solution: Bloom filter per sstable
+    <ul>
+      <li>Space-efficient probabilistic data structure</li>
+      <li>Eliminates ~99% of unnecessary sstable reads</li>
+      <li>Critical for maintaining read performance</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="parallel-seeks">Parallel Seeks</h3>
+<ul>
+  <li>Problem: Range queries examine multiple sstables</li>
+  <li>Solution: Multi-threaded sstable search
+    <ul>
+      <li>Each thread reads one sstable</li>
+      <li>Binary search in parallel</li>
+      <li>Merge results</li>
+      <li>Used only for last level (not cached)</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="seek-based-compaction">Seek-Based Compaction</h3>
+<ul>
+  <li>Triggered by consecutive seek operations (default: 10)</li>
+  <li>Merges sstables within guard to reduce seek overhead</li>
+  <li>Aggressive level compaction when level i within 25% of level i+1</li>
+</ul>
+
+<h2 id="performance-results">Performance Results</h2>
+
+<h3 id="write-amplification-reduction">Write Amplification Reduction</h3>
+<ul>
+  <li>500M key-value pairs insertion:
+    <ul>
+      <li>PebblesDB: 756GB IO (17× amplification)</li>
+      <li>RocksDB: 1868GB IO (42× amplification)</li>
+      <li>HyperLevelDB: 1822GB IO (40× amplification)</li>
+    </ul>
+  </li>
+  <li>2.4-3× reduction in write amplification</li>
+</ul>
+
+<h3 id="throughput-improvements">Throughput Improvements</h3>
+<ul>
+  <li>Random writes: 6.7× better than RocksDB</li>
+  <li>Random reads: 27% better than RocksDB</li>
+  <li>Updates: 2.15× better than HyperLevelDB</li>
+  <li>Real applications:
+    <ul>
+      <li>MongoDB: 18-105% throughput increase</li>
+      <li>HyperDex: up to 59% throughput increase</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="trade-offs">Trade-offs</h3>
+<ul>
+  <li>Small range queries on fully compacted store: 30% overhead
+    <ul>
+      <li>Overhead drops to 11% for large range queries</li>
+      <li>Disappears when interspersed with writes</li>
+    </ul>
+  </li>
+  <li>Sequential inserts: Higher write IO than LSM
+    <ul>
+      <li>LSM can just move sstables without rewriting</li>
+      <li>FLSM must partition even non-overlapping data</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="key-insights">Key Insights</h2>
+<ul>
+  <li>Write amplification isn’t fundamental to sorted storage
+    <ul>
+      <li>Can maintain partial sorting with guards</li>
+      <li>Fragment and organize instead of merge and rewrite</li>
+    </ul>
+  </li>
+  <li>Guards enable efficient parallel compaction
+    <ul>
+      <li>Each guard compacts independently</li>
+      <li>Better utilization of SSD parallelism</li>
+    </ul>
+  </li>
+  <li>Bloom filters crucial for fragmented designs
+    <ul>
+      <li>Overhead of checking multiple sstables</li>
+      <li>Probabilistic filters make this practical</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="when-to-use-pebblesdb">When to Use PebblesDB</h2>
+<ul>
+  <li>Good for:
+    <ul>
+      <li>Write-intensive workloads</li>
+      <li>Mixed read-write workloads</li>
+      <li>Large datasets that don’t fit in memory</li>
+      <li>Applications sensitive to write amplification</li>
+    </ul>
+  </li>
+  <li>Not ideal for:
+    <ul>
+      <li>Small datasets that fit in memory</li>
+      <li>Sequential key insertions</li>
+      <li>Read-only workloads after initial bulk load</li>
+      <li>Workloads dominated by small range queries</li>
+    </ul>
+  </li>
+</ul>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
+<script async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script>
+</body>
+
+</html>

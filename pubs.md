@@ -20,6 +20,22 @@ Stony Brook University <br>
 
 ## Publications
    <ul>
+       <li>
+      AutoMan: Facilitating Verified Distributed Systems Development Through Automatic Code Generation and Manual Optimizations
+      [<a href="./pub/automan-sosp25.pdf">paper</a>]
+      <br>
+      Zihao Zhang, Ti Zhou, Christa Jenkins, Omar Chowdhury, Shuai Mu
+      <br>
+      SOSP 25
+    </li>
+    <li>
+      Tiga: Accelerating Geo-Distributed Transactions with Synchronized Clocks
+      [<a href="./pub/tiga-sosp25.pdf">paper</a>]
+      <br>
+      Jinkun Geng, Shuai Mu, Anirudh Sivaraman, Balaji Prabhakar
+      <br>
+      SOSP 25
+    </li>
      <li>
      Mako: Speculative Distributed Transactions with Geo-Replication
      [<a href="https://www.usenix.org/system/files/osdi25-shen-weihai.pdf">paper</a>]
@@ -28,6 +44,16 @@ Stony Brook University <br>
      <br>
      OSDI 25
      </li>
+     <li>
+      CausalMesh: A Causal Cache for Stateful Serverless Computing
+      [<a href="https://www.cis.upenn.edu/~sga001/papers/causalmesh-vldb25.pdf">paper</a>]
+      <br>
+      Haoran Zhang, Shuai Mu, Sebastian Angel, Vincent Liu
+      <br>
+      PVLDB 24, Best Paper Award Nominee
+      <br>
+      ACM SIGMOD Research Highlight Award
+    </li>
      <li>
      Viper: A Fast Snapshot Isolation Checker 
      [<a href="./pub/viper-eurosys23.pdf">paper</a>]

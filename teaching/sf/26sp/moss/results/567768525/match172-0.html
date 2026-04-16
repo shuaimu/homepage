@@ -1,0 +1,282 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/vmylsamy/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/vmylsamy/src/kvraft/server.go<p><PRE>
+package raftkv
+
+import (
+	"bytes"
+	"fmt"
+	"labgob"
+	"labrpc"
+	"log"
+	"raft"
+	"sync"
+	//"time"
+)
+
+const Debug = 0
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+type Op struct {
+	Type               	string
+	Key                	string
+	Value              	string
+	EventId            	int64
+	CliendId           	int64
+	IsAlreadyProcessed 	bool
+	IsCommandValid 		bool
+}
+
+type ClientWait struct{
+	Index int
+	ch chan Op
+}
+
+type KVServer struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	persister *raft.Persister
+	applyCh chan raft.ApplyMsg
+
+	kvData            map[string]string
+	cliendIdToEventId map[int64]int64
+	channelPerClient  map[int64]ClientWait
+	maxRaftState      int
+
+	LastApplied int
+	isAlive bool
+	snapShot raft.SnapShotT
+	takeSnapShot bool
+
+}
+
+
+func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
+	operation := Op{ Type: OP_GET, Key: args.Key, EventId: args.EventId, CliendId: args.CliendId,}
+
+	clientCh := make(chan Op)
+	index,_,isLeader:=kv.rf.Start(operation)
+	if !isLeader {
+		reply.WrongLeader = true
+	} else {
+		kv.mu.Lock()
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match172-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		clientWait := ClientWait { Index: index, ch: clientCh,}
+		kv.channelPerClient[args.CliendId] = clientWait
+		kv.mu.Unlock()
+</FONT><A NAME="4"></A><FONT color = #FF00FF><A HREF="match172-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		appliedOp := &lt;- clientCh
+		kv.mu.Lock()
+		if (appliedOp.IsCommandValid && (appliedOp.CliendId == operation.CliendId && appliedOp.EventId == operation.EventId &&
+			appliedOp.Key == operation.Key && appliedOp.Type == operation.Type )) || appliedOp.IsAlreadyProcessed {
+</FONT>			reply.WrongLeader = false;
+			reply.Value = appliedOp.Value
+		} else {
+			reply.Err = ErrMsgLost
+		}
+		kv.mu.Unlock()
+	}
+	close(clientCh)
+}
+
+func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+
+	operation := Op{ Type: args.Op, Key: args.Key, EventId: args.EventId, CliendId: args.CliendId, Value: args.Value,}
+	clientCh := make(chan Op)
+	index,_,isLeader :=kv.rf.Start(operation)
+	if !isLeader{
+		reply.WrongLeader = true
+	} else {
+		kv.mu.Lock()
+		clientWait := ClientWait { Index: index, ch: clientCh,}
+		kv.channelPerClient[args.CliendId] = clientWait
+		kv.mu.Unlock()
+		appliedOp := &lt;- clientCh
+		kv.mu.Lock()
+		if (appliedOp.IsCommandValid && (appliedOp.CliendId == operation.CliendId && appliedOp.EventId == operation.EventId &&
+			appliedOp.Key == operation.Key && appliedOp.Type == operation.Type && appliedOp.Value == operation.Value)) ||
+			appliedOp.IsAlreadyProcessed {
+
+			reply.WrongLeader = false;
+		} else {
+			reply.Err = ErrMsgLost
+		}
+		kv.mu.Unlock()
+	}
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match172-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	close(clientCh)
+}
+
+func (kv *KVServer) Kill() {
+	kv.rf.Kill()
+	kv.mu.Lock()
+	kv.isAlive = false
+	kv.mu.Unlock()
+	kv.applyCh &lt;- raft.ApplyMsg{ CommandValid: false, Command: "Kill", CommandIndex: -1,}
+</FONT>
+}
+
+func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
+	labgob.Register(Op{})
+	kv := new(KVServer)
+	kv.isAlive = true
+	kv.me = me
+	kv.persister = persister
+	kv.maxRaftState = maxraftstate
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.kvData = make(map[string]string)
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match172-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.channelPerClient = make(map[int64]ClientWait)
+	kv.cliendIdToEventId = make(map[int64]int64)
+	go kv.startApplyMessageHandler()
+
+	kv.snapShot = kv.readSnapShot(persister.ReadSnapshot())
+</FONT>	kv.rf = raft.MakeWithSnapShot(servers, me, persister, kv.applyCh,kv.snapShot)
+	return kv
+}
+
+func (kv *KVServer) startApplyMessageHandler(){
+	for {
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match172-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		msg := &lt;- kv.applyCh
+		var currCmd  Op
+		if msg.CommandValid {
+		currCmd = msg.Command.(Op)
+			kv.processMsg(currCmd)
+		} else {
+			currCmd = Op{
+				IsCommandValid: false,
+			}
+			go kv.sendMsgToWaitingClients(currCmd, kv.LastApplied)
+			if msg.Command.(string) == "InstallSnapshot" {
+</FONT>				kv.readSnapShot(kv.rf.Snapshot.Data)
+				kv.rf.RespondToApplyMsg()
+			} else if msg.Command.(string) == "Kill" {
+				break
+			}
+		}
+	}
+}
+
+func (kv *KVServer) processMsg(currCmd Op){
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match172-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	currCmd.IsCommandValid = true
+	lastProcEventId := kv.cliendIdToEventId[currCmd.CliendId]
+	if currCmd.Type != OP_GET {
+		if lastProcEventId &lt; currCmd.EventId {
+			if currCmd.Type == OP_PUT {
+				kv.kvData[currCmd.Key] = currCmd.Value
+</FONT>			} else {
+				val, ok := kv.kvData[currCmd.Key]
+				if ok {
+					kv.kvData[currCmd.Key] = val + currCmd.Value
+				} else {
+					kv.kvData[currCmd.Key] = currCmd.Value
+				}
+			}
+		} else {
+			currCmd.IsAlreadyProcessed = true;
+		}
+	} else {
+		currCmd.Value = kv.kvData[currCmd.Key]
+	}
+
+	kv.cliendIdToEventId[currCmd.CliendId] = currCmd.EventId
+	kv.LastApplied++
+	if kv.maxRaftState != -1 && kv.persister.RaftStateSize() &gt;= kv.maxRaftState {
+		kv.compactLogs()
+	}
+
+	kv.rf.RespondToApplyMsg()
+	go kv.sendMsgToWaitingClients(currCmd, kv.LastApplied)
+}
+
+func (kv *KVServer) sendMsgToWaitingClients(msg Op, appliedIndex int){
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match172-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.mu.Lock()
+	for k, v := range kv.channelPerClient {
+		if appliedIndex == v.Index || (!msg.IsCommandValid ){
+			v.ch &lt;- msg
+			delete(kv.channelPerClient, k)
+		}
+	}
+	kv.mu.Unlock()
+}
+
+
+func (kv *KVServer) readSnapShot(data []byte) raft.SnapShotT {
+</FONT>
+	snapshot := raft.SnapShotT{
+		LastIncludedIndex: -1,
+		LastIncludedTerm:  -1,
+		Data:              nil,
+	}
+
+	if data == nil || len(data) &lt; 1 {
+
+		kv.kvData = make(map[string]string)
+		kv.cliendIdToEventId = make(map[int64]int64)
+		return  snapshot
+	}
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+
+
+	var kvData map[string]string
+	var cliendIdToEventId map[int64]int64
+	var lastIncludedTerm int
+	var lastIncludedIndex int
+
+	if d.Decode(&lastIncludedIndex) != nil || d.Decode(&lastIncludedTerm)!=nil || d.Decode(&cliendIdToEventId) !=nil   || d.Decode(&kvData) !=nil {
+		kv.kvData = make(map[string]string)
+		kv.cliendIdToEventId = make(map[int64]int64)
+		fmt.Println("Server : ",kv.me, "something went wrong while decoding raft state.. ");
+		return  snapshot
+	} else {
+		kv.kvData = kvData
+		kv.cliendIdToEventId = cliendIdToEventId
+		snapshot.LastIncludedIndex = lastIncludedIndex
+		snapshot.LastIncludedTerm = lastIncludedTerm
+		snapshot.Data = data
+		kv.LastApplied = lastIncludedIndex
+		return  snapshot
+	}
+}
+
+func (kv *KVServer) compactLogs(){
+	kv.takeSnapShot = false;
+	lastApplied := kv.LastApplied
+	kv.snapShot.LastIncludedIndex = lastApplied
+	kv.snapShot.LastIncludedTerm = kv.rf.GetTerm(lastApplied)
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(lastApplied)
+	e.Encode(kv.snapShot.LastIncludedTerm)
+	e.Encode(kv.cliendIdToEventId)
+	e.Encode(kv.kvData)
+	Data := w.Bytes()
+	kv.snapShot.Data = Data
+	kv.rf.CompactLog(kv.snapShot)
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -17,8 +17,8 @@ Email: shuai at cs stonybrook edu<br>
 Links: 
 <!-- <a href="cv.pdf">CV</a>,  -->
 <a href="./blog.html">Blog</a>, 
-<a href="https://scholar.google.com/citations?user=wcbyR5UAAAAJ&hl=en">Google Scholar</a>, 
-<a href="https://calendar.google.com/calendar/embed?src=shuai%40cs.stonybrook.edu&ctz=America%2FNew_York">Calendar</a>
+<a href="https://calendar.google.com/calendar/embed?src=shuai%40cs.stonybrook.edu&ctz=America%2FNew_York">Calendar</a>, 
+<a href="https://scholar.google.com/citations?user=wcbyR5UAAAAJ&hl=en">Google Scholar</a> 
     </div>
     <div class="col-sm">
       <img src="./photo/photo-19-small.png" height="150" class="img-thumbnail float-right">
@@ -55,16 +55,17 @@ If you are interested, email me a brief resume.
 
 
 ## Recent courses ([see all](teaching))
+* [CSE-590, Reliable System Programming, Spring 2026](./teaching/sf/26sp/)
 * [CSE-532, Database Systems, Fall 2025](./teaching/db/25fa/)
 * [CSE-416, Software Engineering, Fall 2025](./teaching/se/25fa/)
 * [CSE-590, Reliable System Programming, Spring 2025](./teaching/sf/25sp/)
 * [CSE-416, Software Engineering, Fall 2024](./teaching/se/24fa/) 
 <!-- * CSE-59X: Building Reliable Distributed Systems with Dafny, Spring 2023 -->
-* CSE-416, Software Engineering, Spring 2024 
+<!-- * CSE-416, Software Engineering, Spring 2024  -->
   <!-- [IMPORTANT MESSAGE TO READ BEFORE ENROLLING](./teaching/se/24sp/) -->
-* [CSE-535, Distributed Systems, Fall 2023](./teaching/ds/23fa/)
-* Seminar: Distributed Systems Reading Group, Fall 2023 
-* Seminar: Formal Verification with Dafny, Fall 2023
+<!-- * [CSE-535, Distributed Systems, Fall 2023](./teaching/ds/23fa/) -->
+<!-- * Seminar: Distributed Systems Reading Group, Fall 2023  -->
+<!-- * Seminar: Formal Verification with Dafny, Fall 2023 -->
 <!-- * Seminar: Distributed Systems Reading Group, Summer 2023  -->
 <!-- * [CSE-535, Distributed Systems, Fall 2022](./teaching/ds/22fa/) -->
 <!-- * [CSE-416, Software Engineering, Spring 2022](./teaching/se/22sp/) -->
@@ -78,7 +79,7 @@ If you are interested, email me a brief resume.
   <ul>
     <li>
       AutoMan: Facilitating Verified Distributed Systems Development Through Automatic Code Generation and Manual Optimizations
-      <!-- [<a href="#">paper</a>] -->
+      [<a href="pub/automan-sosp25.pdf">paper</a>]
       <br>
       Zihao Zhang, Ti Zhou, Christa Jenkins, Omar Chowdhury, Shuai Mu
       <br>
@@ -86,13 +87,12 @@ If you are interested, email me a brief resume.
     </li>
     <li>
       Tiga: Accelerating Geo-Distributed Transactions with Synchronized Clocks
-      <!-- [<a href="#">paper</a>] -->
+      [<a href="pub/tiga-sosp25.pdf">paper</a>]
       <br>
       Jinkun Geng, Shuai Mu, Anirudh Sivaraman, Balaji Prabhakar
       <br>
       SOSP 25
     </li>
-
     <li>
       Mako: Speculative Distributed Transactions with Geo-Replication
       [<a href="https://www.usenix.org/system/files/osdi25-shen-weihai.pdf">paper</a>]
@@ -134,22 +134,6 @@ If you are interested, email me a brief resume.
     Mohammadreza Alimadadi, Hieu Mai, Shenghsun Cho, Michael Ferdman, Peter Milder, and Shuai Mu
     <br>
     NSDI 23
-    </li>
-    <li>
-    DepFast: Orchestrating Code of Quorum Systems 
-    [<a href="./pub/depfast-atc22.pdf">paper</a>, <a href="https://github.com/stonysystems/depfast-ae">code</a>] 
-    <br>
-    Xuhao Luo, Weihai Shen, Shuai Mu, and Tianyin Xu
-    <br>
-    USENIX ATC 22
-    </li>
-    <li>
-    Rolis: a software approach to efficiently replicating multi-core transactions
-    [<a href="./pub/rolis-eurosys22.pdf">paper</a>, <a href="https://github.com/stonysystems/rolis">code</a>] 
-    <br>
-    Weihai Shen, Ansh Khanna, Sebastian Angel, Siddhartha Sen, and Shuai Mu
-    <br>
-    EuroSys 22
     </li>
   </ul>
 

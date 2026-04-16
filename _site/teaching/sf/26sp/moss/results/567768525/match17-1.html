@@ -1,0 +1,1041 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/jvorob/src/shardkv/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/jvorob/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+
+import (
+    "raft"
+    "labrpc"
+    "sync"
+    "labgob"
+    "time"
+    "fmt"
+    "log"
+    "bytes"
+)
+
+
+const Debug = 0
+
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match17-0.html#6" TARGET="0"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+func (shm *ShardMaster) Printf(format string, a ...interface{}) (n int, err error) {
+    if Debug &lt;= 0 {
+        return
+    }
+
+    // go format uses reshuffling of: Jan 2 15:04:05 2006 MST
+    // (note this is                    1 2  3  4  5    6  -7)
+    timeStr := time.Now().Format("05.000")[3:]; //drop the seconds
+</FONT>    header := fmt.Sprintf("%v SM%v ===", timeStr, shm.me);
+
+    log.Printf(header +  format,  a...);
+    return;
+}
+
+
+// ==========================================================
+//
+//                      STRUCTURES 
+//
+// ==========================================================
+
+
+type ShardMaster struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+
+	// ===
+	maxraftstate int // snapshot if log grows this big
+
+    // key is log index, value is list of all requests pending for that index
+    pending []*PendingReq
+
+    // ====  State Machine:
+    STM      ShardStateMachine
+	configs []Config // indexed by config num
+}
+
+
+
+// Represents client request as it is serialized through raft
+// 
+// before Raft, this represents an incoming request
+// when it returns from raft as an applyMsg, it is a committed op
+type Op struct {
+<A NAME="14"></A><FONT color = #FF00FF><A HREF="match17-0.html#14" TARGET="0"><IMG SRC="../../bitmaps/tm_4_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    Op string
+    OpData interface{} //this is selected by op. Make sure to register all implementations with labgob
+
+	// === General raft-app
+    Req RequestInfo //identifies this request by client and sequence no
+}
+
+
+type PendingReq struct {
+	// === General raft-app
+    op *Op
+
+    index int //the index and term this would go into at time of rf.Start()
+    term int
+
+    // when this request either succeeds or fails, send a pointer to it in doneCh
+    doneCh chan *PendingReq
+
+
+    // ==== Filled in on request completion (success or error)
+	WrongLeader bool
+	Err         Err
+    //applier will also fill in the op.OpData with return values, if any
+}
+
+
+// === This is the state machine, modified only by committed log entries on applyCh
+type ShardStateMachine struct {
+</FONT>    // === app-specific
+
+    configs []Config
+
+
+    // === General raft-app
+    // caches the last commited request per each client
+    // We only need to cache one: client won't send next request until last one returns
+    // If we get a request with a lower sequence number from the same client, it must be stale
+    // Ops should only enter this 
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match17-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    LastFinishedRequests map[ClientId] *Op
+
+    // The index/term of the last applyed entry to this state machine
+    LastIndex int  // starts at 0, first log index at 1
+    LastTerm int   // starts at 0, first valid term at 1
+}
+
+
+
+// == Snapshot serialization
+func EncodeSM(stm *ShardStateMachine) []byte{
+    w := new(bytes.Buffer)
+    e := labgob.NewEncoder(w)
+
+    e.Encode(stm)
+    return w.Bytes()
+}
+
+func DecodeSM(data []byte) *ShardStateMachine {
+    r := bytes.NewBuffer(data)
+    d := labgob.NewDecoder(r)
+
+    var stm ShardStateMachine
+
+    if d.Decode(&stm) != nil {
+        panic("Error in DecodeSM");
+    } else {
+        return &stm
+    }
+}
+
+
+// ==== Interfaces to wrap RPCS into OPs
+
+
+// =========== fields that go in an op, used for RPC polymorphism
+type JoinData struct {
+	Servers map[int][]string // new GID -&gt; servers mappings
+</FONT>}
+type LeaveData struct {
+	GIDs []int
+}
+type MoveData struct {
+	Shard int
+	GID   int
+}
+type QueryData struct {
+	Num int // desired config number
+	Reply_Config      Config    //will be filled in by state machine
+}
+
+
+// This will paper over filling in the reply object at the end of the thing
+type ReplyInterface interface {
+    populate(wrongLeader bool, err Err, filledOpData interface{})
+}
+
+
+// =========== Misc
+// needed by shardkv tester
+func (shm *ShardMaster) Raft() *raft.Raft {
+	return shm.rf
+}
+
+// ==========================================================
+//
+//                       State Machine:
+//
+// ==========================================================
+// !!! ALL OF THIS MUST BE CALLED WITHIN MUTEX
+
+// NOTE: many of these functions are called on the whole shardmaster: this is only for logging
+// these should't modify anything outside the state machine
+
+
+// === Helpers
+func (stm *ShardStateMachine) latestConfig() Config{
+    return stm.configs[len(stm.configs)-1]
+}
+
+
+// Returns a copy
+func copyConfig(c1 Config) Config{
+    c2 := Config {
+        Num: c1.Num,
+        Shards: [NShards]int{},
+        Groups: map[int][]string{},
+    }
+
+    for i := 0; i &lt; NShards; i++ {
+        c2.Shards[i] = c1.Shards[i]
+    }
+
+    for k,v := range c1.Groups {
+          c2.Groups[k] = v
+    }
+    return c2
+}
+
+
+
+
+// rebalances shards (returns a copy of shards array)
+// NOTE: must be deterministic, this is a state machine after all
+func balanceShards(conf Config) [NShards]int {
+    // DPrintf("==== STATEMACHINE: Balancing shards: %+v", conf)
+
+    var shards [NShards]int = conf.Shards
+
+    // If no groups: all shards are orphaned and there's nothing we can do
+    if len(conf.Groups) == 0 {
+        return shards
+    }
+
+
+    // How many shards does each group hold
+    shardCounts := map[int]int{}
+    for grp, _ := range(conf.Groups) { //init
+        shardCounts[grp] = 0
+    }
+    for _, grp := range(shards) { //count
+        shardCounts[grp]++
+    }
+    //DPrintf("==== STATEMACHINE: Shardcounts: %v", shardCounts)
+
+
+    // moves a single shard in shards [NShards]int
+    // updates shardcounts
+    moveShard := func(from int, to int) {
+        //DPrintf("==== STATEMACHINE: moving shards: %v-&gt;%v, %v", from,to, shards)
+        // Try to find a shard to move  (owned by 'from')
+        for i, grp := range(shards) {
+            if grp == from {
+                //found a shard owned by 'from', do the move
+                shards[i] = to
+                shardCounts[from]--
+                shardCounts[to]++
+                return
+            }
+        }
+
+        // only got here if didn't find a matching shard
+        panic(fmt.Sprintf("ERROR in moveShard: group '%v' owns no shards", from))
+    }
+
+
+    // =========== SHARD BALANCING LOOP
+    // Repeatedly counts how many shards each group has, and moves 1 each loop
+    // NOTE: max/min MUST NOT DEPEND on order of group iteration (determinism)
+    // bigger group number wins ties (bigger group counts as having more shards if count is ==)
+    for {
+        // Find groups with most and fewest shards
+        // Watch out for 0 (sentinel group)
+        n_unowned := 0
+
+        n_max := -1
+        grp_max := -1
+
+        n_min := NShards + 1 // using this as int_max, this will take the first group automatically
+        grp_min := -1
+
+        for grp, cnt := range(shardCounts) {
+            if grp == 0 { //treat unowned shards separately
+                n_unowned = cnt
+                continue
+            }
+
+            // Update max (note: tiebreaker, bigger grp # is bigger)
+            if cnt &gt; n_max || cnt == n_max && grp &gt; grp_max {
+                n_max = cnt
+                grp_max = grp
+            }
+
+            // update min (note: tiebreaker, smaller group # is smaller)
+            if cnt &lt; n_min || cnt == n_min && grp &lt; grp_min {
+                n_min = cnt
+                grp_min = grp
+            }
+
+        }
+        //DPrintf("==== STATEMACHINE: got group counts: u%v,  max: grp%v@%v,  min grp%v@%v",
+        //        n_unowned, grp_max, n_max, grp_min, n_min)
+
+        // Now: if there's any unowned shards, assign them to min group
+        // Else: if n_max &gt; n_min + 1, assign a shard from max group to min group
+        if n_unowned &gt; 0 {
+            moveShard(0, grp_min)
+        } else if n_max &gt; n_min + 1 {
+            moveShard(grp_max, grp_min)
+        } else {
+            // If max and min are within 1, we're done
+            break
+        }
+    }
+
+
+
+
+    return shards
+}
+
+
+// === Main funcs
+
+// Note on error handling: we'll silently fail on leave/move that aren't valid, and spit out some logging
+
+func (shm *ShardMaster) doJoin(newcomers map[int] ([]string)) {
+    DPrintf("==== STATEMACHINE: Doing Join %+v", newcomers)
+
+    last := shm.STM.latestConfig();
+
+    // copy groups for new config
+    conf := copyConfig(last)
+    conf.Num = last.Num + 1
+
+
+    // Add all groups to new map
+    for gid, servers := range(newcomers) {
+
+        //assert that none of the created groups have existed before
+        if _, pres := last.Groups[gid]; pres {
+            panic("Join should only specify new groups")
+        }
+
+        conf.Groups[gid] = servers
+    }
+
+
+    // Reassign shards
+    conf.Shards = balanceShards(conf)
+
+
+
+    DPrintf("Configs: old %+v, new %+v", last, conf)
+
+    // Add newly created config to configs
+    shm.STM.configs = append(shm.STM.configs, conf)
+
+    return
+}
+
+func (shm *ShardMaster) doLeave(leavers []int) {
+    DPrintf("==== STATEMACHINE: Doing Leave %+v", leavers)
+
+    last := shm.STM.latestConfig();
+
+    // make copy for new config
+    conf := copyConfig(last)
+    conf.Num = last.Num + 1
+
+
+    // Remove all specified groups
+    for _, gid := range(leavers) {
+
+        //assert: only delete existing groups
+        if _, pres := last.Groups[gid]; !pres {
+            panic("Leave should only delete existing groups")
+        }
+
+        // delete group
+        delete(conf.Groups, gid)
+
+        // orphan its shards
+        for i := 0; i &lt; NShards; i++ {
+            if conf.Shards[i] == gid {
+                conf.Shards[i] = 0;
+            }
+        }
+    }
+
+
+    // Reassign shards
+    conf.Shards = balanceShards(conf)
+
+
+    DPrintf("Configs: old %+v, new %+v", last, conf)
+
+    // Add newly created config to configs
+    shm.STM.configs = append(shm.STM.configs, conf)
+
+    return
+}
+func (shm *ShardMaster) doMove(shard int, gid int) {
+    DPrintf("==== STATEMACHINE: Doing Move %v,%v", shard, gid)
+
+    last := shm.STM.latestConfig();
+
+    // make copy for new config
+    conf := copyConfig(last)
+    conf.Num = last.Num + 1
+
+
+    // Move the shard
+    conf.Shards[shard] = gid
+
+    // Add newly created config to configs
+    shm.STM.configs = append(shm.STM.configs, conf)
+
+    return
+}
+
+
+func (shm *ShardMaster) doQuery(num int) Config {
+    DPrintf("==== STATEMACHINE: Doing query(%v)", num)
+
+    if num == -1 {
+        return shm.STM.latestConfig();
+    }
+
+    if num &lt; 0 || num &gt;= len(shm.STM.configs) {
+        panic("Error: out-of-bounds query in doQuery")
+    }
+
+    return shm.STM.configs[num]
+}
+
+
+// We got an op that's not cached, is new, etc etc:
+// actually apply it to state machine
+// fill in reply in opdata if any
+func (shm *ShardMaster) runStateMachineInner(op *Op) {
+    // MUST BE CALLED FROM WITHIN MUTEX
+
+    switch op.Op {
+    case "Join":
+        var servers map[int] ([]string) = op.OpData.(JoinData).Servers
+        shm.doJoin(servers)
+
+    case "Leave":
+        var gids []int = op.OpData.(LeaveData).GIDs
+        shm.doLeave(gids)
+
+    case "Move":
+        shard := op.OpData.(MoveData).Shard
+        gid   := op.OpData.(MoveData).GID
+        shm.doMove(shard, gid)
+    case "Query":
+        num := op.OpData.(QueryData).Num
+        Reply_Config := shm.doQuery(num)
+
+        // Need to do this song and dance to assign to cast interface
+        var data QueryData
+        data = op.OpData.(QueryData)
+        data.Reply_Config = Reply_Config
+        op.OpData = data
+    default:
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match17-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        panic(fmt.Sprintf("ERROR: Unrecognized op type %v", op.Op))
+    }
+
+}
+
+// === Takes a committed op and applies to state machine (this part does cache-check stuff)
+// If cache has already seen request, don't apply to state machine
+// Updates cached requests
+func (shm *ShardMaster) applyOpToStateMachine(msg *raft.ApplyMsg) {
+    // MUST BE CALLED FROM WITHIN MUTEX
+    if !msg.CommandValid {
+        panic("ERROR: applyOpToStateMachine should only be called with valid log msgs");
+    }
+
+    var op Op = (msg.Command.(Op)) // no pointers
+    index := msg.CommandIndex
+    term := msg.CommandTerm
+
+    // Update index and term (even if we don't put it into effect)
+    shm.STM.LastIndex = index
+    shm.STM.LastTerm = term
+</FONT>
+    // Check if we've already applied this request to state machine 
+    cacheResult, err := shm.STM.checkCachedRequest(op.Req);
+
+    // If cache hit, or stale request, noop (we've already applied it)
+    if cacheResult != nil || err != "" {
+        //shm.Printf("Skipping apply op: already cached", op.Op);
+        return;
+    }
+
+    // Did all tests: we actually need to apply this op
+    shm.runStateMachineInner(&op)
+
+
+    // Update request cache (not quite cache but you know what I mean)
+    shm.STM.LastFinishedRequests[op.Req.C_id] = &op;
+}
+// ==========================================================
+//
+//                       HELPER VERBS
+//
+// ==========================================================
+// should be called from within mutex?
+
+
+// given a request, checks against cached requests
+// results: nothing|stale|cache hit
+// if cache hit, returns op,""
+// if cache miss, returns nil, ""
+// if stale, returns nil, "Error: Stale"
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match17-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (stm *ShardStateMachine) checkCachedRequest(req RequestInfo) (*Op, Err) {
+    //MUST BE CALLED WITHIN MUTEX
+
+    cachedOp := stm.LastFinishedRequests[req.C_id];
+
+    // cache miss, return nil
+    if cachedOp == nil { return nil, "" }
+
+    // Assert clientid matches
+    if cachedOp.Req.C_id != req.C_id {
+        panic(fmt.Sprintf("Error: cachedOp for different C_id: cach:%v, new req:%v", cachedOp, req));
+    }
+
+
+    // valid cache hit
+    if req.R_id == cachedOp.Req.R_id {
+        return cachedOp, ""
+
+    // cache holds outdated entry, is a miss
+    } else if req.R_id &gt; cachedOp.Req.R_id {
+        return nil, ""
+
+    // cache entry newer than request, so request is stale and should fail
+    } else {
+        staleStr := Err(fmt.Sprintf("Error: Incoming request stale, req %v already committed", cachedOp))
+</FONT><A NAME="2"></A><FONT color = #0000FF><A HREF="match17-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        return nil,staleStr
+    }
+
+}
+
+
+// If raft's state size is bigger than maxRaftState, send Raft a new snapshot
+func (shm *ShardMaster) checkIfRaftNeedsSnapshot() {
+    // MUST BE CALLED FROM WITHIN MUTEX
+
+    // -1 means snapshotting disabled
+    if shm.maxraftstate &lt; 0 {
+        return;
+    }
+
+    lim := shm.maxraftstate
+    size := shm.rf.GetStateSize();
+
+
+    if float64(size) &gt; float64(lim) * 0.9 {
+        shm.Printf("Raft state getting big: size %v/ lim %v", size, lim);
+
+        // Save a copy of state machine, install to Raft
+        var SMCopy ShardStateMachine = shm.STM
+
+        snap := raft.Snapshot {
+            LastIndex: SMCopy.LastIndex,
+            LastTerm: SMCopy.LastTerm,
+            Data: EncodeSM(&SMCopy),
+        }
+        shm.rf.NotifyNewSnapshot(&snap);
+    }
+
+}
+
+
+// ==========================================================
+//
+//              FUNCTIONS TO HANDLE APPLYCH MSGS
+//
+// ==========================================================
+
+// Waits on applyCh: when message available, delegates to handleApply
+func (shm *ShardMaster) ApplierThread() {
+    var msg raft.ApplyMsg
+    for {
+        msg = &lt;-shm.applyCh; //
+
+        shm.mu.Lock();
+</FONT><A NAME="9"></A><FONT color = #FF00FF><A HREF="match17-0.html#9" TARGET="0"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        shm.handleApply(&msg);
+        shm.mu.Unlock();
+
+        //TODO: don't reacquire lock repeatedly
+    }
+}
+
+
+// Raft just sent a committed command
+// Apply it to statemachine, update request cache
+// notify any pending requests that are now completed or dead
+func (shm *ShardMaster) handleApply(msg *raft.ApplyMsg) {
+    // MUST BE CALLED FROM WITHIN MUTEX
+
+    // Non-log-affecting commands handled separately
+    if !msg.CommandValid {
+        shm.handleNonLogApply(msg)
+        return
+    }
+
+    op := msg.Command.(Op) // all applied commands are Op, no pointers
+    index := msg.CommandIndex
+</FONT>    term := msg.CommandTerm
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match17-0.html#7" TARGET="0"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    shm.Printf("Op applied: i%v t%v: op%+v", index, term, op)
+
+    // Apply the operation to the state machine, and cache the result
+    // (idempotent)
+    shm.applyOpToStateMachine(msg);
+
+
+    // == Notify pending requests
+    if len(shm.pending) &gt; 0 {
+
+        shm.Printf("NOTIFYING: %v pending requests, just committed %v, i%v", len(shm.pending), op.Req, index);
+
+        for i, v := range(shm.pending){
+            // We'll be deleting some throughout this loop, and I'm just nil-ing them out for now
+            if v == nil { continue; }
+
+            // Fill in some blank values just to be safe (I don't think I initted these at creation)
+            v.Err = ""
+</FONT><A NAME="15"></A><FONT color = #FF0000><A HREF="match17-0.html#15" TARGET="0"><IMG SRC="../../bitmaps/tm_0_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+            v.WrongLeader = false  // We'll only tell them to retry leader from the main handler
+
+            doneFlag := false
+
+
+
+            // Test pending req against cache: (it may have been complete (e.g., just now))
+            cachedOp, errStale := shm.STM.checkCachedRequest(v.op.Req);
+
+            // cache hit, return it (probably it's the just-applied op)
+            if cachedOp != nil {
+                shm.Printf("Finalizing request: %v (found %v cached)", v.op.Req, cachedOp.Req);
+</FONT>                v.op = cachedOp // cachedOp will have values filled in
+                doneFlag = true
+
+            // if the request is outdated (in cache), error (something newer already in cache)
+            } else if errStale != "" {
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match17-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_13.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+                shm.Printf("Pending Request %v Stale (cache), failing", cachedOp.Req);
+                v.Err = errStale
+                doneFlag = true
+
+            // === Test if request is outdated and needs to be destroyed
+
+            // if the request is outdated by index, different error
+            // (NOTE: check this last so if index == and we're here, then cache check failed
+            //  so entry at index != this one)
+            } else if shm.STM.LastIndex &gt;= v.index {
+                shm.Printf("Pending Request %v at i%v, FAIL, another op committed at i%v",
+                                v.op.Req, v.index, shm.STM.LastIndex)
+                v.Err = "Error: Another request committed at newer index"
+                doneFlag = true
+
+            // Check if outdated by term (our partition may have ran ahead, so index wont save us, look at term)
+            } else if shm.STM.LastTerm &gt; v.term {
+                shm.Printf("Pending Request %v at i%v t%v, FAIL, another op committed at newer term t%v",
+                                v.op.Req, v.index, v.term, shm.STM.LastTerm)
+                v.Err = "Error: Another request committed at newer term"
+                doneFlag = true
+            }
+
+            if doneFlag {
+                // Complete the pending request, delete from pend list
+                v.doneCh &lt;- v;
+                shm.pending[i] = nil
+            }
+
+        }
+
+        //delete all nil entries from the slice
+        //god this is so ugly but whatever
+        newSlice := make([](*PendingReq), 0, len(shm.pending))
+        for _, v := range(shm.pending) {
+            if v != nil {
+                newSlice = append(newSlice, v)
+            }
+        }
+        shm.pending = newSlice
+    }
+
+    // ==== Done notifying pending requests
+    shm.checkIfRaftNeedsSnapshot() // will send snapshot if size too big
+}
+
+
+
+
+
+// Called for applyMsgs that aren't normal committed log entries
+// These are things like snapshot requests and step-down notifications
+func (shm *ShardMaster) handleNonLogApply(msg *raft.ApplyMsg) {
+    // MUST BE CALLED FROM WITHIN MUTEX
+
+    //shm.Printf("Got non-log applyMsg: %+v\n", msg)
+
+    switch msg.MsgType {
+    case raft.StepDownMsg:
+        shm.Printf("Raft leader stepped down: clearing %v pending messages", len(shm.pending))
+
+        // Kill all pending requests: we failed to leader
+        for _, v := range(shm.pending){
+            v.Err = "Error: We stepped down as leader"
+            v.WrongLeader = true
+
+            v.doneCh &lt;- v;
+        }
+
+        // wipe the list
+        shm.pending = make([](*PendingReq), 0)
+
+
+    // === We are being told to reinitialize our state
+    case raft.LoadSnapshotMsg:
+        shm.Printf("Loading Snapshot")
+        snap := msg.Command.(raft.Snapshot)
+
+        // Snapshots can be sent at any time by InstallRPC or load from persist
+        newSM := DecodeSM(snap.Data);
+        shm.Printf("Decoded STM from snapshot: %+v", newSM)
+        // quick sanity check
+        if newSM.LastIndex != snap.LastIndex || newSM.LastTerm != snap.LastTerm {
+            panic("Error: snapshot and snapshot-date index/term mismatch")
+        }
+
+        // install the snapshot I guess (discards our own stuff)
+        shm.STM = *newSM;
+
+        // Kill all pending requests, installsnapshot means we're not leader
+        for _, v := range(shm.pending){
+            v.Err = "Error: We stepped down as leader"
+            v.WrongLeader = true
+
+            v.doneCh &lt;- v;
+        }
+        // wipe the list
+        shm.pending = make([](*PendingReq), 0)
+
+
+    default:
+        panic(fmt.Sprintf("Error: unrecognized MsgType %v in handleNonLogApply", msg.MsgType))
+    }
+}
+
+
+
+// ==========================================================
+//
+//             INCOMING CLIENT-REQUEST HANDLERS
+//
+// ==========================================================
+
+
+// =============== Unified request handler
+
+// handles either kind of request, the ReplyObj interface handles both getreply and putappend reply
+func (shm *ShardMaster) handleRequest(op *Op, reply ReplyInterface) {
+    // op is the flattened form of the incoming request
+    shm.mu.Lock();
+    // CANT DEFER UNLOCK: SOME PATHS DONT NEED IT
+    // BE CAREFUL TO UNLOCK AT ALL RETURNS
+
+    shm.Printf("got op: op'%v' req'%v', data:%+v", op.Op, op.Req, op.OpData);
+</FONT>
+
+    // ==== First we check if we can reply immediately:
+    // - either we have a valid cached request, 
+    // - or we have cached a newer request from the same client, so this req is outdated
+<A NAME="16"></A><FONT color = #00FF00><A HREF="match17-0.html#16" TARGET="0"><IMG SRC="../../bitmaps/tm_1_0.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    cachedOp, errStale := shm.STM.checkCachedRequest(op.Req);
+
+    // cache hit, we can just return that
+    if cachedOp != nil {
+        shm.Printf("response cached, returning cachedOp %v", cachedOp);
+        reply.populate(false, "", cachedOp.OpData); // not wrongleader, no err
+</FONT>        shm.mu.Unlock();
+        return;
+    }
+
+    // if the request is outdated, error (something newer already in cache)
+    if errStale != "" {
+        // we don't know if it's the wrong leader, so just put false for now
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match17-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+        shm.Printf("incoming request stale, newer request exists");
+        reply.populate(false, errStale, op.OpData) //(no reply, send back their own opdata)
+        shm.mu.Unlock();
+        return;
+    }
+
+
+    // ===== Request not cached, need to submit to start
+    // NOTE: can't send pointers through raft
+    index, term, is_leader := shm.rf.Start(*op);
+
+    // if not the leader, return err
+    if !is_leader {
+        reply.populate(true, "", op.OpData) //WrongLeader is true
+        shm.mu.Unlock();
+        return;
+    }
+
+    // ===== Setup a pendingReq object, wait on it to finish
+    pend := &PendingReq{
+        op: op,
+        index: index,
+        term: term,
+        doneCh: make(chan *PendingReq, 1),
+        //remaining fields will be filled by applier
+    }
+
+
+    //insert request into shm data structure
+    shm.pending = append(shm.pending, pend)
+
+    // Sleep until request completed or failed
+    shm.mu.Unlock()
+    &lt;-pend.doneCh
+
+    // ==== Our request is ready (or errored)
+    // return results (don't need shm lock for this, we're the only ones using pend)
+
+    // applier will have filled in the values, just copy them to return obj
+    reply.populate(pend.WrongLeader, pend.Err, pend.op.OpData);
+
+    shm.Printf("sending reply to %v: %+v", op.Req, reply);
+</FONT><A NAME="12"></A><FONT color = #0000FF><A HREF="match17-0.html#12" TARGET="0"><IMG SRC="../../bitmaps/tm_2_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    return;
+}
+
+
+
+// ==========================================================
+//
+//            Application-Specific RPC Wrappers
+//
+// ==========================================================
+
+// == Wrap incoming RPCs into consistent format
+
+
+// // kvserver: handle incoming PutAppend request
+// func (shm *ShardMaster) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+//     op := &Op{
+//         Key: args.Key,
+//         Value: args.Value,
+//         Op: args.Op,
+//         Req: args.Req,
+//     }
+// 
+//     shm.handleRequest(op, reply);
+// }
+
+
+//=============
+// Since all of these have different keys and values:
+// We'll serialize them to a []bytes with gob
+
+
+func (shm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+     op := &Op{
+         Op: "Join",
+         Req: args.Req,
+         OpData: JoinData {args.Servers},
+</FONT>     }
+
+     shm.handleRequest(op, reply);
+}
+
+func (shm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+     op := &Op{
+         Op: "Leave",
+         Req: args.Req,
+         OpData: LeaveData{args.GIDs},
+     }
+
+     shm.handleRequest(op, reply);
+}
+
+func (shm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+     op := &Op{
+         Op: "Move",
+         Req: args.Req,
+         OpData: MoveData{args.Shard, args.GID},
+     }
+
+     shm.handleRequest(op, reply);
+}
+
+func (shm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+    op := &Op{
+        Op: "Query",
+        Req: args.Req,
+        OpData: QueryData{Num: args.Num, Reply_Config: Config{} }, //reply starts blank
+    }
+
+<A NAME="8"></A><FONT color = #00FFFF><A HREF="match17-0.html#8" TARGET="0"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    shm.handleRequest(op, reply);
+    // handleRequest will populate our reply object when needed
+}
+
+
+
+// ========== Return handlers: 
+// need to implement .populate() on each reply tape 
+// to satisfy ReplyInterface
+
+func (reply *JoinReply) populate(wrongLeader bool, err Err, filledOpData interface{}) {
+   reply.WrongLeader = wrongLeader;
+   reply.Err = err;
+   // no value
+}
+
+func (reply *LeaveReply) populate(wrongLeader bool, err Err, filledOpData interface{}) {
+   reply.WrongLeader = wrongLeader;
+   reply.Err = err;
+</FONT>   // no value
+}
+
+func (reply *MoveReply) populate(wrongLeader bool, err Err, filledOpData interface{}) {
+   reply.WrongLeader = wrongLeader;
+<A NAME="11"></A><FONT color = #00FF00><A HREF="match17-0.html#11" TARGET="0"><IMG SRC="../../bitmaps/tm_1_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+   reply.Err = err;
+   // no value
+}
+func (reply *QueryReply) populate(wrongLeader bool, err Err, filledOpData interface{}) {
+   reply.WrongLeader = wrongLeader;
+   reply.Err = err;
+
+   // value will be in filledOpData, cast to QueryData
+   reply.Config = filledOpData.(QueryData).Reply_Config
+</FONT>}
+
+// ==========================================================
+//
+//                          INIT
+//
+// ==========================================================
+
+func NewBlankStateMachine() ShardStateMachine {
+    STM := ShardStateMachine{
+        LastFinishedRequests:  make(map[ClientId]*Op),
+        LastTerm: 0,
+    }
+
+    STM.configs = make([]Config, 1)
+    STM.configs[0] = BlankConfig()
+    return STM
+}
+
+
+
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+<A NAME="10"></A><FONT color = #FF0000><A HREF="match17-0.html#10" TARGET="0"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	labgob.Register(Op{})
+	labgob.Register(JoinData{})
+	labgob.Register(MoveData{})
+	labgob.Register(LeaveData{})
+	labgob.Register(QueryData{})
+
+	shm := new(ShardMaster)
+	shm.me = me
+
+    //shm.configs = make([]Config, 1) //TODO: put this into state machine
+	//shm.configs[0].Groups = map[int][]string{}
+
+	shm.applyCh = make(chan raft.ApplyMsg)
+</FONT>	shm.rf = raft.Make(servers, me, persister, shm.applyCh)
+
+	// ====
+
+	shm.maxraftstate = -1
+    shm.STM = NewBlankStateMachine()
+    go shm.ApplierThread();
+
+	return shm
+}
+
+
+
+
+func (shm *ShardMaster) Kill() {
+    shm.Printf("help I'm being killed" )
+    shm.mu.Lock()
+    defer shm.mu.Unlock()
+
+    shm.Printf("got kill lock" )
+	shm.rf.Kill()
+
+
+    // clean up pending requests with errors
+<A NAME="13"></A><FONT color = #00FFFF><A HREF="match17-0.html#13" TARGET="0"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+    for _, v := range(shm.pending) {
+        v.Err = "ERROR: raft killed"
+        v.doneCh &lt;- v
+    }
+
+    shm.pending = shm.pending[:0]
+</FONT>    //TODO: notify applierthread to slurp up remainder
+}
+
+</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -1,0 +1,445 @@
+<HTML>
+<HEAD>
+<TITLE>./spring19/LudwigOtto/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./spring19/LudwigOtto/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+
+import "raft"
+import "labrpc"
+import "sync"
+import "labgob"
+//import "fmt"
+
+type ShardMaster struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	// Your data here.
+
+	configs []Config // indexed by config num
+	clnt_msg_stats map[int64](*Stat)
+}
+
+
+type Op struct {
+	// Your data here.
+	Op string
+	C_id int64
+	O_id uint32
+
+	Servers map[int][]string
+	GIDs []int
+	Shard int
+	GID   int
+	Num int
+}
+
+type Stat struct {
+	O_id uint32
+	Index int
+	Conf Config
+}
+
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+	// Your code here.
+	op := new(Op)
+	op.Op = "Join"
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match171-0.html#1" TARGET="0"><IMG SRC="../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	op.C_id = args.C_id
+	op.O_id = args.O_id
+	op.Servers = args.Servers
+
+	reply.WrongLeader = true
+	reply.Err = ""
+
+	_, ans := sm.isOldRequest(op)
+	if ans == YES {
+		reply.WrongLeader = false
+		reply.Err = OK
+		return
+	} else if ans == WAIT {
+		reply.WrongLeader = false
+</FONT>		reply.Err = "Wait for commit"
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match171-0.html#4" TARGET="0"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		return
+	}
+
+	if sm.rf != nil {
+		_, _, isLeader := sm.rf.Start(op)
+		if isLeader {
+			reply.WrongLeader = false
+</FONT>		}
+	}
+}
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+	// Your code here.
+	op := new(Op)
+	op.Op = "Leave"
+	op.C_id = args.C_id
+	op.O_id = args.O_id
+	op.GIDs = args.GIDs
+
+	reply.WrongLeader = true
+	reply.Err = ""
+
+	_, ans := sm.isOldRequest(op)
+	if ans == YES {
+		reply.WrongLeader = false
+		reply.Err = OK
+		return
+	} else if ans == WAIT {
+		reply.WrongLeader = false
+		reply.Err = "Wait for commit"
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match171-0.html#5" TARGET="0"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		return
+	}
+
+	if sm.rf != nil {
+		_, _, isLeader := sm.rf.Start(op)
+		if isLeader {
+			reply.WrongLeader = false
+</FONT>		}
+	}
+}
+
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+	// Your code here.
+	op := new(Op)
+	op.Op = "Move"
+	op.C_id = args.C_id
+	op.O_id = args.O_id
+	op.Shard = args.Shard
+	op.GID = args.GID
+
+	reply.WrongLeader = true
+	reply.Err = ""
+
+	_, ans := sm.isOldRequest(op)
+	if ans == YES {
+		reply.WrongLeader = false
+		reply.Err = OK
+		return
+	} else if ans == WAIT {
+		reply.WrongLeader = false
+		reply.Err = "Wait for commit"
+		return
+	}
+
+	if sm.rf != nil {
+		_, _, isLeader := sm.rf.Start(op)
+		if isLeader {
+			reply.WrongLeader = false
+		}
+	}
+}
+
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+	// Your code here.
+	op := new(Op)
+	op.Op = "Query"
+	op.C_id = args.C_id
+	op.O_id = args.O_id
+	op.Num = args.Num
+
+	reply.WrongLeader = true
+	reply.Err = ""
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match171-0.html#2" TARGET="0"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	config, ans := sm.isOldRequest(op)
+	if ans == YES {
+		reply.WrongLeader = false
+		reply.Config = config
+		reply.Err = OK
+		return
+	} else if ans == WAIT {
+		reply.WrongLeader = false
+		reply.Err = "Wait for commit"
+</FONT>		return
+	}
+
+	if sm.rf != nil {
+		_, _, isLeader := sm.rf.Start(op)
+		if isLeader {
+			reply.WrongLeader = false
+		}
+	}
+}
+
+
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+	// Your code here, if desired.
+	close(sm.applyCh)
+}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+	return sm.rf
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	sm := new(ShardMaster)
+	sm.me = me
+
+	sm.configs = make([]Config, 1)
+	sm.configs[0].Groups = map[int][]string{}
+
+	labgob.Register(Op{})
+	sm.applyCh = make(chan raft.ApplyMsg)
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+
+	// Your code here.
+	sm.clnt_msg_stats = make(map[int64](*Stat))
+
+	go sm.StateMachine()
+
+	return sm
+}
+
+func (sm *ShardMaster) isOldRequest(op *Op) (Config, string) {
+	_, isLeader := sm.rf.GetState()
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	var conf Config
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match171-0.html#3" TARGET="0"><IMG SRC="../../bitmaps/tm_3_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	if isLeader {
+		stat, ok := sm.clnt_msg_stats[op.C_id]
+		if ok && stat.O_id &gt;= op.O_id {
+			if stat.Index != -1 {
+				conf = stat.Conf
+</FONT>				return conf, YES
+			} else {
+				return conf, WAIT
+			}
+		} else {
+			sm.clnt_msg_stats[op.C_id] = &Stat{O_id: op.O_id, Index: -1, Conf: conf}
+		}
+	}
+	return conf, NOT
+}
+
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match171-0.html#0" TARGET="0"><IMG SRC="../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (sm *ShardMaster) StateMachine() {
+	for  m:= range sm.applyCh {
+		if m.CommandValid == true {
+			sm.mu.Lock()
+			op, ok := m.Command.(Op)
+			if !ok {
+				op = *(m.Command.(*Op))
+			}
+			stat, ok := sm.clnt_msg_stats[op.C_id]
+			if ok && stat.O_id == op.O_id && stat.Index != -1 {
+				//fmt.Printf("Duplicated commit. drop it\n")
+				sm.mu.Unlock()
+			} else {
+</FONT>				var conf Config
+				if op.Op == "Join" {
+					conf = sm.doJoin(op)
+					//fmt.Printf("sm %d, groups %v\n",sm.me, conf.Groups[1])
+				} else if op.Op == "Leave" {
+					conf = sm.doLeave(op)
+				} else if op.Op == "Move" {
+					conf = sm.doMove(op)
+				} else {
+					conf = sm.doQuery(op)
+				}
+				sm.clnt_msg_stats[op.C_id] = &Stat{O_id: op.O_id, Index: m.CommandIndex, Conf: conf}
+				sm.mu.Unlock()
+			}
+		} else {
+			// Leave for snapshot
+		}
+	}
+}
+
+func (sm *ShardMaster) doQuery(op Op) (Config) {
+	//Called in Lock
+	idx_config := op.Num
+	if idx_config == -1 || idx_config &gt;= len(sm.configs) {
+		idx_config = len(sm.configs) - 1
+	}
+	config := sm.configs[idx_config]
+	return config
+}
+
+func (sm *ShardMaster) doJoin(op Op) (Config) {
+	//Called in Lock
+	idx_config := len(sm.configs) - 1
+	old_config := sm.configs[idx_config]
+	new_config := new(Config)
+
+	new_config.Num = old_config.Num + 1
+
+	new_config.Groups = make(map[int][]string)
+	sm.copyMap(new_config.Groups, old_config.Groups)
+	sm.copyMap(new_config.Groups, op.Servers)
+
+	new_config.Shards = old_config.Shards
+
+	keys := make([]int, 0, len(op.Servers))
+    for k := range op.Servers {
+		if _, ok := old_config.Groups[k]; !ok {
+			keys = append(keys, k)
+		}
+    }
+
+	sm.shardsBalance(new_config, keys)
+
+	sm.configs = append(sm.configs, *new_config)
+	return *new_config
+}
+
+func (sm *ShardMaster) doLeave(op Op) (Config) {
+	//Called in Lock
+	idx_config := len(sm.configs) - 1
+	old_config := sm.configs[idx_config]
+	new_config := new(Config)
+
+	new_config.Num = old_config.Num + 1
+
+	new_config.Groups = make(map[int][]string)
+	sm.copyMap(new_config.Groups, old_config.Groups)
+	new_config.Shards = old_config.Shards
+
+	for _, gid := range(op.GIDs) {
+		delete(new_config.Groups, gid)
+	}
+	sm.shardsBalance(new_config, nil)
+
+	sm.configs = append(sm.configs, *new_config)
+	return *new_config
+}
+
+func (sm *ShardMaster) doMove(op Op) (Config) {
+	//Called in Lock
+	idx_config := len(sm.configs) - 1
+	old_config := sm.configs[idx_config]
+	new_config := new(Config)
+
+	new_config.Num = old_config.Num + 1
+
+	new_config.Groups = make(map[int][]string)
+	sm.copyMap(new_config.Groups, old_config.Groups)
+	new_config.Shards = old_config.Shards
+
+	new_config.Shards[op.Shard] = op.GID
+	sm.shardsBalance(new_config, nil)
+
+	sm.configs = append(sm.configs, *new_config)
+	return *new_config
+}
+
+func (sm *ShardMaster) copyMap(dst map[int][]string, src map[int][]string) {
+	//Called in Lock
+	for gid, servers := range(src) {
+		dst[gid] = make([]string, len(servers))
+		copy(dst[gid], servers)
+		//fmt.Printf("sm %d, gid %d, servers %s\n",sm.me, gid, dst[gid])
+	}
+}
+
+func (sm *ShardMaster) shardsBalance(conf *Config, new_GIDs []int) {
+	//Called in Lock
+	if len(conf.Groups) == 0 || len(conf.Shards) == 0 {
+		return
+	}
+	avg_shard := len(conf.Shards) / len(conf.Groups)
+	residual := make([]int, 0)
+	shards_per_group := make(map[int]int)
+	for shard, gid := range(conf.Shards) {
+		if gid == 0 {
+			residual = append(residual, shard)
+			continue
+		}
+		if _, ok := conf.Groups[gid]; !ok {
+			residual = append(residual, shard)
+			continue
+		}
+		if size, ok := shards_per_group[gid]; ok {
+			if size == avg_shard {
+				residual = append(residual, shard)
+			} else {
+				shards_per_group[gid] += 1
+			}
+		} else {
+			shards_per_group[gid] = 1
+		}
+	}
+	i := len(residual) - 1
+	limit := avg_shard
+	if (avg_shard * len(conf.Groups)) != len(conf.Shards) {
+		limit += 1
+	}
+	/*if sm.me == 0 {
+		fmt.Printf("len of groups %d, len of shards %d, avg %d, i %d, limit %d\n", len(conf.Groups), len(conf.Shards), avg_shard, i, limit)
+	}*/
+
+	if new_GIDs != nil {
+		for _, new_GID := range(new_GIDs) {
+			if i &lt; 0 {
+				break
+			}
+			for {
+				conf.Shards[residual[i]] = new_GID
+				shards_per_group[new_GID] += 1
+				i -= 1
+				if i &lt; 0 || shards_per_group[new_GID] == avg_shard {
+					break
+				}
+			}
+			/*if sm.me == 0 {
+				fmt.Printf("new GID %d, shards_per_group[gid] %d\n", new_GID, shards_per_group[new_GID])
+			}*/
+		}
+	}
+
+	for gid, _ := range(conf.Groups) {
+		if i &lt; 0 {
+			break
+		}
+		/*if sm.me == 0 {
+			fmt.Printf("all GID %d, shards_per_group[gid] %d\n", gid, shards_per_group[gid])
+		}*/
+		size, _ := shards_per_group[gid]
+		for j:= size; j&lt;limit; j++ {
+			conf.Shards[residual[i]] = gid
+			shards_per_group[gid] += 1
+			i -= 1
+			if i &lt; 0 {
+				break
+			}
+		}
+	}
+}
+
+
+
+</PRE>
+</PRE>
+</BODY>
+</HTML>

@@ -20,7 +20,6 @@ Lab PI: <a href="http://mpaxos.com">Shuai Mu</a><br>
 
 ## Code/Data/Scripts/Software/Tools
 
-- [Code for our blackbox database serializability verifier, named Cobra](https://github.com/DBCobra/CobraHome)
-- [Code for our geo-replicated database, named Janus](https://github.com/nyu-news/janus)
+- [RustyCpp: A Rust-style borrow checker for C++](./software/rusty-cpp.html) - [GitHub](https://github.com/shuaimu/rusty-cpp)
 
    

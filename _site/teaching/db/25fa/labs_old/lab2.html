@@ -7,16 +7,16 @@
 <meta name="generator" content="Jekyll v3.9.0" />
 <meta property="og:title" content="Lab 2: Replicated State Machine" />
 <meta property="og:locale" content="en_US" />
-<link rel="canonical" href="http://0.0.0.0/teaching/db/25fa/labs_old/lab2.html" />
-<meta property="og:url" content="http://0.0.0.0/teaching/db/25fa/labs_old/lab2.html" />
+<link rel="canonical" href="http://localhost:4000/teaching/db/25fa/labs_old/lab2.html" />
+<meta property="og:url" content="http://localhost:4000/teaching/db/25fa/labs_old/lab2.html" />
 <meta property="og:site_name" content="Home" />
 <meta name="twitter:card" content="summary" />
 <meta property="twitter:title" content="Lab 2: Replicated State Machine" />
 <script type="application/ld+json">
-{"@type":"WebPage","headline":"Lab 2: Replicated State Machine","url":"http://0.0.0.0/teaching/db/25fa/labs_old/lab2.html","@context":"https://schema.org"}</script>
+{"@type":"WebPage","headline":"Lab 2: Replicated State Machine","url":"http://localhost:4000/teaching/db/25fa/labs_old/lab2.html","@context":"https://schema.org"}</script>
 <!-- End Jekyll SEO tag -->
 <link rel="stylesheet" href="/assets/main.css">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"><link type="application/atom+xml" rel="alternate" href="http://0.0.0.0/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"><link type="application/atom+xml" rel="alternate" href="http://localhost:4000/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
   <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
 </head>
 <body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
@@ -57,20 +57,20 @@
 
 <p>Your Raft instances are only allowed to interact using RPC. For example, different Raft instances are not allowed to share Go variables. Your code should not use files at all.</p>
 
-<!-- You should consult the [extended Raft paper](../papers/raft-extended.pdf) and the Raft lecture notes. You may find it useful to look at this [illustration](http://thesecretlivesofdata.com/raft/) of the Raft protocol, a [guide](https://thesquareplanet.com/blog/students-guide-to-raft/) to Raft implementation written for 6.824 students in 2016, and advice about [locking](raft-locking.txt) and [structure](raft-structure.txt) for concurrency. For a wider perspective, have a look at Paxos, Chubby, Paxos Made Live, Spanner, Zookeeper, Harp, Viewstamped Replication, and [Bolosky et al.](http://static.usenix.org/event/nsdi11/tech/full_papers/Bolosky.pdf) -->
+<!-- You should consult the [extended Raft paper](../papers/raft-extended.pdf) and the Raft lecture notes. You may find it useful to look at this [illustration](http://thesecretlivesofdata.com/raft/) of the Raft protocol, a [guide](https://thesquareplanet.com/blog/students-guide-to-raft/) to Raft implementation written for 6.824 students in 2016, and advice about [locking](/teaching/db/25fa/labs_old/raft-locking.txt) and [structure](/teaching/db/25fa/labs_old/raft-structure.txt) for concurrency. For a wider perspective, have a look at Paxos, Chubby, Paxos Made Live, Spanner, Zookeeper, Harp, Viewstamped Replication, and [Bolosky et al.](http://static.usenix.org/event/nsdi11/tech/full_papers/Bolosky.pdf) -->
 
 <p>In this lab you’ll implement most of the Raft design described in the extended paper, including saving persistent state and reading it after a node fails and then restarts. You will not implement cluster membership changes (Section 6) or log compaction / snapshotting (Section 7).</p>
 
 <ul>
   <li>Start early. Although the amount of code isn’t large, getting it to work correctly will be challenging.</li>
-  <li>Read and understand the <a href="../readings/raft.pdf">extended Raft paper</a> and the Raft lecture notes before you start. Your implementation should follow the paper’s description closely, particularly Figure 2, since that’s what the tests expect.</li>
+  <li>Read and understand the <a href="/teaching/db/25fa/readings/raft.pdf">extended Raft paper</a> and the Raft lecture notes before you start. Your implementation should follow the paper’s description closely, particularly Figure 2, since that’s what the tests expect.</li>
 </ul>
 
 <p>This lab is due in three parts. You must submit each part on the corresponding due date. This lab does not involve a lot of code, but concurrency makes it challenging to debug; start each part early.</p>
 
 <h3 id="getting-started">Getting Started</h3>
 
-<!-- If you have done Lab 1, you already have a copy of the lab source code. If not, you can find directions for obtaining the source via git in the [Lab 1 instructions](lab1.md). -->
+<!-- If you have done Lab 1, you already have a copy of the lab source code. If not, you can find directions for obtaining the source via git in the [Lab 1 instructions](/teaching/db/25fa/labs_old/lab1.html). -->
 
 <!-- <div class="important"> -->
 
@@ -133,7 +133,7 @@ type ApplyMsg</pre>
   <li>The paper’s Section 5.2 mentions election timeouts in the range of 150 to 300 milliseconds. Such a range only makes sense if the leader sends heartbeats considerably more often than once per 150 milliseconds. Because the tester limits you to 10 heartbeats per second, you will have to use an election timeout larger than the paper’s 150 to 300 milliseconds, but not too large, because then you may fail to elect a leader within five seconds.</li>
   <li>You may find Go’s <a href="https://golang.org/pkg/math/rand/">rand</a> useful.</li>
   <li>You’ll need to write code that takes actions periodically or after delays in time. The easiest way to do this is to create a goroutine with a loop that calls <a href="https://golang.org/pkg/time/#Sleep">time.Sleep()</a>. The hard way is to use Go’s <tt>time.Timer</tt> or <tt>time.Ticker</tt>, which are difficult to use correctly.</li>
-  <li>If you are puzzled about locking, you may find this <a href="raft-locking.txt">advice</a> helpful.</li>
+  <li>If you are puzzled about locking, you may find this <a href="/teaching/db/25fa/labs_old/raft-locking.txt">advice</a> helpful.</li>
   <li>If your code has trouble passing the tests, read the paper’s Figure 2 again; the full logic for leader election is spread over multiple parts of the figure.</li>
   <li>A good way to debug your code is to insert print statements when a peer sends or receives a message, and collect the output in a file with <tt>go test -run 2A &gt; out</tt>. Then, by studying the trace of messages in the <tt>out</tt> file, you can identify where your implementation deviates from the desired protocol. You might find <tt>DPrintf</tt> in <tt>util.go</tt> useful to turn printing on and off as you debug different problems.</li>
   <li>Go RPC sends only struct fields whose names start with capital letters. Sub-structures must also have capitalized field names (e.g. fields of log records in an array). The <tt>labgob</tt> package will warn you about this; don’t ignore the warnings.</li>
@@ -171,7 +171,7 @@ $
   <li>You will need to implement the election restriction (section 5.4.1 in the paper).</li>
   <li>One way to fail the early Lab 2B tests is to hold un-needed elections, that is, an election even though the current leader is alive and can talk to all peers. This can prevent agreement in situations where the tester believes agreement is possible. Bugs in election timer management, or not sending out heartbeats immediately after winning an election, can cause un-needed elections.</li>
   <li>You may need to write code that waits for certain events to occur. Do not write loops that execute continuously without pausing, since that will slow your implementation enough that it fails tests. You can wait efficiently with Go’s channels, or Go’s <a href="https://golang.org/pkg/sync/#Cond">condition variables</a>, or (if all else fails) by inserting a <tt>time.Sleep(10 * time.Millisecond)</tt> in each loop iteration.</li>
-  <li>Give yourself time to rewrite your implementation in light of lessons learned about structuring concurrent code. In later labs you’ll thank yourself for having Raft code that’s as clear and clean as possible. For ideas, you can re-visit our <a href="raft-structure.txt">structure</a>, <a href="raft-locking.txt">locking</a> and <a href="https://thesquareplanet.com/blog/students-guide-to-raft/">guide</a>, pages.</li>
+  <li>Give yourself time to rewrite your implementation in light of lessons learned about structuring concurrent code. In later labs you’ll thank yourself for having Raft code that’s as clear and clean as possible. For ideas, you can re-visit our <a href="/teaching/db/25fa/labs_old/raft-structure.txt">structure</a>, <a href="/teaching/db/25fa/labs_old/raft-locking.txt">locking</a> and <a href="https://thesquareplanet.com/blog/students-guide-to-raft/">guide</a>, pages.</li>
 </ul>
 
 <p>The tests for upcoming labs may fail your code if it runs too slowly. You can check how much real time and CPU time your solution uses with the time command. Here’s some typical output for Lab 2B:</p>

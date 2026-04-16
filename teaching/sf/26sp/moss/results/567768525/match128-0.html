@@ -1,0 +1,351 @@
+<HTML>
+<HEAD>
+<TITLE>./spring19/naveenanto-stonybrook/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./spring19/naveenanto-stonybrook/src/kvraft/server.go<p><PRE>
+package raftkv
+
+import (
+	"bytes"
+	"fmt"
+	"labgob"
+	"labrpc"
+	"log"
+	"raft"
+	"sync"
+	"time"
+)
+
+const Debug = 0
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+type Op struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+	Key   string
+	Value string
+	//KVState  map[string]string
+	Op       string
+	UID      int
+	ClientNo int64
+}
+
+func (op *Op) isSame(other Op) bool {
+	return op.Op == other.Op && op.Key == other.Key && op.Value == other.Value
+}
+
+type KVServer struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	maxraftstate int // snapshot if log grows this big
+
+	// Your definitions here.
+	store map[string]string
+
+	// ignore any request prior to this
+	lastSeenRequest map[int64]int
+	//receivedCommands map[int]chan ApplyResponseMessage
+	receivedCommands sync.Map
+
+	lastAppliedIndex int
+
+	persistor *raft.Persister
+
+	quit chan bool
+}
+
+type ApplyResponseMessage struct {
+	msg   raft.ApplyMsg
+	value string
+	err   Err
+	term  int
+}
+
+type DuplicateReply struct {
+	SeqNo int
+	Value string
+}
+
+func (kv *KVServer) LockMe() {
+	//DPrintf("Trying to aquire Lock")
+	kv.mu.Lock()
+	//DPrintf("Aquired Lock")
+}
+
+func (kv *KVServer) UnlockMe() {
+	kv.mu.Unlock()
+	//DPrintf("Unlocked")
+}
+
+func (kv *KVServer) handleRPC(op Op) (wrongLeader bool, nextLeader int, err Err, value string) {
+	nextLeader = -1
+	_, isLeader := kv.rf.GetState()
+	kv.LockMe()
+	if isLeader && kv.isDuplicateRequest(op) {
+		wrongLeader = false
+		//value = kv.lastSeenRequest[op.ClientNo].Value
+		value = kv.store[op.Key]
+		kv.UnlockMe()
+		return
+	}
+	index, term, isLeader := kv.rf.Start(op)
+	kv.UnlockMe()
+
+	if !isLeader {
+		kv.rf.LockMe()
+		nextLeader = kv.rf.LastLeader
+		kv.rf.UnLockMe()
+		wrongLeader = true
+		return
+	}
+	//fmt.Println(op)
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match128-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	wrongLeader = false
+	//kv.receivedCommands[index] = make(chan ApplyResponseMessage)
+	channel := make(chan ApplyResponseMessage)
+	kv.LockMe()
+	_, ok := kv.receivedCommands.Load(index)
+	if ok {
+		fmt.Println("Duplicate received")
+	}
+	kv.receivedCommands.Store(index, channel)
+	kv.UnlockMe()
+</FONT>
+	appliedMessage := &lt;-channel
+	//appliedOp := appliedMessage.msg.Command.(Op)
+	kv.LockMe()
+	currentTerm := appliedMessage.term
+	if currentTerm == term {
+		err = ""
+		value = appliedMessage.value
+	} else {
+		//fmt.Println(appliedMessage.err)
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match128-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		wrongLeader = true
+	}
+	kv.receivedCommands.Delete(index)
+	kv.UnlockMe()
+	return
+}
+
+func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
+	// Your code here.
+	op := Op{Key: args.Key, Op: "Get", UID: args.UID, ClientNo: args.ClientNo}
+</FONT><A NAME="2"></A><FONT color = #0000FF><A HREF="match128-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	reply.WrongLeader, reply.NextLeader, reply.Err, reply.Value = kv.handleRPC(op)
+}
+
+func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	// Your code here.
+	op := Op{Key: args.Key, Value: args.Value, Op: args.Op, UID: args.UID, ClientNo: args.ClientNo}
+</FONT>	reply.WrongLeader, reply.NextLeader, reply.Err, _ = kv.handleRPC(op)
+}
+
+<A NAME="7"></A><FONT color = #0000FF><A HREF="match128-1.html#7" TARGET="1"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *KVServer) applierLoop() {
+	for {
+		//fmt.Println("Waiting for channel on", kv.me)
+		select {
+		case msg := &lt;-kv.applyCh:
+
+			responseMessage := ApplyResponseMessage{msg: msg, value: "", term: msg.Term}
+</FONT>			//fmt.Println("Received msg from Raft:", msg.CommandIndex)
+
+			//kv.rf.LockMe()
+			if msg.UseSnapshot {
+				kv.LockMe()
+				kv.DecodeSnapshot(msg.Command.([]byte))
+				kv.lastAppliedIndex = msg.CommandIndex
+				kv.UnlockMe()
+				//kv.takeSnapshotIfNeeded(msg.CommandIndex)
+			} else {
+				kv.LockMe()
+				kv.lastAppliedIndex = msg.CommandIndex
+				op := msg.Command.(Op)
+
+				if kv.isDuplicateRequest(op) {
+					responseMessage.value = kv.store[op.Key]
+				} else {
+					kv.applyToStateMachine(op, &responseMessage)
+				}
+
+				channel, ok := kv.receivedCommands.Load(msg.CommandIndex)
+				kv.takeSnapshotIfNeeded(msg.CommandIndex)
+				kv.UnlockMe()
+				if ok {
+					channel.(chan ApplyResponseMessage) &lt;- responseMessage
+				}
+			}
+
+		case &lt;-kv.quit:
+			return
+		}
+	}
+}
+
+//
+// the tester calls Kill() when a KVServer instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *KVServer) Kill() {
+	kv.rf.Kill()
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match128-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	close(kv.quit)
+	//fmt.Println(kv.me,"along with",kv.rf,"is killed")
+	// Your code here, if desired.
+}
+func (kv *KVServer) applyToStateMachine(op Op, responseMessage *ApplyResponseMessage) {
+	//fmt.Println(op)
+	switch op.Op {
+	case "Get":
+		value, ok := kv.store[op.Key]
+		if ok {
+			responseMessage.value = value
+</FONT>		}
+		break
+	case "Put":
+		//values := []string{op.Value}
+		kv.store[op.Key] = op.Value
+<A NAME="8"></A><FONT color = #00FFFF><A HREF="match128-1.html#8" TARGET="1"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		break
+	case "Append":
+		value := ""
+		key, ok := kv.store[op.Key]
+		if ok {
+			value = key
+</FONT>		}
+		kv.store[op.Key] = value + op.Value
+		break
+	default:
+		DPrintf("Incorrect operation\n")
+	}
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match128-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.lastSeenRequest[op.ClientNo] = op.UID
+}
+func (kv *KVServer) isDuplicateRequest(op Op) bool {
+	id, ok := kv.lastSeenRequest[op.ClientNo]
+	return ok && op.UID &lt;= id
+}
+
+func (kv *KVServer) EncodeSnapshot() []byte {
+</FONT>	snapBuffer := new(bytes.Buffer)
+	snapEncoder := labgob.NewEncoder(snapBuffer)
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match128-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	snapEncoder.Encode(kv.store)
+	snapEncoder.Encode(kv.lastSeenRequest)
+	snapEncoder.Encode(kv.lastAppliedIndex)
+	return snapBuffer.Bytes()
+}
+
+func (kv *KVServer) DecodeSnapshot(data []byte) {
+	if data == nil || len(data) &lt; 1 { // bootstrap without any state?
+		return
+</FONT>	}
+	//fmt.Println("Reading from snapshot", kv.me)
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var kvstate map[string]string
+	var lastSeenRequest map[int64]int
+	var lastAppliedIndex int
+	if d.Decode(&kvstate) != nil ||
+		d.Decode(&lastSeenRequest) != nil ||
+		d.Decode(&lastAppliedIndex) != nil {
+		fmt.Println("Error decoding from persistent state-kv")
+	} else {
+		kv.store = kvstate
+		kv.lastSeenRequest = lastSeenRequest
+		kv.lastAppliedIndex = lastAppliedIndex
+	}
+}
+
+func (kv *KVServer) takeSnapshotIfNeeded(index int) {
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match128-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	raftSize := kv.persistor.RaftStateSize()
+	if kv.maxraftstate &gt; 0 && raftSize &gt;= int(float64(kv.maxraftstate)*0.95) {
+		kv.rf.SaveSnapshot(index, kv.EncodeSnapshot())
+</FONT>	}
+}
+
+func (kv *KVServer) truncateOnCheckpoint() {
+	if kv.maxraftstate &lt;= 0 {
+		return
+	}
+	for {
+		select {
+		case &lt;-time.After(10 * time.Millisecond):
+			kv.takeSnapshotIfNeeded(kv.lastAppliedIndex)
+		case &lt;-kv.quit:
+			return
+		}
+	}
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Raft to
+// form the fault-tolerant key/Value service.
+// me is the index of the current server in servers[].
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+// the k/v server should snapshot when Raft's saved state exceeds maxraftstate bytes,
+// in order to allow Raft to garbage-collect its log. if maxraftstate is -1,
+// you don't need to snapshot.
+// StartKVServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
+	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+
+	kv := new(KVServer)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+
+	// You may need initialization code here.
+
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.persistor = persister
+	//kv.receivedCommands = make(map[int]chan ApplyResponseMessage)
+	//kv.receivedCommands = sync.Map)
+	kv.lastSeenRequest = make(map[int64]int)
+	kv.store = make(map[string]string)
+	kv.quit = make(chan bool)
+	//kv.maxraftstate = 1
+	// You may need initialization code here.
+	kv.DecodeSnapshot(kv.persistor.ReadSnapshot())
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+	go kv.applierLoop()
+	//go kv.truncateOnCheckpoint()
+
+	return kv
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

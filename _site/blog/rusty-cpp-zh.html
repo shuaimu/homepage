@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>用 AI 构建 Rust 风格的 C++ 静态分析器 | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="用 AI 构建 Rust 风格的 C++ 静态分析器" />
+<meta property="og:locale" content="en_US" />
+<link rel="canonical" href="http://localhost:4000/blog/rusty-cpp-zh.html" />
+<meta property="og:url" content="http://localhost:4000/blog/rusty-cpp-zh.html" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="用 AI 构建 Rust 风格的 C++ 静态分析器" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"用 AI 构建 Rust 风格的 C++ 静态分析器","url":"http://localhost:4000/blog/rusty-cpp-zh.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"><link type="application/atom+xml" rel="alternate" href="http://localhost:4000/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container-blog-post page-content">
+          <article>
+
+  <header>
+    <h1>用 AI 构建 Rust 风格的 C++ 静态分析器</h1></header>
+
+  <section>
+    <p><em>项目地址：<a href="https://github.com/shuaimu/rusty-cpp">https://github.com/shuaimu/rusty-cpp</a></em></p>
+
+<p>我搞了快 15 年 C++ 系统研究，最头疼的就是各种崩溃，特别是段错误和内存损坏。大部分都是内存问题：内存泄漏、悬空指针、释放后使用，等等。我遇到过好多次指针末尾是奇数的情况。最近一次就在上个月，搞得我好几晚睡不着。还记得有个内存 bug，我花了一个月都没找到原因，最后只能把所有能找到的裸指针都包上 shared_ptr。</p>
+
+<p>所以我一直想，能不能有个自动化的办法，帮我彻底解决这些内存问题。</p>
+
+<h2 id="rust-的梦想c-的现实">Rust 的梦想，C++ 的现实</h2>
+
+<p>Rust 就是我想要的，看它慢慢成熟我也挺高兴。但问题是，我手头很多代码库都是 C++ 写的，而且我离不开它们。把东西全扔掉，用 Rust 重写？这不现实。</p>
+
+<p>我本来还指望 C++ 和 Rust 能更好地互操作——像 C++ 和 D 语言那样，或者像 Swift 对 C++ 的有限支持，能无缝混用。你写个新类，就能和现有 C++ 代码共存。但跟了 Rust 委员会的讨论后，我觉得短期内没戏。</p>
+
+<h2 id="把-rust-带到-c">把 Rust 带到 C++</h2>
+
+<p>后来我发现另一个路子：把 Rust 的内存安全、借用检查这些特性，直接带到 C++ 里。这其实有戏，因为 C++ 在很多方面都是 Rust 的超集。</p>
+
+<p>我一开始想的是：能不能用 C++ 那套强大的宏来追踪借用？要是能不改编译器就实现就好了。研究了一阵子，发现 Google 的工程师已经试过了，但这条路走不通。问题出在 C++ 的细节上。你可以看看<a href="https://docs.google.com/document/d/e/2PACX-1vSt2VB1zQAJ6JDMaIA9PlmEgBxz2K5Tx6w2JqJNeYCy0gU4aoubdTxlENSKNSrQ2TXqPWcuwtXe6PlO/pub">他们的分析</a>。</p>
+
+<p>看来只能做个 C++ 静态分析器了。</p>
+
+<!--
+## 转译器的弯路
+
+好吧，看来得改编译器。但这工作量太大了。我下一个想法是：能不能写个 Rust 到 C++ 的转译器？像我这样还离不开 C++ 的人，可以把 Rust 代码转成 C++，不用搞互操作。我们确实做了个玩具翻译器，但后来发现问题：要转译 Rust 到 C++，还是得验证 Rust 代码安全，而且可能用不了 Rust 编译器，因为我们想要深度集成——想在 C++ 源码里写 Rust 函数。
+
+好吧，这方向不对。
+-->
+
+<h2 id="circle-c就差那么一点">Circle C++：就差那么一点</h2>
+
+<p>确实有人在做。最成熟的是 <a href="https://github.com/seanbaxter/circle">Circle C++</a>，还有后来的 Memory Safe C++ 提案。Circle C++ 几乎满足我所有幻想。它基本就是 Rust 的翻版——把 Rust 的借用检查规则搬到 C++。</p>
+
+<p>但 Circle 也有问题，我基本用不了。它依赖闭源编译器。我不能把 g++ 换成实验性编译器。而且它还有很多侵入性特性，比如改 C++ 语法，引入特殊的借用检查引用语法。Circle 后续发展也让人担心。C++ 委员会把它拒了，而且看起来项目已经停更了。</p>
+
+<h2 id="回到原点直接写分析器">回到原点：直接写分析器</h2>
+
+<p>又回到原点了。大家都在修语言，但没人直接分析它。还有人说 2025 年是发明 C++ 替代语言的一年，但这不是我想要的。我就想让 C++ 变安全。我还不想离开 C++。</p>
+
+<p>然后我想：写个 C++ 静态分析器有多难？概念上不难。就是遍历 AST。而且静态分析主要是静态作用域，不需要大量跨文件分析。可以单文件处理，作用域很有限。应该能实现，但工程量会很大，因为基本就是在克隆 Rust 的前端。我当全职教授，没时间搞这个。</p>
+
+<p>我想过雇个博士生。但有两个问题：我没钱，而且很难找到愿意做的博士生。我不怪他们。我跟几个学生聊过，都没兴趣。因为这听起来工程量大，而且不够”论文友好”，可能连个能发论文的酷概念都想不出来，虽然我觉得要是能发，这会是篇很有影响力的论文。</p>
+
+<p>所以这想法就搁置了。</p>
+
+<h2 id="ai-编程助手来了">AI 编程助手来了</h2>
+
+<p>直到今年，AI 编程助手真的起飞了。我试了 Claude Code，很快就升级了。我用它做了几个简单的网页仪表板，然后想：能不能用它试试做 Rust 风格的 C++ 静态分析器？</p>
+
+<p>我就问了 Claude。我把想法告诉它，它很快说可行，还给了个看起来很合理的计划。我让它写个原型，然后让它写测试。有些过了，有些挂了，然后它不断修原型。我不断要更多测试。这迭代持续了一阵，直到它写不出能发现 bug 的测试了。</p>
+
+<p>然后我开始在其他项目里用这个工具。我从 <a href="https://github.com/makodb/mako">Mako 项目</a> 的 rpc 组件开始。重构过程发现了更多 bug，我修了，迭代继续。</p>
+
+<p>现在我觉得它已经相当稳定、可用了。</p>
+
+<h2 id="看着-ai-实时进化">看着 AI 实时进化</h2>
+
+<p>关于 AI 编程还有件事：它进化得真快。一开始我用 Sonnet 3.7，经常出错，像一年级学生。我得手动重跑测试，因为它不会自动。升级到 Sonnet 4.5 后，它给”幻影答案”的情况少了。但它有时还是处理不了复杂问题。我们来回交流，我给它提示。但到了 Opus 4.5，现在少多了。我甚至开始试完全自主编程：不再盯着它每个动作，我就写个 TODO 列表，让它一个个完成任务。</p>
+
+<p>这体验很有意思。半年前，我绝对想不到 AI 编程助手能这么强。</p>
+
+<p>很神奇。但也让我有点担心。就这个小项目，它展现的工程能力比我的大多数博士生都强，可能也比我强。看它写的代码，我觉得让我全职做，可能得几年才能到这水平，这还是乐观估计，因为我根本不是编译器专家。</p>
+
+<p>从我第一手经验看，Claude 在不断进化。它越来越强，越来越不容易给幻影结果。如果它继续这样，我很担心系统工程市场的未来。也许不可避免，总有一天我们不再需要严格训练的系统黑客，只需要对概念熟悉、能读代码的人就够了。</p>
+
+<p>我从来不需要完全理解代码。我做的就是：让它给我个实施前的变更计划，它给几个选项，我选最合理的。记住，我不是专家。我觉得大多数时候，上过本科编译器课的人都能选对。</p>
+
+<p>有意思的是，它通常给我三个选项，选项 A 通常不对，通常是选项 B。我在想它是不是就想给我更多选项，第一个总是占位符，就像我学生有时那样。</p>
+
+<h2 id="技术设计">技术设计</h2>
+
+<p>简单聊聊技术设计。</p>
+
+<p><strong>基于注释的语法</strong>：为了兼容任何 C++ 编译器，我们用注释做注解，不在代码里引入新语法。你可以用 <code class="language-plaintext highlighter-rouge">@safe</code> 标记安全函数，用 <code class="language-plaintext highlighter-rouge">@unsafe</code> 标记不安全函数。所有未注解的代码，包括你代码库和 STL 里的，默认都是 <code class="language-plaintext highlighter-rouge">@unsafe</code>。</p>
+
+<p>规则很简单：<code class="language-plaintext highlighter-rouge">@safe</code> 代码只能直接调用其他 <code class="language-plaintext highlighter-rouge">@safe</code> 代码。要调用其他东西（STL、外部库、未注解的遗留代码），你得包在 <code class="language-plaintext highlighter-rouge">@unsafe</code> 块里。这样就划了条清晰的审计边界——代码要么安全，要么不安全。</p>
+
+<p>不需要改现有代码。如果你有遗留代码库，想写个新的安全函数，完全没问题——标记为 <code class="language-plaintext highlighter-rouge">@safe</code>，分析器就会检查。</p>
+
+<div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">// 命名空间级别：让命名空间里所有函数默认安全</span>
+<span class="c1">// @safe</span>
+<span class="k">namespace</span> <span class="n">myapp</span> <span class="p">{</span>
+
+    <span class="kt">void</span> <span class="n">func1</span><span class="p">()</span> <span class="p">{</span>
+        <span class="kt">int</span> <span class="n">value</span> <span class="o">=</span> <span class="mi">42</span><span class="p">;</span>
+        <span class="kt">int</span><span class="o">&amp;</span> <span class="n">ref1</span> <span class="o">=</span> <span class="n">value</span><span class="p">;</span>
+        <span class="kt">int</span><span class="o">&amp;</span> <span class="n">ref2</span> <span class="o">=</span> <span class="n">value</span><span class="p">;</span>  <span class="c1">// 错误：多个可变借用</span>
+    <span class="p">}</span>
+
+    <span class="c1">// @unsafe</span>
+    <span class="kt">void</span> <span class="n">unsafe_func</span><span class="p">()</span> <span class="p">{</span>
+        <span class="c1">// 显式不安全，这里不检查</span>
+        <span class="kt">int</span> <span class="n">value</span> <span class="o">=</span> <span class="mi">42</span><span class="p">;</span>
+        <span class="kt">int</span><span class="o">&amp;</span> <span class="n">ref1</span> <span class="o">=</span> <span class="n">value</span><span class="p">;</span>
+        <span class="kt">int</span><span class="o">&amp;</span> <span class="n">ref2</span> <span class="o">=</span> <span class="n">value</span><span class="p">;</span>  <span class="c1">// 可以 - 不检查</span>
+    <span class="p">}</span>
+<span class="p">}</span>
+
+<span class="c1">// 函数级别注解</span>
+<span class="c1">// @safe</span>
+<span class="kt">void</span> <span class="nf">checked_func</span><span class="p">()</span> <span class="p">{</span>
+    <span class="kt">int</span> <span class="n">value</span> <span class="o">=</span> <span class="mi">42</span><span class="p">;</span>
+    <span class="kt">int</span><span class="o">&amp;</span> <span class="n">ref1</span> <span class="o">=</span> <span class="n">value</span><span class="p">;</span>
+
+    <span class="c1">// 需要调用 STL 或外部代码？用不安全块</span>
+    <span class="c1">// @unsafe</span>
+    <span class="p">{</span>
+        <span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span> <span class="n">vec</span><span class="p">;</span>  <span class="c1">// 在不安全块里可以</span>
+        <span class="n">vec</span><span class="p">.</span><span class="n">push_back</span><span class="p">(</span><span class="n">value</span><span class="p">);</span>
+    <span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p><strong>Const 当不可变用</strong>：C++ 对 Rust 的可变性有完美对应：<code class="language-plaintext highlighter-rouge">const</code> 和非 <code class="language-plaintext highlighter-rouge">const</code>。Const 变量和 const 成员函数就是不可变的。非 const 就是可变的。唯一区别是默认反过来——我们只需要在东西前面加 <code class="language-plaintext highlighter-rouge">const</code>。</p>
+
+<p><strong>借用检查</strong>：核心是 Rust 风格的借用检查。多个不可变借用可以，但不能有多个可变借用，也不能混用可变和不可变借用到同一变量：</p>
+
+<div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">// @safe</span>
+<span class="kt">void</span> <span class="nf">borrow_rules</span><span class="p">()</span> <span class="p">{</span>
+    <span class="kt">int</span> <span class="n">value</span> <span class="o">=</span> <span class="mi">42</span><span class="p">;</span>
+
+    <span class="c1">// 多个不可变借用 - 可以</span>
+    <span class="k">const</span> <span class="kt">int</span><span class="o">&amp;</span> <span class="n">ref1</span> <span class="o">=</span> <span class="n">value</span><span class="p">;</span>
+    <span class="k">const</span> <span class="kt">int</span><span class="o">&amp;</span> <span class="n">ref2</span> <span class="o">=</span> <span class="n">value</span><span class="p">;</span>
+    <span class="kt">int</span> <span class="n">sum</span> <span class="o">=</span> <span class="n">ref1</span> <span class="o">+</span> <span class="n">ref2</span><span class="p">;</span>  <span class="c1">// 没问题</span>
+
+    <span class="c1">// 多个可变借用 - 错误</span>
+    <span class="kt">int</span><span class="o">&amp;</span> <span class="n">mut1</span> <span class="o">=</span> <span class="n">value</span><span class="p">;</span>
+    <span class="kt">int</span><span class="o">&amp;</span> <span class="n">mut2</span> <span class="o">=</span> <span class="n">value</span><span class="p">;</span>  <span class="c1">// 错误：已经被可变借用</span>
+
+    <span class="c1">// 混用可变和不可变 - 错误</span>
+    <span class="k">const</span> <span class="kt">int</span><span class="o">&amp;</span> <span class="n">immut</span> <span class="o">=</span> <span class="n">value</span><span class="p">;</span>
+    <span class="kt">int</span><span class="o">&amp;</span> <span class="n">mut</span> <span class="o">=</span> <span class="n">value</span><span class="p">;</span>  <span class="c1">// 错误：已经被不可变借用</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p><strong>外部注解</strong>：我还得支持现有 STL 和第三方库。这些库已经在那了——Boost、STL，所有东西。我们能做什么？不能改系统头文件。所以我们做外部注解：允许把现有函数注解为不安全，并给出生命周期。这样就能用任何系统头文件，不用改它们。</p>
+
+<div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">// 外部注解放头文件里</span>
+<span class="c1">// @external: {</span>
+<span class="c1">//   strlen: [safe, (const char* str) -&gt; owned]</span>
+<span class="c1">//   strcpy: [unsafe, (char* dest, const char* src) -&gt; char*]</span>
+<span class="c1">//   strchr: [safe, (const char* str, int c) -&gt; const char* where str: 'a, return: 'a]</span>
+<span class="c1">//</span>
+<span class="c1">//   // 第三方库也一样</span>
+<span class="c1">//   sqlite3_column_text: [safe, (sqlite3_stmt* stmt, int col) -&gt; const char* where stmt: 'a, return: 'a]</span>
+<span class="c1">//   nlohmann::json::parse: [safe, (const string&amp; s) -&gt; owned json]</span>
+<span class="c1">// }</span>
+</code></pre></div></div>
+
+<p><code class="language-plaintext highlighter-rouge">where</code> 子句指定生命周期关系——比如 <code class="language-plaintext highlighter-rouge">where stmt: 'a, return: 'a</code> 意思是返回的指针和语句句柄一样长。这样分析器就能捕获外部 API 的悬空指针。</p>
+
+<p><strong>Libclang 的坑</strong>：我用 libclang 解析 AST，但它不总是给我带合适限定符的简单名称。这意味着如果遇到不同命名空间的名称冲突，它很可能在分析时把名称和正确实体搞混。我得不断修——基本就是不断让 Claude 修。这过程很痛苦，但看起来我快稳定了，bug 少多了。这是好事。</p>
+
+<p><strong>Rust 标准库类型</strong>：很多 Rust 惯用法来自标准库类型，比如 <code class="language-plaintext highlighter-rouge">Box</code>、<code class="language-plaintext highlighter-rouge">Arc</code>、<code class="language-plaintext highlighter-rouge">Option</code>。所以我也写了它们的 C++ 等价物。虽然很多人说 <code class="language-plaintext highlighter-rouge">unique_ptr</code> 等价 <code class="language-plaintext highlighter-rouge">Box</code>，但其实不是——<code class="language-plaintext highlighter-rouge">unique_ptr</code> 允许空指针，<code class="language-plaintext highlighter-rouge">Box</code> 不行。<code class="language-plaintext highlighter-rouge">Arc</code> 和 <code class="language-plaintext highlighter-rouge">shared_ptr</code> 也类似。所以我写了和 Rust API 完全一样的 C++ 替代品。</p>
+
+<div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">#include "rusty/rusty.hpp"
+</span>
+<span class="c1">// @safe</span>
+<span class="kt">void</span> <span class="nf">rust_types_demo</span><span class="p">()</span> <span class="p">{</span>
+    <span class="c1">// Box - 堆分配，单一所有者，永不为空</span>
+    <span class="k">auto</span> <span class="n">box1</span> <span class="o">=</span> <span class="n">rusty</span><span class="o">::</span><span class="n">make_box</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="p">(</span><span class="mi">42</span><span class="p">);</span>
+    <span class="k">auto</span> <span class="n">box2</span> <span class="o">=</span> <span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">box1</span><span class="p">);</span>
+    <span class="c1">// *box1 = 100;  // 错误：移动后使用</span>
+
+    <span class="c1">// Arc - 线程安全的引用计数</span>
+    <span class="k">auto</span> <span class="n">arc1</span> <span class="o">=</span> <span class="n">rusty</span><span class="o">::</span><span class="n">make_arc</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="p">(</span><span class="mi">100</span><span class="p">);</span>
+    <span class="k">auto</span> <span class="n">arc2</span> <span class="o">=</span> <span class="n">arc1</span><span class="p">.</span><span class="n">clone</span><span class="p">();</span>  <span class="c1">// 显式克隆，引用计数增加</span>
+    <span class="c1">// 两个都能读：*arc1, *arc2</span>
+
+    <span class="c1">// Vec - 带所有权的动态数组</span>
+    <span class="n">rusty</span><span class="o">::</span><span class="n">Vec</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span> <span class="n">vec</span><span class="p">;</span>
+    <span class="n">vec</span><span class="p">.</span><span class="n">push</span><span class="p">(</span><span class="mi">10</span><span class="p">);</span>
+    <span class="n">vec</span><span class="p">.</span><span class="n">push</span><span class="p">(</span><span class="mi">20</span><span class="p">);</span>
+    <span class="kt">int</span> <span class="n">last</span> <span class="o">=</span> <span class="n">vec</span><span class="p">.</span><span class="n">pop</span><span class="p">();</span>  <span class="c1">// 返回 20</span>
+
+    <span class="c1">// Option - 不再有空指针意外</span>
+    <span class="n">rusty</span><span class="o">::</span><span class="n">Option</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span> <span class="n">maybe</span> <span class="o">=</span> <span class="n">rusty</span><span class="o">::</span><span class="n">Some</span><span class="p">(</span><span class="mi">42</span><span class="p">);</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">maybe</span><span class="p">.</span><span class="n">is_some</span><span class="p">())</span> <span class="p">{</span>
+        <span class="kt">int</span> <span class="n">val</span> <span class="o">=</span> <span class="n">maybe</span><span class="p">.</span><span class="n">unwrap</span><span class="p">();</span>
+    <span class="p">}</span>
+    <span class="n">rusty</span><span class="o">::</span><span class="n">Option</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span> <span class="n">nothing</span> <span class="o">=</span> <span class="n">rusty</span><span class="o">::</span><span class="n">None</span><span class="p">;</span>
+
+    <span class="c1">// Result - 显式错误处理</span>
+    <span class="k">auto</span> <span class="n">divide</span> <span class="o">=</span> <span class="p">[](</span><span class="kt">int</span> <span class="n">a</span><span class="p">,</span> <span class="kt">int</span> <span class="n">b</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">rusty</span><span class="o">::</span><span class="n">Result</span><span class="o">&lt;</span><span class="kt">int</span><span class="p">,</span> <span class="k">const</span> <span class="kt">char</span><span class="o">*&gt;</span> <span class="p">{</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">b</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="k">return</span> <span class="n">rusty</span><span class="o">::</span><span class="n">Result</span><span class="o">&lt;</span><span class="kt">int</span><span class="p">,</span> <span class="k">const</span> <span class="kt">char</span><span class="o">*&gt;::</span><span class="n">Err</span><span class="p">(</span><span class="s">"div by zero"</span><span class="p">);</span>
+        <span class="k">return</span> <span class="n">rusty</span><span class="o">::</span><span class="n">Result</span><span class="o">&lt;</span><span class="kt">int</span><span class="p">,</span> <span class="k">const</span> <span class="kt">char</span><span class="o">*&gt;::</span><span class="n">Ok</span><span class="p">(</span><span class="n">a</span> <span class="o">/</span> <span class="n">b</span><span class="p">);</span>
+    <span class="p">};</span>
+
+    <span class="k">auto</span> <span class="n">result</span> <span class="o">=</span> <span class="n">divide</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span> <span class="mi">2</span><span class="p">);</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">result</span><span class="p">.</span><span class="n">is_ok</span><span class="p">())</span> <span class="p">{</span>
+        <span class="kt">int</span> <span class="n">val</span> <span class="o">=</span> <span class="n">result</span><span class="p">.</span><span class="n">unwrap</span><span class="p">();</span>  <span class="c1">// 5</span>
+    <span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p><strong>Send 和 Sync</strong>：我们还试了复制 Rust 的想法，把类型标记为 <code class="language-plaintext highlighter-rouge">Send</code> 和 <code class="language-plaintext highlighter-rouge">Sync</code> 来搞多线程安全。只有可发送的类型才能在线程生成里用。现在我们用 C++ 概念来标记类型为 <code class="language-plaintext highlighter-rouge">Send</code> 或 <code class="language-plaintext highlighter-rouge">Sync</code>。目前缺点是手动标记——你得自己标记类型。我还没试能不能自动推导，但即使不能，手动标记 <code class="language-plaintext highlighter-rouge">Send</code> 或 <code class="language-plaintext highlighter-rouge">Sync</code> 现在也没问题。</p>
+
+<h2 id="使用方法">使用方法</h2>
+
+<p>基本用法很简单：</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span>rusty-cpp-checker myfile.cpp
+
+Rusty C++ Checker
+Analyzing: myfile.cpp
+✗ Found 3 violation<span class="o">(</span>s<span class="o">)</span> <span class="k">in </span>myfile.cpp:
+Cannot create mutable reference to <span class="s1">'value'</span>: already mutably borrowed
+Cannot create mutable reference to <span class="s1">'value'</span>: already immutably borrowed
+Use after move: variable <span class="s1">'ptr'</span> has been moved
+</code></pre></div></div>
+
+<p>大项目可以用 <code class="language-plaintext highlighter-rouge">compile_commands.json</code>（CMake 或其他构建系统生成）：</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># 用 CMake 生成 compile_commands.json</span>
+cmake <span class="nt">-DCMAKE_EXPORT_COMPILE_COMMANDS</span><span class="o">=</span>ON ..
+
+<span class="c"># 用它跑分析器</span>
+<span class="nv">$ </span>rusty-cpp-checker src/main.cpp <span class="nt">--compile-commands</span> build/compile_commands.json
+</code></pre></div></div>
+
+<p>我们还有 CMake 集成，支持编译时自动检查。你可以看看 <a href="https://github.com/makodb/mako">Mako 项目</a> 当例子。</p>
+
+<h2 id="结语">结语</h2>
+
+<p>这个项目对我个人来说，是终于挠到了 15 年的痒。不是雇编译器工程师团队，不是等 C++ 委员会搞内存安全，而是和 AI 聊了聊，把我半生不熟的想法变成了能跑的代码。这在半年前我完全想不到。我期待再经历几次 iPhone 时刻，但从没想过会是这样——它展现了一个未来，在那里我所有编程技能可能都不需要了。</p>
+
+<p>不管怎样，去看看这个项目吧。在你代码库上试试。也许，像我一样，你终于能对那些神秘段错误安心点了。</p>
+
+  </section>
+
+  <footer class="mt-4 pt-3 border-top">
+    <p class="text-muted small">
+      <span id="busuanzi_container_page_pv">
+        <span id="busuanzi_value_page_pv"></span> views
+      </span>
+    </p>
+  </footer>
+
+</article>
+
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
+<script async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script>
+</body>
+
+</html>

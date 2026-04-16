@@ -1,0 +1,356 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/psdilip1995/src/kvraft/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/psdilip1995/src/kvraft/server.go<p><PRE>
+package raftkv
+
+import (
+	"labgob"
+	"labrpc"
+	"log"
+	"raft"
+	"sync"
+	//"fmt"
+	"time"
+	"strconv"
+)
+
+const Debug = 0
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+
+type Op struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+	Type string
+	Key string
+	Value string
+	SeqId int
+	Id int
+}
+
+type KVServer struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	maxraftstate int // snapshot if log grows this big
+
+	// Your definitions here.
+	//kvmap map[string]map[int]string
+	kvmap map[string]string
+	putting map[int]string
+	alreadydone map[int]map[int]string
+	processing map[int]map[int]int
+	//lastApplied int
+	putCh chan int
+	getCh chan string
+	//putting map[int]map[int]int
+}
+
+
+<A NAME="2"></A><FONT color = #0000FF><A HREF="match124-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
+	// Your code here.
+	index,_,isLeader := kv.rf.Start(Op{Type:"GET",Key:args.Key,SeqId:args.SeqId,Id:args.Id})
+</FONT>
+	if isLeader{
+		reply.WrongLeader = false
+		reply.Err = ""
+		//fmt.Println("expected index for ",args.Id," -- ",args.SeqId," Get Key ",args.Key," is ",index)
+		//fmt.Println("started ",args.Id," -- ",args.SeqId)
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match124-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_10.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		compareval := strconv.Itoa(args.Id)+" "+strconv.Itoa(args.SeqId)
+		puttingVal := ""
+		beforeTime := time.Now()
+		for{
+			time.Sleep(50*time.Millisecond)
+			kv.mu.Lock()
+			val,ok := kv.putting[index]
+			kv.mu.Unlock()
+			if ok {
+				puttingVal = val
+				break
+			}
+			now := time.Now()
+			if (now.Sub(beforeTime) &gt; 2000*time.Millisecond){
+				reply.Err = "timeout"
+				//fmt.Println("time out in get with cid:seqid as ",args.Id,":",args.SeqId," with expected index ",index)
+				break
+			}
+		}
+
+		if reply.Err != "timeout"{
+			if compareval != puttingVal{
+</FONT>				//fmt.Println("missmatch of index for ",args.Id,":",args.SeqId," with expected index index ",index)
+				reply.Err = "timeout"
+			}else{
+				kv.mu.Lock()
+				reply.Value = kv.kvmap[args.Key]
+				kv.mu.Unlock()
+			}
+		}
+	}else{
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match124-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		reply.WrongLeader = true
+	}
+}
+/*	index,_,isLeader := kv.rf.Start(Op{Type:"GET",Key:args.Key,SeqId:args.SeqId,Id:args.Id})
+	
+	if isLeader{
+		//fmt.Println("expected index for ------ client:",args.Id," -- seqId :",args.SeqId," -- indx:",index)
+		reply.WrongLeader = false
+		//fmt.Println("Id :",args.Id," --- SeqId :",args.SeqId)
+		//fmt.Println("op --- GET -- (client:seqid) = (",args.Id,":",args.SeqId,") Key --- ",args.Key)
+	}else{
+		reply.WrongLeader = true
+		//kv.mu.Unlock()
+		return
+	}
+	
+	//fmt.Println("waiting for index in get ",index)
+
+	go func(index int){
+		for{
+			kv.mu.Lock()
+			_,ok := kv.putting[index]
+			kv.mu.Unlock()
+			if ok{
+				break
+			}
+		}
+		kv.getCh &lt;- 1
+	}(index)
+		//fmt.Println("Now i will wait fro get value (client:seqid) = (",args.Id,":",args.SeqId,")")
+	select{
+	case &lt;- kv.getCh:
+		//fmt.Println("Id :",args.Id," --- SeqId :",args.SeqId)
+		kv.mu.Lock()
+		reply.Value = kv.alreadydone[args.Id][args.SeqId]
+		kv.mu.Unlock()
+		//fmt.Println("Id :",args.Id," --- SeqId :",args.SeqId," ----- Done")
+		//fmt.Println(" get value (client:seqid) = (",args.Id,":",args.SeqId,") ------------------------ done")
+	case &lt;- time.After(10000*time.Millisecond):
+		//fmt.Println("Timeout Id :",args.Id," --- SeqId :",args.SeqId)
+	//	reply.WrongLeader = true
+	}
+	//kv.mu.Unlock()
+}*/
+
+func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	// Your code here.
+	index,_,isLeader := kv.rf.Start(Op{Type:args.Op,Key:args.Key,Value:args.Value,SeqId:args.SeqId,Id:args.Id})
+</FONT>
+	if isLeader{
+		reply.WrongLeader = false
+		reply.Err = ""
+		//fmt.Println("expected index for ",args.Id," -- ",args.SeqId," put/append Key/value ",args.Key,"/",args.Value," is ",index)
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match124-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_10.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		compareval := strconv.Itoa(args.Id)+" "+strconv.Itoa(args.SeqId)
+		puttingVal := ""
+		beforeTime := time.Now()
+		for{
+			time.Sleep(50*time.Millisecond)
+			kv.mu.Lock()
+			va,ok := kv.putting[index]
+			kv.mu.Unlock()
+			if ok{
+				puttingVal = va
+				break
+			}
+			now := time.Now()
+			if (now.Sub(beforeTime) &gt; 1000*time.Millisecond){
+				reply.Err = "timeout"
+				break
+			}
+		}
+
+		if reply.Err != "timeout"{
+			if compareval != puttingVal{
+</FONT>				reply.Err = "timeout"
+			}
+		}
+
+
+	}else{
+		reply.WrongLeader = true
+	}
+}
+/*	index,_,isLeader := kv.rf.Start(Op{Type:args.Op,Key:args.Key,Value:args.Value,SeqId:args.SeqId,Id:args.Id})
+	//fmt.Println(index)
+	
+
+	if isLeader{
+		//fmt.Println("expected index for ------ client:",args.Id," -- seqId :",args.SeqId," -- indx:",index)
+		//fmt.Println(index)
+		//fmt.Println("op --- ",args.Op," -- (client:seqid) = (",args.Id,":",args.SeqId,") K/V --- ",args.Key,"/",args.Value)
+		reply.WrongLeader = false
+	}else{
+		reply.WrongLeader = true
+		return
+	}
+
+	go func(index int){
+		for{
+			kv.mu.Lock()
+			_,ok := kv.putting[index]
+			kv.mu.Unlock()
+			if ok{
+				break
+			}
+		}
+		kv.putCh &lt;- 1
+	}(index)
+		//fmt.Println("Now I will wait for put/append value -- (client:seqid) = (",args.Id,":",args.SeqId,")")
+	select{
+	case &lt;- kv.putCh:
+		//fmt.Println("put/append value -- (client:seqid) = (",args.Id,":",args.SeqId,") ----------------------------- done")
+	case &lt;- time.After(10000*time.Millisecond):
+		//fmt.Println("Rimeout")
+	//	reply.WrongLeader = true
+	}
+
+}*/
+
+//
+// the tester calls Kill() when a KVServer instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (kv *KVServer) Kill() {
+	kv.rf.Kill()
+	// Your code here, if desired.
+}
+
+type ApplMsg struct {
+    CommandValid bool
+    Command      interface{}
+    CommandIndex int
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Raft to
+// form the fault-tolerant key/value service.
+// me is the index of the current server in servers[].
+// the k/v server should store snapshots through the underlying Raft
+// implementation, which should call persister.SaveStateAndSnapshot() to
+// atomically save the Raft state along with the snapshot.
+// the k/v server should snapshot when Raft's saved state exceeds maxraftstate bytes,
+// in order to allow Raft to garbage-collect its log. if maxraftstate is -1,
+// you don't need to snapshot.
+// StartKVServer() must return quickly, so it should start goroutines
+// for any long-running work.
+//
+func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
+	// call labgob.Register on structures you want
+	// Go's RPC library to marshall/unmarshall.
+	labgob.Register(Op{})
+
+	kv := new(KVServer)
+	kv.me = me
+	kv.maxraftstate = maxraftstate
+
+	// You may need initialization code here.
+
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+
+	// You may need initialization code here.
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match124-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	kv.kvmap = make(map[string]string)
+	kv.putting = make(map[int]string)
+	kv.alreadydone = make(map[int]map[int]string)
+</FONT>	//kv.processing = make(map[int]map[int]int)
+	//kv.lastApplied = 0
+	kv.putCh = make(chan int)
+	kv.getCh = make(chan string)
+	go func(){
+		for{
+			msg := &lt;- kv.applyCh
+			
+			//fmt.Println(msg.CommandIndex)
+			if(msg.CommandIndex == 0){
+				continue
+			}
+			
+				kv.mu.Lock()
+				msgCmdValid := msg.CommandValid
+				msgOp := msg.Command.(Op)
+				//fmt.Println(" received from channel ",msgOp.Id," -- ",msgOp.SeqId)
+				_,dne := kv.alreadydone[msgOp.Id][msgOp.SeqId]
+				if !dne {
+					if msgCmdValid {
+						
+						if msgOp.Type == "Put"{
+							kv.kvmap[msgOp.Key] = msgOp.Value
+							//fmt.Println("updated for ",msgOp.Id," - ",msgOp.SeqId," Key with Value ",msgOp.Key," with ",msgOp.Value)
+						}
+						if msgOp.Type == "Append"{
+							_,exist := kv.kvmap[msgOp.Key]
+							if exist {
+								kv.kvmap[msgOp.Key] += msgOp.Value
+							}else{
+								kv.kvmap[msgOp.Key] = msgOp.Value
+							}
+							//fmt.Println("updated for ",msgOp.Id," - ",msgOp.SeqId," Key with Value ",msgOp.Key," with ",msgOp.Value)
+						}
+						//fmt.Println("kvmap for key (commit index :",msg.CommandIndex,") (cid:",msgOp.Id,",seqid:",msgOp.SeqId,") ",msgOp.Key," is ",kv.kvmap[msgOp.Key])
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match124-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_3.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+						_,exsist2 := kv.alreadydone[msgOp.Id]
+						if exsist2{
+							kv.alreadydone[msgOp.Id][msgOp.SeqId] = kv.kvmap[msgOp.Key]
+</FONT>						}else{
+<A NAME="6"></A><FONT color = #00FF00><A HREF="match124-1.html#6" TARGET="1"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+							kv.alreadydone[msgOp.Id] = make(map[int]string)
+							kv.alreadydone[msgOp.Id][msgOp.SeqId] = kv.kvmap[msgOp.Key]
+</FONT>						}
+
+						puttingval := strconv.Itoa(msgOp.Id)+" "+strconv.Itoa(msgOp.SeqId)
+						kv.putting[msg.CommandIndex] = puttingval
+
+						//if msgOp.Type == "GET"{
+						//	kv.getCh &lt;- kv.alreadydone[msgOp.Id][msgOp.SeqId]
+						//}
+					}else{
+						//fmt.Println("snapshot message received")
+					}
+				}else{
+					//fmt.Println("already ",msgOp.Id," -- ",msgOp.SeqId)
+					//kv.putting[msg.CommandIndex] = 1
+					puttingval := strconv.Itoa(msgOp.Id)+" "+strconv.Itoa(msgOp.SeqId)
+					kv.putting[msg.CommandIndex] = puttingval
+				}
+				kv.mu.Unlock()
+				
+			//}
+			//}(msg)
+		}
+	}()
+
+
+	return kv
+}
+</PRE>
+</PRE>
+</BODY>
+</HTML>

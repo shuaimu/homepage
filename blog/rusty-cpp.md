@@ -13,7 +13,7 @@ So I always wished for some mechanical way that can help me eliminate all possib
 
 Rust is exactly what I need, and I'm happy to see this language mature. But unfortunately, many of my existing codebases that I deeply rely on are in C++. It's not a practical decision to just drop everything and rewrite everything from scratch in Rust.
 
-One thing I used to hope for is better interop between C++ and Rust—something similar to C++ and the D language, or Swift's limited support of C++, where you can have seamless interop. You can write one more class and that class coexists with the existing C++ codebase. But after closely following discussions in the Rust committee, I do not think this is likely to happen soon.
+One thing I used to hope for is better interop between C++ and Rust—something similar to C++ and the D language, or Swift's limited support of C++, where you can have seamless interop. You can write one more class and that class coexists with the existing C++ codebase. But after closely following [discussions](https://hackmd.io/@rust-lang-team/rJvv36hq1e) in the Rust committee, I do not think this is likely to happen soon.
 
 ## Bringing Rust to C++
 

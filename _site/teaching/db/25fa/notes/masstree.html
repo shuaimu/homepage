@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>Masstree | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="Masstree" />
+<meta property="og:locale" content="en_US" />
+<link rel="canonical" href="http://localhost:4000/teaching/db/25fa/notes/masstree.html" />
+<meta property="og:url" content="http://localhost:4000/teaching/db/25fa/notes/masstree.html" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="Masstree" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"Masstree","url":"http://localhost:4000/teaching/db/25fa/notes/masstree.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"><link type="application/atom+xml" rel="alternate" href="http://localhost:4000/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>Masstree</h1>
+         </header> -->
+
+  <section>
+    <h1 id="masstree">Masstree</h1>
+<h2 id="goals">Goals</h2>
+<ul>
+  <li>Fast key-value store for multicore servers
+    <ul>
+      <li>All data fits in memory (in-memory)</li>
+      <li>Persistent across crashes</li>
+      <li>Support range queries</li>
+    </ul>
+  </li>
+  <li>Handle hard workloads
+    <ul>
+      <li>Skewed key popularity</li>
+      <li>Small key-value pairs</li>
+      <li>Many puts (writes)</li>
+      <li>Variable-length arbitrary keys</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="problem-dram-is-the-bottleneck">Problem: DRAM is the bottleneck</h2>
+<ul>
+  <li>Network/disk can be optimized away</li>
+  <li>Binary tree: O(log N) serial DRAM latencies</li>
+  <li>Cache-craftiness: careful use of cache and memory</li>
+</ul>
+
+<h2 id="key-design-trie-of-b-trees">Key Design: Trie of B+ Trees</h2>
+<ul>
+  <li>Each trie level = B+ tree indexed by 8-byte key slice
+    <ul>
+      <li>Level 0: k[0:7], Level 1: k[8:15], …</li>
+    </ul>
+  </li>
+  <li>Combines benefits:
+    <ul>
+      <li>B+ tree: balanced, wide fanout</li>
+      <li>Trie: handles long common prefixes efficiently</li>
+    </ul>
+  </li>
+  <li>Example: keys with P-byte prefix
+    <ul>
+      <li>Masstree: O(log N) comparisons and DRAM accesses</li>
+      <li>Single B+ tree: O(P log N) for both</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="cache-crafty-optimizations">Cache-Crafty Optimizations</h2>
+
+<h3 id="integer-key-comparison-intcmp">Integer Key Comparison (IntCmp)</h3>
+<ul>
+  <li>Store 8-byte key slices as 64-bit integers</li>
+  <li>Single CPU integer comparison vs byte-by-byte loops</li>
+  <li>15-24% performance improvement</li>
+  <li>Little-endian challenge:
+    <ul>
+      <li>String “ABCDEFGH” in memory: <code class="language-plaintext highlighter-rouge">41 42 43 44 45 46 47 48</code></li>
+      <li>Loaded as int: <code class="language-plaintext highlighter-rouge">0x4847464544434241</code> (reversed!)</li>
+      <li>Solution: byte-swap to <code class="language-plaintext highlighter-rouge">0x4142434445464748</code></li>
+      <li>Now integer <code class="language-plaintext highlighter-rouge">&lt;</code> gives same result as string comparison</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="wide-fanout-4-tree--b-tree">Wide Fanout (4-tree → B+ tree)</h3>
+<ul>
+  <li>4-tree: fanout 4, one cache line per node
+    <ul>
+      <li>½ levels vs binary tree → ½ DRAM latencies</li>
+      <li>Problem: unbalanced for sequential inserts</li>
+    </ul>
+  </li>
+  <li>B+ tree: fanout 15, balanced
+    <ul>
+      <li>4 cache lines per node (256 bytes)</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="why-256-bytes-4-cache-lines">Why 256 Bytes (4 Cache Lines)?</h3>
+<ul>
+  <li>Hardware constraints:
+    <ul>
+      <li>CPU loads in 64-byte cache lines</li>
+      <li>Limited prefetch queue (4-16 outstanding requests)</li>
+      <li>L1 cache only 32KB (512 lines total)</li>
+    </ul>
+  </li>
+  <li>Tradeoffs:
+    <ul>
+      <li>128 bytes → fanout 7 → deeper tree</li>
+      <li>256 bytes → fanout 15 → optimal balance</li>
+      <li>512 bytes → fanout 31 → wastes cache (nodes 75% full)</li>
+    </ul>
+  </li>
+  <li>Performance impact:
+    <ul>
+      <li>256 bytes = 0.78% of L1 cache</li>
+      <li>Can prefetch all 4 lines in parallel</li>
+      <li>Balances tree depth vs cache pollution</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="prefetching">Prefetching</h3>
+<ul>
+  <li>Software prefetch all cache lines of a node</li>
+  <li>Result: 1 DRAM latency per node (vs 2-4)</li>
+  <li>9-31% throughput improvement</li>
+</ul>
+
+<h3 id="permuter">Permuter</h3>
+<ul>
+  <li>Problem: B+ tree inserts rearrange keys → intermediate states</li>
+  <li>Solution: store keys unsorted, use 64-bit permutation field
+    <ul>
+      <li>Encodes sort order + number of keys</li>
+      <li>Insert appears atomic to concurrent lookups</li>
+    </ul>
+  </li>
+  <li>No retry needed for concurrent reads</li>
+</ul>
+
+<h2 id="concurrency-control">Concurrency Control</h2>
+<ul>
+  <li>Optimistic concurrency control (OCC) for reads
+    <ul>
+      <li>No locks, no writing to shared data</li>
+      <li>Version checking: retry if inconsistent</li>
+    </ul>
+  </li>
+  <li>Fine-grained locking for writes
+    <ul>
+      <li>Lock only affected nodes (≤ 3 per operation)</li>
+      <li>Allows parallel updates to different parts</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="rcu-read-copy-update">RCU (Read-Copy-Update)</h3>
+<ul>
+  <li>Masstree inspired by RCU techniques</li>
+  <li>What is RCU?
+    <ul>
+      <li>Synchronization mechanism allowing reads without locks</li>
+      <li>Readers access data structures without synchronization</li>
+      <li>Writers create new versions instead of modifying in-place</li>
+      <li>Old versions kept until all readers finish</li>
+    </ul>
+  </li>
+  <li>In Masstree:
+    <ul>
+      <li>Readers never block or use locks</li>
+      <li>Writers update by creating new versions</li>
+      <li>Epoch-based reclamation for garbage collection</li>
+      <li>Ensures readers always see consistent data</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="version-management">Version Management</h3>
+<ul>
+  <li>Version field per node includes:
+    <ul>
+      <li>locked bit (for writers)</li>
+      <li>inserting/splitting bits (dirty markers)</li>
+      <li>vinsert/vsplit counters</li>
+    </ul>
+  </li>
+  <li>Writers mark dirty → make changes → clear &amp; increment</li>
+  <li>Readers snapshot version → read → check version</li>
+</ul>
+
+<h2 id="handling-splits">Handling Splits</h2>
+<ul>
+  <li>Problem: splits move keys between nodes</li>
+  <li>Solution: hand-over-hand validation
+    <ul>
+      <li>Check child version before parent</li>
+      <li>Detect splits via vsplit counter change</li>
+      <li>Retry from root on split detection</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="performance-results">Performance Results</h2>
+<ul>
+  <li>140M keys, 16 cores:
+    <ul>
+      <li>Binary tree: 3.7M ops/sec</li>
+      <li>Masstree: 5.8M puts/sec, 8M gets/sec</li>
+    </ul>
+  </li>
+  <li>1.7× improvement from cache-craftiness</li>
+  <li>Scales to 12× on 16 cores</li>
+</ul>
+
+<h2 id="tradeoffs">Tradeoffs</h2>
+
+<h3 id="single-tree-vs-partitioning">Single Tree vs Partitioning</h3>
+<ul>
+  <li>Partitioned (per-core trees):
+    <ul>
+      <li>Pro: no remote DRAM, no concurrency control</li>
+      <li>Con: load imbalance with skewed workloads</li>
+    </ul>
+  </li>
+  <li>Masstree (single shared tree):
+    <ul>
+      <li>Pro: handles skew well (3.5× better at δ=9)</li>
+      <li>Con: 1.5× slower for uniform workloads</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="range-queries-vs-hash-table">Range Queries vs Hash Table</h3>
+<ul>
+  <li>Hash table: 2.5× Masstree throughput</li>
+  <li>Cost of range query support: 2.5× performance</li>
+</ul>
+
+<h2 id="system-components">System Components</h2>
+<ul>
+  <li>Network: 10Gb NIC with multiple queues</li>
+  <li>Logging: per-core logs to multiple SSDs
+    <ul>
+      <li>Batch writes, force every 200ms</li>
+    </ul>
+  </li>
+  <li>Checkpointing: periodic snapshots for recovery</li>
+  <li>Values: multi-column support with atomic updates</li>
+</ul>
+
+<h2 id="key-insights">Key Insights</h2>
+<ul>
+  <li>DRAM latency dominates performance</li>
+  <li>Wide fanout + prefetching reduces tree depth</li>
+  <li>Permuter enables lock-free reads during inserts</li>
+  <li>Trie structure efficiently handles long prefixes</li>
+  <li>Single tree better for skewed workloads</li>
+</ul>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
+<script async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script>
+</body>
+
+</html>

@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>RocksDB | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="RocksDB" />
+<meta property="og:locale" content="en_US" />
+<link rel="canonical" href="http://localhost:4000/teaching/db/25fa/notes/rocksdb.html" />
+<meta property="og:url" content="http://localhost:4000/teaching/db/25fa/notes/rocksdb.html" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="RocksDB" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"RocksDB","url":"http://localhost:4000/teaching/db/25fa/notes/rocksdb.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"><link type="application/atom+xml" rel="alternate" href="http://localhost:4000/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>RocksDB</h1>
+         </header> -->
+
+  <section>
+    <h1 id="rocksdb">RocksDB</h1>
+<h2 id="goals">Goals</h2>
+<ul>
+  <li>Persistent key-value store for large-scale distributed systems
+    <ul>
+      <li>Optimized for SSDs (flash memory)</li>
+      <li>Embedded library (single node)</li>
+      <li>Highly customizable for different workloads</li>
+    </ul>
+  </li>
+  <li>Support diverse use cases
+    <ul>
+      <li>Databases (MySQL, MongoDB, TiDB)</li>
+      <li>Stream processing (Flink, Kafka Streams)</li>
+      <li>Logging/queuing services</li>
+      <li>Index services</li>
+      <li>SSD caching</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="problem-ssds-have-unique-characteristics">Problem: SSDs have unique characteristics</h2>
+<ul>
+  <li>Asymmetric read/write performance</li>
+  <li>Limited write endurance (P/E cycles)</li>
+  <li>High IOPS but write amplification matters</li>
+  <li>Shifted bottleneck: I/O → Network/CPU</li>
+</ul>
+
+<h2 id="key-design-lsm-trees">Key Design: LSM Trees</h2>
+<ul>
+  <li>Log-Structured Merge trees as primary data structure
+    <ul>
+      <li>Writes: MemTable → SSTable (Level 0)</li>
+      <li>Compaction: merge levels to remove dead data</li>
+    </ul>
+  </li>
+  <li>Why multiple levels (not just 2)?
+    <ul>
+      <li>With 2 levels: may rewrite entire dataset on each compaction</li>
+      <li>With N levels: amortize compaction cost</li>
+      <li>Each level ~10x larger than previous</li>
+      <li>Example: 1GB L0 → 10GB L1 → 100GB L2 → 1TB L3</li>
+      <li>Trade-off: more levels = lower write amp but higher read cost</li>
+    </ul>
+  </li>
+  <li>Benefits for SSDs:
+    <ul>
+      <li>Sequential writes (flash-friendly)</li>
+      <li>Tunable write amplification</li>
+      <li>Efficient space reclamation</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="reducing-read-cost-bloom-filters">Reducing Read Cost: Bloom Filters</h3>
+<ul>
+  <li>What: probabilistic data structure to test set membership
+    <ul>
+      <li>Can definitively say “key NOT in SSTable”</li>
+      <li>May have false positives (“key might be in SSTable”)</li>
+      <li>Never false negatives</li>
+    </ul>
+  </li>
+  <li>How it works:
+    <ul>
+      <li>Array of bits + multiple hash functions</li>
+      <li>Insert: hash key multiple ways, set corresponding bits to 1</li>
+      <li>Query: hash key, check if all corresponding bits are 1</li>
+    </ul>
+  </li>
+  <li>Use in RocksDB:
+    <ul>
+      <li>Each SSTable has bloom filter in its metadata</li>
+      <li>Read path: check bloom filter before reading SSTable</li>
+      <li>Eliminates ~99% of unnecessary SSTable reads (with 10 bits/key)</li>
+      <li>Critical for read performance with multiple levels</li>
+    </ul>
+  </li>
+  <li>Example read path:
+    <ul>
+      <li>Looking for key “foo”</li>
+      <li>L0: 5 SSTables → check 5 bloom filters → only read 1 SSTable</li>
+      <li>L1: check bloom filter → skip entire level</li>
+      <li>L2: check bloom filter → read SSTable (key found)</li>
+      <li>Saved: 4 unnecessary SSTable reads in L0, entire L1 scan</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="compaction-strategies">Compaction Strategies</h3>
+<ul>
+  <li>Leveled: balanced read/write (10-30x write amp)
+    <ul>
+      <li>Each level has non-overlapping key ranges</li>
+      <li>Size limit per level (exponentially increasing)</li>
+      <li>When level full → pick SSTable, merge with overlapping SSTables in next level</li>
+      <li>Maintains sorted runs per level</li>
+    </ul>
+  </li>
+  <li>Tiered: write-optimized (4-10x write amp)
+    <ul>
+      <li>Also called Universal Compaction in RocksDB</li>
+      <li>Can use multiple levels, but differently than leveled compaction</li>
+      <li>Structure:
+        <ul>
+          <li>Smaller sorted runs: stored as files in Level 0</li>
+          <li>Larger sorted runs: stored as “levels” (L1, L2, etc.) with partitioned SSTables</li>
+          <li>Each sorted run contains non-overlapping keys within itself</li>
+          <li>Different sorted runs can have overlapping key ranges</li>
+        </ul>
+      </li>
+      <li>Level usage:
+        <ul>
+          <li>num_levels=1: all sorted runs in L0 (limited by 4GB file size)</li>
+          <li>num_levels&gt;1: larger sorted runs promoted to higher levels for partitioning</li>
+        </ul>
+      </li>
+      <li>Compaction triggers:
+        <ul>
+          <li>Too many sorted runs (e.g., &gt; 10-12)</li>
+          <li>Space amplification too high (total size / largest run &gt; threshold)</li>
+        </ul>
+      </li>
+      <li>When triggered: merge multiple sorted runs into one larger sorted run</li>
+      <li>Example:
+        <ul>
+          <li>L0: Run1(1GB), Run2(1GB), Run3(1GB) - smaller runs</li>
+          <li>L1: Run4(10GB split into multiple SSTs) - larger run</li>
+          <li>Read key A: must check all sorted runs</li>
+        </ul>
+      </li>
+      <li>Trade-offs:
+        <ul>
+          <li>Lower write amp: data written fewer times</li>
+          <li>Higher read cost: must check all sorted runs</li>
+          <li>Higher space overhead: duplicate keys across runs</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>FIFO: cache workloads (2x write amp)
+    <ul>
+      <li>NO levels at all - just a queue of SSTable files</li>
+      <li>Simply discard old files when DB hits size limit</li>
+      <li>Minimal compaction (only within Level 0 for deduplication)</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="evolution-of-optimization-targets">Evolution of Optimization Targets</h2>
+
+<h3 id="write-amplification-2012-2015">Write Amplification (2012-2015)</h3>
+<ul>
+  <li>Initial focus: minimize flash wear</li>
+  <li>Leveled compaction: 10-30x write amplification</li>
+  <li>Tiered compaction: 4-10x write amplification</li>
+  <li>Trade-off: write amp vs read performance</li>
+</ul>
+
+<h3 id="space-amplification-2015-2018">Space Amplification (2015-2018)</h3>
+<ul>
+  <li>Shift: flash endurance less critical than space</li>
+  <li>Dynamic Leveled Compaction:
+    <ul>
+      <li>Automatically adjust level sizes</li>
+      <li>Reduce dead data to ~13% overhead</li>
+      <li>Previous: up to 90% worst-case overhead</li>
+    </ul>
+  </li>
+  <li>Result: 50% space reduction for Facebook UDB</li>
+</ul>
+
+<h3 id="cpu-utilization-2018-present">CPU Utilization (2018-present)</h3>
+<ul>
+  <li>Current bottleneck: CPU efficiency</li>
+  <li>Most workloads space-constrained (not IOPS)</li>
+  <li>Optimizations:
+    <ul>
+      <li>Prefix bloom filters</li>
+      <li>Parallel compactions</li>
+      <li>Batched MultiGet with parallel I/O</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="lessons-from-large-scale-systems">Lessons from Large-Scale Systems</h2>
+
+<h3 id="resource-management">Resource Management</h3>
+<ul>
+  <li>Challenge: multiple instances per host (10s-100s)</li>
+  <li>Global limits needed:
+    <ul>
+      <li>Memory (write buffer, block cache)</li>
+      <li>Compaction I/O bandwidth</li>
+      <li>Compaction threads</li>
+      <li>Disk usage</li>
+    </ul>
+  </li>
+  <li>Resource controllers for fairness</li>
+</ul>
+
+<h3 id="data-format-compatibility">Data Format Compatibility</h3>
+<ul>
+  <li>Problem: incremental software rollouts</li>
+  <li>Solution: forward + backward compatibility
+    <ul>
+      <li>Understand old formats indefinitely</li>
+      <li>Forward compatible for ≥1 year</li>
+      <li>Generic encoding (Protocol Buffers)</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="configuration-management">Configuration Management</h3>
+<ul>
+  <li>Problem: too many knobs (100s of options)</li>
+  <li>25+ distinct configs across 39 ZippyDB deployments</li>
+  <li>Current focus: automatic adaptivity</li>
+  <li>Challenge: optimal config depends on workload</li>
+</ul>
+
+<h3 id="wal-treatment">WAL Treatment</h3>
+<ul>
+  <li>Traditional: sync every write (durability)</li>
+  <li>RocksDB options:
+    <ul>
+      <li>Synchronous writes</li>
+      <li>Buffered writes (periodic flush)</li>
+      <li>No WAL (rely on replication)</li>
+    </ul>
+  </li>
+  <li>Distributed systems often have own logs (Paxos)</li>
+</ul>
+
+<h2 id="failure-handling">Failure Handling</h2>
+
+<h3 id="corruption-frequency">Corruption Frequency</h3>
+<ul>
+  <li>~1 corruption per 3 months per 100PB</li>
+  <li>40% already propagated to replicas</li>
+  <li>Sources: CPU/memory bitflips, software bugs</li>
+</ul>
+
+<h3 id="multi-layer-checksums">Multi-Layer Checksums</h3>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Application → Per-KV checksums (planned)
+     ↓
+MemTable/Cache → Currently unprotected
+     ↓
+SSTable → Block checksums + File checksums
+     ↓
+File System → Handoff checksums
+     ↓
+Storage Device → ECC/CRC
+</code></pre></div></div>
+
+<h3 id="detection-strategy">Detection Strategy</h3>
+<ul>
+  <li>Detect early at every layer</li>
+  <li>Block checksums: on every read</li>
+  <li>File checksums: on file transfer (2020)</li>
+  <li>Handoff checksums: write-time verification</li>
+  <li>End-to-end KV checksums: future work</li>
+</ul>
+
+<h3 id="error-handling">Error Handling</h3>
+<ul>
+  <li>Differentiated by severity:
+    <ul>
+      <li>Transient (network): auto-retry</li>
+      <li>Permanent (corruption): fail fast</li>
+      <li>Out-of-space: automatic recovery</li>
+    </ul>
+  </li>
+  <li>Periodic retry for transient errors</li>
+</ul>
+
+<h2 id="key-value-interface-evolution">Key-Value Interface Evolution</h2>
+
+<h3 id="current-limitations">Current Limitations</h3>
+<ul>
+  <li>No built-in versioning</li>
+  <li>No cross-shard consistent reads</li>
+  <li>Performance issues with timestamps in keys/values</li>
+</ul>
+
+<h3 id="user-defined-timestamps">User-Defined Timestamps</h3>
+<ul>
+  <li>New feature: timestamps as metadata</li>
+  <li>Benefits:
+    <ul>
+      <li>1.2-2x throughput improvement</li>
+      <li>Point lookups instead of scans</li>
+      <li>Bloom filter effectiveness</li>
+    </ul>
+  </li>
+  <li>Use cases:
+    <ul>
+      <li>MVCC transactions</li>
+      <li>Distributed transactions</li>
+      <li>Multi-master replication</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="hardware-trends">Hardware Trends</h2>
+
+<h3 id="remotedisaggregated-storage">Remote/Disaggregated Storage</h3>
+<ul>
+  <li>Current priority with faster networks</li>
+  <li>Benefits: independent CPU/storage scaling</li>
+  <li>Challenges: I/O latency, parallelization</li>
+</ul>
+
+<h3 id="storage-class-memory-scm">Storage Class Memory (SCM)</h3>
+<ul>
+  <li>Options being explored:
+    <ul>
+      <li>DRAM extension</li>
+      <li>Main storage (but space-constrained)</li>
+      <li>WAL storage only</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="future-technologies">Future Technologies</h3>
+<ul>
+  <li>Open-channel SSDs: limited benefit (space-constrained)</li>
+  <li>Multi-stream SSDs: minority of workloads</li>
+  <li>ZNS: delegation to file system</li>
+  <li>In-storage computing: unclear benefits</li>
+</ul>
+
+<h2 id="performance-characteristics">Performance Characteristics</h2>
+<ul>
+  <li>Write amplification:
+    <ul>
+      <li>Leveled: 10-30x</li>
+      <li>Tiered: 4-10x</li>
+      <li>FIFO: 2x</li>
+    </ul>
+  </li>
+  <li>Space overhead:
+    <ul>
+      <li>Dynamic leveled: ~13%</li>
+      <li>Traditional leveled: up to 90%</li>
+    </ul>
+  </li>
+  <li>Resource utilization (typical):
+    <ul>
+      <li>CPU: 11-47%</li>
+      <li>Space: 45-78%</li>
+      <li>Flash endurance: &lt;10%</li>
+      <li>Read bandwidth: 1-10%</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="key-insights">Key Insights</h2>
+<ul>
+  <li>Space efficiency dominates for SSD workloads</li>
+  <li>CPU efficiency increasingly important</li>
+  <li>LSM trees remain good fit for SSDs</li>
+  <li>Customizability essential for diverse workloads</li>
+  <li>Early corruption detection critical</li>
+  <li>Forward compatibility necessary for operations</li>
+</ul>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
+<script async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script>
+</body>
+
+</html>

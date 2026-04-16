@@ -1,0 +1,513 @@
+<HTML>
+<HEAD>
+<TITLE>./fall19/maheshwarigagan/src/shardmaster/server.go</TITLE>
+</HEAD>
+<BODY BGCOLOR=white>
+<HR>
+./fall19/maheshwarigagan/src/shardmaster/server.go<p><PRE>
+package shardmaster
+
+import (
+	"encoding/json"
+	"labgob"
+	"labrpc"
+	"log"
+	"raft"
+	"sync"
+)
+
+const (
+	Debug = 0
+)
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug &gt; 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+type RequestType int
+
+const (
+	JoinRPC RequestType = iota
+	LeaveRPC
+	MoveRPC
+	QueryRPC
+)
+
+type ShardMaster struct {
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+
+	// Your data here.
+
+	// The shardmaster manages a sequence of numbered configurations.
+	// Each configuration describes a set of replica groups and an assignment of shards to replica groups
+	configs []Config // indexed by config num
+	duplicateTracker map[int64]int64
+	processingCompleteChannel  map[int]chan struct{}
+}
+
+
+// This structure will be used by Shardmaster to maintain the sequence of Join, leave, move and query operations.
+type Op struct {
+	// Your data here.
+	// Client's unique identifier
+	ClientID int64
+	// To be used by query operation
+	Num     int
+	// Client's operation index
+	OperationIndex    int64
+	// Type of request
+	Request       RequestType
+	// to be provided by Join operation
+	Servers map[int][]string
+	// to be provided by leave operation, the id's of replica groups being removed.
+	GIDs    []int
+	// to be provided by move operation, move shard number Shard to replica group GID
+	Shard   int
+	GID     int
+}
+
+// The Join RPC is used by an administrator to add new replica groups.
+// Its argument is a set of mappings from unique, non-zero replica group identifiers (GIDs) to lists of server names.
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+	// Your code here.
+	operation := Op{
+		ClientID:       args.ClientID,
+		Request:        JoinRPC,
+		Servers:        args.Servers,
+		OperationIndex: args.OperationIndex}
+
+	reply.WrongLeader = true
+	success := sm.processRequest(&operation)
+	if success {
+		reply.WrongLeader = false
+		reply.Err = OK
+	}
+}
+
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+	// Your code here.
+	operation := Op{
+		ClientID:       args.ClientID,
+		Request:        LeaveRPC,
+		GIDs:           args.GIDs,
+		OperationIndex: args.OperationIndex}
+
+	reply.WrongLeader = true
+	success := sm.processRequest(&operation)
+	if success {
+		reply.WrongLeader = false
+		reply.Err = OK
+	}
+}
+
+// The Move RPC’s arguments are a shard number and a GID.
+// The shardmaster should create a new configuration in which the shard is assigned to the group.
+// The purpose of Move is to allow us to test your software.
+// A Join or Leave following a Move will likely un-do the Move, since Join and Leave re-balance.
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+	// Your code here.
+	operation := Op{
+		ClientID:       args.ClientID,
+		Request:        MoveRPC,
+		Shard:          args.Shard,
+		GID:            args.GID,
+		OperationIndex: args.OperationIndex}
+	reply.WrongLeader = true
+	success := sm.processRequest(&operation)
+	if success {
+		reply.WrongLeader = false
+		reply.Err = OK
+	}
+}
+
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+	// Your code here.
+	operation := Op{
+		ClientID:       args.ClientID,
+		Request:        QueryRPC,
+		Num:            args.Num,
+		OperationIndex: args.OperationIndex}
+
+	reply.WrongLeader = true
+	success := sm.processRequest(&operation)
+	if success {
+		reply.WrongLeader = false
+		reply.Err = OK
+		sm.mu.Lock()
+<A NAME="0"></A><FONT color = #FF0000><A HREF="match166-1.html#0" TARGET="1"><IMG SRC="../../bitmaps/tm_0_4.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+		sm.CopyConfig(&reply.Config, args.Num)
+		sm.mu.Unlock()
+	}
+}
+
+
+//
+// the tester calls Kill() when a ShardMaster instance won't
+// be needed again. you are not required to do anything
+// in Kill(), but it might be convenient to (for example)
+// turn off debug output from this instance.
+//
+func (sm *ShardMaster) Kill() {
+	sm.rf.Kill()
+	// Your code here, if desired.
+}
+
+// needed by shardkv tester
+func (sm *ShardMaster) Raft() *raft.Raft {
+	return sm.rf
+}
+
+func (sm *ShardMaster) processRequest(cmd *Op) bool {
+
+	// Shard master should be the leader.
+	// Check it, if it's not the case, return immediately.
+	_, isLeader := sm.rf.GetState()
+	if !isLeader {
+		return false
+	}
+
+	// Check if the request is duplicated or not.
+	sm.mu.Lock()
+	dup, ok := sm.duplicateTracker[cmd.ClientID]
+	if ok {
+		if dup == cmd.OperationIndex {
+</FONT><A NAME="2"></A><FONT color = #0000FF><A HREF="match166-1.html#2" TARGET="1"><IMG SRC="../../bitmaps/tm_2_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			sm.mu.Unlock()
+			// Returning true since it's already processed.
+			return true
+		}
+	}
+
+	// Start the append of the latest command
+	index, _, isLeader := sm.rf.Start(cmd)
+
+	processingChannel := make(chan struct{})
+	sm.processingCompleteChannel[index] = processingChannel
+	sm.mu.Unlock()
+
+	select {
+	case &lt;-processingChannel:
+</FONT>	}
+<A NAME="5"></A><FONT color = #FF0000><A HREF="match166-1.html#5" TARGET="1"><IMG SRC="../../bitmaps/tm_0_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	return true
+}
+
+//
+// servers[] contains the ports of the set of
+// servers that will cooperate via Paxos to
+// form the fault-tolerant shardmaster service.
+// me is the index of the current server in servers[].
+//
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {
+	sm := new(ShardMaster)
+</FONT>	sm.me = me
+
+<A NAME="1"></A><FONT color = #00FF00><A HREF="match166-1.html#1" TARGET="1"><IMG SRC="../../bitmaps/tm_1_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+	sm.configs = make([]Config, 1)
+	sm.configs[0].Groups = map[int][]string{}
+
+	labgob.Register(&Op{})
+	sm.applyCh = make(chan raft.ApplyMsg)
+	sm.rf = raft.Make(servers, me, persister, sm.applyCh)
+</FONT>
+	// Your code here.
+
+	sm.duplicateTracker = make(map[int64]int64)
+	sm.processingCompleteChannel = make(map[int]chan struct{})
+	
+	go sm.StartProcessing()
+
+	return sm
+}
+
+func (sm *ShardMaster) StartProcessing()  {
+	for {
+		select {
+		// We received something on applyCh, that means we have achieved consensus on one
+		// of the operation sent to Raft.
+		case msg, _ := &lt;-sm.applyCh:
+<A NAME="4"></A><FONT color = #FF00FF><A HREF="match166-1.html#4" TARGET="1"><IMG SRC="../../bitmaps/tm_4_1.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+			cmd := msg.Command.(*Op)
+			sm.mu.Lock()
+			lastProcessedOperationIndex, present := sm.duplicateTracker[cmd.ClientID]
+			if !present || lastProcessedOperationIndex &lt; cmd.OperationIndex {
+</FONT>				sm.duplicateTracker[cmd.ClientID] = cmd.OperationIndex
+				if JoinRPC == cmd.Request {
+					// The shardmaster should react by creating a new configuration that includes the new replica groups.
+					// The new configuration should divide the shards as evenly as possible among the full set of groups,
+					// and should move as few shards as possible to achieve that goal.
+					// The shardmaster should allow re-use of a GID if it’s not part of the current configuration
+					// (i.e. a GID should be allowed to Join, then Leave, then Join again).
+
+					config := InitializeConfig(sm)
+
+<A NAME="3"></A><FONT color = #00FFFF><A HREF="match166-1.html#3" TARGET="1"><IMG SRC="../../bitmaps/tm_3_2.gif" ALT="other" BORDER="0" ALIGN=left></A>
+
+					for key, value := range cmd.Servers {
+						var servers = make([]string, len(value))
+						copy(servers, value)
+						config.Groups[key] = servers
+					}
+
+					sm.DistributeShardsToReplicaGroups(&config)
+					sm.configs = append(sm.configs, config)
+
+				}else if LeaveRPC == cmd.Request {
+</FONT>					// create a new config object
+					config := InitializeConfig(sm)
+
+					// now from the new object delete all the GIDs provided in the argument.
+					for _, k := range cmd.GIDs {
+						_, present := config.Groups[k]
+						if present {
+							delete(config.Groups, k)
+						}
+					}
+
+					// once we have removed all the GIDs from the new configuration, we have to rebalance
+					// the distribution of shards in our system.
+					sm.DistributeShardsToReplicaGroups(&config)
+
+					// once that's done we store the new config in our list of shardmaster's configs list
+					sm.configs = append(sm.configs, config)
+
+				} else if MoveRPC == cmd.Request {
+					// The shardmaster should create a new configuration in which the shard is assigned to the group.
+					// The purpose of Move is to allow us to test your software.
+					// A Join or Leave following a Move will likely un-do the Move, since Join and Leave re-balance.
+
+					config := InitializeConfig(sm)
+					config.Shards[cmd.Shard] = cmd.GID
+
+					sm.configs = append(sm.configs, config)
+
+				} else if QueryRPC != cmd.Request {
+					panic("Operation is not valid")
+				}
+			}
+
+			// we will only reach here once we are done processing the rebalancing
+			// in that case we have to notify our caller that your request has been processed.
+			processingChannel, present := sm.processingCompleteChannel[msg.CommandIndex]
+			if present {
+				processingChannel &lt;- struct{}{}
+			}
+			sm.mu.Unlock()
+		}
+	}
+
+}
+
+
+func (sm *ShardMaster) CopyConfig(config *Config, index int) {
+	// If the number is -1 or bigger than the biggest known configuration number,
+	// the shardmaster should reply with the latest configuration
+	if index &gt;= len(sm.configs) || index == -1 {
+		index = len(sm.configs) - 1
+	}
+	deepcopy(config, sm.configs[index])
+}
+
+func deepcopy(dst interface{}, src interface{}){
+	bytes, err := json.Marshal(src)
+	if err != nil{
+		panic("Error while marshalling")
+	}
+	err = json.Unmarshal(bytes, dst)
+	if err != nil {
+		panic("Error while unmarshalling")
+	}
+}
+
+/*
+Algorithm of balancing:
+1.  Find the ideal number of shards per replica group which is equal to total number of shards divided by total number
+	of replica groups.
+2.  Create mapping of replica group to shard from config's Shards object.
+3.  Find Groups which have less shards than the ideal number found in step 1.
+4.  Find Groups which have more shards than the ideal number found in step 1.
+4.  Transfer the shards from the groups with extra to groups have less number of shards
+*/
+func (sm *ShardMaster) DistributeShardsToReplicaGroups(config *Config) {
+	DPrintf("BalancingOfShard")
+
+	DPrintf("input config: ",config)
+
+	shardsPerReplicaGroup := getShardsPerReplicaGroup(config)
+
+	// This is the case where we have more replica groups then the shards,
+	// in which case there's no even reassignment possible.
+	if shardsPerReplicaGroup == 0 {
+		DPrintf("")
+		DPrintf("")
+		return
+	}
+
+	replicaGroupToShardMapping := createMapOfGroupToShard(config.Shards)
+	DPrintf("reverseMappingOfGroupToShard: ",replicaGroupToShardMapping)
+
+	lackingMap := FindLackingGroup(replicaGroupToShardMapping, config)
+	// By this point we know if we have any thing additional added to configuration
+
+	extraMap := FindReplicaGroupsWithExtraShardsAfterRemoval(config, replicaGroupToShardMapping, lackingMap)
+	// By this point we know replica groups with extra shards if any remove was performed.
+
+	// Now we simply have to perform the transfer from extraMap to lackingMap.
+	replicaGroupToShardMapping = TransferFromExtraToLacking(replicaGroupToShardMapping, lackingMap, extraMap)
+
+
+	populateBalancedConfig(replicaGroupToShardMapping, config);
+
+	DPrintf("output config: ",config)
+	DPrintf("")
+	DPrintf("")
+}
+
+
+func TransferFromExtraToLacking(reverseMapping map[int][]int, lackingMap map[int]int, extraMap map[int]int) map[int][]int {
+
+	rebalancing := true
+	for rebalancing {
+		rebalancing = false
+		for keyLackMap, valueLackMap := range lackingMap{
+			for keyExtraMap, valueExtraMap := range extraMap{
+				value := 0
+				if valueLackMap &lt; valueExtraMap && valueLackMap &gt; 0 {
+					extraMap[keyExtraMap] = valueExtraMap - valueLackMap
+					lackingMap[keyLackMap] = 0
+					value = valueLackMap
+					rebalancing = true
+				}else if valueLackMap &gt; valueExtraMap && valueExtraMap &gt; 0 {
+					lackingMap[keyLackMap] = valueLackMap - valueExtraMap
+					extraMap[keyExtraMap] = 0
+					value = valueExtraMap
+					rebalancing = true
+				}else if valueLackMap == valueExtraMap && valueLackMap != 0 {
+					lackingMap[keyLackMap] = 0
+					extraMap[keyExtraMap] = 0
+					value = valueLackMap
+					rebalancing = true
+				}
+				if rebalancing {
+					CopyFromExtraToLacking(reverseMapping, keyExtraMap, keyLackMap, value)
+					break
+				}
+			}
+		}
+	}
+	return reverseMapping
+}
+
+func CopyFromExtraToLacking(data map[int][]int, source int, destination int, count int) {
+	sourceData := data[source]
+	destinationData := data[destination]
+	//srcData, dstData := data[source], data[destination]
+
+	sourceDataCount := len(sourceData)
+	shardsToBeTransfered := sourceData[sourceDataCount-count:]
+	//https://stackoverflow.com/questions/16248241/concatenate-two-slices-in-go
+	destinationData = append(destinationData, shardsToBeTransfered...)
+	sourceData = sourceData[:sourceDataCount-count]
+
+	data[source] = sourceData
+	data[destination] = destinationData
+}
+
+
+// This is where we find if we have removed replica groups. If yes, then we have to reassign their
+// shards to remaining replica groups.
+func FindReplicaGroupsWithExtraShardsAfterRemoval(config *Config, reverseMapping map[int][]int, lackingMap map[int]int) (map[int]int) {
+	// calculate the total number of orphan shards
+	// total shards with the shard master: len(config.Shards)
+	// currently maximum shards which we can accommodate: number of replica groups * ideal distribution
+	shardsPerReplicaGroup := getShardsPerReplicaGroup(config)//len(config.Shards)/len(config.Groups)
+	leftShards := len(config.Shards) - len(config.Groups)*shardsPerReplicaGroup // extra shards after shardsPerReplicaGroup
+	replicaWithExtraShards := make(map[int]int)
+
+	for key, val := range reverseMapping {
+		// check if the replica group exists
+		count := len(val)
+		if _, ok := config.Groups[key]; ok {
+			if shardsPerReplicaGroup &lt; count {
+				if leftShards == 0 {
+					replicaWithExtraShards[key] = count - shardsPerReplicaGroup
+				} else if shardsPerReplicaGroup+1 &lt; count {
+					replicaWithExtraShards[key] = count - shardsPerReplicaGroup - 1
+					leftShards = leftShards - 1
+				} else if shardsPerReplicaGroup+1 == count {
+					leftShards = leftShards - 1
+				}
+			} else {
+				lackingMap[key] = shardsPerReplicaGroup - count
+			}
+		} else {
+			// if not then we need to transfer the whole shards from this to someone else.
+			replicaWithExtraShards[key] = count
+		}
+	}
+
+	return replicaWithExtraShards
+}
+
+// This is kind of finding number of group which are newly added and the capacity we have to fill.
+func FindLackingGroup(reverseMapping map[int][]int, config *Config) (map[int]int) {
+	shardsPerReplicaGroup := getShardsPerReplicaGroup(config)
+	var groupStatusMap = make(map[int]int)
+
+	for group := range config.Groups {
+		if _, present := reverseMapping[group]; !present{
+			groupStatusMap[group] = shardsPerReplicaGroup
+		}
+	}
+	return groupStatusMap
+}
+
+func InitializeConfig(shardMaster *ShardMaster) Config{
+	// create a new config object
+	config := Config{}
+	// copy the latest existing config object to this new object, hence index -1
+	shardMaster.CopyConfig(&config, -1)
+	// assign a new identifier to config, we are doing this +1 way since
+	// we have maintained config numbers to be zero indexed.
+	config.Num = config.Num + 1
+	return  config
+}
+
+func createMapOfGroupToShard(Shards [NShards]int) map[int][]int{
+	var reverseMappingOfGroupToShard = make(map[int][]int)
+	for key, value := range Shards {
+		reverseMappingOfGroupToShard[value] = append(reverseMappingOfGroupToShard[value], key)
+	}
+	return reverseMappingOfGroupToShard
+}
+
+func getShardsPerReplicaGroup(config *Config) int{
+	replicaGroups := len(config.Groups)
+	if replicaGroups == 0 {
+		return 0
+	}
+	shardsPerReplicaGroup := len(config.Shards) / replicaGroups
+	return shardsPerReplicaGroup
+}
+
+func populateBalancedConfig(reverseMappingOfGroupToShard map[int][]int, config *Config){
+	for k, v := range reverseMappingOfGroupToShard {
+		for _, s := range v {
+			config.Shards[s] = k
+		}
+	}
+}</PRE>
+</PRE>
+</BODY>
+</HTML>
