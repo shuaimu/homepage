@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>Lab 2: Verified Replicated State Machine (Verus MultiPaxos) | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="Lab 2: Verified Replicated State Machine (Verus MultiPaxos)" />
+<meta property="og:locale" content="en_US" />
+<link rel="canonical" href="http://localhost:4000/teaching/sf/26sp/labs/labv.html" />
+<meta property="og:url" content="http://localhost:4000/teaching/sf/26sp/labs/labv.html" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="Lab 2: Verified Replicated State Machine (Verus MultiPaxos)" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"Lab 2: Verified Replicated State Machine (Verus MultiPaxos)","url":"http://localhost:4000/teaching/sf/26sp/labs/labv.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"><link type="application/atom+xml" rel="alternate" href="http://localhost:4000/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>Lab 2: Verified Replicated State Machine (Verus MultiPaxos)</h1>
+         </header> -->
+
+  <section>
+    <h1 id="lab-2-verified-replicated-state-machine-verus-multipaxos">Lab 2: Verified Replicated State Machine (Verus MultiPaxos)</h1>
+
+<h2 id="introduction">Introduction</h2>
+
+<p>In this lab you’ll work with a <strong>verified</strong> MultiPaxos (RSL) implementation in <a href="https://github.com/verus-lang/verus">Verus</a> (verified Rust), ported from Microsoft’s <a href="https://github.com/microsoft/Ironclad/tree/main/ironfleet">IronFleet</a> (Dafny).</p>
+
+<p>A replicated state machine ensures that all replicas agree on the same sequence of operations, even in the presence of failures. MultiPaxos achieves this through a ballot-based voting protocol. The fundamental safety property is:</p>
+
+<blockquote>
+  <p><strong>If two quorums each decide a value for the same operation, those values must be identical.</strong></p>
+</blockquote>
+
+<p>Proving this property requires a sophisticated induction argument that tracks how values propagate across different ballots. In this lab, you will both <strong>prove</strong> this safety property and <strong>implement</strong> the protocol actions, all within Verus’s verification framework.</p>
+
+<h2 id="objective">Objective</h2>
+
+<p>In this lab you’ll complete three parts:</p>
+
+<ul>
+  <li><strong>Part 1 — Protocol Safety Proof:</strong> Complete 10 core proof lemmas establishing the safety of MultiPaxos.</li>
+  <li><strong>Part 2 — Implementation + Refinement:</strong> Implement 21 protocol action functions and prove each refines its specification. Build the system, run it with 3 servers and 32 clients, and report throughput/latency.</li>
+  <li><strong>Part 3 — Performance Optimization (Bonus):</strong> Optimize the verified implementation to achieve &gt; 20K req/s while maintaining full verification.</li>
+</ul>
+
+<p>Your task: <strong>replace every <code class="language-plaintext highlighter-rouge">admit()</code> with actual proofs and implementations</strong> so that <code class="language-plaintext highlighter-rouge">verus src/main.rs</code> reports 0 errors, and the system runs end-to-end.</p>
+
+<p>Some general tips:</p>
+
+<ul>
+  <li>Start early. Although the amount of code isn’t large, getting Verus proofs to go through will be challenging.</li>
+  <li>Read and understand the protocol specs in <code class="language-plaintext highlighter-rouge">src/protocol/RSL/</code> before you start. Your proofs should follow the spec closely, since that’s what the verifier expects.</li>
+</ul>
+
+<h2 id="getting-started">Getting Started</h2>
+
+<p>We supply you with Rust skeleton code. All functions you need to complete have <code class="language-plaintext highlighter-rouge">admit()</code> as their body.</p>
+
+<p>Go to <a href="https://classroom.github.com/a/60d1B7fa">this link</a> to join the lab assignment.</p>
+
+<p>Similarly to lab 1, git clone your repo (except this time we already copied the code for you so you don’t need to do that). You can stay on the main branch. For submit, commit your code with a message starting with “submit” (lower case).</p>
+
+<p>To verify your work:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>verus src/main.rs 2&gt;&amp;1 | <span class="nb">tail</span> <span class="nt">-1</span>
+<span class="c"># Target: "verification results:: XXX verified, 0 errors"</span>
+</code></pre></div></div>
+
+<p>To build and run:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>scons <span class="nt">--verus-path</span><span class="o">=</span><span class="s2">"</span><span class="nv">$VERUS_PATH</span><span class="s2">"</span> <span class="nt">--no-verify</span>
+</code></pre></div></div>
+
+<h2 id="the-code">The Code</h2>
+
+<p>The codebase is organized into layers:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>src/
+  services/RSL/           # Entry point (paxos_main), application state machine (counter)
+  protocol/RSL/           # Abstract spec: acceptor, proposer, learner, executor, election
+    common_proof/         # Safety proof lemmas  &lt;-- Part 1 edits here
+    refinement_proof/     # Refinement proofs (provided)
+  implementation/RSL/     # Concrete Rust implementation  &lt;-- Part 2 edits here
+  common/                 # IO framework, collections, logic
+  verus_extra/            # Verus helper libraries
+csharp/                   # .NET IO framework (server/client), calls Rust via FFI
+</code></pre></div></div>
+
+<p>Most of the work for this lab should be in:</p>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">src/protocol/RSL/common_proof/</code> (Part 1: proof lemmas)</li>
+  <li><code class="language-plaintext highlighter-rouge">src/implementation/RSL/acceptorimpl.rs</code> (Part 2: acceptor)</li>
+  <li><code class="language-plaintext highlighter-rouge">src/implementation/RSL/electionimpl.rs</code> (Part 2: election)</li>
+  <li><code class="language-plaintext highlighter-rouge">src/implementation/RSL/proposerimpl.rs</code> (Part 2: proposer)</li>
+</ul>
+
+<p>You will also interact with the protocol spec files:</p>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">src/protocol/RSL/acceptor.rs</code> (spec for acceptor actions)</li>
+  <li><code class="language-plaintext highlighter-rouge">src/protocol/RSL/election.rs</code> (spec for election actions)</li>
+  <li><code class="language-plaintext highlighter-rouge">src/protocol/RSL/proposer.rs</code> (spec for proposer actions)</li>
+</ul>
+
+<p>For the lab, you should implement proof and protocol logic in the files listed above. Do not modify the provided helper functions, spec definitions, or IO/FFI infrastructure.</p>
+
+<h3 id="refinement">Refinement</h3>
+
+<p>Each implementation function has an <code class="language-plaintext highlighter-rouge">ensures</code> clause referencing a spec function:</p>
+
+<div class="language-rust highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">pub</span> <span class="k">fn</span> <span class="nf">CAcceptorProcess1a</span><span class="p">(</span><span class="o">&amp;</span><span class="k">mut</span> <span class="k">self</span><span class="p">,</span> <span class="n">inp</span><span class="p">:</span> <span class="n">CPacket</span><span class="p">)</span> <span class="k">-&gt;</span> <span class="p">(</span><span class="n">sent</span><span class="p">:</span> <span class="n">OutboundPackets</span><span class="p">)</span>
+    <span class="n">requires</span> <span class="nf">old</span><span class="p">(</span><span class="k">self</span><span class="p">)</span><span class="nf">.valid</span><span class="p">(),</span> <span class="n">inp</span><span class="nf">.valid</span><span class="p">(),</span> <span class="n">inp</span><span class="py">.msg</span> <span class="n">is</span> <span class="n">CMessage1a</span>
+    <span class="n">ensures</span>  <span class="k">self</span><span class="nf">.valid</span><span class="p">(),</span> <span class="n">sent</span><span class="nf">.valid</span><span class="p">(),</span>
+             <span class="nf">LAcceptorProcess1a</span><span class="p">(</span><span class="nf">old</span><span class="p">(</span><span class="k">self</span><span class="p">)</span><span class="o">@</span><span class="p">,</span> <span class="k">self</span><span class="o">@</span><span class="p">,</span> <span class="n">inp</span><span class="o">@</span><span class="p">,</span> <span class="n">sent</span><span class="o">@</span><span class="p">)</span>  <span class="c">// &lt;-- refines spec</span>
+<span class="p">{</span>
+    <span class="nf">admit</span><span class="p">();</span> <span class="c">// TODO: replace</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p>The spec defines <strong>what</strong> the function should do. You implement <strong>how</strong> in Rust with concrete types. Verus verifies the <code class="language-plaintext highlighter-rouge">@</code> (view/abstraction) of your output matches the spec.</p>
+
+<h3 id="available-helper-lemmas">Available Helper Lemmas</h3>
+
+<p>These are provided (already proved) and available to call in your proofs:</p>
+
+<p><strong>Behavior &amp; Constants:</strong></p>
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">lemma_ConstantsAllConsistent(b, c, i)</code> — constants consistent at step i</li>
+  <li><code class="language-plaintext highlighter-rouge">lemma_ReplicaConstantsAllConsistent(b, c, i, idx)</code> — per-replica consistency</li>
+  <li><code class="language-plaintext highlighter-rouge">lemma_AssumptionsMakeValidTransition(b, c, i)</code> — step i-&gt;i+1 is valid</li>
+</ul>
+
+<p><strong>Packet Tracking:</strong></p>
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">lemma_PacketStaysInSentPackets(b, c, i, j, p)</code> — once sent, always sent</li>
+  <li><code class="language-plaintext highlighter-rouge">lemma_PacketSetStaysInSentPackets(b, c, i, j, s)</code> — same for sets</li>
+  <li><code class="language-plaintext highlighter-rouge">lemma_ExtractSentPacketsFromIos(ios)</code> — connects IOs to sent packets</li>
+</ul>
+
+<p><strong>Action Identification:</strong></p>
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">lemma_ActionThatSends2aIsMaybeNominateValueAndSend2a(s, s', p)</code> -&gt; (idx, ios)</li>
+  <li><code class="language-plaintext highlighter-rouge">lemma_ActionThatSends1bIsProcess1a(s, s', p)</code> -&gt; (idx, ios)</li>
+  <li><code class="language-plaintext highlighter-rouge">lemma_ActionThatSends2bIsProcess2a(s, s', p)</code> -&gt; (idx, ios)</li>
+  <li><code class="language-plaintext highlighter-rouge">lemma_ActionThatChangesReplicaIsThatReplicasAction(b, c, i, idx)</code> -&gt; ios</li>
+</ul>
+
+<p><strong>Message Properties:</strong></p>
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">lemma_1bMessageImplicationsForCAcceptor(b, c, i, opn, p)</code> — 1b reflects acceptor state</li>
+  <li><code class="language-plaintext highlighter-rouge">lemma_2bMessageImplicationsForCAcceptor(b, c, i, p)</code> — 2b reflects acceptor state</li>
+  <li><code class="language-plaintext highlighter-rouge">lemma_VoteWithOpnImplies2aSent(b, c, i, idx, opn)</code> — vote exists -&gt; 2a was sent</li>
+  <li><code class="language-plaintext highlighter-rouge">lemma_2aMessageHasValidBallot(b, c, i, p)</code> — ballot has valid seqno/proposer_id</li>
+</ul>
+
+<p><strong>Quorum:</strong></p>
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">lemma_GetIndicesFromNodes(nodes, config)</code> -&gt; index set</li>
+  <li><code class="language-plaintext highlighter-rouge">lemma_GetIndicesFromPackets(packets, config)</code> -&gt; index set</li>
+</ul>
+
+<p><strong>Learner State:</strong></p>
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">lemma_GetSent2bMessageFromLearnerState(b, c, i, idx, opn, sender)</code> — extracts a sent 2b</li>
+  <li><code class="language-plaintext highlighter-rouge">lemma_Received2bMessageSendersAlwaysValidReplicas(b, c, i, idx, opn)</code> — senders are valid</li>
+</ul>
+
+<h2 id="required-functionality">Required Functionality</h2>
+
+<h3 id="part-1-protocol-safety-proof">Part 1: Protocol Safety Proof</h3>
+
+<p>Complete 10 proof lemmas in <code class="language-plaintext highlighter-rouge">src/protocol/RSL/common_proof/</code> that establish the safety of MultiPaxos. The top-level safety theorem (<code class="language-plaintext highlighter-rouge">lemma_ChosenQuorumsMatchValue</code>) depends on all others:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>lemma_ChosenQuorumsMatchValue                          [chosen.rs]
+|
++-- lemma_ChosenQuorumAnd2aFromLaterBallotMatchValues  [chosen.rs]
+|   |   "If value v is chosen at ballot b, any 2a at higher ballot b'
+|   |    has value v" (cross-ballot induction — THE HEART OF PAXOS)
+|   |
+|   +-- lemma_2aMessageHas1bQuorumPermittingIt         [message2a.rs]
+|   +-- lemma_QuorumIndexOverlap                       [quorum.rs]
+|   +-- lemma_1bMessageWithoutOpnImplicationsFor2b     [message1b.rs]
+|   +-- lemma_1bMessageWithOpnImplies2aSent            [message1b.rs]
+|   +-- lemma_Vote1bMessageIsFromEarlierBallot         [message1b.rs]
+|   +-- (recursive call with smaller ballot)
+|
++-- lemma_2aMessagesFromSameBallotAndOperationMatch    [message2a.rs]
+|       (calls lemma_2aMessagesFromSameBallotAndOperationMatchWLOG)
+|
++-- lemma_2bMessageHasCorresponding2aMessage           [message2b.rs]
+</code></pre></div></div>
+
+<p>Files to modify (all in <code class="language-plaintext highlighter-rouge">src/protocol/RSL/common_proof/</code>):</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>File</th>
+      <th>Lemmas</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">message2b.rs</code></td>
+      <td><code class="language-plaintext highlighter-rouge">lemma_2bMessageHasCorresponding2aMessage</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">message1b.rs</code></td>
+      <td><code class="language-plaintext highlighter-rouge">lemma_Vote1bMessageIsFromEarlierBallot</code>, <code class="language-plaintext highlighter-rouge">lemma_1bMessageWithoutOpnImplicationsFor2b</code>, <code class="language-plaintext highlighter-rouge">lemma_1bMessageWithOpnImplies2aSent</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">quorum.rs</code></td>
+      <td><code class="language-plaintext highlighter-rouge">lemma_QuorumIndexOverlap</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">message2a.rs</code></td>
+      <td><code class="language-plaintext highlighter-rouge">lemma_2aMessagesFromSameBallotAndOperationMatch</code>, <code class="language-plaintext highlighter-rouge">lemma_2aMessagesFromSameBallotAndOperationMatchWLOG</code>, <code class="language-plaintext highlighter-rouge">lemma_2aMessageHas1bQuorumPermittingIt</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">chosen.rs</code></td>
+      <td><code class="language-plaintext highlighter-rouge">lemma_ChosenQuorumAnd2aFromLaterBallotMatchValues</code>, <code class="language-plaintext highlighter-rouge">lemma_ChosenQuorumsMatchValue</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<p>You are recommended to do the lemmas in this order:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Lemma</th>
+      <th>Key Technique</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>1</td>
+      <td><code class="language-plaintext highlighter-rouge">lemma_2bMessageHasCorresponding2aMessage</code></td>
+      <td>Induction on behavior prefix <code class="language-plaintext highlighter-rouge">i</code>. Base: sentPackets empty. Inductive: packet old -&gt; recurse; new -&gt; <code class="language-plaintext highlighter-rouge">lemma_ActionThatSends2bIsProcess2a</code>.</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td><code class="language-plaintext highlighter-rouge">lemma_Vote1bMessageIsFromEarlierBallot</code></td>
+      <td>Similar induction. Use <code class="language-plaintext highlighter-rouge">lemma_VotePrecedesMaxBal</code>.</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td><code class="language-plaintext highlighter-rouge">lemma_QuorumIndexOverlap</code></td>
+      <td>Pigeonhole on finite sets. Use <code class="language-plaintext highlighter-rouge">lemma_BoundedIntSetFinite</code> + <code class="language-plaintext highlighter-rouge">lemma_SetOfElementsOfRangeNoBiggerThanRange</code>.</td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td><code class="language-plaintext highlighter-rouge">lemma_1bMessageWithOpnImplies2aSent</code></td>
+      <td>Induction. When 1b newly sent, acceptor has vote -&gt; <code class="language-plaintext highlighter-rouge">lemma_VoteWithOpnImplies2aSent</code>.</td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td><code class="language-plaintext highlighter-rouge">lemma_1bMessageWithoutOpnImplicationsFor2b</code></td>
+      <td>4 cases: both old / 1b old + 2b new / 1b new + 2b old / both new (contradiction).</td>
+    </tr>
+    <tr>
+      <td>6</td>
+      <td><code class="language-plaintext highlighter-rouge">lemma_2aMessagesFromSameBallotAndOperationMatch</code></td>
+      <td>Delegates to WLOG (Without Loss Of Generality) helper.</td>
+    </tr>
+    <tr>
+      <td>7</td>
+      <td><code class="language-plaintext highlighter-rouge">lemma_2aMessagesFromSameBallotAndOperationMatchWLOG</code></td>
+      <td>Induction: both old -&gt; recurse; one new -&gt; trace to proposer, show uniqueness.</td>
+    </tr>
+    <tr>
+      <td>8</td>
+      <td><code class="language-plaintext highlighter-rouge">lemma_2aMessageHas1bQuorumPermittingIt</code></td>
+      <td>Induction: trace 2a to send step, extract proposer’s <code class="language-plaintext highlighter-rouge">received_1b_packets</code> as quorum.</td>
+    </tr>
+    <tr>
+      <td>9</td>
+      <td><code class="language-plaintext highlighter-rouge">lemma_ChosenQuorumAnd2aFromLaterBallotMatchValues</code></td>
+      <td>Core induction. Uses all above. <code class="language-plaintext highlighter-rouge">decreases (ballot.seqno, ballot.proposer_id)</code>.</td>
+    </tr>
+    <tr>
+      <td>10</td>
+      <td><code class="language-plaintext highlighter-rouge">lemma_ChosenQuorumsMatchValue</code></td>
+      <td>Case-split on <code class="language-plaintext highlighter-rouge">q1.bal</code> vs <code class="language-plaintext highlighter-rouge">q2.bal</code>, call sub-lemmas.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p><strong>Core proof intuition:</strong></p>
+
+<ul>
+  <li><strong>Case b1 == b2:</strong> Both quorums voted at the same ballot. By <code class="language-plaintext highlighter-rouge">lemma_2aMessagesFromSameBallotAndOperationMatch</code>, a proposer sends only one value per (ballot, opn). Values match.</li>
+  <li><strong>Case b1 &lt; b2 (WLOG):</strong> The proposer at b2 collected a 1b quorum Q_1b. Q_1b and Q1 overlap (pigeonhole). The overlap replica voted at b1 and sent 1b to b2. The 1b must report the vote (contradiction otherwise). The proposer at b2 picks highest-ballot vote b_max where b &lt;= b_max &lt; b2. If b_max == b, value matches directly. If b_max &gt; b, <strong>recurse</strong> with b_max (terminates since b_max &lt; b2).</li>
+</ul>
+
+<h3 id="part-2-implementation--refinement">Part 2: Implementation + Refinement</h3>
+
+<p>Implement 21 protocol action functions in <code class="language-plaintext highlighter-rouge">src/implementation/RSL/</code> and prove each refines its specification.</p>
+
+<p><strong><code class="language-plaintext highlighter-rouge">acceptorimpl.rs</code> — Acceptor:</strong></p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Function</th>
+      <th>Refines</th>
+      <th>Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CAcceptorTruncateLog</code></td>
+      <td><code class="language-plaintext highlighter-rouge">LAcceptorTruncateLog</code></td>
+      <td>Remove old votes below truncation point</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CAcceptorProcessHeartbeat</code></td>
+      <td><code class="language-plaintext highlighter-rouge">LAcceptorProcessHeartbeat</code></td>
+      <td>Update last_checkpointed_operation</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CAcceptorProcess1a</code></td>
+      <td><code class="language-plaintext highlighter-rouge">LAcceptorProcess1a</code></td>
+      <td>Compare ballot, send 1b with votes</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CAcceptorProcess2a</code></td>
+      <td><code class="language-plaintext highlighter-rouge">LAcceptorProcess2a</code></td>
+      <td>Update votes, send 2b broadcast</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Given helpers (don’t modify): <code class="language-plaintext highlighter-rouge">CAcceptorInit</code>, <code class="language-plaintext highlighter-rouge">CRemoveVotesBeforeLogTruncationPoint</code>, <code class="language-plaintext highlighter-rouge">CAddVoteAndRemoveOldOnes</code>, <code class="language-plaintext highlighter-rouge">CIsLogTruncationPointValid</code></p>
+
+<p><strong><code class="language-plaintext highlighter-rouge">electionimpl.rs</code> — Election:</strong></p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Function</th>
+      <th>Refines</th>
+      <th>Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CElectionStateReflectReceivedRequest</code></td>
+      <td><code class="language-plaintext highlighter-rouge">ElectionStateReflectReceivedRequest</code></td>
+      <td>Track client request in epoch</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CElectionStateCheckForViewTimeout</code></td>
+      <td><code class="language-plaintext highlighter-rouge">ElectionStateCheckForViewTimeout</code></td>
+      <td>Timeout + suspicion logic</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CElectionStateCheckForQuorumOfViewSuspicions</code></td>
+      <td><code class="language-plaintext highlighter-rouge">ElectionStateCheckForQuorumOfViewSuspicions</code></td>
+      <td>Quorum check + view advance</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CElectionStateProcessHeartbeat</code></td>
+      <td><code class="language-plaintext highlighter-rouge">ElectionStateProcessHeartbeat</code></td>
+      <td>Reset suspicion or suspect view</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Given helpers (don’t modify): <code class="language-plaintext highlighter-rouge">CElectionStateInit</code>, <code class="language-plaintext highlighter-rouge">CComputeSuccessorView</code>, <code class="language-plaintext highlighter-rouge">CBoundRequestSequence</code>, <code class="language-plaintext highlighter-rouge">CRequestsMatch</code>, <code class="language-plaintext highlighter-rouge">CRequestSatisfiedBy</code>, <code class="language-plaintext highlighter-rouge">FindEarlierRequests</code>, <code class="language-plaintext highlighter-rouge">BoundCRequestHeaders</code>, <code class="language-plaintext highlighter-rouge">CRemoveAllSatisfiedRequestsInSequence</code>, <code class="language-plaintext highlighter-rouge">CRemoveExecutedRequestBatch</code>, <code class="language-plaintext highlighter-rouge">CElectionStateReflectExecutedRequestBatch</code></p>
+
+<p><strong><code class="language-plaintext highlighter-rouge">proposerimpl.rs</code> — Proposer:</strong></p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Function</th>
+      <th>Refines</th>
+      <th>Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CIsAfterLogTruncationPoint</code></td>
+      <td><code class="language-plaintext highlighter-rouge">LIsAfterLogTruncationPoint</code></td>
+      <td>Check opn is after log truncation (HashSet loop)</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CSetOfMessage1b</code></td>
+      <td><code class="language-plaintext highlighter-rouge">LSetOfMessage1b</code></td>
+      <td>Check all packets in set are 1b (HashSet loop)</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CSetOfMessage1bAboutBallot</code></td>
+      <td><code class="language-plaintext highlighter-rouge">LSetOfMessage1bAboutBallot</code></td>
+      <td>Check all 1b packets match ballot (HashSet loop)</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CAllAcceptorsHadNoProposal</code></td>
+      <td><code class="language-plaintext highlighter-rouge">LAllAcceptorsHadNoProposal</code></td>
+      <td>Check no votes for opn in 1b set (HashSet + votes)</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CExistsAcceptorHasProposalLargeThanOpn</code></td>
+      <td><code class="language-plaintext highlighter-rouge">LExistsAcceptorHasProposalLargeThanOpn</code></td>
+      <td>Check existence of proposal &gt; opn (HashSet loop)</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">Cmax_balInS</code></td>
+      <td><code class="language-plaintext highlighter-rouge">Lmax_balInS</code></td>
+      <td>Check ballot is max in 1b set (HashSet + votes + ballot)</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CProposerProcessRequest</code></td>
+      <td><code class="language-plaintext highlighter-rouge">LProposerProcessRequest</code></td>
+      <td>Handle client request (HashMap get/insert + multi-branch)</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CProposerProcess1b</code></td>
+      <td><code class="language-plaintext highlighter-rouge">LProposerProcess1b</code></td>
+      <td>Add 1b packet to received set</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CProposerMaybeEnterNewViewAndSend1a</code></td>
+      <td><code class="language-plaintext highlighter-rouge">LProposerMaybeEnterNewViewAndSend1a</code></td>
+      <td>Start new ballot, broadcast 1a</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CProposerMaybeEnterPhase2</code></td>
+      <td><code class="language-plaintext highlighter-rouge">LProposerMaybeEnterPhase2</code></td>
+      <td>Check 1b quorum, enter phase 2</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CProposerMaybeNominateValueAndSend2a</code></td>
+      <td><code class="language-plaintext highlighter-rouge">LProposerMaybeNominateValueAndSend2a</code></td>
+      <td>Decide whether to nominate</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CProposerNominateNewValueAndSend2a</code></td>
+      <td><code class="language-plaintext highlighter-rouge">LProposerNominateNewValueAndSend2a</code></td>
+      <td>Pick new value from queue, send 2a</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CProposerNominateOldValueAndSend2a</code></td>
+      <td><code class="language-plaintext highlighter-rouge">LProposerNominateOldValueAndSend2a</code></td>
+      <td>Highest-ballot value from 1b votes, send 2a</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Given helpers (don’t modify): <code class="language-plaintext highlighter-rouge">CProposerInit</code>, <code class="language-plaintext highlighter-rouge">CProposerCanNominateUsingOperationNumber</code>, <code class="language-plaintext highlighter-rouge">CExistVotesHasProposalLargeThanOpn</code>, <code class="language-plaintext highlighter-rouge">CProposerProcessHeartbeat</code>, <code class="language-plaintext highlighter-rouge">CProposerCheckForViewTimeout</code>, <code class="language-plaintext highlighter-rouge">CProposerCheckForQuorumOfViewSuspicions</code>, <code class="language-plaintext highlighter-rouge">CProposerResetViewTimerDueToExecution</code></p>
+
+<p>You are recommended to implement in this order:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Function</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>1</td>
+      <td><code class="language-plaintext highlighter-rouge">CAcceptorTruncateLog</code></td>
+      <td>Call <code class="language-plaintext highlighter-rouge">CRemoveVotesBeforeLogTruncationPoint</code>, update field</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td><code class="language-plaintext highlighter-rouge">CAcceptorProcessHeartbeat</code></td>
+      <td>Update checkpoint array</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td><code class="language-plaintext highlighter-rouge">CAcceptorProcess1a</code></td>
+      <td>Compare ballots, construct 1b</td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td><code class="language-plaintext highlighter-rouge">CAcceptorProcess2a</code></td>
+      <td>Update votes, construct 2b broadcast</td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td><code class="language-plaintext highlighter-rouge">CSetOfMessage1b</code></td>
+      <td>HashSet loop: check all elements are 1b</td>
+    </tr>
+    <tr>
+      <td>6</td>
+      <td><code class="language-plaintext highlighter-rouge">CSetOfMessage1bAboutBallot</code></td>
+      <td>HashSet loop: check all 1b match ballot</td>
+    </tr>
+    <tr>
+      <td>7</td>
+      <td><code class="language-plaintext highlighter-rouge">CIsAfterLogTruncationPoint</code></td>
+      <td>HashSet loop: check log truncation point</td>
+    </tr>
+    <tr>
+      <td>8</td>
+      <td><code class="language-plaintext highlighter-rouge">CAllAcceptorsHadNoProposal</code></td>
+      <td>HashSet loop + votes HashMap lookup</td>
+    </tr>
+    <tr>
+      <td>9</td>
+      <td><code class="language-plaintext highlighter-rouge">CExistsAcceptorHasProposalLargeThanOpn</code></td>
+      <td>HashSet loop: existence check</td>
+    </tr>
+    <tr>
+      <td>10</td>
+      <td><code class="language-plaintext highlighter-rouge">Cmax_balInS</code></td>
+      <td>HashSet loop + votes + ballot comparison</td>
+    </tr>
+    <tr>
+      <td>11</td>
+      <td><code class="language-plaintext highlighter-rouge">CProposerProcessRequest</code></td>
+      <td>HashMap get/insert, multi-branch logic</td>
+    </tr>
+    <tr>
+      <td>12</td>
+      <td><code class="language-plaintext highlighter-rouge">CProposerProcess1b</code></td>
+      <td>Add packet to received set</td>
+    </tr>
+    <tr>
+      <td>13</td>
+      <td><code class="language-plaintext highlighter-rouge">CElectionStateReflectReceivedRequest</code></td>
+      <td>Track request</td>
+    </tr>
+    <tr>
+      <td>14</td>
+      <td><code class="language-plaintext highlighter-rouge">CElectionStateCheckForViewTimeout</code></td>
+      <td>Timeout + suspicion logic</td>
+    </tr>
+    <tr>
+      <td>15</td>
+      <td><code class="language-plaintext highlighter-rouge">CElectionStateCheckForQuorumOfViewSuspicions</code></td>
+      <td>Quorum check + view advance</td>
+    </tr>
+    <tr>
+      <td>16</td>
+      <td><code class="language-plaintext highlighter-rouge">CElectionStateProcessHeartbeat</code></td>
+      <td>Longest election function</td>
+    </tr>
+    <tr>
+      <td>17</td>
+      <td><code class="language-plaintext highlighter-rouge">CProposerMaybeEnterNewViewAndSend1a</code></td>
+      <td>Start new ballot</td>
+    </tr>
+    <tr>
+      <td>18</td>
+      <td><code class="language-plaintext highlighter-rouge">CProposerMaybeEnterPhase2</code></td>
+      <td>Check 1b quorum</td>
+    </tr>
+    <tr>
+      <td>19</td>
+      <td><code class="language-plaintext highlighter-rouge">CProposerMaybeNominateValueAndSend2a</code></td>
+      <td>Nomination dispatcher</td>
+    </tr>
+    <tr>
+      <td>20</td>
+      <td><code class="language-plaintext highlighter-rouge">CProposerNominateNewValueAndSend2a</code></td>
+      <td>New value from queue</td>
+    </tr>
+    <tr>
+      <td>21</td>
+      <td><code class="language-plaintext highlighter-rouge">CProposerNominateOldValueAndSend2a</code></td>
+      <td>Highest-ballot from votes (HashSet iteration + loop invariants)</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Key implementation patterns:</p>
+
+<ul>
+  <li><strong>Direct field mapping:</strong> <code class="language-plaintext highlighter-rouge">self.max_bal = bal_1a;</code> maps to <code class="language-plaintext highlighter-rouge">s'.max_bal == inp.msg-&gt;bal_1a</code> in spec.</li>
+  <li><strong>Broadcast construction:</strong> Use <code class="language-plaintext highlighter-rouge">CBroadcast::BuildBroadcastToEveryone(...)</code> (already verified).</li>
+  <li><strong>HashSet iteration:</strong> Convert with <code class="language-plaintext highlighter-rouge">hashset_to_vec(...)</code>, iterate with <code class="language-plaintext highlighter-rouge">while</code> loop + invariants.</li>
+  <li><strong>Assert refinement:</strong> End each function with <code class="language-plaintext highlighter-rouge">assert(LAcceptorProcess1a(old(self)@, self@, inp@, sent@));</code>. Break into conjuncts if Verus can’t prove it automatically.</li>
+</ul>
+
+<h3 id="part-3-bonus-performance-optimization">Part 3 (Bonus): Performance Optimization</h3>
+
+<p>Baseline: ~5K req/s. Target: &gt; 20K req/s. All code must remain fully verified (0 admits, 0 assumes, no new <code class="language-plaintext highlighter-rouge">external_body</code> on logic functions).</p>
+
+<p>Main bottlenecks and strategies:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Bottleneck</th>
+      <th>Strategy</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CAddVoteAndRemoveOldOnes</code> creates new HashMap every call</td>
+      <td>In-place HashMap mutation</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CRemoveVotesBeforeLogTruncationPoint</code> same pattern</td>
+      <td>In-place mutation</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CElectionStateReflectExecutedRequestBatch</code> recursive Vec rebuild</td>
+      <td>Loop-based single-pass filtering</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">truncate_vec_crequest</code> / <code class="language-plaintext highlighter-rouge">concat_vec_crequest</code> element-by-element clone</td>
+      <td><code class="language-plaintext highlighter-rouge">Vec::split_off</code> / <code class="language-plaintext highlighter-rouge">Vec::append</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<table>
+  <thead>
+    <tr>
+      <th>Throughput</th>
+      <th>Bonus</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>&gt; 10K req/s</td>
+      <td>+5%</td>
+    </tr>
+    <tr>
+      <td>&gt; 20K req/s</td>
+      <td>+10%</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="compile-and-test">Compile and Test</h2>
+
+<p>Prerequisites:</p>
+
+<ul>
+  <li>Verus (0.2026.02.04.175a879)</li>
+  <li>rustc 1.80.1</li>
+  <li>.NET 6.0 SDK</li>
+  <li>scons (<code class="language-plaintext highlighter-rouge">pip install scons</code>)</li>
+  <li>Python 3</li>
+</ul>
+
+<p>Build:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># Verify + compile</span>
+scons <span class="nt">--verus-path</span><span class="o">=</span><span class="s2">"</span><span class="nv">$VERUS_PATH</span><span class="s2">"</span>
+
+<span class="c"># Compile only (skip verification)</span>
+scons <span class="nt">--verus-path</span><span class="o">=</span><span class="s2">"</span><span class="nv">$VERUS_PATH</span><span class="s2">"</span> <span class="nt">--no-verify</span>
+</code></pre></div></div>
+
+<p>Run:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># Generate certificates (one-time)</span>
+dotnet bin/CreateIronServiceCerts.dll <span class="nv">outputdir</span><span class="o">=</span>certs <span class="nv">name</span><span class="o">=</span>MyCounter <span class="nb">type</span><span class="o">=</span>IronRSL <span class="se">\</span>
+    <span class="nv">addr1</span><span class="o">=</span>127.0.0.1 <span class="nv">port1</span><span class="o">=</span>4001 <span class="nv">addr2</span><span class="o">=</span>127.0.0.1 <span class="nv">port2</span><span class="o">=</span>4002 <span class="nv">addr3</span><span class="o">=</span>127.0.0.1 <span class="nv">port3</span><span class="o">=</span>4003
+
+<span class="c"># Start 3 servers (separate terminals or background)</span>
+dotnet bin/IronRSLServerUDP.dll certs/MyCounter.IronRSL.service.txt certs/MyCounter.IronRSL.server1.private.txt &amp;
+dotnet bin/IronRSLServerUDP.dll certs/MyCounter.IronRSL.service.txt certs/MyCounter.IronRSL.server2.private.txt &amp;
+dotnet bin/IronRSLServerUDP.dll certs/MyCounter.IronRSL.service.txt certs/MyCounter.IronRSL.server3.private.txt &amp;
+
+<span class="c"># Wait for leader election (~15s), then run benchmark</span>
+<span class="nb">sleep </span>15
+dotnet bin/IronRSLClientUDP.dll <span class="nv">ip1</span><span class="o">=</span>127.0.0.1 <span class="nv">ip2</span><span class="o">=</span>127.0.0.1 <span class="nv">ip3</span><span class="o">=</span>127.0.0.1 <span class="nv">nthreads</span><span class="o">=</span>32 <span class="nv">duration</span><span class="o">=</span>30
+</code></pre></div></div>
+
+<p>Verify no admits or assumes remain:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># No admits in proof layer</span>
+<span class="nb">grep</span> <span class="nt">-rn</span> <span class="s1">'admit()'</span> src/protocol/RSL/common_proof/ | <span class="nb">wc</span> <span class="nt">-l</span>          <span class="c"># Target: 0</span>
+
+<span class="c"># No admits in implementation</span>
+<span class="nb">grep</span> <span class="nt">-rn</span> <span class="s1">'admit()'</span> src/implementation/RSL/acceptorimpl.rs <span class="se">\</span>
+    src/implementation/RSL/electionimpl.rs <span class="se">\</span>
+    src/implementation/RSL/proposerimpl.rs | <span class="nb">wc</span> <span class="nt">-l</span>                  <span class="c"># Target: 0</span>
+
+<span class="c"># No assumes anywhere</span>
+<span class="nb">grep</span> <span class="nt">-rn</span> <span class="s1">'^\s*assume('</span> src/protocol/RSL/ src/implementation/RSL/ | <span class="nb">wc</span> <span class="nt">-l</span>  <span class="c"># Target: 0</span>
+</code></pre></div></div>
+
+<h2 id="submit">Submit</h2>
+
+<p>Commit your code to the repository. Include in your report:</p>
+
+<ul>
+  <li>Verification output (<code class="language-plaintext highlighter-rouge">XXX verified, 0 errors</code>)</li>
+  <li>Throughput and latency numbers from the 32-client, 30-second run</li>
+</ul>
+
+<h2 id="grading">Grading</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Criteria</th>
+      <th>Weight</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Part 1: Protocol Proof</strong> — 10 lemmas, each verified = 4.5%</td>
+      <td><strong>45%</strong></td>
+    </tr>
+    <tr>
+      <td><strong>Part 2: Implementation + Run</strong> — 21 functions, each verified = ~2%; build + benchmark = 3%</td>
+      <td><strong>45%</strong></td>
+    </tr>
+    <tr>
+      <td><strong>Part 3: Optimization (Bonus)</strong> — &gt; 10K = +5%, &gt; 20K = +10%</td>
+      <td><strong>up to +10%</strong></td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="do-not">DO NOT</h2>
+
+<p>Make sure you do not do any of the following; otherwise you will fail the labs, even if the code may pass verification.</p>
+
+<ul>
+  <li>Modify provided helper functions, spec definitions, or IO/FFI infrastructure.</li>
+  <li>Add <code class="language-plaintext highlighter-rouge">assume()</code> or keep <code class="language-plaintext highlighter-rouge">admit()</code> in any submitted code.</li>
+  <li>Add new <code class="language-plaintext highlighter-rouge">external_body</code> annotations on logic functions (existing ones for IO/clone/hash are fine).</li>
+</ul>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
+<script async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script>
+</body>
+
+</html>
