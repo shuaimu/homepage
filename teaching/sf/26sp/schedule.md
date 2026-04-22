@@ -45,11 +45,7 @@ Lecture notes can be found [here](https://drive.google.com/drive/folders/1gI4fvM
 * Apr 13, Cross-host concurrency and multi-level refinement
 * Apr 15, Final project
 * Apr 20, Final project (cont)
-* Apr 22, TBD
-* Apr 27, TBD
-* Apr 29, TBD
-* May 4, TBD
-* May 6, TBD
+* Apr 22-May 6, Recent advances in formal methods
 
 Breaks:
 * Spring Break	Monday, March 16 - Sunday, March 22
