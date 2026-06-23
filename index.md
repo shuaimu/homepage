@@ -39,6 +39,8 @@ I'm particularly interested in:
 If you are interested, email me a brief resume.
 
 ## News ([see all](news.html))
+* Jun 2026, Jetpack accepted to OSDI '26!
+* Jun 2026, Weihai defended his PhD dissertation! Congratulations!
 * Sep 2025, AutoMan and Tiga accepted to SOSP '25!
 * Jul 2025, Mako appeared at OSDI '25!
 * Dec 2024, Received SBU Research Excellence Award. Thank you Seawolves!
@@ -142,8 +144,7 @@ If you are interested, email me a brief resume.
 <!-- * Reza Alimadadi (PhD, with Mike Ferdman) -->
 * [Zihao Zhang](https://zhangzihao270.github.io/) (Post-doc)
 * [Jinkun Geng](https://www.gengjinkun.com/) (Post-doc, co-advised with Anirudh Sivaraman)
-* [Weihai Shen](https://shenweihai1.github.io/) (PhD)
-* [Santa Shithil](https://sites.google.com/grad.cse.buet.ac.bd/santa-maria-shithil/about) (PhD)
+<!-- * [Santa Shithil](https://sites.google.com/grad.cse.buet.ac.bd/santa-maria-shithil/about) (PhD) -->
 * Ze Tang (PhD)
 <!-- * Kumar Shivam (PhD) -->
 * [Ti Zhou (PhD)](https://coladog.github.io/)
@@ -151,10 +152,8 @@ If you are interested, email me a brief resume.
 <!-- * Chenyu Wang (MS) -->
 <!-- * Saumitra Bose (MS) -->
 
-I am also privileged to work closely with other great students including: 
+<!-- I am also privileged to work closely with other great students including:  -->
 <!-- * Xuhao Luo (PhD@UIUC, advised by Tianyin Xu) -->
-* [Haoran Zhang](https://snowchord.com/) (PhD@UPenn, advised by Vincent Liu and Sebastian Angel) 
-* [Jian Zhang](https://www.khoury.northeastern.edu/home/zhangjian3/) (PhD@Northeastern, advised by Cheng Tan)
 <!-- * Hieu Mai (PhD@SBU, advised by Mike Ferdman) -->
 
 

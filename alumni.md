@@ -20,18 +20,30 @@ Stony Brook University <br>
 
 ## Alumni
 
+### PhDs
+
+* [Weihai Shen](https://shenweihai1.github.io/) (PhD -\> Google)
+* [Haoran Zhang](https://snowchord.com/) (PhD@UPenn, advised by Vincent Liu and Sebastian Angel -\> Meta)
+* [Jian Zhang](https://www.khoury.northeastern.edu/home/zhangjian3/) (PhD@Northeastern, advised by Cheng Tan -\> Google)
+
+### MSs with Thesis
+* Krish Makadia
+* Yida Wu (MS -\> Cloudera)
+* Andrew Yoo (MS Thesis@UIUC, with Tianyin Xu -\> Whova)
+
+### MS Advanced Projects (SBU 523/524)
+* Chenyu Wang (MS -\> Meta)
 * [Mrityunjay Kumar](https://www3.cs.stonybrook.edu/~mrkumar/) (MS -\> VMWare)
 * Satya Jain (MS -\> VMWare)
 * Ritesh Sinha (MS -\> HP)
-* [Yuanli Wang](https://pentium3.github.io/) (Virtual Intern, MS@Minnesota -\> PhD@Boston U.)
-* Andrew Yoo (MS Thesis@UIUC, with Tianyin Xu -\> Whova)
-* Yida Wu (MS -\> Cloudera)
 * Ansh Khanna (MS -\> Google)
 * Julie Lee (BSMS -\> HP)
-* Devika Sudheer
-* Radhika Agarwal
+* Devika Sudheer (MS -\> LinkedIn)
+* Radhika Agarwal (MS -\> Apple)
 * Nilesh Gajwani 
 * Ray Zhang
 * Sethu Karthikeyan (MS) 
-* Chenyu Wang (MS)
 * Saumitra Bose (MS)
+
+### Other Interns
+* [Yuanli Wang](https://pentium3.github.io/) (Virtual Intern, MS@Minnesota -\> PhD@Boston U.)
