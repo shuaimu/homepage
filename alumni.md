@@ -20,13 +20,15 @@ Stony Brook University <br>
 
 ## Alumni
 
-### PhDs
+### PhD
 
 * [Weihai Shen](https://shenweihai1.github.io/) (PhD -\> Google)
-* [Haoran Zhang](https://snowchord.com/) (PhD@UPenn, advised by Vincent Liu and Sebastian Angel -\> Meta)
-* [Jian Zhang](https://www.khoury.northeastern.edu/home/zhangjian3/) (PhD@Northeastern, advised by Cheng Tan -\> Google)
 
-### MSs with Thesis
+I am also privileged to have worked with other great PhD students.
+* [Jian Zhang](https://www.khoury.northeastern.edu/home/zhangjian3/) (PhD@Northeastern, advised by Cheng Tan -\> Google)
+* [Haoran Zhang](https://snowchord.com/) (PhD@UPenn, advised by Vincent Liu and Sebastian Angel -\> Meta)
+
+### MS with Thesis
 * Krish Makadia
 * Yida Wu (MS -\> Cloudera)
 * Andrew Yoo (MS Thesis@UIUC, with Tianyin Xu -\> Whova)

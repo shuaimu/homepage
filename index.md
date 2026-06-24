@@ -45,9 +45,9 @@ If you are interested, email me a brief resume.
 * Jul 2025, Mako appeared at OSDI '25!
 * Dec 2024, Received SBU Research Excellence Award. Thank you Seawolves!
 * Jun 2024, CausalMesh accepted to PVLDB 24 (VLDB '25)!
-* Sep 2023, Awarded LARGE (Co-PI). Thanks NSF!
-* May 2023, NCC accepted to OSDI '23!
-* Feb 2023, Awarded CAREER. Thanks NSF!
+<!-- * Sep 2023, Awarded LARGE (Co-PI). Thanks NSF! -->
+<!-- * May 2023, NCC accepted to OSDI '23! -->
+<!-- * Feb 2023, Awarded CAREER. Thanks NSF! -->
 <!-- * Dec 2022, Waverunner accepted to NSDI '23! -->
 <!-- * Aug 2022, Viper accepted to EuroSys '23! -->
 <!-- * Apr 22, DepFast accepted at USENIX ATC '22! -->
