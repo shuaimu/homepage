@@ -80,6 +80,14 @@ If you are interested, email me a brief resume.
 
   <ul>
     <li>
+      Jetpack: Consensus Made Generally Fast
+      [<a href="https://www.usenix.org/system/files/osdi26-tang.pdf">paper</a>]
+      <br>
+      Ze Tang, Zihao Zhang, Weihai Shen, Jicheng Shi, Shuai Mu
+      <br>
+      OSDI 26
+    </li>
+    <li>
       AutoMan: Facilitating Verified Distributed Systems Development Through Automatic Code Generation and Manual Optimizations
       [<a href="pub/automan-sosp25.pdf">paper</a>]
       <br>
@@ -157,16 +165,17 @@ If you are interested, email me a brief resume.
 <!-- * Hieu Mai (PhD@SBU, advised by Mike Ferdman) -->
 
 
-## Program committees 
+## Recent PC activities
 <!-- * APSys 2019, 2020, 2021 -->
-* ASPLOS 2022 (ERC)
-* EuroSys 2025, 2026
-* ICDCS 2023
-* NSDI 2021, 2023, 2026
-* OSDI 2026
-* SIGCOMM 2023
-* SOSP 2024 
-* USENIX ATC 2020, 2024, 2025
+* 2027: NSDI, OSDI
+* 2026: OSDI, ASPLOS, EuroSys, ATC
+* 2025: EuroSys, USENIX ATC
+* 2024: SOSP, USENIX ATC
+
+<!-- * 2023: ICDCS, NSDI, SIGCOMM
+* 2022: ASPLOS (ERC)
+* 2021: NSDI
+* 2020: USENIX ATC -->
 
 <!-- ## Bio
 Prior to joining Stony Brook, I spent 4 years at [NYU](http://nyu.edu) as a visiting student/post-doc/lecturer in the [Systems Group](http://news.cs.nyu.edu). 

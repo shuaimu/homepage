@@ -20,6 +20,14 @@ Stony Brook University <br>
 
 ## Publications
    <ul>
+    <li>
+      Jetpack: Consensus Made Generally Fast
+      [<a href="https://www.usenix.org/system/files/osdi26-tang.pdf">paper</a>]
+      <br>
+      Ze Tang, Zihao Zhang, Weihai Shen, Jicheng Shi, Shuai Mu
+      <br>
+      OSDI 26
+    </li>
        <li>
       AutoMan: Facilitating Verified Distributed Systems Development Through Automatic Code Generation and Manual Optimizations
       [<a href="./pub/automan-sosp25.pdf">paper</a>]
