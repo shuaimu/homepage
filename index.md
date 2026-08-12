@@ -56,12 +56,26 @@ If you are interested, email me a brief resume.
 <!-- #### **MongoDB Replication appeared at NSDI '21!** -->
 
 
+## Recent PC activities
+<!-- * APSys 2019, 2020, 2021 -->
+* 2027: NSDI, OSDI
+* 2026: OSDI, ASPLOS, EuroSys, ATC
+* 2025: EuroSys, USENIX ATC
+* 2024: SOSP, USENIX ATC
+
+<!-- * 2023: ICDCS, NSDI, SIGCOMM
+* 2022: ASPLOS (ERC)
+* 2021: NSDI
+* 2020: USENIX ATC -->
+
 ## Recent courses ([see all](teaching))
+* [CSE-416, Software Engineering, Fall 2026](./teaching/se/26fa/)
+* [CSE-532, Database Systems, Fall 2026](./teaching/db/26fa/)
 * [CSE-590, Reliable System Programming, Spring 2026](./teaching/sf/26sp/)
-* [CSE-532, Database Systems, Fall 2025](./teaching/db/25fa/)
-* [CSE-416, Software Engineering, Fall 2025](./teaching/se/25fa/)
-* [CSE-590, Reliable System Programming, Spring 2025](./teaching/sf/25sp/)
-* [CSE-416, Software Engineering, Fall 2024](./teaching/se/24fa/) 
+<!-- * [CSE-532, Database Systems, Fall 2025](./teaching/db/25fa/) -->
+<!-- * [CSE-416, Software Engineering, Fall 2025](./teaching/se/25fa/) -->
+<!-- * [CSE-590, Reliable System Programming, Spring 2025](./teaching/sf/25sp/) -->
+<!-- * [CSE-416, Software Engineering, Fall 2024](./teaching/se/24fa/) -->
 <!-- * CSE-59X: Building Reliable Distributed Systems with Dafny, Spring 2023 -->
 <!-- * CSE-416, Software Engineering, Spring 2024  -->
   <!-- [IMPORTANT MESSAGE TO READ BEFORE ENROLLING](./teaching/se/24sp/) -->
@@ -121,30 +135,6 @@ If you are interested, email me a brief resume.
       <br>
       ACM SIGMOD Research Highlight Award
     </li>
-    <li>
-    NCC: Natural Concurrency Control for Strictly Serializable Datastores by Avoiding the Timestamp-Inversion Pitfall
-    [<a href="./pub/ncc-osdi23.pdf">paper</a>, <a href="https://arxiv.org/pdf/2305.14270.pdf">tr</a>]
-    <br>
-    Haonan Lu, Shuai Mu, Siddhartha Sen, Wyatt Lloyd
-    <br>
-    OSDI 23
-    </li>
-    <li>
-    Viper: A Fast Snapshot Isolation Checker 
-    [<a href="./pub/viper-eurosys23.pdf">paper</a>]
-    <br>
-    Jian Zhang, Ye Ji, Shuai Mu, and Cheng Tan
-    <br>
-    EuroSys 23
-    </li>
-    <li>
-    Waverunner: An Elegant Approach to Hardware Acceleration of State Machine Replication
-    [<a href="./pub/waverunner-nsdi23.pdf">paper</a>]
-    <br>
-    Mohammadreza Alimadadi, Hieu Mai, Shenghsun Cho, Michael Ferdman, Peter Milder, and Shuai Mu
-    <br>
-    NSDI 23
-    </li>
   </ul>
 
 ## Students ([see alumni](alumni))
@@ -164,18 +154,6 @@ If you are interested, email me a brief resume.
 <!-- * Xuhao Luo (PhD@UIUC, advised by Tianyin Xu) -->
 <!-- * Hieu Mai (PhD@SBU, advised by Mike Ferdman) -->
 
-
-## Recent PC activities
-<!-- * APSys 2019, 2020, 2021 -->
-* 2027: NSDI, OSDI
-* 2026: OSDI, ASPLOS, EuroSys, ATC
-* 2025: EuroSys, USENIX ATC
-* 2024: SOSP, USENIX ATC
-
-<!-- * 2023: ICDCS, NSDI, SIGCOMM
-* 2022: ASPLOS (ERC)
-* 2021: NSDI
-* 2020: USENIX ATC -->
 
 <!-- ## Bio
 Prior to joining Stony Brook, I spent 4 years at [NYU](http://nyu.edu) as a visiting student/post-doc/lecturer in the [Systems Group](http://news.cs.nyu.edu). 
