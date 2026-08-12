@@ -1,0 +1,3340 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>Velox: Meta’s Unified Execution Engine | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="Velox: Meta’s Unified Execution Engine" />
+<meta property="og:locale" content="en_US" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="Velox: Meta’s Unified Execution Engine" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"Velox: Meta’s Unified Execution Engine","url":"/teaching/db/26fa/notes/velox.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"><link type="application/atom+xml" rel="alternate" href="/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>Velox: Meta’s Unified Execution Engine</h1>
+         </header> -->
+
+  <section>
+    <h1 id="velox-metas-unified-execution-engine">Velox: Meta’s Unified Execution Engine</h1>
+
+<h2 id="background-modern-data-workload-types">Background: Modern Data Workload Types</h2>
+
+<h3 id="etl-extract-transform-load">ETL (Extract, Transform, Load)</h3>
+<ul>
+  <li>
+<strong>Definition</strong>: Process of moving and transforming data from source systems to data warehouse</li>
+  <li>
+<strong>Characteristics</strong>:
+    <ul>
+      <li>Batch processing (run periodically, e.g., nightly)</li>
+      <li>Large data volumes (GBs to TBs per run)</li>
+      <li>Complex transformations</li>
+      <li>Usually scheduled (cron jobs, Airflow)</li>
+    </ul>
+  </li>
+</ul>
+
+<p><strong>Real-world Example 1: E-commerce Daily Sales Report</strong></p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>1. EXTRACT (6:00 AM daily):
+   - Pull yesterday's orders from MySQL database
+   - Pull product info from PostgreSQL
+   - Pull customer data from MongoDB
+
+2. TRANSFORM:
+   - Join orders with products and customers
+   - Calculate metrics: revenue per category, top customers
+   - Clean data: remove test orders, fix null values
+   - Aggregate: daily totals, regional breakdowns
+
+3. LOAD:
+   - Write results to data warehouse (e.g., Snowflake, Redshift)
+   - Update summary tables for dashboards
+
+Result: Business analysts query warehouse for reports
+</code></pre></div></div>
+
+<p><strong>Real-world Example 2: Social Media Analytics (Meta’s use case)</strong></p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>1. EXTRACT:
+   - User posts from production databases
+   - User interactions (likes, comments, shares)
+   - Ad impressions and clicks
+
+2. TRANSFORM:
+   - Denormalize: Join users + posts + interactions
+   - Enrich: Add geographic data, device info
+   - Aggregate: Engagement metrics per post/user
+   - Filter: Remove spam, deleted content
+
+3. LOAD:
+   - Store in data warehouse (Presto/Hive tables)
+   - Make available for data scientists, ML training
+
+Volume: Billions of rows per day
+Runtime: Hours (that's why efficiency matters!)
+</code></pre></div></div>
+
+<p><strong>Real-world Example 3: Log Processing</strong></p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>EXTRACT:
+  - Server logs from 10,000 web servers
+  - Application logs from microservices
+  - Database query logs
+
+TRANSFORM:
+  - Parse log format (regex, JSON parsing)
+  - Extract metrics: response times, error rates
+  - Sessionize: Group by user sessions
+  - Aggregate by time window (5-min buckets)
+
+LOAD:
+  - Write to monitoring dashboard (Grafana)
+  - Store in long-term storage (S3 + Parquet)
+
+Frequency: Every hour or day
+Data volume: TBs of raw logs → GBs of metrics
+</code></pre></div></div>
+
+<h3 id="bulk-data-movement">Bulk Data Movement</h3>
+<ul>
+  <li>
+<strong>Definition</strong>: Moving large amounts of data between systems</li>
+  <li>
+<strong>Characteristics</strong>:
+    <ul>
+      <li>Focus on throughput, not latency</li>
+      <li>Minimal or no transformation</li>
+      <li>Often involves format conversion</li>
+      <li>Network and I/O intensive</li>
+    </ul>
+  </li>
+</ul>
+
+<p><strong>Real-world Example 1: Database Migration</strong></p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Scenario: Migrate from MySQL to PostgreSQL
+
+Process:
+  1. Full table export from MySQL
+     - mysqldump or SELECT INTO file
+     - 500GB database → CSV files
+
+  2. Optional transformation:
+     - Convert MySQL-specific types to PostgreSQL
+     - Fix character encoding (latin1 → utf8)
+
+  3. Bulk import to PostgreSQL
+     - COPY command (much faster than INSERT)
+     - Load 500GB in hours instead of days
+
+Challenge: Minimize downtime, ensure data consistency
+</code></pre></div></div>
+
+<p><strong>Real-world Example 2: Data Lake Ingestion</strong></p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Scenario: Move production data to data lake daily
+
+Source: Operational databases (PostgreSQL, MongoDB)
+Target: S3 data lake in Parquet format
+
+Process:
+  1. Extract all changed rows (using change data capture)
+  2. Convert to Parquet format
+     - Row format (DB) → Columnar format (Parquet)
+     - Compress with Snappy/ZSTD
+  3. Upload to S3
+  4. Update metadata catalog (Hive metastore)
+
+Volume: 10TB/day across all tables
+Benefit: Analysts can query with Spark/Presto without hitting prod DB
+</code></pre></div></div>
+
+<p><strong>Real-world Example 3: Cross-Region Replication</strong></p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Scenario: Replicate data from US datacenter to EU datacenter
+
+Process:
+  - Snapshot tables from US database
+  - Transfer over network (potentially across continents)
+  - Load into EU database replica
+  - Enable incremental sync for ongoing changes
+
+Challenges:
+  - Network bandwidth (100 Gbps links)
+  - Data consistency during transfer
+  - Resume capability if transfer interrupted
+
+Use case: GDPR compliance (EU data must stay in EU)
+</code></pre></div></div>
+
+<h3 id="realtime-stream-processing">Realtime Stream Processing</h3>
+<ul>
+  <li>
+<strong>Definition</strong>: Process data continuously as it arrives</li>
+  <li>
+<strong>Characteristics</strong>:
+    <ul>
+      <li>Low latency (milliseconds to seconds)</li>
+      <li>Infinite data streams</li>
+      <li>Incremental computation</li>
+      <li>Stateful processing (windows, aggregations)</li>
+    </ul>
+  </li>
+</ul>
+
+<p><strong>Real-world Example 1: Fraud Detection</strong></p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Scenario: Credit card fraud detection
+
+Data Stream:
+  → Credit card transaction (every few seconds)
+    {user_id, amount, merchant, location, timestamp}
+
+Processing Pipeline:
+  1. Filter: transactions &gt; $1000
+
+  2. Enrich: Join with user profile (location, history)
+
+  3. Detect anomalies:
+     - User in California 1 hour ago, now in New York?
+     - Unusual merchant category for this user?
+     - Transaction amount &gt;&gt; user's average?
+
+  4. Aggregate (5-minute window):
+     - Count transactions per user
+     - Sum amount per user
+     - Alert if &gt; 10 transactions or &gt; $10,000 in 5 min
+
+  5. Alert: Send to fraud investigation system
+
+Latency requirement: &lt; 100ms
+Why streaming: Can't wait for batch ETL (fraud happens now!)
+</code></pre></div></div>
+
+<p><strong>Real-world Example 2: Real-time Analytics Dashboard</strong></p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Scenario: Website traffic monitoring (like Google Analytics)
+
+Data Stream:
+  → Page view events (millions per second)
+    {user_id, page_url, timestamp, referrer, device}
+
+Processing:
+  1. Parse and clean: Extract domain, path, query params
+
+  2. Sessionize: Group events by user session
+     - 30-minute inactivity timeout
+
+  3. Aggregate (tumbling 1-minute windows):
+     - Page views per page
+     - Unique visitors per page
+     - Bounce rate
+     - Average session duration
+
+  4. Write to dashboard: Update live charts
+
+Result: Business sees metrics update every minute
+Why streaming: Batch processing would show yesterday's data
+</code></pre></div></div>
+
+<p><strong>Real-world Example 3: IoT Sensor Monitoring</strong></p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Scenario: Smart building temperature control
+
+Data Stream:
+  → Temperature sensor readings (every 10 seconds)
+    {room_id, temperature, humidity, timestamp}
+
+Processing:
+  1. Filter outliers: Ignore readings &lt; 0°F or &gt; 120°F
+
+  2. Sliding window aggregation (10-minute window):
+     - Average temperature per room
+     - Detect rapid changes (&gt; 5°F in 10 min)
+
+  3. Pattern detection:
+     - Too hot for &gt;20 minutes → Increase AC
+     - Too cold for &gt;20 minutes → Increase heating
+
+  4. Alert HVAC control system
+
+Latency: &lt; 30 seconds
+Why streaming: Immediate response to temperature changes
+</code></pre></div></div>
+
+<p><strong>Real-world Example 4: Social Media Timeline (Meta’s use case)</strong></p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Scenario: Facebook/Instagram feed updates
+
+Data Stream:
+  → New posts from friends (continuous)
+    {user_id, post_id, content, timestamp}
+
+Processing:
+  1. Filter: Only posts from user's friends
+
+  2. Rank: Apply ML model for relevance
+     - User's past interactions
+     - Post popularity (early engagement signals)
+     - Content type preference
+
+  3. Aggregate: Build feed for each user
+
+  4. Push notification: If high-relevance post
+
+Latency: &lt; 1 second
+Why streaming: Users expect immediate updates
+Volume: Billions of posts/day, millions of users
+</code></pre></div></div>
+
+<h3 id="mlai-data-preprocessing">ML/AI Data Preprocessing</h3>
+<ul>
+  <li>
+<strong>Definition</strong>: Transform raw data into format suitable for ML training</li>
+  <li>
+<strong>Characteristics</strong>:
+    <ul>
+      <li>Feature engineering (create ML features from raw data)</li>
+      <li>Data cleaning and normalization</li>
+      <li>Train/test split</li>
+      <li>Can be batch or realtime (for online learning)</li>
+    </ul>
+  </li>
+</ul>
+
+<p><strong>Real-world Example 1: Recommendation System Training Data</strong></p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Scenario: Netflix movie recommendations
+
+Raw Data:
+  - User viewing history (watched movies, watch time)
+  - User ratings (1-5 stars)
+  - Movie metadata (genre, actors, director, year)
+  - User demographics (age, location)
+
+Preprocessing Pipeline:
+  1. Feature Engineering:
+     a) User features:
+        - Favorite genres (count by genre)
+        - Average rating given
+        - Viewing frequency (movies/week)
+        - Preferred viewing time (weekend vs weekday)
+
+     b) Movie features:
+        - One-hot encode genres
+        - Normalize release year
+        - Average rating from all users
+        - Popularity score
+
+     c) Interaction features:
+        - User-genre affinity score
+        - Similar users' ratings
+        - Time since last watched similar movie
+
+  2. Data Cleaning:
+     - Remove incomplete records
+     - Handle missing ratings (impute or drop)
+     - Filter out bot accounts
+
+  3. Normalization:
+     - Scale numerical features to [0, 1]
+     - Standardize (mean=0, std=1) for neural nets
+
+  4. Split:
+     - 80% training, 10% validation, 10% test
+     - Time-based split (older data = train, recent = test)
+
+  5. Output Format:
+     - TFRecord (TensorFlow) or Parquet
+     - Feature vectors ready for ML model
+
+Volume: Billions of viewing events → Millions of training examples
+Why it matters: Bad features = Bad model (no matter how good the algorithm)
+</code></pre></div></div>
+
+<p><strong>Real-world Example 2: Image Classification Preprocessing</strong></p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Scenario: Train model to detect cats vs dogs
+
+Raw Data:
+  - 100,000 images (JPEG files)
+  - Labels (cat or dog)
+
+Preprocessing:
+  1. Image Transformations:
+     - Resize to 224x224 pixels (model input size)
+     - Convert to RGB (handle grayscale)
+     - Normalize pixel values: [0, 255] → [0, 1]
+
+  2. Data Augmentation (create more training data):
+     - Random horizontal flip
+     - Random rotation (±15 degrees)
+     - Random brightness/contrast adjustment
+     - Random crop
+
+     Original 100K images → 500K augmented images
+
+  3. Encoding:
+     - Labels: "cat" → 0, "dog" → 1 (one-hot encoding)
+
+  4. Batching:
+     - Group into batches of 32 images
+     - Shuffle order (prevent learning order)
+
+  5. Split:
+     - 70% train, 15% validation, 15% test
+
+Output: Tensors ready for PyTorch/TensorFlow
+
+Challenges:
+  - Memory: Can't load all images at once
+  - I/O: Reading images is slow (need prefetching)
+  - Compute: Augmentation is CPU-intensive
+</code></pre></div></div>
+
+<p><strong>Real-world Example 3: NLP Text Preprocessing</strong></p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Scenario: Train sentiment analysis model (positive/negative reviews)
+
+Raw Data:
+  - Product reviews (text + star rating)
+    "This phone is amazing! Battery lasts all day." → 5 stars
+    "Terrible product. Broke after 1 week." → 1 star
+
+Preprocessing:
+  1. Text Cleaning:
+     - Lowercase: "Amazing" → "amazing"
+     - Remove punctuation: "amazing!" → "amazing"
+     - Remove HTML tags
+     - Remove URLs, @mentions
+
+  2. Tokenization:
+     "This phone is amazing" → ["this", "phone", "is", "amazing"]
+
+  3. Feature Engineering:
+     a) Bag of Words:
+        {"this": 1, "phone": 1, "is": 1, "amazing": 1}
+
+     b) TF-IDF:
+        Weight words by rarity
+        "the" → low weight (common)
+        "amazing" → high weight (distinctive)
+
+     c) Word Embeddings:
+        "amazing" → [0.2, -0.1, 0.5, ...] (300-dim vector)
+        Use pre-trained (Word2Vec, GloVe)
+
+  4. Padding/Truncation:
+     - Max sequence length = 100 words
+     - Pad short reviews: [w1, w2, PAD, PAD, ...]
+     - Truncate long reviews: [w1, w2, ..., w100]
+
+  5. Label Processing:
+     - 1-2 stars → Negative (label = 0)
+     - 4-5 stars → Positive (label = 1)
+     - 3 stars → Neutral (discard or separate class)
+
+  6. Split and Balance:
+     - Ensure 50/50 positive/negative in training set
+     - Undersample or oversample if imbalanced
+
+Output: Token sequences + labels for LSTM/BERT model
+
+Why complex: Text is unstructured, high-dimensional, sparse
+</code></pre></div></div>
+
+<p><strong>Real-world Example 4: Feature Engineering for Ad Click Prediction (Meta)</strong></p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Scenario: Predict if user will click on an ad
+
+Raw Data:
+  - User profile (age, gender, location, interests)
+  - User history (past clicks, liked pages)
+  - Ad content (text, image, target audience)
+  - Context (time of day, device type, current page)
+
+Feature Engineering:
+  1. User Features:
+     - Age group: 18-24, 25-34, ... (categorical)
+     - Gender: M/F (binary)
+     - Location: Country, City (categorical, millions of values!)
+     - Interests: One-hot encoding (sparse, thousands of categories)
+     - Activity level: Posts/day, logins/week
+
+  2. Ad Features:
+     - Ad category (e-commerce, gaming, etc.)
+     - Target keywords (extracted from ad text)
+     - Image embeddings (from CNN)
+     - Advertiser quality score
+
+  3. Interaction Features (most important!):
+     - User-Ad category match score
+     - User's past CTR for similar ads
+     - Similar users' behavior on this ad
+
+  4. Temporal Features:
+     - Hour of day (0-23)
+     - Day of week (0-6)
+     - Is weekend? (binary)
+     - Time since last ad click
+
+  5. Embeddings:
+     - User embedding (learn from behavior)
+     - Ad embedding (learn from performance)
+     - Dot product → similarity score
+
+  6. Transformations:
+     - Log transform: count features (log(1 + count))
+     - Binning: Continuous → categorical
+     - Normalization: Z-score for neural nets
+
+Challenges:
+  - High cardinality: Millions of users/ads
+  - Sparse features: Most values are 0
+  - Real-time: Must compute features in &lt; 50ms for serving
+  - Drift: User behavior changes over time
+
+Volume: Billions of examples, thousands of features
+Compute: This preprocessing consumes ~50% of ML resources!
+
+This is where Velox's TorchArrow helps:
+  - Fast vectorized transformations
+  - Consistent functions (same as in Spark/Presto)
+  - Efficient handling of complex types (arrays, maps)
+</code></pre></div></div>
+
+<h3 id="comparison-table">Comparison Table</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Workload Type    | Latency      | Volume       | Frequency    | Example
+-----------------|--------------|--------------|--------------|------------------
+ETL              | Hours        | TB           | Daily/Hourly | Sales reports
+Bulk Movement    | Hours        | TB-PB        | One-time     | DB migration
+Stream           | Milliseconds | Infinite     | Continuous   | Fraud detection
+ML Preprocessing | Minutes      | GB-TB        | Per training | Feature engineering
+</code></pre></div></div>
+
+<h3 id="why-multiple-engines-existed-before-velox">Why Multiple Engines Existed Before Velox</h3>
+
+<p><strong>Different workloads had different engines</strong>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ETL:                  Spark, Hive (batch processing)
+Stream Processing:    Flink, Storm, XStream (low latency)
+Bulk Movement:        Custom scripts, Sqoop (throughput)
+ML Preprocessing:     Pandas, custom Python (ML-friendly)
+Analytics:            Presto, Impala (interactive queries)
+</code></pre></div></div>
+
+<p><strong>Each engine optimized differently</strong>:</p>
+<ul>
+  <li>ETL: Fault tolerance (long-running jobs must survive failures)</li>
+  <li>Streaming: Low latency (process events immediately)</li>
+  <li>Bulk: High throughput (saturate network/disk)</li>
+  <li>ML: Integration with Python/PyTorch ecosystem</li>
+</ul>
+
+<p><strong>Velox’s goal</strong>: Unified execution engine for ALL of these!</p>
+
+<h3 id="how-metas-products-map-to-workload-types">How Meta’s Products Map to Workload Types</h3>
+
+<h4 id="etl-and-batch-analytics--spark-spruce">ETL and Batch Analytics → <strong>Spark (Spruce)</strong>
+</h4>
+
+<p><strong>Workload</strong>: Large-scale batch processing and ETL</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Example: Daily aggregation of user engagement metrics
+
+Raw data (TB scale):
+  - User posts from last 24 hours (from production DB)
+  - User interactions (likes, comments, shares)
+  - Ad impressions and clicks
+
+Spark ETL Pipeline:
+  1. EXTRACT:
+     - Read from Hive tables (yesterday's partition)
+     - Load user metadata from database snapshots
+
+  2. TRANSFORM:
+     - Join posts + interactions + ad data
+     - Calculate engagement rate per post
+     - Compute user activity scores
+     - Aggregate by region, age group, content type
+
+  3. LOAD:
+     - Write summary tables (Parquet format)
+     - Update data warehouse for reporting
+
+Runtime: 2-4 hours
+Data volume: 100TB input → 10TB output
+Frequency: Daily at 2 AM
+</code></pre></div></div>
+
+<p><strong>Why Spark needs Velox</strong>:</p>
+<ul>
+  <li>Long-running queries need efficiency (hours of CPU time)</li>
+  <li>Better fault tolerance for multi-hour jobs</li>
+  <li>Same function semantics as interactive analytics (Presto)</li>
+</ul>
+
+<h4 id="interactive-analytics--presto-prestissimo">Interactive Analytics → <strong>Presto (Prestissimo)</strong>
+</h4>
+
+<p><strong>Workload</strong>: Low-latency SQL queries for exploration and dashboards</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Example: Ad-hoc analysis by data scientist
+
+Query: "Show me top 10 advertisers by revenue in last 7 days"
+
+SELECT advertiser_id,
+       SUM(revenue) as total_revenue,
+       COUNT(DISTINCT user_id) as unique_users
+FROM ad_impressions
+WHERE date &gt;= current_date - interval '7' day
+  AND click = true
+GROUP BY advertiser_id
+ORDER BY total_revenue DESC
+LIMIT 10
+
+Latency requirement: &lt; 10 seconds
+Data scanned: ~500GB (7 days of ad impressions)
+Use case: Interactive exploration, dashboards, reporting
+</code></pre></div></div>
+
+<p><strong>Why Presto needs Velox</strong>:</p>
+<ul>
+  <li>User waiting for results (need low latency)</li>
+  <li>Thousands of concurrent queries</li>
+  <li>6-10x speedup = better user experience</li>
+  <li>3x fewer servers = cost savings</li>
+</ul>
+
+<h4 id="stream-processing--xstream">Stream Processing → <strong>XStream</strong>
+</h4>
+
+<p><strong>Workload</strong>: Continuous processing of event streams</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Example: Real-time content moderation
+
+Data Stream (from Scribe):
+  → User posts (continuous, millions/sec)
+    {user_id, post_id, content, timestamp, location}
+
+XStream Processing:
+  1. Filter: Posts with text content
+
+  2. Enrich: Join with user reputation score
+     - Read from key-value store
+     - Add user's violation history
+
+  3. Apply ML model: Toxicity detection
+     - Score: 0.0 (safe) to 1.0 (toxic)
+
+  4. Aggregation (5-minute tumbling window):
+     - Count toxic posts per user
+     - If count &gt; threshold → Flag for review
+
+  5. Write results:
+     - Back to Scribe (for moderation queue)
+     - To dashboard (real-time metrics)
+
+Latency: &lt; 1 second (post to moderation decision)
+Throughput: Millions of posts/second
+Window: 5-minute tumbling windows
+</code></pre></div></div>
+
+<p><strong>Why XStream needs Velox</strong>:</p>
+<ul>
+  <li>Low latency critical (users expect immediate moderation)</li>
+  <li>Batched execution (up to 500KB, 20 sec) benefits from vectorization</li>
+  <li>Reuses Presto function package (consistency)</li>
+  <li>Temporal window aggregations (tumbling, hopping, session)</li>
+</ul>
+
+<p><strong>Connection to Scribe (Messaging Bus)</strong>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Data Flow:
+  Web Tier → Scribe (ingest)
+       ↓
+  XStream reads from Scribe
+       ↓
+  XStream processes (using Velox)
+       ↓
+  XStream writes back to Scribe
+       ↓
+  Downstream consumers (dashboards, storage)
+</code></pre></div></div>
+
+<p><strong>Why Scribe needs Velox</strong>:</p>
+<ul>
+  <li>Traditionally row-by-row reads</li>
+  <li>Now: Columnar serialization (more efficient)</li>
+  <li>Pushdown operations (projection, filtering) to storage</li>
+  <li>Reduces cross-datacenter traffic</li>
+</ul>
+
+<h4 id="bulk-data-movement--data-ingestion--fbetl">Bulk Data Movement / Data Ingestion → <strong>FBETL</strong>
+</h4>
+
+<p><strong>Workload Type 1: Data Warehouse Ingestion</strong></p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Example: Scribe → Data Warehouse pipeline
+
+Source: Scribe pipes (message bus)
+  - User activity logs (100M events/hour)
+  - Application events (50M events/hour)
+  - Ad events (200M events/hour)
+
+FBETL Pipeline:
+  1. Read from Scribe:
+     - Batch reads (not row-by-row)
+     - Using Velox columnar serialization
+
+  2. Optional transformations:
+     - Parse JSON fields
+     - Apply UDFs (same as Presto functions!)
+     - Filter out test data
+     - Denormalize nested structures
+
+  3. Write to warehouse:
+     - ORC/DWRF format (columnar)
+     - Partitioned by date/hour
+     - Compressed (Snappy/ZSTD)
+
+Throughput: 350M events/hour → 5TB/day
+Frequency: Continuous (micro-batches every 5 min)
+Format: Row (Scribe) → Columnar (ORC) conversion
+</code></pre></div></div>
+
+<p><strong>Why doing transformations in FBETL (not separate stream app)</strong>:</p>
+<ul>
+  <li>No need to write to intermediate Scribe pipe</li>
+  <li>Saves one write + one read cycle</li>
+  <li>Lower latency, less storage</li>
+</ul>
+
+<p><strong>Workload Type 2: Database Ingestion</strong></p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Example: MySQL → Data Warehouse snapshots
+
+Source: MySQL operational database
+  - Read database redo logs (change data capture)
+  - Previous snapshot from warehouse
+
+FBETL Snapshot Process:
+  1. Read previous snapshot (Parquet/ORC)
+  2. Read incremental changes from MySQL logs
+  3. Merge changes (like merge-join operator)
+  4. Write new snapshot
+
+Schedule: Daily (full snapshot of production DB)
+Volume: 10TB database → 10TB snapshot
+Use case: Analytics on operational data without hitting prod DB
+</code></pre></div></div>
+
+<p><strong>Why FBETL needs Velox</strong>:</p>
+<ul>
+  <li>Reuses ORC encoder from Spark/Presto (consistency)</li>
+  <li>Same transformation functions (UDFs)</li>
+  <li>Snapshotting uses merge-join operator</li>
+  <li>Efficient columnar processing</li>
+</ul>
+
+<h4 id="ml-data-preprocessing--torcharrow-pytorch">ML Data Preprocessing → <strong>TorchArrow (PyTorch)</strong>
+</h4>
+
+<p><strong>Workload</strong>: Feature engineering for ML training</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Example: Training a recommendation model
+
+Raw Data (from data warehouse):
+  - User viewing history (10B events)
+  - User ratings (1B ratings)
+  - Content metadata (100M items)
+  - User demographics (1B users)
+
+TorchArrow Preprocessing:
+  1. Feature Engineering:
+     # User features
+     user_features = df.group_by('user_id').agg(
+       favorite_genre=most_common('genre'),
+       avg_rating=mean('rating'),
+       watch_frequency=count() / time_span_days('timestamp')
+     )
+
+     # Content features
+     content_features = df.group_by('content_id').agg(
+       avg_rating=mean('rating'),
+       popularity=count(),
+       genre_vector=one_hot_encode('genre')
+     )
+
+     # Interaction features
+     interactions = df.join(user_features, on='user_id')
+                      .join(content_features, on='content_id')
+                      .select(
+                        'user_id',
+                        'content_id',
+                        user_genre_match(user.favorite_genre, content.genre),
+                        days_since_last_watch('timestamp')
+                      )
+
+  2. Transformations (using Velox functions):
+     - Array operations: array_agg(), flatten()
+     - Map operations: map_keys(), map_values()
+     - String processing: regexp_extract(), split()
+     - Math: log(), sqrt(), normalize()
+
+  3. Data Cleaning:
+     - Remove nulls: filter(is_not_null())
+     - Remove outliers: filter(rating.between(1, 5))
+     - Deduplicate: distinct()
+
+  4. Output:
+     - Convert to PyTorch tensors
+     - Save as TFRecord or Parquet
+     - Ready for model training
+
+Volume: 10B events → 500M training examples
+Runtime: 30 minutes (previously 2 hours with Pandas!)
+</code></pre></div></div>
+
+<p><strong>Why ML preprocessing needed Velox</strong>:</p>
+<ul>
+  <li>
+<strong>Problem before</strong>: 14 different preprocessing libraries at Meta
+    <ul>
+      <li>Inconsistent functions (different substr() implementations!)</li>
+      <li>Poor performance (Pandas doesn’t scale)</li>
+      <li>Incompatible with Data Analytics tools</li>
+    </ul>
+  </li>
+  <li>
+<strong>Solution with Velox</strong>:
+    <ul>
+      <li>Same function package as Presto/Spark</li>
+      <li>Vectorized execution (10-100x faster than Pandas)</li>
+      <li>Consistent semantics (no surprises)</li>
+      <li>“DI for AI” - Data Infrastructure for Artificial Intelligence</li>
+    </ul>
+  </li>
+</ul>
+
+<h4 id="feature-engineering--f3">Feature Engineering → <strong>F3</strong>
+</h4>
+
+<p><strong>Workload</strong>: Define features once, use everywhere</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Example: User engagement score feature
+
+F3 DSL Definition:
+  feature UserEngagementScore:
+    sources:
+      - user_posts (from data warehouse)
+      - user_interactions (from stream)
+
+    transformations:
+      posts_per_day = count(posts) / days_active
+      avg_likes_per_post = sum(likes) / count(posts)
+      engagement_score = (posts_per_day * 0.3 +
+                         avg_likes_per_post * 0.7)
+
+    output: float
+
+Three Execution Paths:
+  1. Offline (batch training data):
+     - F3 → Spark (uses Velox)
+     - Generate historical features
+     - 1B users × 1000 features = 1TB dataset
+
+  2. Realtime (streaming features):
+     - F3 → XStream (uses Velox)
+     - Update features as events arrive
+     - Low latency (&lt;1 sec)
+
+  3. Online (serving/inference):
+     - F3 → Online serving system
+     - Compute features during prediction
+     - Very low latency (&lt;10ms)
+     - Currently exploring codegen (not vectorization)
+</code></pre></div></div>
+
+<p><strong>Why F3 needs Velox</strong>:</p>
+<ul>
+  <li>
+<strong>Offline + Realtime</strong>: Already using Velox (via Spark + XStream)</li>
+  <li>
+<strong>Online serving</strong>: Challenge!
+    <ul>
+      <li>High QPS (queries per second)</li>
+      <li>Low latency (&lt;10ms)</li>
+      <li>Small batches (often single row)</li>
+      <li><strong>Vectorization overhead too high</strong></li>
+      <li>Solution: Code generation (experimental)</li>
+    </ul>
+  </li>
+</ul>
+
+<p><strong>Consistency benefit</strong>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Same feature definition used in:
+  Training (Spark) → Uses Velox vectorized
+  Streaming (XStream) → Uses Velox vectorized
+  Serving (online) → Uses Velox codegen (future)
+
+Result: No training/serving skew!
+  - Feature computed same way everywhere
+  - Model sees same features in training and production
+</code></pre></div></div>
+
+<h3 id="summary-velox-integration-across-metas-stack">Summary: Velox Integration Across Meta’s Stack</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Product      | Workload Type        | Velox Components Used           | Key Benefit
+-------------|----------------------|---------------------------------|------------------
+Spark        | ETL/Batch            | Full stack                      | 2x speedup
+Presto       | Interactive SQL      | Full stack                      | 6-10x speedup
+XStream      | Stream processing    | Operators, functions, vectors   | Low latency + consistency
+Scribe       | Messaging            | Serializers, vectors            | Efficient reads, pushdown
+FBETL        | Data ingestion       | I/O, serializers, functions     | Consistency, no intermediate storage
+TorchArrow   | ML preprocessing     | All except operators            | 10-100x vs Pandas
+F3           | Feature engineering  | Functions, expression eval      | Train/serve consistency
+</code></pre></div></div>
+
+<p><strong>The Big Picture</strong>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>User Activity
+     ↓
+Scribe (uses Velox for efficient reads)
+     ↓
+  ┌──┴───────────────────────────────┐
+  ↓                                  ↓
+XStream (stream)              FBETL (batch ingest)
+Uses Velox                    Uses Velox
+  ↓                                  ↓
+Scribe (results)              Data Warehouse (ORC)
+  ↓                                  ↓
+Dashboards                     ┌─────┴──────┐
+                               ↓            ↓
+                          Presto (SQL)  Spark (ETL)
+                          Uses Velox    Uses Velox
+                               ↓            ↓
+                          Analytics    Training Data
+                                           ↓
+                                    TorchArrow (ML prep)
+                                    Uses Velox
+                                           ↓
+                                    F3 (features)
+                                    Uses Velox
+                                           ↓
+                                    ML Training
+                                           ↓
+                                    Model Serving
+
+All these systems share Velox execution engine!
+  → Same functions
+  → Consistent behavior
+  → Develop optimizations once
+</code></pre></div></div>
+
+<h2 id="motivation-the-siloed-data-ecosystem-problem">Motivation: The Siloed Data Ecosystem Problem</h2>
+
+<h3 id="the-proliferation-problem">The Proliferation Problem</h3>
+<ul>
+  <li>Modern data workloads are diverse:
+    <ul>
+      <li>Transaction processing (OLTP)</li>
+      <li>Batch and interactive analytics (OLAP)</li>
+      <li>ETL and bulk data movement</li>
+      <li>Realtime stream processing</li>
+      <li>ML/AI data preprocessing and feature engineering</li>
+    </ul>
+  </li>
+  <li>Led to dozens of specialized engines:
+    <ul>
+      <li>Each targeted to specific workload type</li>
+      <li>Built with different frameworks and libraries</li>
+      <li>Written in different languages</li>
+      <li>Maintained by different teams</li>
+      <li><strong>Share little to nothing with each other</strong></li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="problems-with-fragmentation">Problems with Fragmentation</h3>
+
+<h4 id="1-maintenance-and-evolution-cost">1. Maintenance and Evolution Cost</h4>
+<ul>
+  <li>Evolving engines for new hardware (GPUs, NVRAM, accelerators) requires per-engine work</li>
+  <li>Supporting new features (Tensor types for ML) across all engines is impractical</li>
+  <li>Engines end up with disparate sets of optimizations</li>
+</ul>
+
+<h4 id="2-inconsistent-user-experience">2. Inconsistent User Experience</h4>
+<ul>
+  <li>Same functions behave differently across engines</li>
+  <li>Example at Meta: <strong>12 different implementations of substr()</strong>
+    <ul>
+      <li>Different parameter semantics (0-based vs 1-based indices)</li>
+      <li>Different null handling</li>
+      <li>Different exception behavior</li>
+    </ul>
+  </li>
+  <li>Users must interact with multiple engines to complete tasks</li>
+  <li>Available data types, functions, aggregates vary across systems</li>
+</ul>
+
+<h4 id="3-engineering-duplication">3. Engineering Duplication</h4>
+<ul>
+  <li>Same functionality implemented multiple times</li>
+  <li>Example: All engines need:
+    <ul>
+      <li>Type system for scalar and complex types</li>
+      <li>Columnar memory representation</li>
+      <li>Expression evaluation</li>
+      <li>Operators (joins, aggregation, sort)</li>
+      <li>Serialization formats</li>
+      <li>Resource management</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="key-observation">Key Observation</h3>
+<ul>
+  <li>
+<strong>Engines differ mainly in</strong>:
+    <ul>
+      <li>Language frontend (SQL, dataframes, DSLs)</li>
+      <li>Query optimizer</li>
+      <li>Task distribution (runtime)</li>
+      <li>IO layer</li>
+    </ul>
+  </li>
+  <li>
+<strong>Execution engines are all rather similar</strong>
+    <ul>
+      <li>This is where Velox fits in!</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="what-is-velox">What is Velox?</h2>
+
+<h3 id="definition">Definition</h3>
+<ul>
+  <li>Open source C++ database acceleration library</li>
+  <li>Provides reusable, extensible, high-performance data processing components</li>
+  <li>Can be used to build, enhance, or replace execution engines</li>
+</ul>
+
+<h3 id="key-characteristics">Key Characteristics</h3>
+<ul>
+  <li>
+<strong>Vectorized execution</strong>: Process data in batches (columnar)</li>
+  <li>
+<strong>Adaptive</strong>: Runtime optimizations based on data characteristics</li>
+  <li>
+<strong>Complex type support</strong>: Designed for nested/complex data types from ground up</li>
+  <li>
+<strong>Dialect-agnostic</strong>: Works with any SQL dialect or query language</li>
+  <li>
+<strong>Modular</strong>: Pick and choose components needed</li>
+  <li>
+<strong>Extensible</strong>: Many hooks for customization</li>
+</ul>
+
+<h3 id="what-velox-does-not-provide">What Velox Does NOT Provide</h3>
+<ul>
+  <li>❌ SQL parser</li>
+  <li>❌ Dataframe layer or other DSLs</li>
+  <li>❌ Global query optimizer</li>
+  <li>❌ Distributed runtime / task scheduling</li>
+</ul>
+
+<h3 id="input-and-output">Input and Output</h3>
+<ul>
+  <li>
+<strong>Input</strong>: Fully optimized query plan (as operator tree)</li>
+  <li>
+<strong>Output</strong>: Executes computation using local node resources</li>
+  <li>Velox sits on the <strong>data-plane</strong>, engines provide <strong>control-plane</strong>
+</li>
+</ul>
+
+<h3 id="value-proposition">Value Proposition</h3>
+
+<h4 id="1-efficiency">1. Efficiency</h4>
+<ul>
+  <li>Democratizes optimizations previously in individual engines:
+    <ul>
+      <li>SIMD leveraging</li>
+      <li>Lazy evaluation</li>
+      <li>Adaptive predicate reordering</li>
+      <li>Common subexpression elimination</li>
+      <li>Execution over encoded data</li>
+      <li>Code generation</li>
+    </ul>
+  </li>
+</ul>
+
+<h4 id="2-consistency">2. Consistency</h4>
+<ul>
+  <li>All engines using Velox expose same:
+    <ul>
+      <li>Data types</li>
+      <li>Scalar/aggregate function packages</li>
+      <li>Behavior and semantics</li>
+    </ul>
+  </li>
+</ul>
+
+<h4 id="3-engineering-efficiency">3. Engineering Efficiency</h4>
+<ul>
+  <li>Features and optimizations developed once</li>
+  <li>Maintained once</li>
+  <li>Reduces duplication</li>
+</ul>
+
+<h2 id="core-optimizations-explained">Core Optimizations Explained</h2>
+
+<h3 id="1-simd-leveraging-single-instruction-multiple-data">1. SIMD Leveraging (Single Instruction, Multiple Data)</h3>
+
+<p><strong>What is SIMD?</strong>:</p>
+<ul>
+  <li>CPU instruction that processes multiple data elements in parallel</li>
+  <li>Modern CPUs (x86-64 with AVX2/AVX-512) can operate on:
+    <ul>
+      <li>4 × 64-bit integers per instruction (AVX2)</li>
+      <li>8 × 32-bit integers per instruction (AVX2)</li>
+      <li>16 × 16-bit integers per instruction (AVX2)</li>
+      <li>8 × 64-bit integers per instruction (AVX-512)</li>
+    </ul>
+  </li>
+</ul>
+
+<p><strong>How it Works</strong>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Scalar (traditional):
+  for (int i = 0; i &lt; 1000; i++) {
+    result[i] = a[i] + b[i];  // 1 addition per clock cycle
+  }
+
+  Time: 1000 clock cycles
+
+SIMD (AVX2):
+  for (int i = 0; i &lt; 1000; i += 4) {
+    __m256i va = _mm256_load_si256(&amp;a[i]);     // Load 4 × 64-bit
+    __m256i vb = _mm256_load_si256(&amp;b[i]);     // Load 4 × 64-bit
+    __m256i vr = _mm256_add_epi64(va, vb);     // 4 additions in 1 cycle!
+    _mm256_store_si256(&amp;result[i], vr);        // Store 4 × 64-bit
+  }
+
+  Time: 250 clock cycles (4x speedup!)
+</code></pre></div></div>
+
+<p><strong>Example in Velox (Filter Execution)</strong>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Query: SELECT * FROM table WHERE age &gt; 30
+
+Input: Vector with 1024 ages
+       [25, 35, 42, 28, 50, 31, ...]
+
+Without SIMD (scalar):
+  for (int i = 0; i &lt; 1024; i++) {
+    if (ages[i] &gt; 30) {
+      output_indices[count++] = i;
+    }
+  }
+  Time: ~1024 comparisons
+
+With SIMD (AVX2 - 8 × 32-bit ints):
+  __m256i threshold = _mm256_set1_epi32(30);  // Broadcast 30 to all lanes
+
+  for (int i = 0; i &lt; 1024; i += 8) {
+    __m256i ages_vec = _mm256_load_si256(&amp;ages[i]);
+    __m256i mask = _mm256_cmpgt_epi32(ages_vec, threshold);
+    // mask = [0xFF..FF, 0, 0xFF..FF, 0, ...] for [35, 25, 42, 28, ...]
+
+    int bitmask = _mm256_movemask_epi8(mask);
+    // Extract passing indices using bit manipulation
+    // Write to output_indices
+  }
+
+  Time: ~128 iterations (8x fewer)
+  Actual speedup: 5-6x (overhead from extracting indices)
+</code></pre></div></div>
+
+<p><strong>Real Performance Impact</strong>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Operation               Scalar      SIMD (AVX2)   Speedup
+Integer comparison      1.0 ns/val  0.2 ns/val    5x
+Null bitmap check       0.5 ns/val  0.1 ns/val    5x
+Integer addition        0.8 ns/val  0.15 ns/val   5.3x
+Bitwise AND (filters)   0.3 ns/val  0.05 ns/val   6x
+</code></pre></div></div>
+
+<p><strong>Velox’s Approach</strong>:</p>
+<ul>
+  <li>Compiler auto-vectorization: Let compiler generate SIMD code</li>
+  <li>Hand-written SIMD: Critical paths (filters, aggregations)</li>
+  <li>Simple Function API benefits: Compilers can auto-vectorize simple loops</li>
+</ul>
+
+<h3 id="2-lazy-evaluation">2. Lazy Evaluation</h3>
+
+<p><strong>What is Lazy Evaluation?</strong>:</p>
+<ul>
+  <li>Delay computing values until actually needed</li>
+  <li>May avoid computation entirely if values unused</li>
+</ul>
+
+<p><strong>Example 1: Conditional Expressions</strong>:</p>
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">SELECT</span>
+  <span class="k">CASE</span>
+    <span class="k">WHEN</span> <span class="n">status</span> <span class="o">=</span> <span class="s1">'active'</span> <span class="k">THEN</span> <span class="n">expensive_function</span><span class="p">(</span><span class="k">data</span><span class="p">)</span>
+    <span class="k">ELSE</span> <span class="mi">0</span>
+  <span class="k">END</span>
+<span class="k">FROM</span> <span class="k">table</span>
+
+<span class="k">Input</span><span class="p">:</span> <span class="mi">1</span><span class="n">M</span> <span class="k">rows</span><span class="p">,</span> <span class="mi">10</span><span class="o">%</span> <span class="n">status</span> <span class="o">=</span> <span class="s1">'active'</span>
+
+<span class="n">Eager</span> <span class="n">Evaluation</span> <span class="p">(</span><span class="n">bad</span><span class="p">):</span>
+  <span class="mi">1</span><span class="p">.</span> <span class="n">Compute</span> <span class="n">expensive_function</span><span class="p">(</span><span class="k">data</span><span class="p">)</span> <span class="k">for</span> <span class="k">ALL</span> <span class="mi">1</span><span class="n">M</span> <span class="k">rows</span>
+  <span class="mi">2</span><span class="p">.</span> <span class="n">Evaluate</span> <span class="n">condition</span>
+  <span class="mi">3</span><span class="p">.</span> <span class="k">Select</span> <span class="n">appropriate</span> <span class="n">value</span>
+
+  <span class="nb">Time</span><span class="p">:</span> <span class="mi">1</span><span class="n">M</span> <span class="err">×</span> <span class="n">expensive_function_cost</span> <span class="o">=</span> <span class="mi">100</span> <span class="n">seconds</span>
+
+<span class="n">Lazy</span> <span class="n">Evaluation</span> <span class="p">(</span><span class="n">good</span><span class="p">):</span>
+  <span class="mi">1</span><span class="p">.</span> <span class="n">Evaluate</span> <span class="n">condition</span> <span class="p">(</span><span class="n">status</span> <span class="o">=</span> <span class="s1">'active'</span><span class="p">)</span>
+     <span class="err">→</span> <span class="mi">100</span><span class="n">K</span> <span class="k">rows</span> <span class="n">pass</span><span class="p">,</span> <span class="mi">900</span><span class="n">K</span> <span class="k">rows</span> <span class="n">fail</span>
+  <span class="mi">2</span><span class="p">.</span> <span class="n">Compute</span> <span class="n">expensive_function</span><span class="p">()</span> <span class="k">ONLY</span> <span class="k">for</span> <span class="mi">100</span><span class="n">K</span> <span class="n">passing</span> <span class="k">rows</span>
+  <span class="mi">3</span><span class="p">.</span> <span class="k">Set</span> <span class="mi">0</span> <span class="k">for</span> <span class="mi">900</span><span class="n">K</span> <span class="n">failing</span> <span class="k">rows</span>
+
+  <span class="nb">Time</span><span class="p">:</span> <span class="mi">100</span><span class="n">K</span> <span class="err">×</span> <span class="n">expensive_function_cost</span> <span class="o">=</span> <span class="mi">10</span> <span class="n">seconds</span>
+
+  <span class="n">Speedup</span><span class="p">:</span> <span class="mi">10</span><span class="n">x</span><span class="o">!</span>
+</code></pre></div></div>
+
+<p><strong>How Velox Implements It</strong>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Lazy Vector: Wrapper around unevaluated expression
+
+Structure:
+  LazyVector {
+    expression_tree: Expression to evaluate
+    row_set: Which rows to evaluate (initially all)
+    is_loaded: false
+    value_vector: null (until loaded)
+  }
+
+When accessed:
+  if (!is_loaded) {
+    value_vector = evaluate(expression_tree, row_set);
+    is_loaded = true;
+  }
+  return value_vector;
+</code></pre></div></div>
+
+<p><strong>Example 2: Unused Columns in Joins</strong>:</p>
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">SELECT</span> <span class="n">t1</span><span class="p">.</span><span class="n">id</span><span class="p">,</span> <span class="n">t1</span><span class="p">.</span><span class="n">name</span>
+<span class="k">FROM</span> <span class="n">table1</span> <span class="n">t1</span>
+<span class="k">JOIN</span> <span class="n">table2</span> <span class="n">t2</span> <span class="k">ON</span> <span class="n">t1</span><span class="p">.</span><span class="n">id</span> <span class="o">=</span> <span class="n">t2</span><span class="p">.</span><span class="n">id</span>
+
+<span class="n">Table1</span> <span class="k">schema</span><span class="p">:</span> <span class="n">id</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">data1</span><span class="p">,</span> <span class="n">data2</span><span class="p">,</span> <span class="n">data3</span><span class="p">,</span> <span class="n">data4</span>
+                               <span class="err">↑</span> <span class="n">These</span> <span class="n">columns</span> <span class="n">unused</span> <span class="k">in</span> <span class="k">output</span><span class="o">!</span>
+
+<span class="k">Without</span> <span class="n">Lazy</span> <span class="n">Evaluation</span><span class="p">:</span>
+  <span class="mi">1</span><span class="p">.</span> <span class="k">Read</span> <span class="k">ALL</span> <span class="n">columns</span> <span class="k">from</span> <span class="n">table1</span><span class="p">:</span> <span class="n">id</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">data1</span><span class="p">,</span> <span class="n">data2</span><span class="p">,</span> <span class="n">data3</span><span class="p">,</span> <span class="n">data4</span>
+  <span class="mi">2</span><span class="p">.</span> <span class="n">Hash</span> <span class="k">join</span> <span class="k">on</span> <span class="n">id</span>
+  <span class="mi">3</span><span class="p">.</span> <span class="n">Project</span> <span class="n">id</span><span class="p">,</span> <span class="n">name</span>
+
+  <span class="n">I</span><span class="o">/</span><span class="n">O</span><span class="p">:</span> <span class="mi">6</span> <span class="n">columns</span> <span class="err">×</span> <span class="mi">1</span><span class="n">GB</span> <span class="k">each</span> <span class="o">=</span> <span class="mi">6</span><span class="n">GB</span> <span class="k">read</span> <span class="k">from</span> <span class="n">disk</span><span class="o">/</span><span class="n">S3</span>
+
+<span class="k">With</span> <span class="n">Lazy</span> <span class="n">Evaluation</span><span class="p">:</span>
+  <span class="mi">1</span><span class="p">.</span> <span class="k">Create</span> <span class="n">Lazy</span> <span class="n">Vectors</span> <span class="k">for</span> <span class="n">data1</span><span class="p">,</span> <span class="n">data2</span><span class="p">,</span> <span class="n">data3</span><span class="p">,</span> <span class="n">data4</span>
+  <span class="mi">2</span><span class="p">.</span> <span class="k">Read</span> <span class="k">only</span> <span class="n">id</span> <span class="p">(</span><span class="k">for</span> <span class="k">join</span> <span class="k">key</span><span class="p">)</span>
+  <span class="mi">3</span><span class="p">.</span> <span class="n">Hash</span> <span class="k">join</span> <span class="k">on</span> <span class="n">id</span>
+  <span class="mi">4</span><span class="p">.</span> <span class="n">Project</span> <span class="n">id</span><span class="p">,</span> <span class="n">name</span> <span class="err">→</span> <span class="k">Read</span> <span class="n">name</span> <span class="k">column</span> <span class="n">NOW</span>
+  <span class="mi">5</span><span class="p">.</span> <span class="n">data1</span><span class="o">-</span><span class="mi">4</span> <span class="n">NEVER</span> <span class="n">materialized</span><span class="o">!</span>
+
+  <span class="n">I</span><span class="o">/</span><span class="n">O</span><span class="p">:</span> <span class="mi">2</span> <span class="n">columns</span> <span class="err">×</span> <span class="mi">1</span><span class="n">GB</span> <span class="k">each</span> <span class="o">=</span> <span class="mi">2</span><span class="n">GB</span> <span class="k">read</span>
+
+  <span class="n">Savings</span><span class="p">:</span> <span class="mi">4</span><span class="n">GB</span> <span class="n">I</span><span class="o">/</span><span class="n">O</span> <span class="n">avoided</span><span class="o">!</span>
+</code></pre></div></div>
+
+<p><strong>Example 3: Remote Storage (S3)</strong>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Query: SELECT * FROM s3_table WHERE region = 'US'
+
+Table on S3: 100 columns, 1TB total, region filter selectivity = 1%
+
+Without Lazy:
+  1. Read all 100 columns from S3
+     S3 read: 1TB × $0.09/GB = $90
+     Time: 1TB / 100MB/s = 10,000 seconds
+  2. Filter by region
+  3. Return 1% of rows
+
+With Lazy:
+  1. Read only region column
+  2. Filter → 1% of rows pass
+  3. Read other 99 columns ONLY for 1% of rows
+     S3 read: 0.01TB + 0.99TB × 0.01 = 0.01TB + 0.01TB = 0.02TB
+     Cost: $1.80 (50x cheaper!)
+     Time: 200 seconds (50x faster!)
+</code></pre></div></div>
+
+<h3 id="3-adaptive-predicate-reordering">3. Adaptive Predicate Reordering</h3>
+
+<p><strong>Problem</strong>:</p>
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">SELECT</span> <span class="o">*</span> <span class="k">FROM</span> <span class="k">table</span>
+<span class="k">WHERE</span> <span class="n">expensive_function</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="k">AND</span> <span class="n">cheap_check</span><span class="p">(</span><span class="n">y</span><span class="p">)</span>
+
+<span class="n">Question</span><span class="p">:</span> <span class="n">Which</span> <span class="n">predicate</span> <span class="k">to</span> <span class="n">evaluate</span> <span class="k">first</span><span class="o">?</span>
+  <span class="o">-</span> <span class="n">expensive_function</span><span class="p">()</span> <span class="n">takes</span> <span class="mi">1</span> <span class="n">microsecond</span>
+  <span class="o">-</span> <span class="n">cheap_check</span><span class="p">()</span> <span class="n">takes</span> <span class="mi">10</span> <span class="n">nanoseconds</span>
+</code></pre></div></div>
+
+<p><strong>Solution: Adaptive Reordering</strong>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Metric for each predicate:
+  cost = time_spent / (rows_in - rows_out + 1)
+
+  Lower cost = better (fast + selective)
+
+Example:
+
+Predicate A: cheap_check(y)
+  - Time: 10 ns/row
+  - Selectivity: 50% (drops half the rows)
+  - Cost: 10 / (100 - 50 + 1) = 10 / 51 = 0.196
+
+Predicate B: expensive_function(x)
+  - Time: 1000 ns/row
+  - Selectivity: 90% (drops 90% of rows)
+  - Cost: 1000 / (100 - 90 + 1) = 1000 / 11 = 90.9
+
+Decision: Evaluate A first (lower cost)
+</code></pre></div></div>
+
+<p><strong>Execution Strategy</strong>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Initial order (from query):
+  WHERE expensive_function(x) AND cheap_check(y)
+
+After seeing first batch (1024 rows):
+
+  Stats:
+    expensive_function(x): 1024ms, 100 rows pass → cost = 1024/925 = 1.1
+    cheap_check(y): 10ms, 500 rows pass → cost = 10/525 = 0.019
+
+  Reorder: cheap_check(y) AND expensive_function(x)
+
+Execution on next batches:
+  1. Evaluate cheap_check(y) on all 1024 rows → 500 pass
+  2. Evaluate expensive_function(x) ONLY on 500 rows
+
+  Time saved: 1024 × 1ms - 500 × 1ms = 524ms per batch!
+</code></pre></div></div>
+
+<p><strong>Real-World Example</strong>:</p>
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">SELECT</span> <span class="o">*</span> <span class="k">FROM</span> <span class="n">logs</span>
+<span class="k">WHERE</span> <span class="n">parse_json</span><span class="p">(</span><span class="k">data</span><span class="p">)</span> <span class="k">LIKE</span> <span class="s1">'%error%'</span>    <span class="c1">-- Expensive: 10 µs</span>
+  <span class="k">AND</span> <span class="nb">timestamp</span> <span class="o">&gt;</span> <span class="s1">'2025-01-01'</span>           <span class="c1">-- Cheap: 5 ns</span>
+  <span class="k">AND</span> <span class="n">user_id</span> <span class="k">IN</span> <span class="p">(</span><span class="k">SELECT</span> <span class="p">...)</span>            <span class="c1">-- Medium: 100 ns</span>
+
+<span class="n">Initial</span> <span class="n">execution</span> <span class="p">(</span><span class="n">batch</span> <span class="mi">1</span><span class="p">):</span>
+  <span class="k">Order</span><span class="p">:</span> <span class="n">parse_json</span><span class="p">,</span> <span class="nb">timestamp</span><span class="p">,</span> <span class="n">user_id</span> <span class="p">(</span><span class="n">query</span> <span class="k">order</span><span class="p">)</span>
+  <span class="nb">Time</span><span class="p">:</span> <span class="mi">10</span><span class="n">ms</span>
+
+<span class="k">After</span> <span class="n">batch</span> <span class="mi">1</span><span class="p">,</span> <span class="n">reorder</span> <span class="n">based</span> <span class="k">on</span> <span class="n">cost</span><span class="p">:</span>
+  <span class="k">Order</span><span class="p">:</span> <span class="nb">timestamp</span><span class="p">,</span> <span class="n">user_id</span><span class="p">,</span> <span class="n">parse_json</span>
+
+  <span class="nb">timestamp</span><span class="p">:</span> <span class="n">Filters</span> <span class="mi">95</span><span class="o">%</span> <span class="k">of</span> <span class="k">rows</span> <span class="p">(</span><span class="n">very</span> <span class="n">selective</span><span class="o">!</span><span class="p">)</span>
+  <span class="n">user_id</span><span class="p">:</span> <span class="n">Filters</span> <span class="mi">80</span><span class="o">%</span> <span class="k">of</span> <span class="n">remaining</span>
+  <span class="n">parse_json</span><span class="p">:</span> <span class="k">Only</span> <span class="n">runs</span> <span class="k">on</span> <span class="mi">1</span><span class="o">%</span> <span class="k">of</span> <span class="n">original</span> <span class="k">rows</span>
+
+  <span class="nb">Time</span><span class="p">:</span> <span class="mi">0</span><span class="p">.</span><span class="mi">5</span><span class="n">ms</span> <span class="n">per</span> <span class="n">batch</span> <span class="p">(</span><span class="mi">20</span><span class="n">x</span> <span class="n">faster</span><span class="o">!</span><span class="p">)</span>
+</code></pre></div></div>
+
+<p><strong>Flattening Nested AND/OR</strong>:</p>
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">WHERE</span> <span class="p">(</span><span class="n">a</span> <span class="k">AND</span> <span class="n">b</span><span class="p">)</span> <span class="k">AND</span> <span class="p">(</span><span class="k">c</span> <span class="k">AND</span> <span class="p">(</span><span class="n">d</span> <span class="k">AND</span> <span class="n">e</span><span class="p">))</span>
+
+<span class="k">Before</span> <span class="n">flattening</span><span class="p">:</span>
+  <span class="n">Tree</span> <span class="n">depth</span> <span class="o">=</span> <span class="mi">4</span>
+  <span class="n">Must</span> <span class="n">evaluate</span> <span class="k">in</span> <span class="n">nested</span> <span class="k">order</span>
+
+<span class="k">After</span> <span class="n">flattening</span><span class="p">:</span>
+  <span class="k">WHERE</span> <span class="n">a</span> <span class="k">AND</span> <span class="n">b</span> <span class="k">AND</span> <span class="k">c</span> <span class="k">AND</span> <span class="n">d</span> <span class="k">AND</span> <span class="n">e</span>
+
+  <span class="n">Now</span> <span class="n">can</span> <span class="n">reorder</span><span class="p">:</span> <span class="n">e</span><span class="p">,</span> <span class="n">b</span><span class="p">,</span> <span class="n">a</span><span class="p">,</span> <span class="n">d</span><span class="p">,</span> <span class="k">c</span> <span class="p">(</span><span class="n">based</span> <span class="k">on</span> <span class="n">cost</span><span class="p">)</span>
+</code></pre></div></div>
+
+<h3 id="4-common-subexpression-elimination-cse">4. Common Subexpression Elimination (CSE)</h3>
+
+<p><strong>What is CSE?</strong>:</p>
+<ul>
+  <li>Identify repeated computations in expression tree</li>
+  <li>Compute once, reuse result</li>
+</ul>
+
+<p><strong>Example 1: Duplicate Function Calls</strong>:</p>
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">SELECT</span>
+  <span class="k">upper</span><span class="p">(</span><span class="n">name</span><span class="p">)</span> <span class="k">AS</span> <span class="n">name_upper</span><span class="p">,</span>
+  <span class="k">length</span><span class="p">(</span><span class="k">upper</span><span class="p">(</span><span class="n">name</span><span class="p">))</span> <span class="k">AS</span> <span class="n">name_length</span><span class="p">,</span>
+  <span class="k">upper</span><span class="p">(</span><span class="n">name</span><span class="p">)</span> <span class="k">LIKE</span> <span class="s1">'JOHN%'</span> <span class="k">AS</span> <span class="n">is_john</span>
+<span class="k">FROM</span> <span class="n">users</span>
+
+<span class="n">Expression</span> <span class="n">tree</span> <span class="p">(</span><span class="k">before</span> <span class="n">CSE</span><span class="p">):</span>
+  <span class="n">Project</span> <span class="p">[</span>
+    <span class="k">upper</span><span class="p">(</span><span class="n">name</span><span class="p">),</span>              <span class="o">//</span> <span class="k">Call</span> <span class="mi">1</span>
+    <span class="k">length</span><span class="p">(</span><span class="k">upper</span><span class="p">(</span><span class="n">name</span><span class="p">)),</span>      <span class="o">//</span> <span class="k">Call</span> <span class="mi">2</span> <span class="p">(</span><span class="n">duplicates</span> <span class="k">upper</span><span class="o">!</span><span class="p">)</span>
+    <span class="k">upper</span><span class="p">(</span><span class="n">name</span><span class="p">)</span> <span class="k">LIKE</span> <span class="s1">'JOHN%'</span>  <span class="o">//</span> <span class="k">Call</span> <span class="mi">3</span> <span class="p">(</span><span class="n">duplicates</span> <span class="k">upper</span><span class="o">!</span><span class="p">)</span>
+  <span class="p">]</span>
+
+<span class="k">After</span> <span class="n">CSE</span><span class="p">:</span>
+  <span class="n">temp1</span> <span class="o">=</span> <span class="k">upper</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>         <span class="o">//</span> <span class="n">Compute</span> <span class="n">ONCE</span>
+
+  <span class="n">Project</span> <span class="p">[</span>
+    <span class="n">temp1</span><span class="p">,</span>                    <span class="o">//</span> <span class="n">Reuse</span>
+    <span class="k">length</span><span class="p">(</span><span class="n">temp1</span><span class="p">),</span>            <span class="o">//</span> <span class="n">Reuse</span>
+    <span class="n">temp1</span> <span class="k">LIKE</span> <span class="s1">'JOHN%'</span>        <span class="o">//</span> <span class="n">Reuse</span>
+  <span class="p">]</span>
+
+<span class="n">Performance</span><span class="p">:</span>
+  <span class="k">Without</span> <span class="n">CSE</span><span class="p">:</span> <span class="mi">3</span> <span class="err">×</span> <span class="k">upper</span><span class="p">()</span> <span class="n">calls</span> <span class="o">=</span> <span class="mi">300</span> <span class="n">ns</span>
+  <span class="k">With</span> <span class="n">CSE</span><span class="p">:</span> <span class="mi">1</span> <span class="err">×</span> <span class="k">upper</span><span class="p">()</span> <span class="k">call</span> <span class="o">=</span> <span class="mi">100</span> <span class="n">ns</span>
+  <span class="n">Speedup</span><span class="p">:</span> <span class="mi">3</span><span class="n">x</span>
+</code></pre></div></div>
+
+<p><strong>Example 2: Complex Filter</strong>:</p>
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">SELECT</span> <span class="o">*</span> <span class="k">FROM</span> <span class="n">events</span>
+<span class="k">WHERE</span> <span class="p">(</span><span class="n">log</span><span class="p">(</span><span class="n">price</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">2</span><span class="p">.</span><span class="mi">5</span> <span class="k">AND</span> <span class="n">category</span> <span class="o">=</span> <span class="s1">'A'</span><span class="p">)</span>
+   <span class="k">OR</span> <span class="p">(</span><span class="n">log</span><span class="p">(</span><span class="n">price</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">.</span><span class="mi">0</span> <span class="k">AND</span> <span class="n">category</span> <span class="o">=</span> <span class="s1">'B'</span><span class="p">)</span>
+
+<span class="k">Before</span> <span class="n">CSE</span><span class="p">:</span>
+  <span class="k">OR</span> <span class="p">[</span>
+    <span class="k">AND</span> <span class="p">[</span><span class="n">log</span><span class="p">(</span><span class="n">price</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">2</span><span class="p">.</span><span class="mi">5</span><span class="p">,</span> <span class="n">category</span> <span class="o">=</span> <span class="s1">'A'</span><span class="p">],</span>     <span class="o">//</span> <span class="n">Computes</span> <span class="n">log</span><span class="p">(</span><span class="n">price</span><span class="p">)</span>
+    <span class="k">AND</span> <span class="p">[</span><span class="n">log</span><span class="p">(</span><span class="n">price</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">.</span><span class="mi">0</span><span class="p">,</span> <span class="n">category</span> <span class="o">=</span> <span class="s1">'B'</span><span class="p">]</span>      <span class="o">//</span> <span class="n">Computes</span> <span class="n">log</span><span class="p">(</span><span class="n">price</span><span class="p">)</span> <span class="n">again</span><span class="o">!</span>
+  <span class="p">]</span>
+
+<span class="k">After</span> <span class="n">CSE</span><span class="p">:</span>
+  <span class="n">temp_log_price</span> <span class="o">=</span> <span class="n">log</span><span class="p">(</span><span class="n">price</span><span class="p">)</span>    <span class="o">//</span> <span class="n">Compute</span> <span class="n">once</span>
+
+  <span class="k">OR</span> <span class="p">[</span>
+    <span class="k">AND</span> <span class="p">[</span><span class="n">temp_log_price</span> <span class="o">&gt;</span> <span class="mi">2</span><span class="p">.</span><span class="mi">5</span><span class="p">,</span> <span class="n">category</span> <span class="o">=</span> <span class="s1">'A'</span><span class="p">],</span>
+    <span class="k">AND</span> <span class="p">[</span><span class="n">temp_log_price</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">.</span><span class="mi">0</span><span class="p">,</span> <span class="n">category</span> <span class="o">=</span> <span class="s1">'B'</span><span class="p">]</span>
+  <span class="p">]</span>
+
+<span class="n">Performance</span> <span class="p">(</span><span class="mi">1</span><span class="n">M</span> <span class="k">rows</span><span class="p">):</span>
+  <span class="k">Without</span> <span class="n">CSE</span><span class="p">:</span> <span class="mi">2</span><span class="n">M</span> <span class="n">log</span><span class="p">()</span> <span class="n">calls</span> <span class="o">=</span> <span class="mi">200</span><span class="n">ms</span>
+  <span class="k">With</span> <span class="n">CSE</span><span class="p">:</span> <span class="mi">1</span><span class="n">M</span> <span class="n">log</span><span class="p">()</span> <span class="n">calls</span> <span class="o">=</span> <span class="mi">100</span><span class="n">ms</span>
+</code></pre></div></div>
+
+<p><strong>Example 3: Nested Expressions</strong>:</p>
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">SELECT</span>
+  <span class="k">CASE</span>
+    <span class="k">WHEN</span> <span class="n">substr</span><span class="p">(</span><span class="n">email</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">5</span><span class="p">)</span> <span class="o">=</span> <span class="s1">'admin'</span> <span class="k">THEN</span> <span class="s1">'Admin'</span>
+    <span class="k">WHEN</span> <span class="n">substr</span><span class="p">(</span><span class="n">email</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">5</span><span class="p">)</span> <span class="o">=</span> <span class="s1">'user_'</span> <span class="k">THEN</span> <span class="s1">'User'</span>
+    <span class="k">ELSE</span> <span class="s1">'Other'</span>
+  <span class="k">END</span>
+<span class="k">FROM</span> <span class="n">users</span>
+
+<span class="k">Before</span> <span class="n">CSE</span><span class="p">:</span>
+  <span class="k">CASE</span> <span class="p">[</span>
+    <span class="n">substr</span><span class="p">(</span><span class="n">email</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">5</span><span class="p">)</span> <span class="o">=</span> <span class="s1">'admin'</span><span class="p">,</span>   <span class="o">//</span> <span class="k">Call</span> <span class="mi">1</span>
+    <span class="n">substr</span><span class="p">(</span><span class="n">email</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">5</span><span class="p">)</span> <span class="o">=</span> <span class="s1">'user_'</span><span class="p">,</span>   <span class="o">//</span> <span class="k">Call</span> <span class="mi">2</span> <span class="p">(</span><span class="n">duplicate</span><span class="o">!</span><span class="p">)</span>
+  <span class="p">]</span>
+
+<span class="k">After</span> <span class="n">CSE</span><span class="p">:</span>
+  <span class="n">temp_prefix</span> <span class="o">=</span> <span class="n">substr</span><span class="p">(</span><span class="n">email</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">5</span><span class="p">)</span>   <span class="o">//</span> <span class="n">Compute</span> <span class="n">once</span>
+
+  <span class="k">CASE</span> <span class="p">[</span>
+    <span class="n">temp_prefix</span> <span class="o">=</span> <span class="s1">'admin'</span><span class="p">,</span>
+    <span class="n">temp_prefix</span> <span class="o">=</span> <span class="s1">'user_'</span><span class="p">,</span>
+  <span class="p">]</span>
+
+<span class="n">Speedup</span><span class="p">:</span> <span class="mi">2</span><span class="n">x</span> <span class="p">(</span><span class="n">especially</span> <span class="n">significant</span> <span class="n">if</span> <span class="n">substr</span> <span class="k">is</span> <span class="n">expensive</span><span class="p">)</span>
+</code></pre></div></div>
+
+<h3 id="5-execution-over-encoded-data">5. Execution Over Encoded Data</h3>
+
+<p><strong>What is it?</strong>:</p>
+<ul>
+  <li>Process data in compressed/encoded form</li>
+  <li>Avoid decompression when possible</li>
+</ul>
+
+<p><strong>Dictionary Encoding</strong>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Raw data (1000 rows):
+  ["red", "blue", "red", "green", "blue", "red", ...]
+
+  Size: 1000 × 8 bytes (avg) = 8KB
+
+Dictionary encoded:
+  Dictionary: ["red", "blue", "green"]  (3 values, 24 bytes)
+  Indices: [0, 1, 0, 2, 1, 0, ...]      (1000 × 4 bytes = 4KB)
+
+  Total size: 4KB + 24 bytes (50% reduction!)
+</code></pre></div></div>
+
+<p><strong>Optimization: Operate on Dictionary, Not Data</strong>:</p>
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">SELECT</span> <span class="k">upper</span><span class="p">(</span><span class="n">color</span><span class="p">)</span> <span class="k">FROM</span> <span class="n">products</span>
+
+<span class="k">Input</span> <span class="p">(</span><span class="k">dictionary</span> <span class="n">encoded</span><span class="p">):</span>
+  <span class="n">Indices</span><span class="p">:</span> <span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="p">...]</span> <span class="p">(</span><span class="mi">1000</span> <span class="k">values</span><span class="p">)</span>
+  <span class="n">Dict</span><span class="p">:</span> <span class="p">[</span><span class="nv">"red"</span><span class="p">,</span> <span class="nv">"blue"</span><span class="p">,</span> <span class="nv">"green"</span><span class="p">]</span>   <span class="p">(</span><span class="mi">3</span> <span class="k">values</span><span class="p">)</span>
+
+<span class="n">Naive</span> <span class="n">approach</span><span class="p">:</span>
+  <span class="mi">1</span><span class="p">.</span> <span class="n">Decode</span> <span class="k">all</span> <span class="mi">1000</span> <span class="k">values</span>
+  <span class="mi">2</span><span class="p">.</span> <span class="n">Apply</span> <span class="k">upper</span><span class="p">()</span> <span class="mi">1000</span> <span class="n">times</span>
+  <span class="mi">3</span><span class="p">.</span> <span class="n">Re</span><span class="o">-</span><span class="n">encode</span> <span class="k">result</span>
+
+  <span class="n">Calls</span><span class="p">:</span> <span class="mi">1000</span> <span class="err">×</span> <span class="k">upper</span><span class="p">()</span>
+
+<span class="n">Optimized</span> <span class="p">(</span><span class="n">execution</span> <span class="n">over</span> <span class="n">encoded</span> <span class="k">data</span><span class="p">):</span>
+  <span class="mi">1</span><span class="p">.</span> <span class="n">Apply</span> <span class="k">upper</span><span class="p">()</span> <span class="k">to</span> <span class="k">dictionary</span><span class="p">:</span> <span class="p">[</span><span class="nv">"RED"</span><span class="p">,</span> <span class="nv">"BLUE"</span><span class="p">,</span> <span class="nv">"GREEN"</span><span class="p">]</span>
+  <span class="mi">2</span><span class="p">.</span> <span class="n">Keep</span> <span class="n">same</span> <span class="n">indices</span><span class="p">:</span> <span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="p">...]</span>
+
+  <span class="n">Calls</span><span class="p">:</span> <span class="mi">3</span> <span class="err">×</span> <span class="k">upper</span><span class="p">()</span> <span class="p">(</span><span class="mi">333</span><span class="n">x</span> <span class="n">fewer</span><span class="o">!</span><span class="p">)</span>
+
+  <span class="n">Speedup</span><span class="p">:</span> <span class="mi">100</span><span class="o">-</span><span class="mi">300</span><span class="n">x</span> <span class="k">for</span> <span class="n">low</span><span class="o">-</span><span class="k">cardinality</span> <span class="n">columns</span>
+</code></pre></div></div>
+
+<p><strong>Memoization Across Batches</strong>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Batch 1:
+  Indices: [0, 1, 0, 2, 1, ...]
+  Dict: ["red", "blue", "green"] (base_vector_id = 12345)
+
+  upper(dict) = ["RED", "BLUE", "GREEN"]
+  Cache: {12345 → ["RED", "BLUE", "GREEN"]}
+
+Batch 2:
+  Indices: [2, 0, 0, 1, 2, ...]  (Different indices!)
+  Dict: ["red", "blue", "green"] (same base_vector_id = 12345)
+
+  Check cache: Found 12345!
+  Result: Reuse cached ["RED", "BLUE", "GREEN"]
+
+  Computation: 0 function calls (infinite speedup!)
+</code></pre></div></div>
+
+<p><strong>Real-World Example: Regular Expression</strong>:</p>
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">SELECT</span> <span class="o">*</span> <span class="k">FROM</span> <span class="n">logs</span>
+<span class="k">WHERE</span> <span class="n">message</span> <span class="n">REGEXP</span> <span class="s1">'^ERROR.*database'</span>
+
+<span class="k">Input</span><span class="p">:</span> <span class="mi">1</span><span class="n">M</span> <span class="k">rows</span><span class="p">,</span> <span class="mi">100</span> <span class="k">distinct</span> <span class="n">messages</span> <span class="p">(</span><span class="n">high</span> <span class="n">duplication</span><span class="p">)</span>
+
+<span class="k">Without</span> <span class="n">optimization</span><span class="p">:</span>
+  <span class="o">-</span> <span class="n">Decode</span> <span class="k">all</span> <span class="n">strings</span>
+  <span class="o">-</span> <span class="n">Run</span> <span class="n">regex</span> <span class="mi">1</span><span class="n">M</span> <span class="n">times</span>
+  <span class="o">-</span> <span class="nb">Time</span><span class="p">:</span> <span class="mi">1</span><span class="n">M</span> <span class="err">×</span> <span class="mi">50</span><span class="err">µ</span><span class="n">s</span> <span class="o">=</span> <span class="mi">50</span> <span class="n">seconds</span>
+
+<span class="k">With</span> <span class="k">dictionary</span> <span class="n">optimization</span><span class="p">:</span>
+  <span class="o">-</span> <span class="n">Run</span> <span class="n">regex</span> <span class="k">on</span> <span class="mi">100</span> <span class="k">distinct</span> <span class="k">values</span>
+  <span class="o">-</span> <span class="n">Build</span> <span class="n">bitmap</span> <span class="k">of</span> <span class="n">matching</span> <span class="n">indices</span>
+  <span class="o">-</span> <span class="n">Apply</span> <span class="n">bitmap</span> <span class="k">to</span> <span class="mi">1</span><span class="n">M</span> <span class="k">rows</span>
+  <span class="o">-</span> <span class="nb">Time</span><span class="p">:</span> <span class="mi">100</span> <span class="err">×</span> <span class="mi">50</span><span class="err">µ</span><span class="n">s</span> <span class="o">+</span> <span class="mi">1</span><span class="n">M</span> <span class="err">×</span> <span class="mi">1</span><span class="n">ns</span> <span class="o">=</span> <span class="mi">5</span><span class="n">ms</span> <span class="o">+</span> <span class="mi">1</span><span class="n">ms</span> <span class="o">=</span> <span class="mi">6</span><span class="n">ms</span>
+
+  <span class="n">Speedup</span><span class="p">:</span> <span class="mi">8</span><span class="p">,</span><span class="mi">333</span><span class="n">x</span><span class="o">!</span>
+</code></pre></div></div>
+
+<p><strong>Constant Encoding Optimization</strong>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>All values in vector are same:
+  Vector: [42, 42, 42, ..., 42] (1024 rows)
+
+  Encoded: Constant(value=42, size=1024)
+
+Filter: value &gt; 30
+
+  Without optimization:
+    Check 1024 values: all pass
+
+  With optimization:
+    Check constant value: 42 &gt; 30? Yes
+    Generate all-true bitmap instantly
+    Time: O(1) instead of O(n)
+</code></pre></div></div>
+
+<h3 id="6-code-generation">6. Code Generation</h3>
+
+<p><strong>What is Code Generation?</strong>:</p>
+<ul>
+  <li>Convert expression tree to C++ source code</li>
+  <li>Compile to native machine code</li>
+  <li>Fuses operations, eliminates virtual calls</li>
+</ul>
+
+<p><strong>Example Expression</strong>:</p>
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">SELECT</span> <span class="p">(</span><span class="n">a</span> <span class="o">+</span> <span class="n">b</span><span class="p">)</span> <span class="o">*</span> <span class="k">c</span> <span class="o">+</span> <span class="mi">100</span> <span class="k">FROM</span> <span class="k">table</span>
+
+<span class="n">Expression</span> <span class="n">tree</span><span class="p">:</span>
+    <span class="o">+</span>
+   <span class="o">/</span> <span class="err">\</span>
+  <span class="o">*</span>   <span class="mi">100</span>
+ <span class="o">/</span> <span class="err">\</span>
+<span class="o">+</span>   <span class="k">c</span>
+<span class="o">/</span> <span class="err">\</span>
+<span class="n">a</span>   <span class="n">b</span>
+</code></pre></div></div>
+
+<p><strong>Interpreted Execution (Vectorized)</strong>:</p>
+<div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">Vector</span> <span class="nf">eval</span><span class="p">(</span><span class="n">RowBatch</span> <span class="n">batch</span><span class="p">)</span> <span class="p">{</span>
+  <span class="n">Vector</span> <span class="n">temp1</span> <span class="o">=</span> <span class="n">add</span><span class="p">(</span><span class="n">batch</span><span class="p">.</span><span class="n">column</span><span class="p">(</span><span class="s">"a"</span><span class="p">),</span> <span class="n">batch</span><span class="p">.</span><span class="n">column</span><span class="p">(</span><span class="s">"b"</span><span class="p">));</span>
+  <span class="n">Vector</span> <span class="n">temp2</span> <span class="o">=</span> <span class="n">multiply</span><span class="p">(</span><span class="n">temp1</span><span class="p">,</span> <span class="n">batch</span><span class="p">.</span><span class="n">column</span><span class="p">(</span><span class="s">"c"</span><span class="p">));</span>
+  <span class="n">Vector</span> <span class="n">result</span> <span class="o">=</span> <span class="n">add</span><span class="p">(</span><span class="n">temp2</span><span class="p">,</span> <span class="n">constant</span><span class="p">(</span><span class="mi">100</span><span class="p">));</span>
+  <span class="k">return</span> <span class="n">result</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="n">Characteristics</span><span class="o">:</span>
+  <span class="o">-</span> <span class="mi">3</span> <span class="n">temporary</span> <span class="n">vectors</span> <span class="n">allocated</span>
+  <span class="o">-</span> <span class="mi">3</span> <span class="n">function</span> <span class="n">calls</span>
+  <span class="o">-</span> <span class="mi">3</span> <span class="n">separate</span> <span class="n">loops</span> <span class="n">over</span> <span class="n">data</span>
+  <span class="o">-</span> <span class="n">Poor</span> <span class="n">CPU</span> <span class="n">cache</span> <span class="n">utilization</span>
+</code></pre></div></div>
+
+<p><strong>Generated Code</strong>:</p>
+<div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">// Generated C++ code</span>
+<span class="kt">void</span> <span class="nf">eval_generated</span><span class="p">(</span><span class="kt">int64_t</span><span class="o">*</span> <span class="n">a</span><span class="p">,</span> <span class="kt">int64_t</span><span class="o">*</span> <span class="n">b</span><span class="p">,</span> <span class="kt">int64_t</span><span class="o">*</span> <span class="n">c</span><span class="p">,</span>
+                    <span class="kt">int64_t</span><span class="o">*</span> <span class="n">result</span><span class="p">,</span> <span class="kt">int</span> <span class="n">n</span><span class="p">)</span> <span class="p">{</span>
+  <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">n</span><span class="p">;</span> <span class="n">i</span><span class="o">++</span><span class="p">)</span> <span class="p">{</span>
+    <span class="n">result</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">a</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">+</span> <span class="n">b</span><span class="p">[</span><span class="n">i</span><span class="p">])</span> <span class="o">*</span> <span class="n">c</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">+</span> <span class="mi">100</span><span class="p">;</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+
+<span class="c1">// Compiled to machine code (example x86-64 assembly):</span>
+<span class="n">loop</span><span class="o">:</span>
+  <span class="n">movq</span> <span class="p">(</span><span class="o">%</span><span class="n">rdi</span><span class="p">,</span><span class="o">%</span><span class="n">rcx</span><span class="p">,</span><span class="mi">8</span><span class="p">),</span> <span class="o">%</span><span class="n">rax</span>    <span class="c1">// Load a[i]</span>
+  <span class="n">addq</span> <span class="p">(</span><span class="o">%</span><span class="n">rsi</span><span class="p">,</span><span class="o">%</span><span class="n">rcx</span><span class="p">,</span><span class="mi">8</span><span class="p">),</span> <span class="o">%</span><span class="n">rax</span>    <span class="c1">// Add b[i]</span>
+  <span class="n">imulq</span> <span class="p">(</span><span class="o">%</span><span class="n">rdx</span><span class="p">,</span><span class="o">%</span><span class="n">rcx</span><span class="p">,</span><span class="mi">8</span><span class="p">),</span> <span class="o">%</span><span class="n">rax</span>   <span class="c1">// Multiply by c[i]</span>
+  <span class="n">addq</span> <span class="err">$</span><span class="mi">100</span><span class="p">,</span> <span class="o">%</span><span class="n">rax</span>             <span class="c1">// Add 100</span>
+  <span class="n">movq</span> <span class="o">%</span><span class="n">rax</span><span class="p">,</span> <span class="p">(</span><span class="o">%</span><span class="n">r8</span><span class="p">,</span><span class="o">%</span><span class="n">rcx</span><span class="p">,</span><span class="mi">8</span><span class="p">)</span>     <span class="c1">// Store result[i]</span>
+  <span class="n">incq</span> <span class="o">%</span><span class="n">rcx</span>                   <span class="c1">// i++</span>
+  <span class="n">cmpq</span> <span class="o">%</span><span class="n">rcx</span><span class="p">,</span> <span class="o">%</span><span class="n">r9</span>              <span class="c1">// i &lt; n?</span>
+  <span class="n">jl</span> <span class="n">loop</span>
+
+<span class="n">Characteristics</span><span class="o">:</span>
+  <span class="o">-</span> <span class="n">NO</span> <span class="n">temporary</span> <span class="n">vectors</span>
+  <span class="o">-</span> <span class="n">NO</span> <span class="n">function</span> <span class="n">calls</span> <span class="p">(</span><span class="n">inlined</span><span class="p">)</span>
+  <span class="o">-</span> <span class="n">Single</span> <span class="n">loop</span> <span class="p">(</span><span class="n">better</span> <span class="n">cache</span><span class="p">)</span>
+  <span class="o">-</span> <span class="n">Compiler</span> <span class="n">optimizations</span> <span class="p">(</span><span class="n">instruction</span> <span class="n">reordering</span><span class="p">,</span> <span class="k">register</span> <span class="n">allocation</span><span class="p">)</span>
+</code></pre></div></div>
+
+<p><strong>Performance Comparison</strong>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Benchmark: (a + b) * c + 100 on 1M rows
+
+Vectorized interpreter:
+  - 3 vector allocations: 24 MB memory
+  - 3 passes over data
+  - Time: 15 ms
+
+Code generation:
+  - 0 temporary allocations
+  - 1 pass over data
+  - Time: 5 ms
+
+  Speedup: 3x
+</code></pre></div></div>
+
+<p><strong>Complex Example with Conditionals</strong>:</p>
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">SELECT</span>
+  <span class="k">CASE</span>
+    <span class="k">WHEN</span> <span class="n">status</span> <span class="o">=</span> <span class="s1">'active'</span> <span class="k">THEN</span> <span class="n">price</span> <span class="o">*</span> <span class="mi">1</span><span class="p">.</span><span class="mi">1</span>
+    <span class="k">WHEN</span> <span class="n">status</span> <span class="o">=</span> <span class="s1">'inactive'</span> <span class="k">THEN</span> <span class="n">price</span> <span class="o">*</span> <span class="mi">0</span><span class="p">.</span><span class="mi">5</span>
+    <span class="k">ELSE</span> <span class="n">price</span>
+  <span class="k">END</span>
+
+<span class="k">Generated</span> <span class="n">code</span><span class="p">:</span>
+  <span class="k">for</span> <span class="p">(</span><span class="nb">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">n</span><span class="p">;</span> <span class="n">i</span><span class="o">++</span><span class="p">)</span> <span class="err">{</span>
+    <span class="n">if</span> <span class="p">(</span><span class="n">status</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">==</span> <span class="n">ACTIVE</span><span class="p">)</span> <span class="err">{</span>
+      <span class="k">result</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">price</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">*</span> <span class="mi">1</span><span class="p">.</span><span class="mi">1</span><span class="p">;</span>
+    <span class="err">}</span> <span class="k">else</span> <span class="n">if</span> <span class="p">(</span><span class="n">status</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">==</span> <span class="n">INACTIVE</span><span class="p">)</span> <span class="err">{</span>
+      <span class="k">result</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">price</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">*</span> <span class="mi">0</span><span class="p">.</span><span class="mi">5</span><span class="p">;</span>
+    <span class="err">}</span> <span class="k">else</span> <span class="err">{</span>
+      <span class="k">result</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">price</span><span class="p">[</span><span class="n">i</span><span class="p">];</span>
+    <span class="err">}</span>
+  <span class="err">}</span>
+
+<span class="n">Benefits</span><span class="p">:</span>
+  <span class="o">-</span> <span class="n">Branch</span> <span class="n">predictor</span> <span class="n">can</span> <span class="n">learn</span> <span class="n">patterns</span>
+  <span class="o">-</span> <span class="k">No</span> <span class="n">vector</span> <span class="n">materialization</span> <span class="k">for</span> <span class="n">branches</span>
+  <span class="o">-</span> <span class="n">Tight</span> <span class="n">loop</span> <span class="err">→</span> <span class="n">better</span> <span class="n">CPU</span> <span class="k">cache</span> <span class="k">usage</span>
+</code></pre></div></div>
+
+<p><strong>Trade-offs in Velox</strong>:</p>
+
+<p><strong>Pros</strong>:</p>
+<ul>
+  <li>2-10x speedup for complex expressions</li>
+  <li>Eliminates temporary allocations</li>
+  <li>Better for long-running queries (ETL)</li>
+</ul>
+
+<p><strong>Cons</strong>:</p>
+<ul>
+  <li>Compilation time: 10-30 seconds</li>
+  <li>Only beneficial if query runs longer than compilation time</li>
+  <li>Breaks adaptivity (can’t change plan at runtime)</li>
+</ul>
+
+<p><strong>When to Use</strong>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Code generation good for:
+  - Long-running ETL queries (hours)
+  - Repeated queries (compile once, use many times)
+  - Feature engineering (fixed expressions)
+
+Vectorized execution good for:
+  - Interactive queries (seconds)
+  - Ad-hoc exploration
+  - Adaptive execution
+  - Short-lived queries
+</code></pre></div></div>
+
+<p><strong>Current Status in Velox</strong>:</p>
+<ul>
+  <li>Experimental feature</li>
+  <li>C++ code generation via templates</li>
+  <li>gcc/clang compilation to .so</li>
+  <li>Loaded dynamically at runtime</li>
+  <li>Open question: When to switch between vectorized and codegen?</li>
+</ul>
+
+<h2 id="library-components-overview">Library Components Overview</h2>
+
+<h3 id="1-type-system">1. Type System</h3>
+<ul>
+  <li>Generic type system for scalar and complex types</li>
+  <li>Supports:
+    <ul>
+      <li>Primitives: integers, floats, strings, dates, timestamps</li>
+      <li>Complex: structs, maps, arrays, tensors</li>
+      <li>Functions (lambdas)</li>
+    </ul>
+  </li>
+  <li>Extensible for engine-specific types</li>
+</ul>
+
+<h3 id="2-vector">2. Vector</h3>
+<ul>
+  <li>Arrow-compatible columnar memory layout</li>
+  <li>Multiple encodings:
+    <ul>
+      <li>Flat, Dictionary, Constant, Sequence/RLE, Bias</li>
+    </ul>
+  </li>
+  <li>Lazy materialization pattern</li>
+  <li>Out-of-order result population support</li>
+</ul>
+
+<h3 id="3-expression-eval">3. Expression Eval</h3>
+<ul>
+  <li>Fully vectorized expression evaluation engine</li>
+  <li>Optimizations:
+    <ul>
+      <li>Common subexpression elimination</li>
+      <li>Constant folding</li>
+      <li>Efficient null propagation</li>
+      <li>Encoding-aware evaluation</li>
+      <li>Dictionary memoization</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="4-functions">4. Functions</h3>
+<ul>
+  <li>APIs for building custom scalar and aggregate functions</li>
+  <li>
+<strong>Simple API</strong>: Row-by-row, easy to write</li>
+  <li>
+<strong>Vectorized API</strong>: Batch-by-batch, high performance</li>
+  <li>Function packages for Presto and Spark dialects included</li>
+</ul>
+
+<h3 id="5-operators">5. Operators</h3>
+<ul>
+  <li>Common data processing operators:
+    <ul>
+      <li>TableScan, Project, Filter</li>
+      <li>Aggregation, HashJoin, MergeJoin</li>
+      <li>Exchange/Merge, OrderBy, Unnest</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="6-io">6. I/O</h3>
+<ul>
+  <li>Generic connector interface</li>
+  <li>Pluggable file format encoders/decoders</li>
+  <li>Storage adapters</li>
+  <li>Built-in support:
+    <ul>
+      <li>Formats: ORC, Parquet</li>
+      <li>Storage: S3, HDFS</li>
+    </ul>
+  </li>
+</ul>
+
+<p><strong>File Formats</strong>:</p>
+
+<p><strong>ORC (Optimized Row Columnar)</strong>:</p>
+<ul>
+  <li>Columnar storage format for analytics workloads</li>
+  <li>Key characteristics:
+    <ul>
+      <li>Column-major layout (good for analytics queries that select few columns)</li>
+      <li>Built-in compression (Zlib, Snappy, ZSTD)</li>
+      <li>Stripe-based organization (groups of rows, typically 64MB)</li>
+      <li>Lightweight indexes and statistics per stripe (min/max, count)</li>
+      <li>Predicate pushdown support (skip stripes based on statistics)</li>
+    </ul>
+  </li>
+  <li>Benefits:
+    <ul>
+      <li>Read only columns needed (vs row formats that read entire rows)</li>
+      <li>High compression ratios (similar columns compress well)</li>
+      <li>Efficient for scans and aggregations</li>
+    </ul>
+  </li>
+  <li>Common at Meta: Data warehouse storage format</li>
+  <li>Alternative: <strong>Parquet</strong> (similar columnar format, more ecosystem support)</li>
+</ul>
+
+<h3 id="7-serializers">7. Serializers</h3>
+<ul>
+  <li>Network communication serialization</li>
+  <li>Wire protocol interface</li>
+  <li>Supports: PrestoPage, Spark UnsafeRow</li>
+</ul>
+
+<h3 id="8-resource-management">8. Resource Management</h3>
+<ul>
+  <li>Memory arenas and buffer management</li>
+  <li>Tasks, drivers, thread pools</li>
+  <li>Spilling support</li>
+  <li>Caching (memory and SSD)</li>
+</ul>
+
+<h2 id="use-cases-at-meta">Use Cases at Meta</h2>
+
+<h3 id="1-presto-prestissimo">1. Presto (Prestissimo)</h3>
+<ul>
+  <li>
+<strong>Goal</strong>: Replace Java workers with C++ for efficiency</li>
+  <li>
+<strong>What it uses</strong>: Full Velox stack</li>
+  <li>
+<strong>Architecture</strong>:
+    <div class="language-plaintext highlighter-rouge">
+<div class="highlight"><pre class="highlight"><code>Java Coordinator (unchanged)
+  ↓ HTTP REST
+C++ Worker (Prestissimo)
+  ↓ Uses Velox for execution
+No JVM, No GC on workers!
+</code></pre></div>    </div>
+  </li>
+  <li>
+<strong>Benefits</strong>:
+    <ul>
+      <li>Eliminates JVM overhead and GC issues</li>
+      <li>6-10x average speedup on real workloads</li>
+      <li>Up to 8.4x speedup on CPU-bound queries (TPC-H Q1)</li>
+      <li>
+<strong>3x fewer servers</strong> for same workload (60 → 20 servers)</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="2-spark-spruce">2. Spark (Spruce)</h3>
+<ul>
+  <li>
+<strong>Goal</strong>: Accelerate batch/ETL workloads</li>
+  <li>
+<strong>Integration</strong>: Uses Spark script transform interface
+    <div class="language-plaintext highlighter-rouge">
+<div class="highlight"><pre class="highlight"><code>Spark Executor (Scala/Java)
+  ↓ Spark script transform
+External C++ Process (SparkCpp)
+  ↓ Uses Velox for execution
+</code></pre></div>    </div>
+  </li>
+  <li>
+<strong>Customization</strong>:
+    <ul>
+      <li>Custom operators for Spark compatibility</li>
+      <li>UnsafeRow serializer for data shuffling</li>
+      <li>Spark-specific scalar/aggregate functions</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="3-stream-processing-xstream">3. Stream Processing (XStream)</h3>
+<ul>
+  <li>
+<strong>What</strong>: Meta’s stream processing platform</li>
+  <li>
+<strong>Data flow</strong>:
+    <div class="language-plaintext highlighter-rouge">
+<div class="highlight"><pre class="highlight"><code>Scribe (messaging) → XStream → Scribe/Scuba/KV stores
+</code></pre></div>    </div>
+  </li>
+  <li>
+<strong>Characteristics</strong>:
+    <ul>
+      <li>Batched execution (up to 500KB, 20 second window)</li>
+      <li>Benefits from vectorized execution despite row-at-a-time abstraction</li>
+    </ul>
+  </li>
+  <li>
+<strong>Integration</strong>:
+    <ul>
+      <li>Most operations map directly to Velox operators</li>
+      <li>Exposes same function package as Presto (consistency!)</li>
+      <li>Custom windowing aggregations (tumbling, hopping, session)</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="4-messaging-bus-scribe">4. Messaging Bus (Scribe)</h3>
+<ul>
+  <li>
+<strong>What</strong>: Distributed messaging for log collection/aggregation</li>
+  <li>
+<strong>Velox usage</strong>:
+    <ul>
+      <li>Columnar serialization formats for reads</li>
+      <li>Predicate/projection pushdown to storage</li>
+      <li>Reduces cross-datacenter traffic</li>
+      <li>Same semantics as compute engines (consistency!)</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="5-data-ingestion-fbetl">5. Data Ingestion (FBETL)</h3>
+<ul>
+  <li>
+<strong>Use cases</strong>:
+    <ul>
+      <li>Data warehouse ingestion (Scribe → ORC/DWRF files)</li>
+      <li>Database ingestion (DB logs → warehouse snapshots)</li>
+    </ul>
+  </li>
+  <li>
+<strong>Benefits</strong>:
+    <ul>
+      <li>Reuses ORC encoder from other engines (consistency)</li>
+      <li>Allows transformations at ingestion time</li>
+      <li>Same function package as Presto/Spark</li>
+      <li>Eliminates need for separate stream processing app</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="6-machine-learning-torcharrow">6. Machine Learning (TorchArrow)</h3>
+<ul>
+  <li>
+<strong>Problem</strong>: 14 different data preprocessing libraries at Meta
+    <ul>
+      <li>Incomplete type support</li>
+      <li>Incompatible memory representations</li>
+      <li>Inconsistent function packages</li>
+      <li>Preprocessing consumes ~50% of ML resources</li>
+    </ul>
+  </li>
+  <li>
+<strong>Solution</strong>: TorchArrow - Python dataframe layer on Velox
+    <ul>
+      <li>Pandas-like API</li>
+      <li>Translates to Velox plans</li>
+      <li>Consolidates Data Analytics + ML infrastructure</li>
+      <li>
+<strong>“DI for AI”</strong> (Data Infrastructure for Artificial Intelligence)</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="7-feature-engineering-f3">7. Feature Engineering (F3)</h3>
+<ul>
+  <li>
+<strong>What</strong>: Framework for ML feature engineering</li>
+  <li>
+<strong>Integration</strong>:
+    <ul>
+      <li>Offline: Spark (already using Velox)</li>
+      <li>Realtime: XStream (already using Velox)</li>
+      <li>Online serving: Exploring codegen for low-latency/high-QPS</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="vectors-columnar-memory-layout">Vectors: Columnar Memory Layout</h2>
+
+<h3 id="what-is-apache-arrow">What is Apache Arrow?</h3>
+
+<p><strong>Definition</strong>:</p>
+<ul>
+  <li>Open-source, language-agnostic columnar memory format</li>
+  <li>Standard for in-memory analytics data</li>
+  <li>Created in 2016 by Wes McKinney (Pandas creator) and Dremio team</li>
+</ul>
+
+<p><strong>Problem Arrow Solves</strong>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Before Arrow (serialization overhead):
+
+Pandas (Python)
+    ↓ serialize to CSV/JSON/Pickle
+Network/File
+    ↓ deserialize
+Spark (JVM)
+    ↓ serialize to different format
+Network/File
+    ↓ deserialize
+TensorFlow (C++)
+
+Result: Copying and converting data repeatedly!
+  - CPU waste (serialize/deserialize)
+  - Memory waste (multiple copies)
+  - Time waste (minutes for GB of data)
+</code></pre></div></div>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>With Arrow (zero-copy):
+
+Pandas → Arrow format (in memory)
+           ↓
+Spark → Reads same Arrow memory (zero-copy!)
+           ↓
+TensorFlow → Reads same Arrow memory (zero-copy!)
+
+Result: Direct memory sharing across languages/engines
+</code></pre></div></div>
+
+<p><strong>Why Arrow is Needed</strong>:</p>
+
+<ol>
+  <li>
+<strong>Eliminate serialization overhead</strong>:
+    <div class="language-plaintext highlighter-rouge">
+<div class="highlight"><pre class="highlight"><code>Example: Python → Spark communication
+
+WITHOUT Arrow:
+  1. Python creates Pandas DataFrame (Python objects)
+  2. Serialize to Pickle format (slow!)
+  3. Send over socket
+  4. JVM deserializes to Spark Row objects
+  5. Convert to columnar format for processing
+
+  Time: 30 seconds for 1GB DataFrame
+  Memory: 3x overhead (Python, Pickle, JVM copies)
+
+WITH Arrow:
+  1. Python creates Arrow Table (columnar)
+  2. Send Arrow buffers (just memory pointers!)
+  3. JVM reads Arrow buffers directly
+  4. Already in columnar format!
+
+  Time: &lt; 1 second (100MB/s network)
+  Memory: 1x (single copy)
+</code></pre></div>    </div>
+  </li>
+  <li>
+<strong>Standardized columnar format</strong>:
+    <ul>
+      <li>All analytics systems use same in-memory layout</li>
+      <li>CPU cache-friendly (column-at-a-time access)</li>
+      <li>SIMD-friendly (vectorized operations)</li>
+    </ul>
+  </li>
+  <li>
+<strong>Interoperability</strong>:
+```
+Supported by 13+ languages:
+    <ul>
+      <li>Python (Pandas, PyArrow)</li>
+      <li>Java/Scala (Spark)</li>
+      <li>C++ (many databases)</li>
+      <li>R, Go, Rust, JavaScript, …</li>
+    </ul>
+
+    <p>Supported by 50+ projects:</p>
+    <ul>
+      <li>Databases: Spark, Presto, ClickHouse, DuckDB</li>
+      <li>Analytics: Pandas, Polars, Dask</li>
+      <li>Visualization: Tableau, Grafana</li>
+      <li>ML: TensorFlow, PyTorch (via libraries)</li>
+      <li>Storage: Parquet (uses Arrow-like encoding on disk)
+```</li>
+    </ul>
+  </li>
+</ol>
+
+<p><strong>Arrow Format Basics</strong>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Example: Column of integers [10, null, 30, 40]
+
+Arrow Representation:
+  ┌─────────────────────────────────────┐
+  │ Schema (metadata)                   │
+  │   - Column name: "age"              │
+  │   - Type: int32                     │
+  │   - Nullable: true                  │
+  └─────────────────────────────────────┘
+  ┌─────────────────────────────────────┐
+  │ Nullability Bitmap (1 bit per row)  │
+  │   [1, 0, 1, 1]  (0 = null)          │
+  │   Packed: 0b1101 = 13               │
+  └─────────────────────────────────────┘
+  ┌─────────────────────────────────────┐
+  │ Values Buffer (contiguous array)    │
+  │   [10, ??, 30, 40]  (?? = garbage)  │
+  │   Memory: 4 bytes × 4 = 16 bytes    │
+  └─────────────────────────────────────┘
+
+Benefits:
+  - Null bitmap separate from values (efficient SIMD)
+  - Values contiguous (cache-friendly)
+  - Fixed-size types = direct array indexing
+</code></pre></div></div>
+
+<p><strong>Real-World Example: Data Pipeline</strong>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Scenario: Load CSV, process in Spark, visualize in Pandas
+
+Step 1: Read CSV with PyArrow
+  import pyarrow.csv as csv
+  table = csv.read_csv("data.csv")  # → Arrow Table
+
+  Memory: Arrow columnar format (efficient)
+
+Step 2: Process in Spark (via PySpark)
+  df = spark.createDataFrame(table.to_pandas())
+
+  OLD way: table.to_pandas() converts to Python objects
+           → Spark serializes with Pickle (slow!)
+
+  NEW way (Arrow enabled):
+    spark.conf.set("spark.sql.execution.arrow.pyspark.enabled", "true")
+    df = spark.createDataFrame(table.to_batches(), schema)
+    → Spark reads Arrow batches directly (zero-copy!)
+
+Step 3: Results back to Pandas for plotting
+  result = df.toPandas()  # Uses Arrow (fast!)
+
+  Without Arrow: 45 seconds
+  With Arrow: 3 seconds (15x faster!)
+</code></pre></div></div>
+
+<p><strong>How Arrow Solves Cross-Process/Machine Memory Access</strong>:</p>
+
+<p><strong>Case 1: Same Machine, Different Processes (True Zero-Copy)</strong>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Python Process A                    Spark Process B
+     ↓                                    ↓
+Creates Arrow Table              Reads Arrow Table
+     ↓                                    ↓
+Writes to Shared Memory          Memory-maps same file
+(mmap or /dev/shm)              (mmap with SHARED flag)
+     ↓                                    ↓
+  ┌──────────────────────────────────────┐
+  │   Shared Memory Region (OS kernel)   │
+  │   Arrow buffers (metadata + data)    │
+  └──────────────────────────────────────┘
+     ↑                                    ↑
+Both processes read SAME physical memory pages!
+
+Result: ZERO memory copies, just pointer sharing
+</code></pre></div></div>
+
+<p><strong>Example (same machine)</strong>:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1"># Process A (Python): Write to shared memory
+</span><span class="kn">import</span> <span class="nn">pyarrow</span> <span class="k">as</span> <span class="n">pa</span>
+<span class="kn">import</span> <span class="nn">pyarrow.plasma</span> <span class="k">as</span> <span class="n">plasma</span>  <span class="c1"># Shared memory object store
+</span>
+<span class="c1"># Connect to Plasma store (shared memory manager)
+</span><span class="n">client</span> <span class="o">=</span> <span class="n">plasma</span><span class="p">.</span><span class="n">connect</span><span class="p">(</span><span class="s">"/tmp/plasma"</span><span class="p">)</span>
+
+<span class="c1"># Create Arrow table
+</span><span class="n">table</span> <span class="o">=</span> <span class="n">pa</span><span class="p">.</span><span class="n">table</span><span class="p">({</span><span class="s">'x'</span><span class="p">:</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">],</span> <span class="s">'y'</span><span class="p">:</span> <span class="p">[</span><span class="mi">4</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">6</span><span class="p">]})</span>
+
+<span class="c1"># Put in shared memory, get object ID
+</span><span class="n">object_id</span> <span class="o">=</span> <span class="n">client</span><span class="p">.</span><span class="n">put</span><span class="p">(</span><span class="n">table</span><span class="p">)</span>
+<span class="c1"># → Arrow buffers written to /dev/shm (Linux) or equivalent
+</span>
+<span class="c1"># Process B (Java/Scala): Read from shared memory
+</span><span class="n">PlasmaClient</span> <span class="n">client</span> <span class="o">=</span> <span class="n">new</span> <span class="n">PlasmaClient</span><span class="p">(</span><span class="s">"/tmp/plasma"</span><span class="p">);</span>
+<span class="n">ArrowTable</span> <span class="n">table</span> <span class="o">=</span> <span class="n">client</span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="n">object_id</span><span class="p">);</span>
+<span class="o">//</span> <span class="err">→</span> <span class="n">Reads</span> <span class="n">SAME</span> <span class="n">memory</span><span class="p">,</span> <span class="n">no</span> <span class="n">copy</span><span class="err">!</span>
+
+<span class="n">Memory</span> <span class="n">usage</span><span class="p">:</span> <span class="mi">1</span><span class="n">x</span> <span class="p">(</span><span class="n">shared</span> <span class="n">between</span> <span class="n">processes</span><span class="p">)</span>
+<span class="n">Transfer</span> <span class="n">time</span><span class="p">:</span> <span class="n">Microseconds</span> <span class="p">(</span><span class="n">just</span> <span class="n">mmap</span><span class="p">)</span>
+</code></pre></div></div>
+
+<p><strong>Case 2: Different Machines (Efficient Serialization, NOT Zero-Copy)</strong>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Machine A (Sender)                  Machine B (Receiver)
+     ↓                                      ↓
+Arrow Table in memory               Network socket
+     ↓                                      ↓
+Serialize to IPC format             Receive IPC format
+(Arrow IPC/Flight)                  (Arrow IPC/Flight)
+     ↓                                      ↓
+  ┌──────────────────────┐         ┌──────────────────┐
+  │  Network bytes       │  ─────→ │  Network bytes   │
+  │  (metadata + buffers)│         │  (metadata + buffers)│
+  └──────────────────────┘         └──────────────────┘
+                                           ↓
+                                    Deserialize to Arrow Table
+                                           ↓
+                                    Arrow Table in memory
+
+Result: Data copied over network (unavoidable!)
+        But serialization/deserialization is cheap
+</code></pre></div></div>
+
+<p><strong>Why Cross-Machine is Still Fast (Even Though Not Zero-Copy)</strong>:</p>
+
+<ol>
+  <li>
+<strong>Minimal Serialization Overhead</strong>:
+    <div class="language-plaintext highlighter-rouge">
+<div class="highlight"><pre class="highlight"><code>Arrow IPC Format = Metadata + Raw Buffers
+
+Traditional (Pickle/JSON):
+  Python objects → Convert each to string/bytes → Encode → Send
+  Time: O(n) conversions + O(n) encoding
+
+Arrow IPC:
+  Arrow buffers → Add metadata header → Send raw buffers
+  Time: O(1) metadata + O(n) memcpy (unavoidable for network)
+
+Speedup: No conversion overhead!
+</code></pre></div>    </div>
+  </li>
+  <li>
+<strong>Deserialization is Nearly Free</strong>:
+    <div class="language-plaintext highlighter-rouge">
+<div class="highlight"><pre class="highlight"><code>Traditional:
+  Receive bytes → Parse → Allocate objects → Convert types
+  Example (JSON): "123" → parse → create Integer object
+  Time: O(n) parsing + O(n) object allocation
+
+Arrow IPC:
+  Receive bytes → Read metadata → Point to buffers
+  Already in columnar format, already typed!
+  Time: O(1) metadata read + O(n) memcpy (unavoidable)
+
+Example: 1GB of data
+  JSON deserialization: 15 seconds
+  Arrow IPC deserialization: 1 second
+</code></pre></div>    </div>
+  </li>
+  <li>
+<strong>Network Transfer is the Real Bottleneck</strong>:
+    <div class="language-plaintext highlighter-rouge">
+<div class="highlight"><pre class="highlight"><code>1 Gbps network = 125 MB/s
+
+Sending 1 GB of data:
+  Network transfer: ~8 seconds (cannot avoid)
+  Arrow serialization: ~0.1 seconds
+  Arrow deserialization: ~0.1 seconds
+  Total: ~8.2 seconds
+
+With JSON:
+  Network transfer: ~8 seconds (same size after compression)
+  JSON serialization: ~10 seconds
+  JSON deserialization: ~15 seconds
+  Total: ~33 seconds
+
+Arrow wins because serialization overhead is negligible!
+</code></pre></div>    </div>
+  </li>
+</ol>
+
+<p><strong>Arrow IPC Format Details</strong>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Structure of Arrow IPC message:
+
+┌────────────────────────────────────────┐
+│ Message Header (Flatbuffers)          │
+│  - Schema (column names, types)       │
+│  - RecordBatch metadata               │
+│  - Buffer locations and sizes         │
+└────────────────────────────────────────┘
+┌────────────────────────────────────────┐
+│ Buffer 0: Nullability bitmap (column 1)│
+│   [compact bit array]                  │
+└────────────────────────────────────────┘
+┌────────────────────────────────────────┐
+│ Buffer 1: Values (column 1)            │
+│   [contiguous array of typed values]   │
+└────────────────────────────────────────┘
+┌────────────────────────────────────────┐
+│ Buffer 2: Nullability bitmap (column 2)│
+└────────────────────────────────────────┘
+┌────────────────────────────────────────┐
+│ Buffer 3: Values (column 2)            │
+└────────────────────────────────────────┘
+
+Key: Buffers are already in final format!
+     Just write to socket, read from socket
+     No conversion needed
+</code></pre></div></div>
+
+<p><strong>Arrow Flight (High-Performance RPC)</strong>:</p>
+<ul>
+  <li>Built on top of gRPC and HTTP/2</li>
+  <li>Optimized for large dataset transfers</li>
+  <li>Features:
+    <ul>
+      <li>Parallel streams (multiple connections)</li>
+      <li>Authentication and encryption</li>
+      <li>Metadata exchange before data transfer</li>
+    </ul>
+  </li>
+  <li>Performance: Can saturate 10 Gbps networks</li>
+</ul>
+
+<p><strong>Example (cross-machine with Arrow Flight)</strong>:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1"># Server (Machine A)
+</span><span class="kn">import</span> <span class="nn">pyarrow.flight</span> <span class="k">as</span> <span class="n">flight</span>
+
+<span class="k">class</span> <span class="nc">DataService</span><span class="p">(</span><span class="n">flight</span><span class="p">.</span><span class="n">FlightServerBase</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">do_get</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">context</span><span class="p">,</span> <span class="n">ticket</span><span class="p">):</span>
+        <span class="c1"># Return large Arrow table
+</span>        <span class="n">table</span> <span class="o">=</span> <span class="n">get_data</span><span class="p">()</span>  <span class="c1"># 1 GB table
+</span>        <span class="k">return</span> <span class="n">flight</span><span class="p">.</span><span class="n">RecordBatchStream</span><span class="p">(</span><span class="n">table</span><span class="p">)</span>
+
+<span class="n">server</span> <span class="o">=</span> <span class="n">DataService</span><span class="p">()</span>
+<span class="n">server</span><span class="p">.</span><span class="n">serve</span><span class="p">()</span>  <span class="c1"># Listen on port 8815
+</span>
+<span class="c1"># Client (Machine B)
+</span><span class="n">client</span> <span class="o">=</span> <span class="n">flight</span><span class="p">.</span><span class="n">FlightClient</span><span class="p">(</span><span class="s">"grpc://machine-a:8815"</span><span class="p">)</span>
+<span class="n">reader</span> <span class="o">=</span> <span class="n">client</span><span class="p">.</span><span class="n">do_get</span><span class="p">(</span><span class="n">ticket</span><span class="p">)</span>
+<span class="n">table</span> <span class="o">=</span> <span class="n">reader</span><span class="p">.</span><span class="n">read_all</span><span class="p">()</span>  <span class="c1"># Efficiently stream Arrow batches
+</span>
+<span class="n">Transfer</span> <span class="n">rate</span><span class="p">:</span> <span class="mi">500</span> <span class="n">MB</span><span class="o">/</span><span class="n">s</span> <span class="p">(</span><span class="n">limited</span> <span class="n">by</span> <span class="n">network</span><span class="p">,</span> <span class="ow">not</span> <span class="n">Arrow</span><span class="err">!</span><span class="p">)</span>
+</code></pre></div></div>
+
+<p><strong>Summary</strong>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Scenario                  | Mechanism           | Speed
+--------------------------|---------------------|------------------
+Same process             | Direct pointers     | Instant (no copy)
+Different processes      | Shared memory       | Microseconds (mmap)
+(same machine)           | (mmap, Plasma)      | TRUE zero-copy
+--------------------------|---------------------|------------------
+Different machines       | Arrow IPC/Flight    | Network-bound
+                         | (network transfer)  | NOT zero-copy
+                         |                     | But minimal overhead
+</code></pre></div></div>
+
+<p><strong>Key Insight</strong>:</p>
+<ul>
+  <li>Arrow doesn’t magically share memory across machines</li>
+  <li>Instead: Makes serialization so cheap it’s negligible compared to network transfer</li>
+  <li>Zero-copy only applies to same-machine, different processes</li>
+  <li>Cross-machine: “Zero-overhead” serialization, not zero-copy</li>
+</ul>
+
+<p><strong>History</strong>:</p>
+<ul>
+  <li>
+<strong>2016</strong>: Project started by Wes McKinney and Jacques Nadeau
+    <ul>
+      <li>Wes: Frustrated with Pandas serialization overhead</li>
+      <li>Jacques: CEO of Dremio (needed standard format)</li>
+    </ul>
+  </li>
+  <li>
+<strong>2017</strong>: Multiple engines adopt Arrow
+    <ul>
+      <li>Spark 2.3 adds Arrow support for Python/R</li>
+      <li>Pandas adds PyArrow integration</li>
+    </ul>
+  </li>
+  <li>
+<strong>2020</strong>: Arrow Flight (RPC framework) released</li>
+  <li>
+<strong>2025</strong>: De facto standard for in-memory analytics</li>
+</ul>
+
+<p><strong>How Velox Uses Arrow</strong>:</p>
+<ul>
+  <li>Velox Vectors are <strong>Arrow-compatible</strong> (not identical!)</li>
+  <li>Can convert to/from Arrow with zero-copy (when possible)</li>
+  <li>Why not use Arrow directly?
+    <ul>
+      <li>Need additional encodings (Dictionary, Constant, RLE)</li>
+      <li>Need lazy materialization</li>
+      <li>Need out-of-order writes (for conditionals)</li>
+      <li>Velox = Arrow + optimizations for query engines</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="basic-structure">Basic Structure</h3>
+<ul>
+  <li>Extends Apache Arrow format</li>
+  <li>Components:
+    <ul>
+      <li>
+<strong>Size</strong>: Number of rows</li>
+      <li>
+<strong>Type</strong>: Data type (from type system)</li>
+      <li>
+<strong>Nullability bitmap</strong>: Optional, for null values</li>
+      <li>
+<strong>Data buffers</strong>: Actual data storage</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="encoding-formats">Encoding Formats</h3>
+
+<h4 id="1-flat-encoding">1. Flat Encoding</h4>
+<ul>
+  <li>Standard columnar layout</li>
+  <li>Data stored contiguously</li>
+</ul>
+
+<h4 id="2-dictionary-encoding">2. Dictionary Encoding</h4>
+<ul>
+  <li>
+<strong>Structure</strong>:
+    <div class="language-plaintext highlighter-rouge">
+<div class="highlight"><pre class="highlight"><code>Indices buffer: [0, 2, 1, 0, 2, 1, ...]  (1000 values)
+Inner vector:   ["red", "green", "blue"] (3 values)
+</code></pre></div>    </div>
+  </li>
+  <li>
+<strong>Benefits</strong>: Compact representation for low-cardinality columns</li>
+  <li>
+<strong>Optimization</strong>: Operations can be performed on distinct values only</li>
+</ul>
+
+<h4 id="3-constant-encoding">3. Constant Encoding</h4>
+<ul>
+  <li>All values are the same</li>
+  <li>Use cases: Literals, partition keys</li>
+  <li>
+<strong>Structure</strong>: Single value + size</li>
+</ul>
+
+<h4 id="4-sequencerle-encoding">4. Sequence/RLE Encoding</h4>
+<ul>
+  <li>Run-length encoding for repeated values</li>
+</ul>
+
+<h4 id="5-bias-frame-of-reference">5. Bias (Frame of Reference)</h4>
+<ul>
+  <li>Store offset + deltas for tightly-clustered values</li>
+</ul>
+
+<h3 id="lazy-vectors">Lazy Vectors</h3>
+<ul>
+  <li>
+<strong>Concept</strong>: Vectors materialized only on first use</li>
+  <li>
+<strong>Use cases</strong>:
+    <ul>
+      <li>Joins (may not need all columns)</li>
+      <li>Conditionals in projections</li>
+      <li>Remote storage reads (S3, HDFS)</li>
+    </ul>
+  </li>
+  <li>
+<strong>Benefits</strong>:
+    <ul>
+      <li>Can avoid entire IO operations</li>
+      <li>Reduce memory usage</li>
+    </ul>
+  </li>
+  <li>
+<strong>Callback support</strong>: Pushdown computation without materialization</li>
+</ul>
+
+<h3 id="decoded-vector-abstraction">Decoded Vector Abstraction</h3>
+<ul>
+  <li>
+<strong>Problem</strong>: Input vectors can be arbitrarily encoded</li>
+  <li>
+<strong>Solution</strong>: Unified API that handles all encodings</li>
+  <li>
+<strong>How it works</strong>:
+    <div class="language-plaintext highlighter-rouge">
+<div class="highlight"><pre class="highlight"><code>Arbitrarily-encoded Vector
+  ↓ Decoded Vector
+Flat vector + indices (logically consistent API)
+</code></pre></div>    </div>
+  </li>
+  <li>
+<strong>Performance</strong>: Zero-copy for flat, constant, single-level dictionary</li>
+</ul>
+
+<h3 id="differences-from-apache-arrow">Differences from Apache Arrow</h3>
+
+<h4 id="1-string-representation-stringview">1. String Representation (StringView)</h4>
+<div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">struct</span> <span class="nc">StringView</span> <span class="p">{</span>
+  <span class="kt">uint32_t</span> <span class="n">size_</span><span class="p">;</span>
+  <span class="kt">char</span> <span class="n">prefix_</span><span class="p">[</span><span class="mi">4</span><span class="p">];</span>      <span class="c1">// Always stores 4-byte prefix</span>
+  <span class="k">union</span> <span class="p">{</span>
+    <span class="kt">char</span> <span class="n">inlined</span><span class="p">[</span><span class="mi">8</span><span class="p">];</span>    <span class="c1">// For strings ≤ 12 bytes</span>
+    <span class="k">const</span> <span class="kt">char</span><span class="o">*</span> <span class="n">data</span><span class="p">;</span>   <span class="c1">// For strings &gt; 12 bytes</span>
+  <span class="p">}</span> <span class="n">value_</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p><strong>Benefits</strong>:</p>
+<ul>
+  <li>
+<strong>Prefix</strong>: Short-circuits failed comparisons (filtering, sorting)</li>
+  <li>
+<strong>Inlining</strong>: Small strings (≤ 12 bytes) don’t need secondary buffer</li>
+  <li>
+<strong>Zero-copy operations</strong>: <code class="language-plaintext highlighter-rouge">trim()</code>, <code class="language-plaintext highlighter-rouge">substr()</code> just update pointers</li>
+</ul>
+
+<p><strong>Example</strong>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>String "Hello World":
+  size_ = 11
+  prefix_ = "Hell"
+  value_.inlined = "Hello World"  (fully inlined!)
+
+String "A very long string...":
+  size_ = 24
+  prefix_ = "A ve"
+  value_.data = pointer to full string
+</code></pre></div></div>
+
+<h4 id="2-out-of-order-write-support">2. Out-of-Order Write Support</h4>
+<ul>
+  <li>
+<strong>Use case</strong>: Conditionals (IF, SWITCH)</li>
+  <li>
+<strong>How it works</strong>:
+    <div class="language-plaintext highlighter-rouge">
+<div class="highlight"><pre class="highlight"><code>Evaluate condition → Generate bitmask
+Process branch 1 → Write to output vector (positions from bitmask)
+Process branch 2 → Write to output vector (other positions)
+</code></pre></div>    </div>
+  </li>
+  <li>
+<strong>Support</strong>:
+    <ul>
+      <li>Primitive types: Always (constant size)</li>
+      <li>Strings: Yes (StringView is constant 16 bytes)</li>
+      <li>Arrays/Maps: Store both lengths and offsets buffers</li>
+    </ul>
+  </li>
+</ul>
+
+<h4 id="3-additional-encodings">3. Additional Encodings</h4>
+<ul>
+  <li>RLE (Run-Length Encoding)</li>
+  <li>Constant encoding</li>
+</ul>
+
+<h3 id="vector-conversion-to-arrow">Vector Conversion to Arrow</h3>
+<ul>
+  <li>Zero-copy when possible</li>
+  <li>Re-arranges data when needed</li>
+  <li>API provided for interoperability</li>
+</ul>
+
+<h2 id="expression-evaluation">Expression Evaluation</h2>
+
+<h3 id="expression-tree-nodes">Expression Tree Nodes</h3>
+<ul>
+  <li>
+<strong>Column reference</strong>: Reference to input column</li>
+  <li>
+<strong>Constant/Literal</strong>: Fixed value</li>
+  <li>
+<strong>Function call</strong>: Function name + input expressions</li>
+  <li>
+<strong>CAST</strong>: Type conversion</li>
+  <li>
+<strong>Lambda function</strong>: For higher-order functions</li>
+</ul>
+
+<h3 id="metadata">Metadata</h3>
+<ul>
+  <li>
+<strong>Determinism</strong>: Same inputs → same outputs?</li>
+  <li>
+<strong>Null propagation</strong>: Any null input → null output?</li>
+</ul>
+
+<h3 id="two-phase-process">Two-Phase Process</h3>
+
+<h4 id="phase-1-compilation">Phase 1: Compilation</h4>
+
+<p><strong>1. Common Subexpression Elimination (CSE)</strong></p>
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">Expression</span><span class="p">:</span> <span class="n">strpos</span><span class="p">(</span><span class="k">upper</span><span class="p">(</span><span class="n">a</span><span class="p">),</span> <span class="s1">'FOO'</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">OR</span> <span class="n">strpos</span><span class="p">(</span><span class="k">upper</span><span class="p">(</span><span class="n">a</span><span class="p">),</span> <span class="s1">'BAR'</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span>
+
+<span class="n">Identified</span> <span class="n">common</span> <span class="n">subexpression</span><span class="p">:</span> <span class="k">upper</span><span class="p">(</span><span class="n">a</span><span class="p">)</span>
+<span class="k">Result</span><span class="p">:</span> <span class="n">Calculated</span> <span class="k">only</span> <span class="n">once</span><span class="p">,</span> <span class="n">reused</span> <span class="n">twice</span>
+</code></pre></div></div>
+
+<p><strong>2. Constant Folding</strong></p>
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">Before</span><span class="p">:</span> <span class="k">upper</span><span class="p">(</span><span class="n">a</span><span class="p">)</span> <span class="o">=</span> <span class="k">upper</span><span class="p">(</span><span class="s1">'Foo'</span><span class="p">)</span>
+<span class="k">After</span><span class="p">:</span>  <span class="k">upper</span><span class="p">(</span><span class="n">a</span><span class="p">)</span> <span class="o">=</span> <span class="s1">'FOO'</span>  <span class="p">(</span><span class="n">evaluated</span> <span class="k">at</span> <span class="n">compile</span> <span class="nb">time</span><span class="p">)</span>
+</code></pre></div></div>
+
+<p><strong>3. Adaptive Conjunct Reordering</strong></p>
+<ul>
+  <li>
+<strong>For AND/OR expressions</strong>:</li>
+  <li>Track performance of each conjunct</li>
+  <li>Evaluate most selective first</li>
+  <li>
+<strong>Metric</strong>: <code class="language-plaintext highlighter-rouge">time / (1 + n_in - n_out)</code> (lower is better)</li>
+  <li>
+<strong>Also flattens nested AND/OR</strong>:
+    <div class="language-plaintext highlighter-rouge">
+<div class="highlight"><pre class="highlight"><code>Before: AND(AND(AND(a, b), c), AND(d, e))
+After:  AND(a, b, c, d, e)
+</code></pre></div>    </div>
+  </li>
+</ul>
+
+<h4 id="phase-2-evaluation">Phase 2: Evaluation</h4>
+
+<p><strong>1. Null Propagation Optimization</strong></p>
+<ul>
+  <li>If expression propagates nulls and any input is null:
+    <ul>
+      <li>Just combine nullability bitmasks (SIMD)</li>
+      <li>Skip evaluation entirely</li>
+    </ul>
+  </li>
+</ul>
+
+<p><strong>2. Peeling (Dictionary Optimization)</strong></p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Dictionary-encoded input:
+  Indices: [0, 1, 2, 0, 1, 2, ...] (1000 rows)
+  Inner:   ["red", "green", "blue"] (3 values)
+
+Evaluation of upper(color):
+  1. Peel off dictionary wrapper
+  2. Apply upper() to 3 distinct values: ["RED", "GREEN", "BLUE"]
+  3. Wrap result with original indices
+
+Result: 3 function calls instead of 1000!
+</code></pre></div></div>
+
+<p><strong>3. Memoization</strong></p>
+<ul>
+  <li>Remembers results for base vectors across batches</li>
+  <li>Use case: Same dictionary base vector reused in multiple batches
+```
+Batch 1: Dict with base [“red”, “green”, “blue”]
+→ Compute upper() → Cache result</li>
+</ul>
+
+<p>Batch 2: Dict with same base, different indices
+  → Reuse cached result → Just wrap with new indices</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
+**Benefits**:
+* Huge speedup for complex operations:
+  * String manipulation
+  * Regular expressions
+  * Array/map operations
+  * Nested data traversal
+
+### Code Generation (Experimental)
+* **Approach**: Rewrite expression tree as C++ source
+* **Compilation**: Use gcc/clang to compile to shared library
+* **Overhead**: 10+ seconds compilation time
+* **Target use cases**:
+  * Large ETL queries (hours to days)
+  * Fixed expression trees (e.g., feature engineering)
+* **Open questions**:
+  * Codegen vs vectorized tradeoffs
+  * Codegen vs JIT LLVM
+  * Runtime adaptivity between paths
+
+## Functions
+
+### Scalar Functions
+
+#### Vectorized API
+* **Input**: Full Vectors (batches)
+* **Output**: Full Vector
+* **Direct access to**:
+  * Encoding formats
+  * Nullability buffers
+  * Active rows bitmap
+* **Pros**: Can leverage columnar layout for constant-time operations
+* **Cons**: Complex, error-prone, high cognitive burden
+
+**Examples of constant-time functions**:
+```cpp
+is_null()       → Return nullability buffer
+cardinality()   → Return lengths buffer (for arrays)
+map_keys()      → Return keys buffer (for maps)
+map_values()    → Return values buffer (for maps)
+</code></pre></div></div>
+
+<h4 id="simple-api">Simple API</h4>
+<ul>
+  <li>
+<strong>Goal</strong>: Developer productivity and ease of use</li>
+  <li>
+<strong>Input</strong>: Single row values (NOT Vectors)</li>
+  <li>
+<strong>Output</strong>: Single value</li>
+  <li>
+<strong>Hide</strong>: Encoding, nullability, memory layout</li>
+</ul>
+
+<p><strong>Example</strong>:</p>
+<div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">class</span> <span class="nc">MultiplyFunction</span> <span class="p">{</span>
+  <span class="kt">void</span> <span class="n">call</span><span class="p">(</span>
+    <span class="kt">int64_t</span><span class="o">&amp;</span> <span class="n">result</span><span class="p">,</span>           <span class="c1">// Output (by reference)</span>
+    <span class="k">const</span> <span class="kt">int64_t</span><span class="o">&amp;</span> <span class="n">a</span><span class="p">,</span>          <span class="c1">// Input 1</span>
+    <span class="k">const</span> <span class="kt">int64_t</span><span class="o">&amp;</span> <span class="n">b</span><span class="p">)</span> <span class="p">{</span>        <span class="c1">// Input 2</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="n">a</span> <span class="o">*</span> <span class="n">b</span><span class="p">;</span>
+  <span class="p">}</span>
+<span class="p">};</span>
+
+<span class="n">registerFunction</span><span class="o">&lt;</span>
+  <span class="n">MultiplyFunction</span><span class="p">,</span>
+  <span class="kt">int64_t</span><span class="p">,</span>   <span class="c1">// Return type</span>
+  <span class="kt">int64_t</span><span class="p">,</span>   <span class="c1">// Arg 1 type</span>
+  <span class="kt">int64_t</span>    <span class="c1">// Arg 2 type</span>
+<span class="o">&gt;</span><span class="p">({</span><span class="s">"multiply"</span><span class="p">});</span>
+</code></pre></div></div>
+
+<p><strong>Features</strong>:</p>
+<ul>
+  <li>
+<strong>Return</strong>: <code class="language-plaintext highlighter-rouge">void</code> (never null) or <code class="language-plaintext highlighter-rouge">bool</code> (true = not null)</li>
+  <li>
+<strong>Default null behavior</strong>: Any null input → null output (skip call)</li>
+  <li>
+<strong>Custom null behavior</strong>: Provide <code class="language-plaintext highlighter-rouge">callNullable()</code> with pointers</li>
+</ul>
+
+<p><strong>How it works</strong>:</p>
+<ul>
+  <li>Uses <code class="language-plaintext highlighter-rouge">DecodedVector</code> to handle any encoding</li>
+  <li>C++ template metaprogramming for efficient batching</li>
+  <li>
+<strong>Inlines</strong> all logic in hot loop (no function call overhead)</li>
+  <li>Compilers can auto-vectorize (generate SIMD code!)</li>
+</ul>
+
+<p><strong>Performance</strong>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Micro-benchmark results:
+  plus():      Simple API = Vectorized API (no overhead!)
+  make_map():  Simple API faster (auto-optimizations)
+  array_min(): Simple API faster (missed optimizations in vectorized)
+</code></pre></div></div>
+
+<p><strong>Type Mapping</strong>:</p>
+<ul>
+  <li>Primitives → C++ types (int64_t, double, etc.)</li>
+  <li>Strings → Proxy objects (not std::string, zero-copy)</li>
+  <li>Arrays → ArrayReader/ArrayWriter (std::vector-like API)</li>
+  <li>Maps → MapReader/MapWriter</li>
+  <li>Structs → RowReader/RowWriter</li>
+</ul>
+
+<h4 id="advanced-string-processing">Advanced String Processing</h4>
+
+<p><strong>1. ASCII Fast Path</strong></p>
+<ul>
+  <li>
+<strong>Observation</strong>: Most warehouse strings are ASCII-only</li>
+  <li>
+<strong>Optimization</strong>: Provide <code class="language-plaintext highlighter-rouge">callAscii()</code> method</li>
+  <li>
+<strong>Engine</strong>: Automatically calls when inputs are ASCII</li>
+  <li>
+<strong>Declaration</strong>: Set ASCII behavior flag (output ASCII if inputs ASCII)</li>
+</ul>
+
+<p><strong>Performance gains</strong>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Function      Without ASCII opt    With ASCII opt
+lower()       10,000 ns            500 ns
+upper()       10,000 ns            500 ns
+substr()      8,000 ns             300 ns
+strpos()      1,500 ns             500 ns
+</code></pre></div></div>
+
+<p><strong>2. Zero-Copy String Operations</strong></p>
+<ul>
+  <li>
+<strong>Use case</strong>: <code class="language-plaintext highlighter-rouge">substr()</code>, <code class="language-plaintext highlighter-rouge">trim()</code>, <code class="language-plaintext highlighter-rouge">split()</code>
+</li>
+  <li>
+<strong>Mechanism</strong>: Set flag to reuse input string buffer in output</li>
+  <li>
+<strong>How</strong>: Output StringView points to input buffer (no copy!)</li>
+</ul>
+
+<p><strong>Performance</strong>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>substr() implementations:
+  NoOpts (baseline):           100 ns
+  ASCII-only:                   50 ns
+  ASCII-only + buffer reuse:    20 ns
+</code></pre></div></div>
+
+<h3 id="aggregate-functions">Aggregate Functions</h3>
+
+<h4 id="execution-steps">Execution Steps</h4>
+<ol>
+  <li>
+<strong>Partial aggregation</strong>: Raw data → Intermediate results</li>
+  <li>
+<strong>Final aggregation</strong>: Intermediate → Final results</li>
+  <li>
+<strong>Single aggregation</strong> (optional): When pre-partitioned on grouping keys</li>
+  <li>
+<strong>Intermediate aggregation</strong> (optional): Combine partial results</li>
+</ol>
+
+<h4 id="accumulator-types">Accumulator Types</h4>
+
+<p><strong>1. Fixed-Size Accumulators</strong></p>
+<ul>
+  <li>Functions: <code class="language-plaintext highlighter-rouge">count()</code>, <code class="language-plaintext highlighter-rouge">sum()</code>, <code class="language-plaintext highlighter-rouge">avg()</code>, <code class="language-plaintext highlighter-rouge">min()</code>, <code class="language-plaintext highlighter-rouge">max()</code>
+</li>
+  <li>
+<strong>Storage</strong>: Inline within hash table row</li>
+  <li>
+<strong>Example</strong>:
+    <div class="language-plaintext highlighter-rouge">
+<div class="highlight"><pre class="highlight"><code>Hash table row:
+[grouping_key | count | sum | avg_sum | avg_count]
+</code></pre></div>    </div>
+  </li>
+</ul>
+
+<p><strong>2. Variable-Size Accumulators</strong></p>
+<ul>
+  <li>Functions: <code class="language-plaintext highlighter-rouge">array_agg()</code>, <code class="language-plaintext highlighter-rouge">distinct()</code>, approximate percentiles</li>
+  <li>
+<strong>Storage</strong>: Separate buffer, pointer stored in row</li>
+  <li>
+<strong>Example</strong>:
+    <div class="language-plaintext highlighter-rouge">
+<div class="highlight"><pre class="highlight"><code>Hash table row:
+[grouping_key | pointer_to_accumulator_buffer]
+</code></pre></div>    </div>
+  </li>
+</ul>
+
+<h2 id="operators">Operators</h2>
+
+<h3 id="execution-model">Execution Model</h3>
+
+<h4 id="task-pipeline-driver">Task, Pipeline, Driver</h4>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Task (query plan fragment)
+  ↓
+Divided into Pipelines (linear sub-trees)
+  ↓
+Each Pipeline → Multiple Drivers (threads of execution)
+
+Example:
+  HashJoin splits into:
+    - Pipeline 1: HashBuild
+    - Pipeline 2: HashProbe
+</code></pre></div></div>
+
+<p><strong>Driver Characteristics</strong>:</p>
+<ul>
+  <li>Can go on/off thread based on work availability</li>
+  <li>Reasons to go off-thread:
+    <ul>
+      <li>Consumer hasn’t consumed data yet</li>
+      <li>Source hasn’t produced data</li>
+      <li>Waiting for file scans</li>
+    </ul>
+  </li>
+  <li>More convenient than Volcano iterator model (state is resumable)</li>
+</ul>
+
+<h4 id="operator-api">Operator API</h4>
+<ul>
+  <li>
+<code class="language-plaintext highlighter-rouge">addInput()</code>: Add batch of vectors</li>
+  <li>
+<code class="language-plaintext highlighter-rouge">getOutput()</code>: Get batch of vectors</li>
+  <li>
+<code class="language-plaintext highlighter-rouge">isReady()</code>: Ready to accept more input?</li>
+  <li>
+<code class="language-plaintext highlighter-rouge">noMoreInput()</code>: Signal end of input (flush state)</li>
+</ul>
+
+<h3 id="tablescan-filter-project">TableScan, Filter, Project</h3>
+
+<h4 id="filter-execution">Filter Execution</h4>
+<ul>
+  <li>
+<strong>Column-by-column processing</strong>: Filter columns first</li>
+  <li>
+<strong>Adaptive filter ordering</strong>:
+    <div class="language-plaintext highlighter-rouge">
+<div class="highlight"><pre class="highlight"><code>Metric: time / (1 + values_in - values_out)
+
+Choose filter that drops most values in least time
+</code></pre></div>    </div>
+  </li>
+  <li>
+<strong>SIMD for simple filters</strong>:
+    <ul>
+      <li>Process multiple values per CPU clock with AVX2</li>
+      <li>Integer comparisons ~1 hit per clock</li>
+    </ul>
+  </li>
+</ul>
+
+<h4 id="dictionary-encoded-filters">Dictionary-Encoded Filters</h4>
+<ul>
+  <li>
+<strong>Cache filter results</strong> (memoization as in expression eval)</li>
+  <li>
+<strong>SIMD cache lookup</strong>:
+    <ul>
+      <li>Gather values</li>
+      <li>Compare against cache</li>
+      <li>Permute to write passing rows</li>
+      <li>
+        <blockquote>
+          <p>1 hit per CPU clock</p>
+        </blockquote>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h4 id="large-in-filters">Large IN Filters</h4>
+<ul>
+  <li>For hash join pushdown</li>
+  <li>Trigger 4 cache misses at a time (memory-level parallelism)</li>
+</ul>
+
+<h4 id="filterproject-optimization">FilterProject Optimization</h4>
+<ul>
+  <li>
+<strong>Single expression context</strong> for all filter + project expressions</li>
+  <li>
+<strong>Execution order</strong>:
+    <ol>
+      <li>Evaluate filter on all rows</li>
+      <li>If no rows pass → <strong>skip project expressions entirely</strong>
+</li>
+      <li>Else → evaluate projects only on passing rows</li>
+    </ol>
+  </li>
+</ul>
+
+<h3 id="hash-table-for-joins-and-aggregations">Hash Table for Joins and Aggregations</h3>
+
+<h4 id="vectorhasher">VectorHasher</h4>
+<ul>
+  <li>
+<strong>Purpose</strong>: Process hashing keys in columnar manner</li>
+  <li>
+<strong>Adaptivity</strong>: Recognizes key characteristics
+    <div class="language-plaintext highlighter-rouge">
+<div class="highlight"><pre class="highlight"><code>If keys map to small integer range:
+  → Flat array (direct indexing)
+
+Else if multiple keys can map to single 64-bit key:
+  → Single normalized key
+  If range small:
+    → Flat array
+  Else:
+    → Hash table with single key
+
+Else:
+  → Multi-part hash key (less efficient)
+</code></pre></div>    </div>
+  </li>
+  <li>
+<strong>Dynamic</strong>: Can change as more data is processed</li>
+  <li>
+<strong>Pushdown</strong>: VectorHashers can be pushed to TableScans as IN filters</li>
+</ul>
+
+<h4 id="hash-table-layout">Hash Table Layout</h4>
+<ul>
+  <li>
+<strong>Similar to Meta’s F14</strong> hash table</li>
+  <li>
+<strong>Memory access interleaving</strong>:
+    <ul>
+      <li>Lookups for different keys interleaved</li>
+      <li>Maximize cache misses in-flight simultaneously</li>
+      <li>Reduce pipeline stalls</li>
+    </ul>
+  </li>
+  <li>
+<strong>Storage</strong>: Row-wise (minimize cache misses for dependent data)</li>
+</ul>
+
+<h3 id="memory-management">Memory Management</h3>
+
+<h4 id="memory-pools">Memory Pools</h4>
+<ul>
+  <li>
+<strong>Hierarchical tracking</strong> of memory usage</li>
+  <li>
+<strong>Allocation types</strong>:
+    <ul>
+      <li>Small objects (plans, expressions) → C++ heap</li>
+      <li>Large objects (cache, hash tables, buffers) → Custom allocator</li>
+    </ul>
+  </li>
+</ul>
+
+<h4 id="custom-allocator">Custom Allocator</h4>
+<ul>
+  <li>
+<strong>Zero fragmentation</strong> for large objects</li>
+  <li>Uses <code class="language-plaintext highlighter-rouge">mmap</code> and <code class="language-plaintext highlighter-rouge">madvise</code> (similar to Umbra)</li>
+  <li>
+<strong>Memory tracking</strong>: All allocations through pools tracked</li>
+  <li>
+<strong>Limit enforcement</strong>: Per-pool limits</li>
+</ul>
+
+<h4 id="memory-reservation">Memory Reservation</h4>
+<ul>
+  <li>
+<strong>Purpose</strong>: Guarantee budget for specific operation</li>
+  <li>Example: Processing batch of group-by keys</li>
+</ul>
+
+<h4 id="recovery-mechanisms">Recovery Mechanisms</h4>
+
+<p><strong>1. Pause and Resume</strong></p>
+<ul>
+  <li>Consumers can be <strong>asynchronously paused</strong>
+</li>
+  <li>Consumer acknowledges, goes off-thread</li>
+  <li>Returns continuation future for resumption</li>
+  <li>While paused: Task can be instructed to spill or cancel</li>
+</ul>
+
+<p><strong>2. Memory Arbiter</strong></p>
+<ul>
+  <li>
+<strong>Process-wide</strong> visibility over all tasks</li>
+  <li>Tracks:
+    <ul>
+      <li>Memory usage per task</li>
+      <li>Reclaimable memory (how much could be freed by spilling)</li>
+    </ul>
+  </li>
+  <li>
+<strong>Pluggable logic</strong>: Which task to spill/cancel?</li>
+</ul>
+
+<p><strong>3. Spilling Interface</strong></p>
+<ul>
+  <li>Operators implement:
+    <ul>
+      <li>
+<code class="language-plaintext highlighter-rouge">reclaimableMemory()</code>: How much could be released?</li>
+      <li>
+<code class="language-plaintext highlighter-rouge">spill()</code>: Actual spilling method</li>
+    </ul>
+  </li>
+  <li>If not implemented: Operator must continue without extra memory or fail</li>
+</ul>
+
+<p><strong>4. Adaptive Resource Management</strong></p>
+<ul>
+  <li>Operators monitor memory pressure</li>
+  <li>Example: Exchange operator reduces buffer size when memory scarce</li>
+</ul>
+
+<h4 id="caching-memory--ssd">Caching (Memory + SSD)</h4>
+
+<p><strong>Architecture</strong>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Disaggregated Storage (S3, HDFS)
+         ↓ Read
+    Memory Cache (all unused RAM)
+         ↓ Evict
+      SSD Cache (local disk)
+</code></pre></div></div>
+
+<p><strong>Memory Cache</strong>:</p>
+<ul>
+  <li>
+<strong>Allocation</strong>: All memory not used otherwise</li>
+  <li>
+<strong>Buffer sizes</strong>: Arbitrary (match columnar dataset layout)</li>
+  <li>No fragmentation (mmap/madvise)</li>
+</ul>
+
+<p><strong>Read Coalescing</strong>:</p>
+<ul>
+  <li>Merge nearby column reads if gap is small</li>
+  <li>
+<strong>Thresholds</strong>:
+    <ul>
+      <li>SSD: ~20KB gap</li>
+      <li>Disaggregated storage: ~500KB gap</li>
+    </ul>
+  </li>
+  <li>
+<strong>Benefit</strong>: Temporal locality → correlated columns cached together</li>
+</ul>
+
+<p><strong>Adaptive Prefetching</strong>:</p>
+<ul>
+  <li>Track column access frequencies per-query</li>
+  <li>Prefetch hot columns in advance</li>
+  <li>
+<strong>Result</strong>: Interleave IO stalls with CPU processing</li>
+  <li>Many workloads effectively served from memory (IO off critical path)</li>
+</ul>
+
+<p><strong>Performance</strong> (26-core, 64GB RAM, 2x2TB SSD):</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Storage Layer          Read Rate
+RAM cache             8 GB/s
+SSD cache             2-3 GB/s
+Disaggregated (S3)    700 MB/s
+
+Speedup:
+  RAM vs SSD:              ~3x
+  SSD vs Disaggregated:    ~4x
+  RAM vs Disaggregated:    ~12x
+</code></pre></div></div>
+
+<h2 id="experimental-results">Experimental Results</h2>
+
+<h3 id="tpc-h-80-nodes-64gb-ram-2x2tb-ssd-3tb-dataset">TPC-H (80 nodes, 64GB RAM, 2x2TB SSD, 3TB dataset)</h3>
+
+<p><strong>Setup</strong>:</p>
+<ul>
+  <li>Prestissimo (Velox C++) vs Presto Java</li>
+  <li>Warm cache on both</li>
+  <li>ORC format, no compression</li>
+  <li>Optimized join trees</li>
+</ul>
+
+<p><strong>Results</strong>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Query    Wall Time (sec)     CPU Time (sec)      Workload Type
+         C++   Java  Speedup  C++    Java  Speedup
+
+Q1       5     42    8.4x     2211   14435  6.5x   CPU-bound
+Q6       1     9     9.0x     538    2018   3.7x   CPU-bound
+Q13      15    31    2.0x     5647   12322  2.1x   Shuffle-heavy
+Q19      6     13    2.1x     1362   3483   2.5x   Shuffle-heavy
+</code></pre></div></div>
+
+<p><strong>Observations</strong>:</p>
+<ul>
+  <li>CPU-bound: <strong>~9x speedup</strong>, now bottlenecked on coordinator</li>
+  <li>Shuffle-heavy: <strong>~2x speedup</strong>, bottlenecked on shuffle latency</li>
+</ul>
+
+<h3 id="real-production-workloads">Real Production Workloads</h3>
+
+<p><strong>Setup</strong>:</p>
+<ul>
+  <li>Replay production traffic from interactive analytical tools</li>
+  <li>Two identical clusters (Prestissimo vs Presto Java)</li>
+</ul>
+
+<p><strong>Results</strong>:</p>
+<ul>
+  <li>
+<strong>Average speedup</strong>: 6-7x</li>
+  <li>
+<strong>Many queries</strong>: 10x or more speedup</li>
+  <li>Distribution histogram shows wide range (0x to 10x+)</li>
+</ul>
+
+<h3 id="capacity-impact">Capacity Impact</h3>
+<p><strong>Experiment</strong>: Shadow production workloads, reduce Prestissimo cluster size</p>
+
+<p><strong>Result</strong>: <strong>3x fewer servers</strong> (60 → 20) for same workload with equal/better performance</p>
+
+<p><strong>Implications</strong>:</p>
+<ul>
+  <li>Significant datacenter power savings</li>
+  <li>Lower hardware costs</li>
+  <li>Smaller operational footprint</li>
+</ul>
+
+<h2 id="lessons-and-future-directions">Lessons and Future Directions</h2>
+
+<h3 id="key-insights">Key Insights</h3>
+
+<h4 id="1-siloed-engines-can-be-unified">1. Siloed Engines Can Be Unified</h4>
+<ul>
+  <li>Velox integrated with 12+ systems at Meta:
+    <ul>
+      <li>Analytics: Presto, Spark</li>
+      <li>Stream processing: XStream</li>
+      <li>Messaging: Scribe</li>
+      <li>Ingestion: FBETL</li>
+      <li>ML: PyTorch (TorchArrow), F3</li>
+      <li>And more</li>
+    </ul>
+  </li>
+  <li>
+<strong>Proof point</strong>: Unified execution engine is achievable</li>
+</ul>
+
+<h4 id="2-modularity-enables-reusability">2. Modularity Enables Reusability</h4>
+<ul>
+  <li>Engines pick components they need</li>
+  <li>Simple cases: Just Type, Vector, Serializer</li>
+  <li>Full SQL engine: All operators + resource management</li>
+</ul>
+
+<h4 id="3-extensibility-is-critical">3. Extensibility is Critical</h4>
+<ul>
+  <li>Generic components in library</li>
+  <li>Engine-specific plugins in engine codebase</li>
+  <li>Examples:
+    <ul>
+      <li>Generic: ORC/Parquet, common operators</li>
+      <li>Engine-specific: ML functions, stream operators</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="emerging-trends">Emerging Trends</h3>
+
+<h4 id="1-ai-as-primary-data-consumer">1. AI as Primary Data Consumer</h4>
+<ul>
+  <li>ML workloads dominate data processing</li>
+  <li>Need for unified Data Analytics + ML infrastructure</li>
+  <li>TorchArrow demonstrates viability</li>
+</ul>
+
+<h4 id="2-hardware-componentization">2. Hardware Componentization</h4>
+<ul>
+  <li>GPUs, FPGAs, tensor accelerators</li>
+  <li>Cache-coherent interconnects (CXL)</li>
+  <li>Future: Specialized kernels plugged into data management “bus”</li>
+</ul>
+
+<h4 id="3-platform-evolution">3. Platform Evolution</h4>
+<ul>
+  <li>Apache Arrow: Standardized in-memory format</li>
+  <li>Substrait: Interoperable plan representation</li>
+  <li>
+<strong>Velox</strong>: Execution engine layer</li>
+  <li>
+<strong>Vision</strong>: Plug-and-play specialized processing kernels</li>
+</ul>
+
+<h3 id="open-questions-and-future-work">Open Questions and Future Work</h3>
+
+<h4 id="1-codegen-trade-offs">1. Codegen Trade-offs</h4>
+<ul>
+  <li>When does codegen outweigh compilation delays?</li>
+  <li>Codegen vs JIT LLVM compilation?</li>
+  <li>Runtime adaptivity between vectorized and codegen paths?</li>
+</ul>
+
+<h4 id="2-low-latency-workloads">2. Low-Latency Workloads</h4>
+<ul>
+  <li>Operational databases</li>
+  <li>Small batch sizes</li>
+  <li>Vectorization overhead for single rows</li>
+  <li>Solutions under investigation</li>
+</ul>
+
+<h4 id="3-local-intelligence-and-adaptivity">3. Local Intelligence and Adaptivity</h4>
+<ul>
+  <li>Less reliance on omniscient optimizer</li>
+  <li>Emphasis on local adaptivity at all stack levels</li>
+  <li>Auto-configuration and self-driven systems</li>
+</ul>
+
+<h4 id="4-one-engine-for-all-workloads">4. One Engine for All Workloads?</h4>
+<ul>
+  <li>Batch/ETL, interactive analytics, stream processing</li>
+  <li>Transactional, AI/ML, and more</li>
+  <li>Single extensible open source engine</li>
+  <li>
+<strong>Challenge</strong>: “One size does not fit all” but with adaptivity</li>
+</ul>
+
+<h2 id="key-insights-1">Key Insights</h2>
+
+<h3 id="technical-innovations">Technical Innovations</h3>
+
+<h4 id="1-vectorization--adaptivity">1. Vectorization + Adaptivity</h4>
+<ul>
+  <li>Process data in columnar batches</li>
+  <li>Adapt to data characteristics at runtime</li>
+  <li>Dictionary encoding, memoization, peeling</li>
+</ul>
+
+<h4 id="2-developer-productivity">2. Developer Productivity</h4>
+<ul>
+  <li>Simple function API hides complexity</li>
+  <li>Same performance as hand-optimized vectorized code</li>
+  <li>Compiler auto-vectorization (SIMD generation)</li>
+</ul>
+
+<h4 id="3-memory-and-resource-management">3. Memory and Resource Management</h4>
+<ul>
+  <li>Zero-fragmentation allocator (mmap/madvise)</li>
+  <li>Hierarchical memory tracking</li>
+  <li>Spilling and caching support</li>
+  <li>Adaptive prefetching</li>
+</ul>
+
+<h4 id="4-consistent-semantics">4. Consistent Semantics</h4>
+<ul>
+  <li>Same function behavior across all engines</li>
+  <li>End of “12 different substr() implementations”</li>
+  <li>Users can transfer knowledge between systems</li>
+</ul>
+
+<h3 id="strategic-impact">Strategic Impact</h3>
+
+<h4 id="1-engineering-efficiency">1. Engineering Efficiency</h4>
+<ul>
+  <li>Features developed once, maintained once</li>
+  <li>Eliminates duplication across 12+ systems</li>
+  <li>Faster innovation (deploy to all engines at once)</li>
+</ul>
+
+<h4 id="2-hardware-partnerships">2. Hardware Partnerships</h4>
+<ul>
+  <li>Single integration point for hardware vendors</li>
+  <li>New hardware optimizations benefit all engines</li>
+  <li>Example: GPUs, accelerators, CXL devices</li>
+</ul>
+
+<h4 id="3-research-collaboration">3. Research Collaboration</h4>
+<ul>
+  <li>Open source enables academic partnerships</li>
+  <li>Unified platform for testing new ideas</li>
+  <li>Ideas deployed to production at scale</li>
+</ul>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li>
+<li>
+              <a href="mailto:">
+                
+              </a>
+            </li>
+</ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
+<script async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script>
+</body>
+
+</html>

@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>Snowflake | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="Snowflake" />
+<meta property="og:locale" content="en_US" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="Snowflake" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"Snowflake","url":"/teaching/db/26fa/notes/snowflake.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"><link type="application/atom+xml" rel="alternate" href="/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>Snowflake</h1>
+         </header> -->
+
+  <section>
+    <h1 id="snowflake">Snowflake</h1>
+<h2 id="motivation">Motivation</h2>
+<ul>
+  <li>Traditional data warehouses struggle in the cloud
+    <ul>
+      <li>Designed for fixed resources (can’t leverage cloud elasticity)</li>
+      <li>Depend on complex ETL pipelines and physical tuning</li>
+      <li>Poor fit for semi-structured data (JSON, XML, Avro)</li>
+    </ul>
+  </li>
+  <li>Big Data platforms (Hadoop, Spark) lack:
+    <ul>
+      <li>Efficiency and features of established data warehousing</li>
+      <li>Require significant engineering effort to use</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="goals-enterprise-ready-cloud-data-warehouse">Goals (Enterprise-ready cloud data warehouse)</h2>
+<ul>
+  <li>Pure SaaS experience (no tuning, no physical design)</li>
+  <li>Full SQL support with ACID transactions</li>
+  <li>Semi-structured data support (schema-less, JSON, Avro)</li>
+  <li>Elastic scaling (storage and compute independently)</li>
+  <li>High availability (tolerate node/cluster/data center failures)</li>
+  <li>Cost-efficient (pay only for what you use)</li>
+  <li>Secure (end-to-end encryption)</li>
+</ul>
+
+<h2 id="key-design-choice-storage-vs-compute-separation">Key Design Choice: Storage vs Compute Separation</h2>
+
+<h3 id="problems-with-shared-nothing-in-cloud">Problems with Shared-Nothing in Cloud</h3>
+<ul>
+  <li><strong>Heterogeneous Workload</strong>
+    <ul>
+      <li>Bulk loading (high I/O, light compute) vs complex queries (low I/O, heavy compute)</li>
+      <li>Fixed hardware configuration = poor average utilization</li>
+    </ul>
+  </li>
+  <li><strong>Membership Changes</strong>
+    <ul>
+      <li>Node failures or resizing requires data reshuffling</li>
+      <li>Performance impact limits elasticity and availability</li>
+    </ul>
+  </li>
+  <li><strong>Online Upgrade</strong>
+    <ul>
+      <li>Software/hardware upgrades must touch every node</li>
+      <li>Hard to implement without downtime in tightly-coupled system</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="snowflakes-solution">Snowflake’s Solution</h3>
+<ul>
+  <li>Separate storage and compute</li>
+  <li>Storage: Amazon S3 (or any blob store)</li>
+  <li>Compute: Snowflake’s shared-nothing engine</li>
+  <li>Local disk for caching (not for replication)
+    <ul>
+      <li>Cache hot data only</li>
+      <li>Performance approaches/exceeds pure shared-nothing when caches warm</li>
+    </ul>
+  </li>
+  <li>Novel architecture: <strong>multi-cluster, shared-data</strong></li>
+</ul>
+
+<h2 id="architecture-three-layers">Architecture (Three Layers)</h2>
+
+<h3 id="1-data-storage-layer">1. Data Storage Layer</h3>
+<ul>
+  <li>Uses Amazon S3 for table data and query results</li>
+  <li>Why S3?
+    <ul>
+      <li>High availability, strong durability (99.999999999%)</li>
+      <li>Usability hard to beat</li>
+      <li>No need to build custom storage service</li>
+    </ul>
+  </li>
+  <li>S3 characteristics affect design:
+    <ul>
+      <li>Higher latency than local storage</li>
+      <li>Blob store with PUT/GET/DELETE interface</li>
+      <li>Can only overwrite files in full (no appends)</li>
+      <li>Supports GET requests for file ranges</li>
+    </ul>
+  </li>
+  <li><strong>File format</strong>: Hybrid columnar (PAX)
+    <ul>
+      <li>Tables horizontally partitioned into large immutable files (64MB+)</li>
+      <li>Within each file: values of each column grouped together and compressed</li>
+      <li>File header contains column offsets</li>
+      <li>Queries download only needed columns</li>
+    </ul>
+  </li>
+  <li>S3 also used for:
+    <ul>
+      <li>Temp data (when local disk exhausted)</li>
+      <li>Large query results</li>
+    </ul>
+  </li>
+  <li>Metadata stored in transactional key-value store (Cloud Services layer)</li>
+</ul>
+
+<h3 id="2-virtual-warehouses-vws">2. Virtual Warehouses (VWs)</h3>
+<ul>
+  <li>Clusters of EC2 instances</li>
+  <li>Presented as abstract “T-shirt sizes” (X-Small to XX-Large)
+    <ul>
+      <li>Users don’t see individual worker nodes</li>
+    </ul>
+  </li>
+  <li><strong>Elasticity and Isolation</strong>
+    <ul>
+      <li>Pure compute resources (can create/destroy/resize on demand)</li>
+      <li>Creating/destroying VW has no effect on database state</li>
+      <li>Each query runs on exactly one VW</li>
+      <li>Worker nodes not shared across VWs (strong performance isolation)</li>
+      <li>Users can have multiple VWs running simultaneously</li>
+      <li>All VWs access same shared storage (no data copying needed)</li>
+    </ul>
+  </li>
+  <li><strong>Worker Processes</strong>
+    <ul>
+      <li>Each worker node spawns new process per query</li>
+      <li>Process lives only for query duration</li>
+      <li>Failures easily contained (retry query)</li>
+    </ul>
+  </li>
+  <li><strong>Local Caching and File Stealing</strong>
+    <ul>
+      <li>Each worker node caches table files on local disk</li>
+      <li>Cache shared among concurrent/subsequent queries</li>
+      <li>LRU replacement policy</li>
+      <li>Consistent hashing assigns files to nodes (improves hit rate)</li>
+      <li>Lazy consistent hashing (no immediate reshuffling on membership changes)</li>
+      <li>File stealing: slow nodes can request help from faster peers</li>
+    </ul>
+  </li>
+  <li><strong>Execution Engine</strong>
+    <ul>
+      <li>Columnar: better CPU cache/SIMD usage, compression</li>
+      <li>Vectorized: pipeline batches of thousands of rows (no materialization)</li>
+      <li>Push-based: operators push results downstream (better cache efficiency)</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="3-cloud-services-layer">3. Cloud Services Layer</h3>
+<ul>
+  <li>Multi-tenant, long-lived services (shared across users)</li>
+  <li>Services: access control, query optimizer, transaction manager, metadata</li>
+  <li>Replicated for high availability and scalability</li>
+  <li><strong>Query Management and Optimization</strong>
+    <ul>
+      <li>Cascades-style, top-down cost-based optimization</li>
+      <li>No indices, so smaller plan search space</li>
+      <li>Postpone decisions to execution time (e.g., data distribution for joins)</li>
+      <li>Tracks query state for performance counters and failure detection</li>
+    </ul>
+  </li>
+  <li><strong>Concurrency Control</strong>
+    <ul>
+      <li>ACID transactions via Snapshot Isolation (SI)</li>
+      <li>SI on top of Multi-Version Concurrency Control (MVCC)</li>
+      <li>Natural fit: table files are immutable (due to S3)</li>
+      <li>Write operations create new table version by adding/removing files</li>
+      <li>File additions/removals tracked in metadata</li>
+    </ul>
+  </li>
+  <li><strong>Pruning (instead of indices)</strong>
+    <ul>
+      <li>Min-max based pruning (zone maps, small materialized aggregates)</li>
+      <li>Maintains min/max values for each table file</li>
+      <li>Works for relational columns AND paths in semi-structured data</li>
+      <li>Pruning for complex expressions (e.g., <code class="language-plaintext highlighter-rouge">WEEKDAY(orderdate) IN (6,7)</code>)</li>
+      <li>Dynamic pruning: hash join statistics pushed to probe side</li>
+      <li>Bloom filters over paths in semi-structured data</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="feature-highlights">Feature Highlights</h2>
+
+<h3 id="pure-saas-experience">Pure SaaS Experience</h3>
+<ul>
+  <li>Web UI accessible from any browser (no software download needed)</li>
+  <li>Users can point at cloud data and query immediately</li>
+  <li>No tuning knobs, no physical design, no storage grooming</li>
+  <li>Only one tuning parameter: how much performance you want</li>
+</ul>
+
+<h3 id="continuous-availability">Continuous Availability</h3>
+
+<h4 id="fault-resilience">Fault Resilience</h4>
+<ul>
+  <li><strong>Data Storage</strong>: S3 replicated across availability zones (AZs)</li>
+  <li><strong>Metadata</strong>: distributed across multiple AZs</li>
+  <li><strong>Cloud Services</strong>: stateless nodes in multiple AZs with load balancer
+    <ul>
+      <li>Single node/AZ failure causes no system-wide impact</li>
+    </ul>
+  </li>
+  <li><strong>Virtual Warehouses</strong>: not distributed across AZs (for performance)
+    <ul>
+      <li>Worker node failure: query fails, transparently re-executed</li>
+      <li>Standby node pool for fast replacement</li>
+      <li>Full AZ failure: user must re-provision VW (rare event)</li>
+    </ul>
+  </li>
+</ul>
+
+<h4 id="online-upgrade">Online Upgrade</h4>
+<ul>
+  <li>Multiple versions of services run side-by-side</li>
+  <li>Services are stateless (hard state in transactional KV store)</li>
+  <li>Metadata versioning and schema evolution</li>
+  <li>Upgrade process:
+    <ol>
+      <li>Deploy new version alongside old version</li>
+      <li>Progressively switch user accounts to new version</li>
+      <li>Queries on old version run to completion</li>
+      <li>Terminate old version when all users migrated</li>
+    </ol>
+  </li>
+  <li>Different VW versions can share same worker nodes and caches</li>
+  <li>No downtime, no performance degradation</li>
+  <li>Weekly upgrades in production</li>
+  <li>Can quickly downgrade if critical bugs found</li>
+</ul>
+
+<h3 id="semi-structured-data">Semi-Structured Data</h3>
+
+<h4 id="variant-type">VARIANT Type</h4>
+<ul>
+  <li>Three new SQL types: VARIANT, ARRAY, OBJECT</li>
+  <li>VARIANT stores:
+    <ul>
+      <li>Any native SQL type (DATE, VARCHAR, etc.)</li>
+      <li>Variable-length ARRAYs</li>
+      <li>JavaScript-like OBJECTs (maps from strings to VARIANT values)</li>
+    </ul>
+  </li>
+  <li>Self-describing, compact binary serialization</li>
+  <li>Can be used as join keys, grouping keys, ordering keys</li>
+</ul>
+
+<h4 id="elt-vs-etl">ELT vs ETL</h4>
+<ul>
+  <li>“Schema later” approach</li>
+  <li>Load JSON/Avro/XML directly into VARIANT column</li>
+  <li>No schema specification required</li>
+  <li>Schema evolution decoupled from producers/consumers</li>
+  <li>Transform using full SQL power after loading</li>
+</ul>
+
+<h4 id="post-relational-operations">Post-relational Operations</h4>
+<ul>
+  <li>Extraction: by field name (OBJECT) or offset (ARRAY)
+    <ul>
+      <li>Functional SQL notation or JavaScript-like path syntax</li>
+    </ul>
+  </li>
+  <li>Flattening: SQL lateral views (can be recursive)</li>
+  <li>Aggregation: ARRAY_AGG, OBJECT_AGG functions</li>
+</ul>
+
+<h4 id="columnar-storage-for-semi-structured-data">Columnar Storage for Semi-Structured Data</h4>
+<ul>
+  <li>Automatic statistical analysis of documents per table file</li>
+  <li>Automatic type inference</li>
+  <li>Frequently common typed paths extracted and stored separately</li>
+  <li>Same compressed columnar format as relational data</li>
+  <li>Pruning metadata computed for extracted columns</li>
+  <li>Projection pushdown: access only needed columns</li>
+  <li>Bloom filters over paths (for pruning)</li>
+</ul>
+
+<h4 id="optimistic-conversion">Optimistic Conversion</h4>
+<ul>
+  <li>Converts strings to native types (dates, numbers) at write time</li>
+  <li>Preserves both converted result and original string</li>
+  <li>Allows pruning on dates</li>
+  <li>Minimal performance impact (unused columns not loaded)</li>
+</ul>
+
+<h4 id="performance">Performance</h4>
+<ul>
+  <li>TPC-H experiments (SF100, SF1000)</li>
+  <li>Schema-less (single VARIANT column) vs relational schema</li>
+  <li>~10% overhead for most queries</li>
+  <li>Benefits of columnar storage, execution, and pruning without user effort</li>
+</ul>
+
+<h3 id="time-travel-and-cloning">Time Travel and Cloning</h3>
+
+<h4 id="time-travel">Time Travel</h4>
+<ul>
+  <li>File retention (up to 90 days) enables reading earlier versions
+    <div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">SELECT</span> <span class="o">*</span> <span class="k">FROM</span> <span class="n">my_table</span> <span class="k">AT</span><span class="p">(</span><span class="nb">TIMESTAMP</span> <span class="o">=&gt;</span> <span class="s1">'2015-05-01 16:20:00'</span><span class="p">);</span>
+<span class="k">SELECT</span> <span class="o">*</span> <span class="k">FROM</span> <span class="n">my_table</span> <span class="k">AT</span><span class="p">(</span><span class="k">OFFSET</span> <span class="o">=&gt;</span> <span class="o">-</span><span class="mi">60</span><span class="o">*</span><span class="mi">5</span><span class="p">);</span> <span class="c1">-- 5 min ago</span>
+<span class="k">SELECT</span> <span class="o">*</span> <span class="k">FROM</span> <span class="n">my_table</span> <span class="k">BEFORE</span><span class="p">(</span><span class="k">STATEMENT</span> <span class="o">=&gt;</span> <span class="s1">'8e5d0ca9-...'</span><span class="p">);</span>
+</code></pre></div>    </div>
+  </li>
+  <li>Can join different versions in same query
+    <div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">SELECT</span> <span class="k">new</span><span class="p">.</span><span class="k">key</span><span class="p">,</span> <span class="k">new</span><span class="p">.</span><span class="n">value</span><span class="p">,</span> <span class="k">old</span><span class="p">.</span><span class="n">value</span> <span class="k">FROM</span> <span class="n">my_table</span> <span class="k">new</span>
+<span class="k">JOIN</span> <span class="n">my_table</span> <span class="k">AT</span><span class="p">(</span><span class="k">OFFSET</span> <span class="o">=&gt;</span> <span class="o">-</span><span class="mi">86400</span><span class="p">)</span> <span class="k">old</span> <span class="c1">-- 1 day ago</span>
+<span class="k">ON</span> <span class="k">new</span><span class="p">.</span><span class="k">key</span> <span class="o">=</span> <span class="k">old</span><span class="p">.</span><span class="k">key</span> <span class="k">WHERE</span> <span class="k">new</span><span class="p">.</span><span class="n">value</span> <span class="o">&lt;&gt;</span> <span class="k">old</span><span class="p">.</span><span class="n">value</span><span class="p">;</span>
+</code></pre></div>    </div>
+  </li>
+</ul>
+
+<h4 id="undrop">UNDROP</h4>
+<ul>
+  <li>Quickly restore accidentally dropped tables/schemas/databases
+    <div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">DROP</span> <span class="k">DATABASE</span> <span class="n">important_db</span><span class="p">;</span> <span class="c1">-- whoops!</span>
+<span class="n">UNDROP</span> <span class="k">DATABASE</span> <span class="n">important_db</span><span class="p">;</span>
+</code></pre></div>    </div>
+  </li>
+</ul>
+
+<h4 id="clone">CLONE</h4>
+<ul>
+  <li>Create copy of table/schema/database without physical file copying</li>
+  <li>Only copies metadata</li>
+  <li>Both tables initially refer to same files</li>
+  <li>Can be modified independently thereafter</li>
+  <li>Can combine with AT/BEFORE for after-the-fact snapshots
+    <div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">CREATE</span> <span class="k">DATABASE</span> <span class="n">recovered_db</span> <span class="n">CLONE</span> <span class="n">important_db</span>
+<span class="k">BEFORE</span><span class="p">(</span><span class="k">STATEMENT</span> <span class="o">=&gt;</span> <span class="s1">'8e5d0ca9-...'</span><span class="p">);</span>
+</code></pre></div>    </div>
+  </li>
+</ul>
+
+<h3 id="security">Security</h3>
+
+<h4 id="key-hierarchy-4-levels">Key Hierarchy (4 levels)</h4>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Root Keys (AWS CloudHSM)
+  ↓
+Account Keys (one per user account)
+  ↓
+Table Keys (one per table)
+  ↓
+File Keys (one per file, derived from table key + filename)
+</code></pre></div></div>
+<ul>
+  <li>Hierarchical model constrains data protected by each key</li>
+  <li>Multi-tenancy isolation: separate account key per user</li>
+</ul>
+
+<h4 id="key-life-cycle">Key Life Cycle</h4>
+<ul>
+  <li><strong>Key Rotation</strong>: create new versions periodically (e.g., monthly)
+    <ul>
+      <li>Retired versions used only to decrypt (not encrypt)</li>
+    </ul>
+  </li>
+  <li><strong>Rekeying</strong>: re-encrypt old data with new keys (e.g., yearly)
+    <ul>
+      <li>Allows retired keys to be destroyed</li>
+    </ul>
+  </li>
+  <li>File keys cryptographically derived (not stored separately)
+    <ul>
+      <li>Table key + filename → file key</li>
+      <li>Avoids managing billions of file keys</li>
+    </ul>
+  </li>
+  <li>Re-encryption uses separate workers (no impact on queries)</li>
+  <li>Atomic metadata update after rekeying</li>
+</ul>
+
+<h4 id="end-to-end-encryption">End-to-End Encryption</h4>
+<ul>
+  <li>AWS CloudHSM for root keys (tamper-proof)
+    <ul>
+      <li>Root keys never leave HSM devices</li>
+      <li>All root key operations performed in HSM</li>
+    </ul>
+  </li>
+  <li>All data encrypted before:
+    <ul>
+      <li>Sent over network</li>
+      <li>Written to local disk</li>
+      <li>Written to S3</li>
+    </ul>
+  </li>
+  <li>Additional protections:
+    <ul>
+      <li>Isolation via S3 access policies</li>
+      <li>Role-based access control (RBAC)</li>
+      <li>Encrypted import/export (Amazon never sees plaintext)</li>
+      <li>Two-factor authentication</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="real-world-use-cases">Real-World Use Cases</h2>
+
+<h3 id="financial-services">Financial Services</h3>
+
+<h4 id="capital-one-banking--credit-cards">Capital One (Banking &amp; Credit Cards)</h4>
+<ul>
+  <li>Began migrating all data to Snowflake in 2017</li>
+  <li><strong>Scale</strong>: Enables 6,000+ analysts to run millions of queries</li>
+  <li><strong>Performance</strong>: Runs 250 concurrent queries (vs 60 on Teradata)</li>
+  <li><strong>Use cases</strong>:
+    <ul>
+      <li>Data-driven innovation</li>
+      <li>ML model training</li>
+      <li>Compliance and governance</li>
+      <li>Cost visibility and optimization</li>
+    </ul>
+  </li>
+  <li><strong>Benefit</strong>: No performance degradation, instant scaling, lower cost</li>
+</ul>
+
+<h4 id="blocksquare-payments">Block/Square (Payments)</h4>
+<ul>
+  <li>Built self-service fraud prevention models</li>
+  <li>Analysts identify bad actors and detect attack vectors</li>
+  <li>Real-time fraud detection on transaction data</li>
+</ul>
+
+<h4 id="citi-banking">Citi (Banking)</h4>
+<ul>
+  <li>Satisfies regulatory compliance requirements</li>
+  <li>Financial crime detection (KYC, AML)</li>
+  <li>Unifies data across business for anomaly detection</li>
+</ul>
+
+<h3 id="technology--saas">Technology &amp; SaaS</h3>
+
+<h4 id="adobe-creative-software">Adobe (Creative Software)</h4>
+<ul>
+  <li>High-profile Snowflake customer</li>
+  <li>Uses Snowflake for data storage and analysis</li>
+</ul>
+
+<h4 id="doordash-food-delivery">DoorDash (Food Delivery)</h4>
+<ul>
+  <li>Became customer in 2018, migrated data in early 2019</li>
+  <li><strong>Performance</strong>: 2x faster data requests at 50% cost</li>
+  <li>Handles high-volume transaction and delivery data</li>
+</ul>
+
+<h4 id="netflix-streaming-media">Netflix (Streaming Media)</h4>
+<ul>
+  <li>Multi-platform data warehouse approach</li>
+  <li>Uses Snowflake alongside S3/Hive, Redshift, Druid, MySQL</li>
+  <li>Metacat service provides unified view across platforms</li>
+  <li><strong>Use cases</strong>:
+    <ul>
+      <li>Data movement (Hive → Snowflake)</li>
+      <li>Spark compute engine with lineage tracking</li>
+      <li>Federated architecture for complex data needs</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="retail--e-commerce">Retail &amp; E-commerce</h3>
+
+<h4 id="sainsburys-grocery-retail">Sainsbury’s (Grocery Retail)</h4>
+<ul>
+  <li>Real-time transaction and click-stream processing</li>
+  <li>Uses Snowflake Streams and Tasks for continuous data pipelines</li>
+</ul>
+
+<h4 id="s-group--kesko-finlands-largest-retailers">S-Group &amp; Kesko (Finland’s largest retailers)</h4>
+<ul>
+  <li>Single platform for automating key processes</li>
+  <li>Model design, data pipelines, workflow management, deployments</li>
+  <li>Powered by Agile Data Engine on Snowflake</li>
+</ul>
+
+<h4 id="petco-pet-retail">Petco (Pet Retail)</h4>
+<ul>
+  <li>Built advanced real-time analytics platform</li>
+  <li>Scalable data pipeline for real-time ingestion and processing</li>
+</ul>
+
+<h3 id="insurance--risk">Insurance &amp; Risk</h3>
+
+<h4 id="progressive-insurance">Progressive Insurance</h4>
+<ul>
+  <li>Real-time speed data analysis</li>
+  <li>Customer behavior analysis for usage-based pricing</li>
+  <li>Delivers appropriate discounts based on driving patterns</li>
+</ul>
+
+<h3 id="healthcare">Healthcare</h3>
+
+<h4 id="nib-group-australian-health-insurance">nib group (Australian Health Insurance)</h4>
+<ul>
+  <li>Adopted Snowflake for cloud data warehouse</li>
+  <li><strong>Integration</strong>: Seamless with existing cloud infrastructure</li>
+  <li><strong>Use cases</strong>:
+    <ul>
+      <li>KPIs across claims, sales, policies, customer behavior</li>
+      <li>Tableau dashboards for business metrics</li>
+      <li>Handles large data volumes efficiently</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="travel--hospitality">Travel &amp; Hospitality</h3>
+<ul>
+  <li><strong>Customers</strong>: Hyatt, Tripadvisor, Marriott, JetBlue, Booking.com</li>
+  <li><strong>Use cases</strong>:
+    <ul>
+      <li>Dynamic pricing optimization</li>
+      <li>Operational efficiency</li>
+      <li>Reputation management</li>
+      <li>Sustainability tracking</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="common-use-case-patterns">Common Use Case Patterns</h3>
+
+<h4 id="real-time-streaming-analytics">Real-Time Streaming Analytics</h4>
+<ul>
+  <li><strong>IoT/Manufacturing</strong>: Temperature, vibration, pressure sensors</li>
+  <li><strong>Retail</strong>: Transaction processing, click-stream analysis</li>
+  <li><strong>Financial</strong>: Fraud detection, transaction monitoring</li>
+  <li><strong>Technology</strong>: Snowpipe Streaming for continuous low-latency ingestion</li>
+  <li>Sources: Apache Kafka, CDC streams, IoT sensors, application events</li>
+</ul>
+
+<h4 id="machine-learning--ai">Machine Learning &amp; AI</h4>
+<ul>
+  <li>Model training and deployment within platform</li>
+  <li>Integration with TensorFlow, PyTorch</li>
+  <li>Large dataset loading, transformation, management</li>
+  <li>Credit card fraud detection models</li>
+  <li>Customer behavior prediction</li>
+</ul>
+
+<h4 id="data-sharing--marketplace">Data Sharing &amp; Marketplace</h4>
+<ul>
+  <li><strong>Snowflake Marketplace</strong>: 100+ data providers in 13 categories</li>
+  <li><strong>Partners</strong>: FactSet, Fiserv, Stripe (transaction/risk data)</li>
+  <li><strong>Use cases</strong>:
+    <ul>
+      <li>External data enrichment (COVID-19 data, weather, demographics)</li>
+      <li>Supply chain visibility (vendor → logistics → customer)</li>
+      <li>Location intelligence (CARTO)</li>
+      <li>Data observability (Monte Carlo)</li>
+    </ul>
+  </li>
+</ul>
+
+<h4 id="legacy-migration">Legacy Migration</h4>
+<ul>
+  <li>Companies migrating from Teradata, Oracle, on-prem systems</li>
+  <li>Examples: Penske, Siemens, PayPal, NAVEX, Core Digital Media</li>
+  <li>Reduced cost, improved performance, eliminated physical tuning</li>
+</ul>
+
+<h4 id="compliance--governance">Compliance &amp; Governance</h4>
+<ul>
+  <li>FRTB compliance (finance)</li>
+  <li>KYC/AML (banking)</li>
+  <li>Data lineage tracking</li>
+  <li>Role-based access control</li>
+  <li>End-to-end encryption for regulated data</li>
+</ul>
+
+<h2 id="key-insights">Key Insights</h2>
+<ul>
+  <li>Separation of storage and compute critical for cloud</li>
+  <li>Multi-cluster, shared-data architecture enables:
+    <ul>
+      <li>True elasticity (scale compute independently of storage)</li>
+      <li>Performance isolation (separate VWs for different workloads)</li>
+      <li>Shared data without physical copying</li>
+    </ul>
+  </li>
+  <li>Elasticity changes user behavior:
+    <ul>
+      <li>Can use more nodes for same cost (faster results)</li>
+      <li>Example: 4 nodes × 15 hours ≈ 32 nodes × 2 hours</li>
+    </ul>
+  </li>
+  <li>Schema-less semi-structured data with relational performance
+    <ul>
+      <li>Automatic type inference</li>
+      <li>Columnar storage for extracted paths</li>
+      <li>~10% overhead vs pure relational</li>
+    </ul>
+  </li>
+  <li>Online upgrade critical for SaaS model
+    <ul>
+      <li>Weekly releases</li>
+      <li>No downtime</li>
+      <li>Can quickly downgrade if needed</li>
+    </ul>
+  </li>
+  <li>Pure service principle: no tuning, no physical design, no grooming
+    <ul>
+      <li>Only one parameter: performance level (VW size)</li>
+    </ul>
+  </li>
+</ul>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
+<script async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script>
+</body>
+
+</html>
