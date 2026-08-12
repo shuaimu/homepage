@@ -86,7 +86,7 @@ Milestone grades consider the quality of what the team delivers and each student
 - **Dec 2**: Milestone 6: Final Demo (due Dec 5)
 - **Dec 7**: Milestone 6: Final Demo (if needed)
 
-* [SBU Academic Calendar](https://www.stonybrook.edu/commcms/registrar/calendars/academic_calendars)
+* [SBU Academic Calendar](https://www.stonybrook.edu/registrar/academic-calendar/current-terms/undergrad-calendar-fall-2026.html)
 
 
 ## Office hours

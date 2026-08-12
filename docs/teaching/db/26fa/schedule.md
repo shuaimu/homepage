@@ -67,4 +67,4 @@ table td:first-child {
 | Dec 02 | Student Project Presentations |
 | Dec 07 | Poster Presentations |
 
-[SBU calendar](https://www.stonybrook.edu/commcms/registrar/calendars/)
+[SBU calendar](https://www.stonybrook.edu/registrar/academic-calendar/current-terms/undergrad-calendar-fall-2026.html)

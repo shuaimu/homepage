@@ -23,7 +23,7 @@ Note: Downloading the notes requires your logging into Google with your stonybro
 | Aug 26 | Lecture: Bitcoin                              | |
 | Aug 31 | Lecture: Bitcoin (cont'd)                     | |
 | Sep 2 | Lecture: Design Overview                      | |
-| Sep 7 |                                                | Labor Day |
+| Sep 7 | No class                                       | Labor Day |
 | Sep 9 | Presentation: GUI                             | |
 | Sep 14 | Milestone 1: Proposal and Requirements        | |
 | Sep 16 | Milestone 1: Proposal and Requirements        | Due Sep 19 |
@@ -33,7 +33,7 @@ Note: Downloading the notes requires your logging into Google with your stonybro
 | Sep 30 | Milestone 2: Design and Setup                 | Due Oct 3 |
 | Oct 5 | Presentation: Code Review                     | |
 | Oct 7 | Lecture: A tour of the Rust Lanugage          | |
-| Oct 12 |                                                | Fall break |
+| Oct 12 | No class                                       | Fall break |
 | Oct 14 | Workshop                                      | |
 | Oct 19 | Milestone 3: MVP                              | |
 | Oct 21 | Milestone 3: MVP                              | Due Oct 24 |
@@ -46,7 +46,7 @@ Note: Downloading the notes requires your logging into Google with your stonybro
 | Nov 16 | Milestone 5: Testing and Integration          | |
 | Nov 18 | Milestone 5: Testing and Integration          | Due Nov 21 |
 | Nov 23 | Workshop                                      | |
-| Nov 25 |                                                | Thanksgiving break |
+| Nov 25 | No class                                       | Thanksgiving break |
 | Nov 30 | Milestone 6: Final Demo                       | |
 | Dec 2 | Milestone 6: Final Demo                       | Due Dec 5 |
 | Dec 7 | Milestone 6: Final Demo (if needed)           | Last day of classes |
@@ -54,4 +54,4 @@ Note: Downloading the notes requires your logging into Google with your stonybro
 
 
 
-[SBU undergrad calendar](https://www.stonybrook.edu/commcms/registrar/calendars/_undergrad-calendar-fall-2026.php) 
+[SBU undergrad calendar](https://www.stonybrook.edu/registrar/academic-calendar/current-terms/undergrad-calendar-fall-2026.html) 
