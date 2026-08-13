@@ -11,7 +11,7 @@ layout: page
 # Schedule 
 
 Lecture: MW 2:00-3:20pm (Aug 24 -- Dec 7), NCS 120
-Office hour: MW noon-2pm NCS 351
+Office hour: MW 1-2pm NCS 351
 
 The schedule is tentative and subject to change.
 
@@ -20,36 +20,36 @@ Note: Downloading the notes requires your logging into Google with your stonybro
 | Date   | Topic &nbsp;                                                                   | Comments                                                                                    |
 |--------|--------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------|
 | Aug 24 | Course Overview (Syllabus)                    | |
-| Aug 26 | Lecture: Bitcoin                              | |
-| Aug 31 | Lecture: Bitcoin (cont'd)                     | |
-| Sep 2 | Lecture: Design Overview                      | |
+| Aug 26 | Free session: Team up and brainstorm          | |
+| Aug 31 | Free session: Team up and brainstorm          | |
+| Sep 2 | Lecture: Software Engineering Tech Overview   | |
 | Sep 7 | No class                                       | Labor Day |
-| Sep 9 | Presentation: GUI                             | |
+| Sep 9 | Lecture: Software Modeling, Diagrams, Spec Driven Dev | |
 | Sep 14 | Milestone 1: Proposal and Requirements        | |
-| Sep 16 | Milestone 1: Proposal and Requirements        | Due Sep 19 |
-| Sep 21 | Workshop                                      | |
-| Sep 23 | Lecture: DHT                                  | |
+| Sep 16 | Milestone 1: Proposal and Requirements        | |
+| Sep 21 | Presentation 1: Project Management Tools and Practices | |
+| Sep 23 | Presentation 2: Software Architecture and Design Patterns | |
 | Sep 28 | Milestone 2: Design and Setup                 | |
-| Sep 30 | Milestone 2: Design and Setup                 | Due Oct 3 |
-| Oct 5 | Presentation: Code Review                     | |
-| Oct 7 | Lecture: A tour of the Rust Lanugage          | |
+| Sep 30 | Milestone 2: Design and Setup                 | |
+| Oct 5 | Presentation 3: Prompt Engineering and AI-Assisted Development | |
+| Oct 7 | Presentation 4: API Design and Documentation  | |
 | Oct 12 | No class                                       | Fall break |
-| Oct 14 | Workshop                                      | |
+| Oct 14 | Presentation 5: CI/CD and DevOps              | |
 | Oct 19 | Milestone 3: MVP                              | |
-| Oct 21 | Milestone 3: MVP                              | Due Oct 24 |
-| Oct 26 | Presentation: Testing                         | |
-| Oct 28 | Presentation: Debugging                       | |
+| Oct 21 | Milestone 3: MVP                              | |
+| Oct 26 | Presentation 6: Software Testing              | |
+| Oct 28 | Presentation 7: Debugging and Observability   | |
 | Nov 2 | Milestone 4: Feature-Complete                 | |
-| Nov 4 | Milestone 4: Feature-Complete                 | Due Nov 7 |
-| Nov 9 | Discussion: Boeing                            | |
-| Nov 11 | Presentation: "Fake it until you make it"     | |
+| Nov 4 | Milestone 4: Feature-Complete                 | |
+| Nov 9 | Presentation 8: Software Security and Secure Coding Practices | |
+| Nov 11 | Presentation 9: Software Maintenance, Technical Debt and Refactoring | |
 | Nov 16 | Milestone 5: Testing and Integration          | |
-| Nov 18 | Milestone 5: Testing and Integration          | Due Nov 21 |
-| Nov 23 | Workshop                                      | |
+| Nov 18 | Milestone 5: Testing and Integration          | |
+| Nov 23 | Presentation 10: Responsible and Ethical Tech | |
 | Nov 25 | No class                                       | Thanksgiving break |
 | Nov 30 | Milestone 6: Final Demo                       | |
-| Dec 2 | Milestone 6: Final Demo                       | Due Dec 5 |
-| Dec 7 | Milestone 6: Final Demo (if needed)           | Last day of classes |
+| Dec 2 | Milestone 6: Final Demo                       | |
+| Dec 7 | Poster Session                                | Last day of classes |
 {:.table-striped}
 
 
