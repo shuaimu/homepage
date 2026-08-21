@@ -38,9 +38,9 @@ table td:first-child {
 | Sep 09 | MongoDB Replication<br>[Fault-Tolerant Replication with Pull-Based Consensus in MongoDB](readings/mongodb-nsdi.pdf) |
 | Sep 14 | Student presentation |
 |        | Session III: Index and Storage                                             |
-| Sep 16 | Student presentation |
-| Sep 21 | LSM-Tree<br>[The Log-Structured Merge-Tree (LSM-Tree)](readings/lsm.pdf) |
-| Sep 23 | RocksDB<br>[Evolution of Development Priorities in Key-value Stores Serving Large-scale Applications: The RocksDB Experience](readings/rocksdb.pdf) |
+| Sep 16 | LSM-Tree<br>[The Log-Structured Merge-Tree (LSM-Tree)](readings/lsm.pdf) |
+| Sep 21 | RocksDB<br>[Evolution of Development Priorities in Key-value Stores Serving Large-scale Applications: The RocksDB Experience](readings/rocksdb.pdf) |
+| Sep 23 | Student presentation |
 | Sep 28 | **Exam 1** |
 |        | Session IV: B+ Trees |
 | Sep 30 | B+ Tree<br>[Efficient Locking for Concurrent Operations on B-Trees](readings/lehman-yao.pdf) |
