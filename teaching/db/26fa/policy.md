@@ -56,11 +56,3 @@ There are three exams; we keep the two best scores. You may skip one exam.
 **No makeup tests will be offered.** A missed exam is a zero, which the drop
 covers if you take the other two.
 
-## Negotiation is not allowed
-Our grading standard is open and objective. If you find an error in grading,
-feel free to inform the course staff to request a correction. In any other
-circumstances, any attempt (email/in-person/proxy) to ask for more scores
-(including offering to do extra work) will lead to a 10% penalty in overall
-class score. This is stackable: two attempts will lead to a 20% penalty, and so
-forth.
-
