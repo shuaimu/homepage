@@ -11,7 +11,7 @@ layout: page
 # Schedule 
 Lecture: MW 3:30-4:50pm (Aug 24 -- Dec 7) Location: JAVITS LECTR 109 WESTCAMPUS
 
-Office hour: MW 1-2pm NCS 351 (Please [book a GCal meeting](https://calendar.app.google/5fEbJJZW86Gcgije6) a day before)
+Office hour: MW 1-2pm NCS 351 (If you want to lock in a time, you can [book a meeting with GCal](https://calendar.app.google/5fEbJJZW86Gcgije6))
 
 <!-- Office hour: T 3-5pm in this [Zoom meeting room](https://stonybrook.zoom.us/j/94704333277?pwd=NFhrbGYzUW50ZSt5R0Z3d3hobk54Zz09). Please book a meeting before 6pm using this [link](https://calendly.com/shuaimu/officehour). Each slot is 15 minutes. You can book 2 slots for 30 minutes, 3 slots for 45 minutes, etc. -->
 
