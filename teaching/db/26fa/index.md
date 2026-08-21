@@ -7,7 +7,7 @@ permalink: /teaching/db/26fa/
 [
 [Home](./index.html) | 
 [Schedule](./schedule.html) |
-[Labs](./labs.html) |
+[Project](./project.html) |
 [Policy](./policy.html)
 ]
 # CSE 532-01 (93734) Database Systems (Fall 2026)
@@ -37,12 +37,12 @@ and large-scale data processing platforms.
 
 The course emphasizes real-world systems through influential research papers from 
 companies like Google, Facebook/Meta, Amazon, and Snowflake. Students will study 
-how theoretical concepts are implemented in production systems like Spanner, 
-Aurora, TiDB, MongoDB, Spark and MapReduce. 
+how theoretical concepts are implemented in production systems like Spanner,
+TiDB, MongoDB, Spark and MapReduce. 
 
 The course consists of lectures covering both theory and practice, with readings 
-from top-tier systems conferences (OSDI, SIGMOD, VLDB, NSDI). Labs provide 
-hands-on experience implementing core database components.
+from top-tier systems conferences (OSDI, SIGMOD, VLDB, NSDI). There are three 
+exams, student presentations, and a team project; there are no labs.
 
 ## Prerequisites:
  * Data Structures and Algorithms
@@ -57,17 +57,13 @@ They are listed in rough order of usefulness.
  * Database Management Systems. Raghu Ramakrishnan and Johannes Gehrke,
    McGraw-Hill. -->
 
-## Project and Grading
+## Exams, Project, and Grading
 
-The grading for this course is divided into two main components: the lab assignments and the class project.
+* **Exams (60%)**. Three in-class exams. We keep your **two best scores** (30% each). You may skip one exam. **No makeup tests will be offered.**
+* **Presentations (10%)**. Student paper presentations. See the [schedule](./schedule.html) for dates; topics TBA.
+* **Project (30%)**. A team project. Pick a systems research paper and implement its ideas in [Mako](https://github.com/makodb/mako), or propose your own idea (needs approval). Groups of 3–5. Evaluation is subjective: motivation, completeness, soundness of the implementation, results, and the final presentation. AI is encouraged on the project. See [project ideas](./project.html).
 
-Lab assignments will account for 40% of your final grade. Each student is required to complete the lab work individually. Collaboration between students on lab assignments is not permitted, and the use of AI tools or assistance from others is strictly prohibited. The labs are designed to give you hands-on experience with implementing core database components and to reinforce the concepts covered in lectures.
-
-The remaining 60% of your grade will be based on a class project. For this project, you will select a systems research paper and implement its ideas in Mako, an open-source database system derived from the lab codebase. You are encouraged to form groups of 3-5 students for the project. The evaluation of the project will be very subjective and will consider several factors, including the motivation behind your project, the completeness and soundness of your implementation, the results you obtain, and the quality of your final presentation. You are encouraged to use AI as much as possible for this project.
-
-If you prefer not to implement an existing research work, you may propose your own original project idea. However, any such proposal must be approved by the instructor before you proceed. 
-
-The lab and the project must be finished in either C++ or Rust.
+The project must be finished in either C++ or Rust.
 
 Note: all your code will be released under MIT license; feel free to use it for other purposes (e.g., write it in your resume, or use it to pursue an advanced project with any professor in the department). 
 

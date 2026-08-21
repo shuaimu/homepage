@@ -3,15 +3,15 @@
  <meta charset="utf-8">
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
-<title>Home</title>
+<title>Project Ideas CSE 532 - Database Systems | Home</title>
 <meta name="generator" content="Jekyll v3.9.0" />
-<meta property="og:title" content="Home" />
+<meta property="og:title" content="Project Ideas CSE 532 - Database Systems" />
 <meta property="og:locale" content="en_US" />
 <meta property="og:site_name" content="Home" />
 <meta name="twitter:card" content="summary" />
-<meta property="twitter:title" content="Home" />
+<meta property="twitter:title" content="Project Ideas CSE 532 - Database Systems" />
 <script type="application/ld+json">
-{"@type":"WebPage","headline":"Home","url":"/teaching/db/26fa/project.html","@context":"https://schema.org"}</script>
+{"@type":"WebPage","headline":"Project Ideas CSE 532 - Database Systems","url":"/teaching/db/26fa/project.html","@context":"https://schema.org"}</script>
 <!-- End Jekyll SEO tag -->
 <link rel="stylesheet" href="/assets/main.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"><link type="application/atom+xml" rel="alternate" href="/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
@@ -33,513 +33,652 @@
           <article>
 
     <!-- <header>
-         <h1></h1>
+         <h1>Project Ideas CSE 532 - Database Systems</h1>
          </header> -->
 
   <section>
-<h1 id="project-ideas-cse-532---database-systems">Project Ideas CSE 532
-- Database Systems</h1>
-<p>In your final project, you will explore state-of-the-art techniques
-and apply them to Mako (OSDI ’25), a database built on the same lab
-frameworks used in this class. You are encouraged to explore the ideas
-that interest you, and/or develop your own ideas. This document lists a
-few potential project topics you can refer to.</p>
+    <h1 id="project-ideas-cse-532---database-systems">Project Ideas CSE 532 - Database Systems</h1>
+
+<p>In your final project, you will explore state-of-the-art techniques and apply them to Mako (OSDI ‘25).
+You are encouraged to explore the ideas that interest you, and/or develop your own ideas.
+This document lists a few potential project topics you can refer to.</p>
+
 <h2 id="project-ideas">Project Ideas</h2>
-<h3 id="cxl-enhanced-memory-architecture-for-mako">1. CXL-Enhanced
-Memory Architecture for Mako</h3>
-<p><strong>Motivation</strong>: Compute Express Link (CXL) is
-revolutionizing database memory architectures by enabling coherent
-memory pooling across servers. Recent work like Tigon (OSDI’25)
-demonstrates up to 2.5× throughput improvements for distributed
-databases using CXL. Mako could benefit from CXL’s memory disaggregation
-to reduce replication overhead and enable faster cross-shard
-transactions.</p>
-<p><strong>Related Work</strong>: - Tigon: A Distributed Database for a
-CXL Pod, OSDI 2025 - Motor: Enabling Multi-Versioning for Distributed
-Transactions on Disaggregated Memory, OSDI 2024 - CXL and the Return of
-Scale-Up Database Engines, arXiv 2024 - An Examination of CXL Memory Use
-Cases for SAP HANA, VLDB 2024</p>
-<p><strong>Project Tasks</strong>: 1. <strong>Survey existing
-approaches</strong>: Study how Tigon, Motor, and SAP HANA leverage CXL
-for distributed transactions 2. <strong>Design CXL integration for
-Mako</strong>: - Identify which Mako components benefit most from CXL
-(e.g., shared lock tables, dependency graphs, commit logs) - Design
-memory coherence protocol for cross-shard coordination - Determine
-optimal placement of data structures in local vs. CXL memory 3.
-<strong>Implementation</strong>: - Integrate CXL memory pools into
-Mako’s memory allocator - Modify critical data structures (e.g.,
-Masstree nodes, transaction metadata) to leverage CXL - Implement hybrid
-approach: hot data in local DRAM, cold metadata in CXL memory 4.
-<strong>Evaluation</strong>: - Compare performance with baseline Mako on
-TPC-C and YCSB workloads - Measure memory bandwidth utilization and
-access latency - Evaluate scalability with varying numbers of
-CXL-connected nodes</p>
-<p><strong>Expected Outcomes</strong>: Demonstrate whether CXL can
-reduce cross-shard coordination overhead in Mako’s speculative 2PC
-protocol, potentially achieving 1.5-2× throughput improvement.</p>
-<p><strong>Fallback Plan</strong>: If CXL hardware is unavailable,
-simulate CXL memory access patterns using shared memory or a software
-emulator to evaluate the design under emulated conditions.</p>
+
+<h3 id="1-cxl-enhanced-memory-architecture-for-mako">1. CXL-Enhanced Memory Architecture for Mako</h3>
+
+<p><strong>Motivation</strong>: Compute Express Link (CXL) is revolutionizing database memory architectures by enabling coherent memory pooling across servers. Recent work like Tigon (OSDI’25) demonstrates up to 2.5× throughput improvements for distributed databases using CXL. Mako could benefit from CXL’s memory disaggregation to reduce replication overhead and enable faster cross-shard transactions.</p>
+
+<p><strong>Related Work</strong>:</p>
+<ul>
+  <li>Tigon: A Distributed Database for a CXL Pod, OSDI 2025</li>
+  <li>Motor: Enabling Multi-Versioning for Distributed Transactions on Disaggregated Memory, OSDI 2024</li>
+  <li>CXL and the Return of Scale-Up Database Engines, arXiv 2024</li>
+  <li>An Examination of CXL Memory Use Cases for SAP HANA, VLDB 2024</li>
+</ul>
+
+<p><strong>Project Tasks</strong>:</p>
+<ol>
+  <li><strong>Survey existing approaches</strong>: Study how Tigon, Motor, and SAP HANA leverage CXL for distributed transactions</li>
+  <li><strong>Design CXL integration for Mako</strong>:
+    <ul>
+      <li>Identify which Mako components benefit most from CXL (e.g., shared lock tables, dependency graphs, commit logs)</li>
+      <li>Design memory coherence protocol for cross-shard coordination</li>
+      <li>Determine optimal placement of data structures in local vs. CXL memory</li>
+    </ul>
+  </li>
+  <li><strong>Implementation</strong>:
+    <ul>
+      <li>Integrate CXL memory pools into Mako’s memory allocator</li>
+      <li>Modify critical data structures (e.g., Masstree nodes, transaction metadata) to leverage CXL</li>
+      <li>Implement hybrid approach: hot data in local DRAM, cold metadata in CXL memory</li>
+    </ul>
+  </li>
+  <li><strong>Evaluation</strong>:
+    <ul>
+      <li>Compare performance with baseline Mako on TPC-C and YCSB workloads</li>
+      <li>Measure memory bandwidth utilization and access latency</li>
+      <li>Evaluate scalability with varying numbers of CXL-connected nodes</li>
+    </ul>
+  </li>
+</ol>
+
+<p><strong>Expected Outcomes</strong>: Demonstrate whether CXL can reduce cross-shard coordination overhead in Mako’s speculative 2PC protocol, potentially achieving 1.5-2× throughput improvement.</p>
+
+<p><strong>Fallback Plan</strong>: If CXL hardware is unavailable, simulate CXL memory access patterns using shared memory or a software emulator to evaluate the design under emulated conditions.</p>
+
 <hr />
-<h3
-id="enhanced-optimistic-concurrency-control-with-modern-techniques">2.
-Enhanced Optimistic Concurrency Control with Modern Techniques</h3>
-<p><strong>Motivation</strong>: Mako currently implements a relatively
-basic version of Optimistic Concurrency Control (OCC). While OCC
-performs well under low contention, it suffers from high abort rates and
-wasted work under contention. Recent research has demonstrated
-significant OCC improvements: Mostly-Optimistic Concurrency Control
-(MOCC) achieves 8-23× better performance than traditional OCC on
-high-conflict workloads, while BCC reduces false aborts by up to 3.68×.
-Enhancing Mako’s OCC implementation with modern techniques could
-dramatically improve performance on contentious workloads while
-maintaining its simplicity.</p>
-<p><strong>Related Work</strong>: - Mostly-Optimistic Concurrency
-Control for Highly Contended Dynamic Workloads, VLDB 2017 - BCC:
-Reducing False Aborts in Optimistic Concurrency Control, VLDB 2016 -
-Improving Optimistic Concurrency Control through Transaction Batching
-and Operation Reordering, VLDB 2019 - Rethinking Serializable
-Multiversion Concurrency Control, VLDB 2015 - Adaptive Optimistic
-Concurrency Control for Heterogeneous Workloads, VLDB 2019</p>
-<p><strong>Project Tasks</strong>: 1. <strong>Analyze Mako’s current OCC
-implementation</strong>: - Identify performance bottlenecks in
-validation phase - Measure abort rates under varying contention levels -
-Profile false abort scenarios (aborts that could have been avoided) 2.
-<strong>Design OCC enhancements</strong>: - <strong>Early abort
-detection</strong>: Detect conflicts during execution rather than at
-validation - <strong>Parallel validation</strong>: Batch multiple
-transactions and validate them in parallel - <strong>Reduced false
-aborts</strong>: Implement fine-grained dependency tracking (e.g.,
-BCC-style) - <strong>Operation reordering</strong>: Reorder reads/writes
-within transactions to reduce conflicts - <strong>Hybrid
-approach</strong>: Add selective pessimistic locking for highly
-contended objects (MOCC-style) 3. <strong>Implementation in
-Mako</strong>: - Implement efficient data structures for enhanced OCC -
-Add batching logic to validator - Modify transaction execution to detect
-conflicts early 4. <strong>Evaluation</strong>: - Compare with baseline
-Mako OCC on TPC-C with varying contention levels - Measure abort rate
-reduction and throughput improvement - Test on skewed workloads with
-hotspots - Compare CPU and memory overhead</p>
-<p><strong>Expected Outcomes</strong>: Reduce abort rates by 40-60% on
-high-contention workloads and improve throughput by 2-5× compared to
-baseline OCC implementation.</p>
-<p><strong>Fallback Plan</strong>: If implementing multiple
-optimizations is too complex, focus on one technique (e.g., parallel
-validation or early abort detection) and evaluate its impact
-thoroughly.</p>
+
+<h3 id="2-enhanced-optimistic-concurrency-control-with-modern-techniques">2. Enhanced Optimistic Concurrency Control with Modern Techniques</h3>
+
+<p><strong>Motivation</strong>: Mako currently implements a relatively basic version of Optimistic Concurrency Control (OCC). While OCC performs well under low contention, it suffers from high abort rates and wasted work under contention. Recent research has demonstrated significant OCC improvements: Mostly-Optimistic Concurrency Control (MOCC) achieves 8-23× better performance than traditional OCC on high-conflict workloads, while BCC reduces false aborts by up to 3.68×. Enhancing Mako’s OCC implementation with modern techniques could dramatically improve performance on contentious workloads while maintaining its simplicity.</p>
+
+<p><strong>Related Work</strong>:</p>
+<ul>
+  <li>Mostly-Optimistic Concurrency Control for Highly Contended Dynamic Workloads, VLDB 2017</li>
+  <li>BCC: Reducing False Aborts in Optimistic Concurrency Control, VLDB 2016</li>
+  <li>Improving Optimistic Concurrency Control through Transaction Batching and Operation Reordering, VLDB 2019</li>
+  <li>Rethinking Serializable Multiversion Concurrency Control, VLDB 2015</li>
+  <li>Adaptive Optimistic Concurrency Control for Heterogeneous Workloads, VLDB 2019</li>
+</ul>
+
+<p><strong>Project Tasks</strong>:</p>
+<ol>
+  <li><strong>Analyze Mako’s current OCC implementation</strong>:
+    <ul>
+      <li>Identify performance bottlenecks in validation phase</li>
+      <li>Measure abort rates under varying contention levels</li>
+      <li>Profile false abort scenarios (aborts that could have been avoided)</li>
+    </ul>
+  </li>
+  <li><strong>Design OCC enhancements</strong>:
+    <ul>
+      <li><strong>Early abort detection</strong>: Detect conflicts during execution rather than at validation</li>
+      <li><strong>Parallel validation</strong>: Batch multiple transactions and validate them in parallel</li>
+      <li><strong>Reduced false aborts</strong>: Implement fine-grained dependency tracking (e.g., BCC-style)</li>
+      <li><strong>Operation reordering</strong>: Reorder reads/writes within transactions to reduce conflicts</li>
+      <li><strong>Hybrid approach</strong>: Add selective pessimistic locking for highly contended objects (MOCC-style)</li>
+    </ul>
+  </li>
+  <li><strong>Implementation in Mako</strong>:
+    <ul>
+      <li>Implement efficient data structures for enhanced OCC</li>
+      <li>Add batching logic to validator</li>
+      <li>Modify transaction execution to detect conflicts early</li>
+    </ul>
+  </li>
+  <li><strong>Evaluation</strong>:
+    <ul>
+      <li>Compare with baseline Mako OCC on TPC-C with varying contention levels</li>
+      <li>Measure abort rate reduction and throughput improvement</li>
+      <li>Test on skewed workloads with hotspots</li>
+      <li>Compare CPU and memory overhead</li>
+    </ul>
+  </li>
+</ol>
+
+<p><strong>Expected Outcomes</strong>: Reduce abort rates by 40-60% on high-contention workloads and improve throughput by 2-5× compared to baseline OCC implementation.</p>
+
+<p><strong>Fallback Plan</strong>: If implementing multiple optimizations is too complex, focus on one technique (e.g., parallel validation or early abort detection) and evaluate its impact thoroughly.</p>
+
 <hr />
-<h3
-id="optimizing-geo-distributed-transactions-with-advanced-techniques">3.
-Optimizing Geo-Distributed Transactions with Advanced Techniques</h3>
-<p><strong>Motivation</strong>: While Mako achieves impressive
-performance with its speculative 2PC protocol, recent research
-demonstrates multiple promising approaches to further optimize
-geo-distributed transactions. Tiga (SOSP’25) achieves 1.3-7.2× higher
-throughput than state-of-the-art systems by consolidating concurrency
-control and consensus using synchronized clocks to commit transactions
-within a single wide-area roundtrip. Other approaches like decentralized
-coordination (D2PC, VLDB’24) reduce commit latency by 43%, while
-clock-based techniques (K2, VLDB’25) leverage precise timestamps for
-optimization. Applying these techniques to Mako could push its
-geo-replication performance even further.</p>
-<p><strong>Related Work</strong>: - Tiga: Accelerating Geo-Distributed
-Transactions with Synchronized Clocks, SOSP 2025 - Fast Commitment for
-Geo-Distributed Transactions via Decentralized Co-Coordinators (D2PC),
-VLDB 2024 - K2: Optimizing Distributed Transactions with True-time
-Clocks, VLDB 2025 - SunStorm: Geographically distributed transactions
-over Aurora-style systems, VLDB 2025 - Bonspiel: Low Tail Latency
-Transactions in Geo-Distributed Databases, VLDB 2025</p>
-<p><strong>Project Tasks</strong>: 1. <strong>Survey state-of-the-art
-approaches</strong>: Study Tiga, D2PC, K2, SunStorm, and Bonspiel to
-understand: - How Tiga uses synchronized clocks to consolidate
-concurrency control and consensus - Decentralized coordination
-mechanisms in D2PC - True-time clock utilization in K2 - Trade-offs
-between different approaches 2. <strong>Choose and design optimization
-for Mako</strong>: - <strong>Option A - Synchronized Clock
-Protocol</strong>: Adapt Tiga’s approach to assign future timestamps and
-commit in 1 WRTT - <strong>Option B - Decentralized
-Coordination</strong>: Replace single coordinator with regional
-co-coordinators (D2PC-style) - <strong>Option C - Hybrid Logical
-Clocks</strong>: Implement clock-based ordering without requiring
-hardware support - <strong>Option D - Optimized Commit
-Protocol</strong>: Reduce coordination rounds through batching or
-pipelining 3. <strong>Implementation</strong>: - Integrate clock
-synchronization infrastructure (for Options A/C) - Modify Mako’s commit
-protocol based on chosen approach - Extend transaction coordinator and
-replication layer - Implement necessary consensus mechanisms 4.
-<strong>Evaluation</strong>: - Deploy on geo-distributed testbed across
-3-7 datacenters (AWS/Azure/GCP multi-region) - Measure commit latency
-(especially tail latency p99) - Compare throughput with baseline Mako -
-Test under varying network conditions and failures - Evaluate clock
-synchronization overhead (if applicable)</p>
-<p><strong>Expected Outcomes</strong>: Reduce commit latency by 30-50%
-and improve throughput by 1.5-3× on geo-distributed workloads,
-approaching 1 WRTT commit time for most transactions.</p>
-<p><strong>Fallback Plan</strong>: If the chosen approach proves too
-complex, implement a simplified version (e.g., clock-based ordering for
-single-datacenter transactions only, or decentralized coordination for
-read-only transactions).</p>
+
+<h3 id="3-optimizing-geo-distributed-transactions-with-advanced-techniques">3. Optimizing Geo-Distributed Transactions with Advanced Techniques</h3>
+
+<p><strong>Motivation</strong>: While Mako achieves impressive performance with its speculative 2PC protocol, recent research demonstrates multiple promising approaches to further optimize geo-distributed transactions. Tiga (SOSP’25) achieves 1.3-7.2× higher throughput than state-of-the-art systems by consolidating concurrency control and consensus using synchronized clocks to commit transactions within a single wide-area roundtrip. Other approaches like decentralized coordination (D2PC, VLDB’24) reduce commit latency by 43%, while clock-based techniques (K2, VLDB’25) leverage precise timestamps for optimization. Applying these techniques to Mako could push its geo-replication performance even further.</p>
+
+<p><strong>Related Work</strong>:</p>
+<ul>
+  <li>Tiga: Accelerating Geo-Distributed Transactions with Synchronized Clocks, SOSP 2025</li>
+  <li>Fast Commitment for Geo-Distributed Transactions via Decentralized Co-Coordinators (D2PC), VLDB 2024</li>
+  <li>K2: Optimizing Distributed Transactions with True-time Clocks, VLDB 2025</li>
+  <li>SunStorm: Geographically distributed transactions over Aurora-style systems, VLDB 2025</li>
+  <li>Bonspiel: Low Tail Latency Transactions in Geo-Distributed Databases, VLDB 2025</li>
+</ul>
+
+<p><strong>Project Tasks</strong>:</p>
+<ol>
+  <li><strong>Survey state-of-the-art approaches</strong>: Study Tiga, D2PC, K2, SunStorm, and Bonspiel to understand:
+    <ul>
+      <li>How Tiga uses synchronized clocks to consolidate concurrency control and consensus</li>
+      <li>Decentralized coordination mechanisms in D2PC</li>
+      <li>True-time clock utilization in K2</li>
+      <li>Trade-offs between different approaches</li>
+    </ul>
+  </li>
+  <li><strong>Choose and design optimization for Mako</strong>:
+    <ul>
+      <li><strong>Option A - Synchronized Clock Protocol</strong>: Adapt Tiga’s approach to assign future timestamps and commit in 1 WRTT</li>
+      <li><strong>Option B - Decentralized Coordination</strong>: Replace single coordinator with regional co-coordinators (D2PC-style)</li>
+      <li><strong>Option C - Hybrid Logical Clocks</strong>: Implement clock-based ordering without requiring hardware support</li>
+      <li><strong>Option D - Optimized Commit Protocol</strong>: Reduce coordination rounds through batching or pipelining</li>
+    </ul>
+  </li>
+  <li><strong>Implementation</strong>:
+    <ul>
+      <li>Integrate clock synchronization infrastructure (for Options A/C)</li>
+      <li>Modify Mako’s commit protocol based on chosen approach</li>
+      <li>Extend transaction coordinator and replication layer</li>
+      <li>Implement necessary consensus mechanisms</li>
+    </ul>
+  </li>
+  <li><strong>Evaluation</strong>:
+    <ul>
+      <li>Deploy on geo-distributed testbed across 3-7 datacenters (AWS/Azure/GCP multi-region)</li>
+      <li>Measure commit latency (especially tail latency p99)</li>
+      <li>Compare throughput with baseline Mako</li>
+      <li>Test under varying network conditions and failures</li>
+      <li>Evaluate clock synchronization overhead (if applicable)</li>
+    </ul>
+  </li>
+</ol>
+
+<p><strong>Expected Outcomes</strong>: Reduce commit latency by 30-50% and improve throughput by 1.5-3× on geo-distributed workloads, approaching 1 WRTT commit time for most transactions.</p>
+
+<p><strong>Fallback Plan</strong>: If the chosen approach proves too complex, implement a simplified version (e.g., clock-based ordering for single-datacenter transactions only, or decentralized coordination for read-only transactions).</p>
+
 <hr />
-<h3 id="read-only-transaction-fast-path-with-true-time-support">4.
-Read-Only Transaction Fast Path with True-Time Support</h3>
-<p><strong>Motivation</strong>: Many distributed database workloads are
-read-heavy. Mako’s speculative protocol applies to all transactions, but
-read-only transactions don’t need full 2PC coordination. By implementing
-a fast path for read-only transactions using snapshot isolation with
-true-time or hybrid logical clocks, we can achieve linearizable reads
-with near-zero coordination overhead.</p>
-<p><strong>Related Work</strong>: - Spanner’s TrueTime for lock-free
-read-only transactions (Google, OSDI 2012) - K2: Optimizing Distributed
-Transactions with True-time Clocks, VLDB 2025 - Calvin’s read-only
-transaction optimization - CockroachDB’s follower reads</p>
-<p><strong>Project Tasks</strong>: 1. <strong>Survey timestamp-based
-approaches</strong>: Study Spanner, K2, CockroachDB, and Calvin 2.
-<strong>Design read-only fast path</strong>: - Choose between true-time
-API (if available), hybrid logical clocks, or NTP-based timestamps -
-Design snapshot acquisition protocol that doesn’t block on commit log -
-Ensure linearizability guarantees 3. <strong>Implementation in
-Mako</strong>: - Modify <code>TxnScheduler</code> to detect read-only
-transactions - Implement timestamp oracle or integrate HLC library - Add
-fast-path execution that bypasses 2PC - Maintain snapshot metadata per
-shard 4. <strong>Evaluation</strong>: - Test on read-heavy workloads
-(90% reads, 10% writes) - Measure latency improvement for read-only
-transactions - Verify correctness with linearizability checker - Compare
-with Spanner and CockroachDB if possible</p>
-<p><strong>Expected Outcomes</strong>: Reduce read-only transaction
-latency by 5-10× and improve overall system throughput by 2-3× on
-read-heavy workloads.</p>
+
+<h3 id="4-read-only-transaction-fast-path-with-true-time-support">4. Read-Only Transaction Fast Path with True-Time Support</h3>
+
+<p><strong>Motivation</strong>: Many distributed database workloads are read-heavy. Mako’s speculative protocol applies to all transactions, but read-only transactions don’t need full 2PC coordination. By implementing a fast path for read-only transactions using snapshot isolation with true-time or hybrid logical clocks, we can achieve linearizable reads with near-zero coordination overhead.</p>
+
+<p><strong>Related Work</strong>:</p>
+<ul>
+  <li>Spanner’s TrueTime for lock-free read-only transactions (Google, OSDI 2012)</li>
+  <li>K2: Optimizing Distributed Transactions with True-time Clocks, VLDB 2025</li>
+  <li>Calvin’s read-only transaction optimization</li>
+  <li>CockroachDB’s follower reads</li>
+</ul>
+
+<p><strong>Project Tasks</strong>:</p>
+<ol>
+  <li><strong>Survey timestamp-based approaches</strong>: Study Spanner, K2, CockroachDB, and Calvin</li>
+  <li><strong>Design read-only fast path</strong>:
+    <ul>
+      <li>Choose between true-time API (if available), hybrid logical clocks, or NTP-based timestamps</li>
+      <li>Design snapshot acquisition protocol that doesn’t block on commit log</li>
+      <li>Ensure linearizability guarantees</li>
+    </ul>
+  </li>
+  <li><strong>Implementation in Mako</strong>:
+    <ul>
+      <li>Modify <code class="language-plaintext highlighter-rouge">TxnScheduler</code> to detect read-only transactions</li>
+      <li>Implement timestamp oracle or integrate HLC library</li>
+      <li>Add fast-path execution that bypasses 2PC</li>
+      <li>Maintain snapshot metadata per shard</li>
+    </ul>
+  </li>
+  <li><strong>Evaluation</strong>:
+    <ul>
+      <li>Test on read-heavy workloads (90% reads, 10% writes)</li>
+      <li>Measure latency improvement for read-only transactions</li>
+      <li>Verify correctness with linearizability checker</li>
+      <li>Compare with Spanner and CockroachDB if possible</li>
+    </ul>
+  </li>
+</ol>
+
+<p><strong>Expected Outcomes</strong>: Reduce read-only transaction latency by 5-10× and improve overall system throughput by 2-3× on read-heavy workloads.</p>
+
 <hr />
-<h3
-id="early-lock-release-for-reduced-contention-in-geo-replicated-mako">5.
-Early Lock Release for Reduced Contention in Geo-Replicated Mako</h3>
-<p><strong>Motivation</strong>: Early Lock Release (ELR) allows
-transactions to release locks before commit, reducing lock hold time and
-improving throughput on contentious workloads. While traditionally
-applied to single-node databases, extending ELR to geo-distributed
-systems with replication is challenging but could significantly reduce
-the window of contention in Mako.</p>
-<p><strong>Related Work</strong>: - Lock Violation for Fault-tolerant
-Distributed Database Systems, ICDE 2021 - Controlled Lock Violation,
-SIGMOD 2013 - Partial Strictness in Two-Phase Locking, ICDT 1995</p>
-<p><strong>Project Tasks</strong>: 1. <strong>Survey ELR
-techniques</strong>: Study controlled lock violation, partial
-strictness, and distributed ELR approaches 2. <strong>Design ELR for
-Mako’s speculative protocol</strong>: - Determine safe points for early
-lock release in speculative 2PC - Design dependency tracking to ensure
-recoverability - Handle cascading aborts when speculation fails 3.
-<strong>Implementation</strong>: - Extend Mako’s lock manager to support
-early release - Modify abort handling to cascade aborts correctly - Add
-logging mechanism to support recovery 4. <strong>Evaluation</strong>: -
-Test on high-contention workloads (e.g., TPC-C with hotspot skew) -
-Measure abort rate vs. throughput trade-off - Compare with baseline Mako
-and 2PL</p>
-<p><strong>Expected Outcomes</strong>: Improve throughput on contentious
-workloads by 20-40% with acceptable increase in abort rate.</p>
-<p><strong>Fallback Plan</strong>: Implement ELR only for read locks
-initially, which is safer and easier to reason about.</p>
+
+<h3 id="5-early-lock-release-for-reduced-contention-in-geo-replicated-mako">5. Early Lock Release for Reduced Contention in Geo-Replicated Mako</h3>
+
+<p><strong>Motivation</strong>: Early Lock Release (ELR) allows transactions to release locks before commit, reducing lock hold time and improving throughput on contentious workloads. While traditionally applied to single-node databases, extending ELR to geo-distributed systems with replication is challenging but could significantly reduce the window of contention in Mako.</p>
+
+<p><strong>Related Work</strong>:</p>
+<ul>
+  <li>Lock Violation for Fault-tolerant Distributed Database Systems, ICDE 2021</li>
+  <li>Controlled Lock Violation, SIGMOD 2013</li>
+  <li>Partial Strictness in Two-Phase Locking, ICDT 1995</li>
+</ul>
+
+<p><strong>Project Tasks</strong>:</p>
+<ol>
+  <li><strong>Survey ELR techniques</strong>: Study controlled lock violation, partial strictness, and distributed ELR approaches</li>
+  <li><strong>Design ELR for Mako’s speculative protocol</strong>:
+    <ul>
+      <li>Determine safe points for early lock release in speculative 2PC</li>
+      <li>Design dependency tracking to ensure recoverability</li>
+      <li>Handle cascading aborts when speculation fails</li>
+    </ul>
+  </li>
+  <li><strong>Implementation</strong>:
+    <ul>
+      <li>Extend Mako’s lock manager to support early release</li>
+      <li>Modify abort handling to cascade aborts correctly</li>
+      <li>Add logging mechanism to support recovery</li>
+    </ul>
+  </li>
+  <li><strong>Evaluation</strong>:
+    <ul>
+      <li>Test on high-contention workloads (e.g., TPC-C with hotspot skew)</li>
+      <li>Measure abort rate vs. throughput trade-off</li>
+      <li>Compare with baseline Mako and 2PL</li>
+    </ul>
+  </li>
+</ol>
+
+<p><strong>Expected Outcomes</strong>: Improve throughput on contentious workloads by 20-40% with acceptable increase in abort rate.</p>
+
+<p><strong>Fallback Plan</strong>: Implement ELR only for read locks initially, which is safer and easier to reason about.</p>
+
 <hr />
-<h3 id="learned-index-structures-for-masstree">6. Learned Index
-Structures for Masstree</h3>
-<p><strong>Motivation</strong>: Mako uses Masstree, a high-performance
-B+tree, for in-memory indexing. Recent learned index research (e.g.,
-Google’s Learned Index, PGM-Index, ALEX) shows that ML models can
-replace or augment traditional indexes with lower memory footprint and
-faster lookups. Integrating learned indexes into Masstree could reduce
-cache misses and improve transaction throughput.</p>
-<p><strong>Related Work</strong>: - The Case for Learned Index
-Structures, SIGMOD 2018 - ALEX: An Updatable Adaptive Learned Index,
-SIGMOD 2020 - PGM-Index: Fully-Dynamic Compressed Learned Index, VLDB
-2020 - Learned indexes for dynamic workloads, ICDE 2022</p>
-<p><strong>Project Tasks</strong>: 1. <strong>Survey learned index
-structures</strong>: Study RMI, ALEX, PGM-Index, and recent adaptations
-2. <strong>Design integration with Masstree</strong>: - Identify whether
-to replace Masstree entirely or create hybrid structure - Design model
-training pipeline for Mako’s key distributions - Handle updates and
-concurrent modifications 3. <strong>Implementation</strong>: - Integrate
-learned index library (e.g., ALEX) as alternative to Masstree -
-Implement fallback to B+tree for worst-case performance - Add online
-model retraining for workload drift 4. <strong>Evaluation</strong>: -
-Compare lookup latency, memory footprint, and update performance - Test
-on skewed and uniform key distributions - Measure impact on end-to-end
-transaction throughput</p>
-<p><strong>Expected Outcomes</strong>: Reduce index memory footprint by
-2-3× and improve lookup latency by 20-30% on skewed workloads.</p>
-<p><strong>Fallback Plan</strong>: If full replacement is too complex,
-implement learned index as a top-level routing layer that directs
-queries to Masstree partitions.</p>
+
+<h3 id="6-learned-index-structures-for-masstree">6. Learned Index Structures for Masstree</h3>
+
+<p><strong>Motivation</strong>: Mako uses Masstree, a high-performance B+tree, for in-memory indexing. Recent learned index research (e.g., Google’s Learned Index, PGM-Index, ALEX) shows that ML models can replace or augment traditional indexes with lower memory footprint and faster lookups. Integrating learned indexes into Masstree could reduce cache misses and improve transaction throughput.</p>
+
+<p><strong>Related Work</strong>:</p>
+<ul>
+  <li>The Case for Learned Index Structures, SIGMOD 2018</li>
+  <li>ALEX: An Updatable Adaptive Learned Index, SIGMOD 2020</li>
+  <li>PGM-Index: Fully-Dynamic Compressed Learned Index, VLDB 2020</li>
+  <li>Learned indexes for dynamic workloads, ICDE 2022</li>
+</ul>
+
+<p><strong>Project Tasks</strong>:</p>
+<ol>
+  <li><strong>Survey learned index structures</strong>: Study RMI, ALEX, PGM-Index, and recent adaptations</li>
+  <li><strong>Design integration with Masstree</strong>:
+    <ul>
+      <li>Identify whether to replace Masstree entirely or create hybrid structure</li>
+      <li>Design model training pipeline for Mako’s key distributions</li>
+      <li>Handle updates and concurrent modifications</li>
+    </ul>
+  </li>
+  <li><strong>Implementation</strong>:
+    <ul>
+      <li>Integrate learned index library (e.g., ALEX) as alternative to Masstree</li>
+      <li>Implement fallback to B+tree for worst-case performance</li>
+      <li>Add online model retraining for workload drift</li>
+    </ul>
+  </li>
+  <li><strong>Evaluation</strong>:
+    <ul>
+      <li>Compare lookup latency, memory footprint, and update performance</li>
+      <li>Test on skewed and uniform key distributions</li>
+      <li>Measure impact on end-to-end transaction throughput</li>
+    </ul>
+  </li>
+</ol>
+
+<p><strong>Expected Outcomes</strong>: Reduce index memory footprint by 2-3× and improve lookup latency by 20-30% on skewed workloads.</p>
+
+<p><strong>Fallback Plan</strong>: If full replacement is too complex, implement learned index as a top-level routing layer that directs queries to Masstree partitions.</p>
+
 <hr />
-<h3 id="storage-disaggregation-with-delta-based-replication">7. Storage
-Disaggregation with Delta-Based Replication</h3>
-<p><strong>Motivation</strong>: Cloud-native databases increasingly
-adopt storage disaggregation (e.g., AWS Aurora). Traditional replication
-rewrites full values, causing I/O amplification. A Key-Delta-Value (KDV)
-store that only replicates deltas could reduce cross-datacenter
-bandwidth and storage costs in Mako’s geo-replication architecture.</p>
-<p><strong>Related Work</strong>: - Key-Delta-Value stores for storage
-disaggregation - FlexPushdownDB: Hybrid Pushdown and Caching in Cloud
-DBMS, VLDB 2021 - PushdownDB: Accelerating a DBMS using S3 Computation,
-ICDE 2020 - Aurora: On Avoiding Consensus for I/Os, SIGMOD 2018</p>
-<p><strong>Project Tasks</strong>: 1. <strong>Survey delta-based
-storage</strong>: Study Aurora, differential updates, and delta
-compression techniques 2. <strong>Design KDV store for Mako</strong>: -
-Define delta format (e.g., binary diff, operation log, column-level
-deltas) - Design read path that reconstructs values from base + deltas -
-Implement compaction policy to prevent long delta chains - Integrate
-with Mako’s RocksDB backend 3. <strong>Implementation</strong>: - Extend
-RocksDB integration to store deltas - Modify write path to compute and
-store deltas - Implement efficient delta merging on read path - Add
-background compaction to collapse deltas 4. <strong>Evaluation</strong>:
-- Measure write bandwidth reduction - Compare read latency with baseline
-(full value storage) - Test on workloads with varying update sizes -
-Evaluate using YCSB with different read/write ratios</p>
-<p><strong>Expected Outcomes</strong>: Reduce cross-datacenter
-replication bandwidth by 50-70% for small updates, with acceptable read
-overhead.</p>
+
+<h3 id="7-storage-disaggregation-with-delta-based-replication">7. Storage Disaggregation with Delta-Based Replication</h3>
+
+<p><strong>Motivation</strong>: Cloud-native databases increasingly adopt storage disaggregation (e.g., AWS Aurora). Traditional replication rewrites full values, causing I/O amplification. A Key-Delta-Value (KDV) store that only replicates deltas could reduce cross-datacenter bandwidth and storage costs in Mako’s geo-replication architecture.</p>
+
+<p><strong>Related Work</strong>:</p>
+<ul>
+  <li>Key-Delta-Value stores for storage disaggregation</li>
+  <li>FlexPushdownDB: Hybrid Pushdown and Caching in Cloud DBMS, VLDB 2021</li>
+  <li>PushdownDB: Accelerating a DBMS using S3 Computation, ICDE 2020</li>
+  <li>Aurora: On Avoiding Consensus for I/Os, SIGMOD 2018</li>
+</ul>
+
+<p><strong>Project Tasks</strong>:</p>
+<ol>
+  <li><strong>Survey delta-based storage</strong>: Study Aurora, differential updates, and delta compression techniques</li>
+  <li><strong>Design KDV store for Mako</strong>:
+    <ul>
+      <li>Define delta format (e.g., binary diff, operation log, column-level deltas)</li>
+      <li>Design read path that reconstructs values from base + deltas</li>
+      <li>Implement compaction policy to prevent long delta chains</li>
+      <li>Integrate with Mako’s RocksDB backend</li>
+    </ul>
+  </li>
+  <li><strong>Implementation</strong>:
+    <ul>
+      <li>Extend RocksDB integration to store deltas</li>
+      <li>Modify write path to compute and store deltas</li>
+      <li>Implement efficient delta merging on read path</li>
+      <li>Add background compaction to collapse deltas</li>
+    </ul>
+  </li>
+  <li><strong>Evaluation</strong>:
+    <ul>
+      <li>Measure write bandwidth reduction</li>
+      <li>Compare read latency with baseline (full value storage)</li>
+      <li>Test on workloads with varying update sizes</li>
+      <li>Evaluate using YCSB with different read/write ratios</li>
+    </ul>
+  </li>
+</ol>
+
+<p><strong>Expected Outcomes</strong>: Reduce cross-datacenter replication bandwidth by 50-70% for small updates, with acceptable read overhead.</p>
+
 <hr />
-<h3 id="deterministic-execution-mode-for-mako">8. Deterministic
-Execution Mode for Mako</h3>
-<p><strong>Motivation</strong>: Deterministic databases like Calvin
-eliminate coordination overhead by pre-determining transaction order.
-While Mako’s speculative approach differs fundamentally, adding a
-deterministic execution mode could benefit certain workloads (e.g.,
-batch analytics, blockchain-style auditing) and provide stronger
-reproducibility guarantees.</p>
-<p><strong>Related Work</strong>: - Calvin: Fast Distributed
-Transactions for Partitioned Database Systems, SIGMOD 2012 - Wait and
-See: Delayed Transaction Partitioning in Deterministic Databases, SIGMOD
-2025 - Aria: A Fast and Practical Deterministic OLTP Database, VLDB
-2020</p>
-<p><strong>Project Tasks</strong>: 1. <strong>Survey deterministic
-protocols</strong>: Study Calvin, Aria, and the SIGMOD 2025 delayed
-partitioning approach 2. <strong>Design deterministic mode for
-Mako</strong>: - Add sequencer component to order transactions globally
-- Design execution engine that follows predetermined order - Handle
-multi-partition transactions - Allow switching between speculative and
-deterministic modes 3. <strong>Implementation</strong>: - Implement
-transaction sequencer (can reuse Paxos layer) - Modify
-<code>TxnScheduler</code> to support deterministic execution - Add mode
-selection logic based on workload characteristics 4.
-<strong>Evaluation</strong>: - Compare with baseline Mako on
-low-contention and high-contention workloads - Measure determinism
-overhead - Test reproducibility and auditing use cases</p>
-<p><strong>Expected Outcomes</strong>: Enable deterministic execution
-for use cases requiring auditability, potentially matching or exceeding
-Calvin’s performance.</p>
-<p><strong>Fallback Plan</strong>: Implement simplified deterministic
-mode for single-partition transactions only.</p>
+
+<h3 id="8-deterministic-execution-mode-for-mako">8. Deterministic Execution Mode for Mako</h3>
+
+<p><strong>Motivation</strong>: Deterministic databases like Calvin eliminate coordination overhead by pre-determining transaction order. While Mako’s speculative approach differs fundamentally, adding a deterministic execution mode could benefit certain workloads (e.g., batch analytics, blockchain-style auditing) and provide stronger reproducibility guarantees.</p>
+
+<p><strong>Related Work</strong>:</p>
+<ul>
+  <li>Calvin: Fast Distributed Transactions for Partitioned Database Systems, SIGMOD 2012</li>
+  <li>Wait and See: Delayed Transaction Partitioning in Deterministic Databases, SIGMOD 2025</li>
+  <li>Aria: A Fast and Practical Deterministic OLTP Database, VLDB 2020</li>
+</ul>
+
+<p><strong>Project Tasks</strong>:</p>
+<ol>
+  <li><strong>Survey deterministic protocols</strong>: Study Calvin, Aria, and the SIGMOD 2025 delayed partitioning approach</li>
+  <li><strong>Design deterministic mode for Mako</strong>:
+    <ul>
+      <li>Add sequencer component to order transactions globally</li>
+      <li>Design execution engine that follows predetermined order</li>
+      <li>Handle multi-partition transactions</li>
+      <li>Allow switching between speculative and deterministic modes</li>
+    </ul>
+  </li>
+  <li><strong>Implementation</strong>:
+    <ul>
+      <li>Implement transaction sequencer (can reuse Paxos layer)</li>
+      <li>Modify <code class="language-plaintext highlighter-rouge">TxnScheduler</code> to support deterministic execution</li>
+      <li>Add mode selection logic based on workload characteristics</li>
+    </ul>
+  </li>
+  <li><strong>Evaluation</strong>:
+    <ul>
+      <li>Compare with baseline Mako on low-contention and high-contention workloads</li>
+      <li>Measure determinism overhead</li>
+      <li>Test reproducibility and auditing use cases</li>
+    </ul>
+  </li>
+</ol>
+
+<p><strong>Expected Outcomes</strong>: Enable deterministic execution for use cases requiring auditability, potentially matching or exceeding Calvin’s performance.</p>
+
+<p><strong>Fallback Plan</strong>: Implement simplified deterministic mode for single-partition transactions only.</p>
+
 <hr />
-<h3 id="cross-shard-query-optimization-with-minimal-wan-traffic">9.
-Cross-Shard Query Optimization with Minimal WAN Traffic</h3>
-<p><strong>Motivation</strong>: Mako focuses on transactional workloads,
-but many applications require analytical queries that span multiple
-shards. Optimizing cross-shard queries to minimize wide-area network
-(WAN) traffic could enable Mako to support hybrid OLTP/OLAP workloads
-more efficiently.</p>
-<p><strong>Related Work</strong>: - Distributed query optimization
-literature - Choosing a Cloud DBMS: Architectures and Tradeoffs, VLDB
-2019 - Predicate Transfer optimization techniques - Distributed join
-algorithms with CXL (DaMon 2024)</p>
-<p><strong>Project Tasks</strong>: 1. <strong>Survey distributed query
-optimization</strong>: Study predicate pushdown, bloom filter shipping,
-semi-joins 2. <strong>Design cross-shard query optimizer for
-Mako</strong>: - Implement cost model for WAN vs. local computation -
-Add predicate transfer to reduce cross-shard data movement - Design
-distributed join strategies (broadcast vs. shuffle) 3.
-<strong>Implementation</strong>: - Extend Mako with basic query language
-(SQL subset or KV-based API) - Implement query planner and optimizer -
-Add distributed query execution engine 4. <strong>Evaluation</strong>: -
-Test on Join Order Benchmark (JOB) or TPC-H queries - Measure WAN
-bandwidth reduction - Compare with naive cross-shard query execution</p>
-<p><strong>Expected Outcomes</strong>: Reduce cross-datacenter traffic
-by 50-80% for analytical queries through intelligent optimization.</p>
+
+<h3 id="9-cross-shard-query-optimization-with-minimal-wan-traffic">9. Cross-Shard Query Optimization with Minimal WAN Traffic</h3>
+
+<p><strong>Motivation</strong>: Mako focuses on transactional workloads, but many applications require analytical queries that span multiple shards. Optimizing cross-shard queries to minimize wide-area network (WAN) traffic could enable Mako to support hybrid OLTP/OLAP workloads more efficiently.</p>
+
+<p><strong>Related Work</strong>:</p>
+<ul>
+  <li>Distributed query optimization literature</li>
+  <li>Choosing a Cloud DBMS: Architectures and Tradeoffs, VLDB 2019</li>
+  <li>Predicate Transfer optimization techniques</li>
+  <li>Distributed join algorithms with CXL (DaMon 2024)</li>
+</ul>
+
+<p><strong>Project Tasks</strong>:</p>
+<ol>
+  <li><strong>Survey distributed query optimization</strong>: Study predicate pushdown, bloom filter shipping, semi-joins</li>
+  <li><strong>Design cross-shard query optimizer for Mako</strong>:
+    <ul>
+      <li>Implement cost model for WAN vs. local computation</li>
+      <li>Add predicate transfer to reduce cross-shard data movement</li>
+      <li>Design distributed join strategies (broadcast vs. shuffle)</li>
+    </ul>
+  </li>
+  <li><strong>Implementation</strong>:
+    <ul>
+      <li>Extend Mako with basic query language (SQL subset or KV-based API)</li>
+      <li>Implement query planner and optimizer</li>
+      <li>Add distributed query execution engine</li>
+    </ul>
+  </li>
+  <li><strong>Evaluation</strong>:
+    <ul>
+      <li>Test on Join Order Benchmark (JOB) or TPC-H queries</li>
+      <li>Measure WAN bandwidth reduction</li>
+      <li>Compare with naive cross-shard query execution</li>
+    </ul>
+  </li>
+</ol>
+
+<p><strong>Expected Outcomes</strong>: Reduce cross-datacenter traffic by 50-80% for analytical queries through intelligent optimization.</p>
+
 <hr />
-<h3 id="rdma-accelerated-replication-for-mako">10. RDMA-Accelerated
-Replication for Mako</h3>
-<p><strong>Motivation</strong>: Mako currently uses traditional TCP/IP
-networking for replication. Recent work like Motor (OSDI 2024) shows
-that RDMA operations can dramatically improve distributed transaction
-performance by bypassing the remote CPU and reducing network latency.
-Adding RDMA support to Mako’s replication layer, particularly one-sided
-RDMA operations, could significantly reduce replication latency and
-improve throughput.</p>
-<p><strong>Related Work</strong>: - Motor: Enabling Multi-Versioning for
-Distributed Transactions on Disaggregated Memory, OSDI 2024 - Fast and
-Scalable In-network Lock Management Using Lock Fission, OSDI 2024 -
-FaRM: Fast Remote Memory, NSDI 2014 - DrTM: Distributed Transactional
-Memory, SOSP 2015</p>
-<p><strong>Project Tasks</strong>: 1. <strong>Survey RDMA-based
-distributed transactions</strong>: Study Motor, FaRM, DrTM, and NAM-DB
-2. <strong>Design RDMA integration for Mako</strong>: - Identify which
-replication operations can benefit from RDMA (e.g., log shipping, commit
-notifications) - Design remote memory layout for replicated data -
-Determine whether to use two-sided (verbs) or one-sided RDMA operations
-- Ensure consistency despite asynchronous RDMA operations 3.
-<strong>Implementation</strong>: - Add RDMA support to Mako’s RRR
-communication framework - Implement RDMA connection management and
-memory registration - Modify Paxos replication layer to use RDMA for log
-shipping - Add RDMA-based commit notifications 4.
-<strong>Evaluation</strong>: - Measure replication latency reduction
-compared to TCP/IP baseline - Compare CPU utilization with traditional
-networking - Test scalability with varying number of replicas - Evaluate
-performance under different network conditions</p>
-<p><strong>Expected Outcomes</strong>: Reduce replication latency by
-30-50% and lower CPU overhead by 40-60%.</p>
+
+<h3 id="10-rdma-accelerated-replication-for-mako">10. RDMA-Accelerated Replication for Mako</h3>
+
+<p><strong>Motivation</strong>: Mako currently uses traditional TCP/IP networking for replication. Recent work like Motor (OSDI 2024) shows that RDMA operations can dramatically improve distributed transaction performance by bypassing the remote CPU and reducing network latency. Adding RDMA support to Mako’s replication layer, particularly one-sided RDMA operations, could significantly reduce replication latency and improve throughput.</p>
+
+<p><strong>Related Work</strong>:</p>
+<ul>
+  <li>Motor: Enabling Multi-Versioning for Distributed Transactions on Disaggregated Memory, OSDI 2024</li>
+  <li>Fast and Scalable In-network Lock Management Using Lock Fission, OSDI 2024</li>
+  <li>FaRM: Fast Remote Memory, NSDI 2014</li>
+  <li>DrTM: Distributed Transactional Memory, SOSP 2015</li>
+</ul>
+
+<p><strong>Project Tasks</strong>:</p>
+<ol>
+  <li><strong>Survey RDMA-based distributed transactions</strong>: Study Motor, FaRM, DrTM, and NAM-DB</li>
+  <li><strong>Design RDMA integration for Mako</strong>:
+    <ul>
+      <li>Identify which replication operations can benefit from RDMA (e.g., log shipping, commit notifications)</li>
+      <li>Design remote memory layout for replicated data</li>
+      <li>Determine whether to use two-sided (verbs) or one-sided RDMA operations</li>
+      <li>Ensure consistency despite asynchronous RDMA operations</li>
+    </ul>
+  </li>
+  <li><strong>Implementation</strong>:
+    <ul>
+      <li>Add RDMA support to Mako’s RRR communication framework</li>
+      <li>Implement RDMA connection management and memory registration</li>
+      <li>Modify Paxos replication layer to use RDMA for log shipping</li>
+      <li>Add RDMA-based commit notifications</li>
+    </ul>
+  </li>
+  <li><strong>Evaluation</strong>:
+    <ul>
+      <li>Measure replication latency reduction compared to TCP/IP baseline</li>
+      <li>Compare CPU utilization with traditional networking</li>
+      <li>Test scalability with varying number of replicas</li>
+      <li>Evaluate performance under different network conditions</li>
+    </ul>
+  </li>
+</ol>
+
+<p><strong>Expected Outcomes</strong>: Reduce replication latency by 30-50% and lower CPU overhead by 40-60%.</p>
+
 <hr />
-<h3 id="formal-verification-of-critical-mako-components-using-verus">11.
-Formal Verification of Critical Mako Components using Verus</h3>
-<p><strong>Motivation</strong>: Distributed transaction systems like
-Mako involve complex concurrency control and consensus protocols where
-subtle bugs can lead to data corruption, consistency violations, or
-livelock. Traditional testing cannot exhaustively cover all possible
-interleavings and failure scenarios. Formal verification provides
-mathematical guarantees that critical components satisfy their
-specifications. Verus (SOSP’24), a practical verification tool for Rust,
-has been successfully used to verify distributed systems, OS kernels,
-and concurrent data structures—achieving 3-61× faster verification than
-prior tools. Applying Verus to verify Mako’s critical components could
-catch bugs that testing misses and provide strong correctness
-guarantees.</p>
-<p><strong>Related Work</strong>: - Verus: A Practical Foundation for
-Systems Verification, SOSP 2024 - Atmosphere: Practical Verified Kernels
-with Rust and Verus, SOSP 2025 - IronFleet: Proving Practical
-Distributed Systems Correct, SOSP 2015 - VerIso: Isolating DBMS bugs
-using formal verification, SIGMOD 2023 - Pushing the Limit: Verified
-Performance-Optimal Causally-Consistent Database Transactions, 2024</p>
-<p><strong>Project Tasks</strong>: 1. <strong>Survey formal verification
-approaches for distributed systems</strong>: - Study how Verus works and
-its verification methodology - Examine IronFleet’s approach to verifying
-distributed protocols - Understand VerIso’s verification of concurrency
-control protocols - Review verification case studies (Atmosphere OS
-kernel, concurrent allocators) 2. <strong>Identify critical Mako
-components to verify</strong>: - <strong>Option A - OCC
-Validator</strong>: Verify that validation logic correctly detects
-conflicts - <strong>Option B - Paxos Consensus</strong>: Verify safety
-properties (agreement, validity) of replication - <strong>Option C -
-Speculative 2PC Protocol</strong>: Verify that speculation doesn’t
-violate serializability - <strong>Option D - Lock Manager</strong>:
-Verify deadlock-freedom and correct lock acquisition/release -
-<strong>Option E - Dependency Graph</strong>: Verify acyclicity
-guarantees and topological ordering 3. <strong>Write formal
-specifications</strong>: - Define invariants (e.g., “committed
-transactions are serializable”) - Specify pre/post-conditions for
-critical functions - Model failure scenarios (network partitions,
-crashes) - Express liveness properties where applicable 4. <strong>Port
-component to Rust and add Verus annotations</strong>: - Extract the
-chosen component from Mako’s C++ codebase - Rewrite in Rust with
-equivalent logic - Add Verus proof annotations (requires, ensures,
-invariant) - Use ghost code to track abstract state 5. <strong>Verify
-and iterate</strong>: - Run Verus verifier to check proofs - Debug
-failed proof attempts and fix bugs or strengthen specifications - Refine
-implementation to make verification tractable 6.
-<strong>Evaluation</strong>: - Document bugs found during verification
-(if any) - Compare verification effort (lines of proof vs. lines of
-code) - Measure verification time - Validate that verified Rust
-component has equivalent behavior to C++ original</p>
-<p><strong>Expected Outcomes</strong>: Successfully verify at least one
-critical component with formal guarantees of correctness properties.
-Potentially discover 1-3 subtle bugs during the verification process.
-Demonstrate that Verus can be applied to transaction system components
-with reasonable effort.</p>
-<p><strong>Fallback Plan</strong>: If full verification proves too
-difficult, focus on verifying a simplified version of the component
-(e.g., single-threaded OCC validator, or Paxos without reconfiguration).
-Alternatively, write specifications and partial proofs that identify
-verification challenges without completing the full proof.</p>
+
+<h3 id="11-formal-verification-of-critical-mako-components-using-verus">11. Formal Verification of Critical Mako Components using Verus</h3>
+
+<p><strong>Motivation</strong>: Distributed transaction systems like Mako involve complex concurrency control and consensus protocols where subtle bugs can lead to data corruption, consistency violations, or livelock. Traditional testing cannot exhaustively cover all possible interleavings and failure scenarios. Formal verification provides mathematical guarantees that critical components satisfy their specifications. Verus (SOSP’24), a practical verification tool for Rust, has been successfully used to verify distributed systems, OS kernels, and concurrent data structures—achieving 3-61× faster verification than prior tools. Applying Verus to verify Mako’s critical components could catch bugs that testing misses and provide strong correctness guarantees.</p>
+
+<p><strong>Related Work</strong>:</p>
+<ul>
+  <li>Verus: A Practical Foundation for Systems Verification, SOSP 2024</li>
+  <li>Atmosphere: Practical Verified Kernels with Rust and Verus, SOSP 2025</li>
+  <li>IronFleet: Proving Practical Distributed Systems Correct, SOSP 2015</li>
+  <li>VerIso: Isolating DBMS bugs using formal verification, SIGMOD 2023</li>
+  <li>Pushing the Limit: Verified Performance-Optimal Causally-Consistent Database Transactions, 2024</li>
+</ul>
+
+<p><strong>Project Tasks</strong>:</p>
+<ol>
+  <li><strong>Survey formal verification approaches for distributed systems</strong>:
+    <ul>
+      <li>Study how Verus works and its verification methodology</li>
+      <li>Examine IronFleet’s approach to verifying distributed protocols</li>
+      <li>Understand VerIso’s verification of concurrency control protocols</li>
+      <li>Review verification case studies (Atmosphere OS kernel, concurrent allocators)</li>
+    </ul>
+  </li>
+  <li><strong>Identify critical Mako components to verify</strong>:
+    <ul>
+      <li><strong>Option A - OCC Validator</strong>: Verify that validation logic correctly detects conflicts</li>
+      <li><strong>Option B - Paxos Consensus</strong>: Verify safety properties (agreement, validity) of replication</li>
+      <li><strong>Option C - Speculative 2PC Protocol</strong>: Verify that speculation doesn’t violate serializability</li>
+      <li><strong>Option D - Lock Manager</strong>: Verify deadlock-freedom and correct lock acquisition/release</li>
+      <li><strong>Option E - Dependency Graph</strong>: Verify acyclicity guarantees and topological ordering</li>
+    </ul>
+  </li>
+  <li><strong>Write formal specifications</strong>:
+    <ul>
+      <li>Define invariants (e.g., “committed transactions are serializable”)</li>
+      <li>Specify pre/post-conditions for critical functions</li>
+      <li>Model failure scenarios (network partitions, crashes)</li>
+      <li>Express liveness properties where applicable</li>
+    </ul>
+  </li>
+  <li><strong>Port component to Rust and add Verus annotations</strong>:
+    <ul>
+      <li>Extract the chosen component from Mako’s C++ codebase</li>
+      <li>Rewrite in Rust with equivalent logic</li>
+      <li>Add Verus proof annotations (requires, ensures, invariant)</li>
+      <li>Use ghost code to track abstract state</li>
+    </ul>
+  </li>
+  <li><strong>Verify and iterate</strong>:
+    <ul>
+      <li>Run Verus verifier to check proofs</li>
+      <li>Debug failed proof attempts and fix bugs or strengthen specifications</li>
+      <li>Refine implementation to make verification tractable</li>
+    </ul>
+  </li>
+  <li><strong>Evaluation</strong>:
+    <ul>
+      <li>Document bugs found during verification (if any)</li>
+      <li>Compare verification effort (lines of proof vs. lines of code)</li>
+      <li>Measure verification time</li>
+      <li>Validate that verified Rust component has equivalent behavior to C++ original</li>
+    </ul>
+  </li>
+</ol>
+
+<p><strong>Expected Outcomes</strong>: Successfully verify at least one critical component with formal guarantees of correctness properties. Potentially discover 1-3 subtle bugs during the verification process. Demonstrate that Verus can be applied to transaction system components with reasonable effort.</p>
+
+<p><strong>Fallback Plan</strong>: If full verification proves too difficult, focus on verifying a simplified version of the component (e.g., single-threaded OCC validator, or Paxos without reconfiguration). Alternatively, write specifications and partial proofs that identify verification challenges without completing the full proof.</p>
+
 <hr />
+
 <h2 id="general-guidelines">General Guidelines</h2>
+
 <h3 id="project-structure">Project Structure</h3>
+
 <p>All projects should follow this general structure:</p>
-<ol type="1">
-<li><strong>Proposal Phase</strong>
-<ul>
-<li>Read 5-10 relevant papers</li>
-<li>Summarize state-of-the-art approaches</li>
-<li>Identify gaps or opportunities</li>
-<li>Propose clear design with diagrams</li>
-<li>Analyze trade-offs</li>
-<li>Get feedback from instructor/TA</li>
-</ul></li>
-<li><strong>Implementation Phase</strong>
-<ul>
-<li>Implement core functionality</li>
-<li>Write unit and integration tests</li>
-<li>Document code changes</li>
-</ul></li>
-<li><strong>Evaluation Phase</strong>
-<ul>
-<li>Run experiments on Mako benchmarks (e.g.,TPC-C, TPC-A, YCSB)</li>
-<li>Collect performance metrics (throughput, latency, CPU, memory)</li>
-<li>Create graphs and analysis</li>
-</ul></li>
+
+<ol>
+  <li><strong>Proposal Phase</strong>
+    <ul>
+      <li>Read 5-10 relevant papers</li>
+      <li>Summarize state-of-the-art approaches</li>
+      <li>Identify gaps or opportunities</li>
+      <li>Propose clear design with diagrams</li>
+      <li>Analyze trade-offs</li>
+      <li>Get feedback from instructor/TA</li>
+    </ul>
+  </li>
+  <li><strong>Implementation Phase</strong>
+    <ul>
+      <li>Implement core functionality</li>
+      <li>Write unit and integration tests</li>
+      <li>Document code changes</li>
+    </ul>
+  </li>
+  <li><strong>Evaluation Phase</strong>
+    <ul>
+      <li>Run experiments on Mako benchmarks (e.g.,TPC-C, TPC-A, YCSB)</li>
+      <li>Collect performance metrics (throughput, latency, CPU, memory)</li>
+      <li>Create graphs and analysis</li>
+    </ul>
+  </li>
 </ol>
+
 <h3 id="testing">Testing</h3>
+
 <p>All implementations must pass Mako’s existing test suite:</p>
-<div class="sourceCode" id="cb1"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">./ci/ci.sh</span> all</span></code></pre></div>
-<p>Additional project-specific tests should be added under
-<code>test/</code>.</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>./ci/ci.sh all
+</code></pre></div></div>
+
+<p>Additional project-specific tests should be added under <code class="language-plaintext highlighter-rouge">test/</code>.</p>
+
 <h3 id="getting-started-with-mako">Getting Started with Mako</h3>
-<ol type="1">
-<li>Clone and build:</li>
+
+<ol>
+  <li>Clone and build:
+    <div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>git clone <span class="nt">--recursive</span> https://github.com/makodb/mako.git
+<span class="nb">cd </span>mako
+bash apt_packages.sh
+make <span class="nt">-j32</span>
+</code></pre></div>    </div>
+  </li>
+  <li>Run basic tests:
+    <div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>./ci/ci.sh simpleTransaction
+./ci/ci.sh shard2Replication
+</code></pre></div>    </div>
+  </li>
+  <li>Read the architecture docs:
+    <ul>
+      <li><code class="language-plaintext highlighter-rouge">CLAUDE.md</code> - Development guide</li>
+      <li><code class="language-plaintext highlighter-rouge">README.md</code> - High-level overview</li>
+      <li><code class="language-plaintext highlighter-rouge">src/mako/</code> - Mako-specific code</li>
+      <li><code class="language-plaintext highlighter-rouge">src/deptran/</code> - Transaction protocol implementations</li>
+    </ul>
+  </li>
 </ol>
-<div class="sourceCode" id="cb2"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> clone <span class="at">--recursive</span> https://github.com/makodb/mako.git</span>
-<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> mako</span>
-<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> apt_packages.sh</span>
-<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="fu">make</span> <span class="at">-j32</span></span></code></pre></div>
-<ol start="2" type="1">
-<li>Run basic tests:</li>
-</ol>
-<div class="sourceCode" id="cb3"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">./ci/ci.sh</span> simpleTransaction</span>
-<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="ex">./ci/ci.sh</span> shard2Replication</span></code></pre></div>
-<ol start="3" type="1">
-<li>Read the architecture docs:</li>
-</ol>
-<ul>
-<li><code>CLAUDE.md</code> - Development guide</li>
-<li><code>README.md</code> - High-level overview</li>
-<li><code>src/mako/</code> - Mako-specific code</li>
-<li><code>src/deptran/</code> - Transaction protocol
-implementations</li>
-</ul>
+
 <h3 id="evaluation-infrastructure">Evaluation Infrastructure</h3>
+
 <ul>
-<li><strong>Local testing</strong>: Use Docker Compose with multiple
-containers</li>
-<li><strong>Distributed testing</strong>: Use cloud VMs
-(AWS/Azure/GCP)</li>
-<li><strong>Benchmarks</strong>: TPC-C (default), TPC-A, YCSB,
-micro-benchmarks</li>
-<li><strong>Metrics</strong>: Throughput (TPS), latency (p50, p99),
-abort rate, CPU/memory usage</li>
+  <li><strong>Local testing</strong>: Use Docker Compose with multiple containers</li>
+  <li><strong>Distributed testing</strong>: Use cloud VMs (AWS/Azure/GCP)</li>
+  <li><strong>Benchmarks</strong>: TPC-C (default), TPC-A, YCSB, micro-benchmarks</li>
+  <li><strong>Metrics</strong>: Throughput (TPS), latency (p50, p99), abort rate, CPU/memory usage</li>
 </ul>
+
 <hr />
+
 <h2 id="additional-resources">Additional Resources</h2>
+
 <h3 id="conference-proceedings">Conference Proceedings</h3>
+
 <ul>
-<li><strong>OSDI</strong>: <a
-href="https://www.usenix.org/conferences/byname/179">https://www.usenix.org/conferences/byname/179</a></li>
-<li><strong>SOSP</strong>: <a
-href="https://sigops.org/s/conferences/sosp/">https://sigops.org/s/conferences/sosp/</a></li>
-<li><strong>VLDB</strong>: <a
-href="https://vldb.org/">https://vldb.org/</a></li>
-<li><strong>SIGMOD</strong>: <a
-href="https://sigmod.org/">https://sigmod.org/</a></li>
+  <li><strong>OSDI</strong>: <a href="https://www.usenix.org/conferences/byname/179">https://www.usenix.org/conferences/byname/179</a></li>
+  <li><strong>SOSP</strong>: <a href="https://sigops.org/s/conferences/sosp/">https://sigops.org/s/conferences/sosp/</a></li>
+  <li><strong>VLDB</strong>: <a href="https://vldb.org/">https://vldb.org/</a></li>
+  <li><strong>SIGMOD</strong>: <a href="https://sigmod.org/">https://sigmod.org/</a></li>
 </ul>
+
 <h3 id="mako-resources">Mako Resources</h3>
+
 <ul>
-<li><strong>GitHub</strong>: <a
-href="https://github.com/makodb/mako">https://github.com/makodb/mako</a></li>
-<li><strong>OSDI’25 Paper</strong>: Check conference proceedings (July
-2025)</li>
-<li><strong>Development Guide</strong>: See <code>doc</code> folder in
-repository</li>
+  <li><strong>GitHub</strong>: <a href="https://github.com/makodb/mako">https://github.com/makodb/mako</a></li>
+  <li><strong>OSDI’25 Paper</strong>: Check conference proceedings (July 2025)</li>
+  <li><strong>Development Guide</strong>: See <code class="language-plaintext highlighter-rouge">doc</code> folder in repository</li>
 </ul>
+
 <h3 id="contact">Contact</h3>
-<p>For questions about specific projects or to propose your own ideas,
-please contact the course instructor.</p>
+
+<p>For questions about specific projects or to propose your own ideas, please contact the course instructor.</p>
+
 <hr />
+
 <p><strong>Last Updated</strong>: 8/12/2026</p>
 
   </section>

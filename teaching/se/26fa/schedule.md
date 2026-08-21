@@ -3,9 +3,9 @@ layout: page
 ---
 
 [
-[Home](./index.html) | 
-[Schedule](./schedule.html) 
-<!-- |[Policy](./policy.html) -->
+[Home](./index.html) |
+[Syllabus](./syllabus.html) |
+[Schedule](./schedule.html)
 ]
 
 # Schedule 

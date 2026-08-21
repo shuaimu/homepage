@@ -1,6 +1,6 @@
 # Project Ideas CSE 532 - Database Systems
 
-In your final project, you will explore state-of-the-art techniques and apply them to Mako (OSDI '25), a database built on the same lab frameworks used in this class.
+In your final project, you will explore state-of-the-art techniques and apply them to Mako (OSDI '25).
 You are encouraged to explore the ideas that interest you, and/or develop your own ideas.
 This document lists a few potential project topics you can refer to.
 

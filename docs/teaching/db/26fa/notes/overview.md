@@ -29,17 +29,20 @@
   * you expect an automatic C
   * you don't have much systems experience
 * Some thinks this is an easy course
-  * grading is objective based on labs, you have an preview
+  * lectures and exams are based on the papers; the project is a substantial implementation
 
 ## How are you evaluated?
-* Lab assignments (60%)
-  * 25 points each lab
-  * You must work alone on all assignments
-  * You have about 3 weeks for each lab
-  * Late policy: 5 percent off per day, at most 40 percent (so you can still get 60 percent of the credit if you submit very late)
-* Exams (40%)
-  * Either 1 exam or 2 quizzes (or 4 quizzes?)
-  * All single choices
+* Exams (60%)
+  * Three in-class exams; we keep the two best scores (30% each)
+  * You may skip one exam
+  * No makeup tests
+* Presentations (10%)
+  * Student paper presentations; dates on the schedule, topics TBA
+  * Prepare the slides and send them to me a week before class
+* Project (30%)
+  * Groups of 3–5
+  * Implement a paper (or your own idea) in Mako; C++ or Rust
+  * AI is encouraged on the project, not on exams
 * Grading standard
   * A: achieve >= 90 in score, or ranking 10% 
   * A-: achieve >= 85 in score, or ranking 25% 
@@ -50,12 +53,7 @@
   * C: score >= 60, or ranking 95%
   * F: score < 60 and last 5%
 * Other bonus 
-  * we will have a few voluntary presentation sessions discussion papers. You can volunteer a 15-minute presentation.  
-    * I will release the papers you can choose from
-    * To make sure the discussion goes on well, you need to prepare the slides and send it to me a week ago than the class. 
-    * If your presentation quality meets expectation, you get 5 points; if it exceeds expection, you get extra 5 points.     
-  * reporting a technical error I made (lecture/lab) gives you 2 points, up to 20 points
-  * from time to time I would ask a "bonus question" in class; each 2 points.
+  * reporting a technical error I made (lecture) gives you 1 point, up to 20 points
  
 ## Integrity policies 
 
@@ -64,7 +62,7 @@
 * You must not look at, or use, solutions from prior years or the Web, or seek assistance from the Internet.
 * You must take reasonable steps to protect your work.
 * You must not publish your solutions.
-* If there are inexplicable discrepancies between exam and lab performance, we will over-weight the exam and interview you.
+* If there are inexplicable discrepancies between exam and project contribution, we will over-weight the exam and interview you.
 
 ## Penalty
 * Violate policy -> F, report to the department   
