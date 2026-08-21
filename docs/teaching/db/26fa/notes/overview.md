@@ -29,7 +29,7 @@
   * you expect an automatic C
   * you don't have much systems experience
 * Some thinks this is an easy course
-  * lectures and exams are based on the papers; the project is a substantial implementation
+  * lectures and exams are based on the papers; the project is a workshop/poster/demo
 
 ## How are you evaluated?
 * Exams (60%)
@@ -40,8 +40,8 @@
   * Student paper presentations; dates on the schedule, topics TBA
   * Prepare the slides and send them to me a week before class
 * Project (30%)
-  * Groups of 3–5
-  * Implement a paper (or your own idea) in Mako; C++ or Rust
+  * Teams of about 3
+  * Any database-related project; the product should be a workshop paper, poster, or demo
   * AI is encouraged on the project, not on exams
 * Grading standard
   * A: achieve >= 90 in score, or ranking 10% 

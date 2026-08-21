@@ -7,7 +7,6 @@ permalink: /teaching/db/26fa/
 [
 [Home](./index.html) | 
 [Schedule](./schedule.html) |
-[Project](./project.html) |
 [Policy](./policy.html)
 ]
 # CSE 532-01 (93734) Database Systems (Fall 2026)
@@ -32,13 +31,12 @@ cloud services to distributed platforms handling billions of users worldwide.
 This class teaches both fundamental concepts and cutting-edge techniques in 
 modern database systems. We cover classical topics including transaction 
 processing, concurrency control, SQL and indexing, alongside 
-contemporary developments in cloud databases, distributed systems, 
-and large-scale data processing platforms.
+contemporary developments in cloud databases and distributed systems.
 
 The course emphasizes real-world systems through influential research papers from 
 companies like Google, Facebook/Meta, Amazon, and Snowflake. Students will study 
 how theoretical concepts are implemented in production systems like Spanner,
-TiDB, MongoDB, Spark and MapReduce. 
+TiDB, MongoDB, and CockroachDB. 
 
 The course consists of lectures covering both theory and practice, with readings 
 from top-tier systems conferences (OSDI, SIGMOD, VLDB, NSDI). There are three 
@@ -61,11 +59,7 @@ They are listed in rough order of usefulness.
 
 * **Exams (60%)**. Three in-class exams. We keep your **two best scores** (30% each). You may skip one exam. **No makeup tests will be offered.**
 * **Presentations (10%)**. Student paper presentations. See the [schedule](./schedule.html) for dates; topics TBA.
-* **Project (30%)**. A team project. Pick a systems research paper and implement its ideas in [Mako](https://github.com/makodb/mako), or propose your own idea (needs approval). Groups of 3–5. Evaluation is subjective: motivation, completeness, soundness of the implementation, results, and the final presentation. AI is encouraged on the project. See [project ideas](./project.html).
-
-The project must be finished in either C++ or Rust.
-
-Note: all your code will be released under MIT license; feel free to use it for other purposes (e.g., write it in your resume, or use it to pursue an advanced project with any professor in the department). 
+* **Project (30%)**. A team project (~3 people). Any database-related project is fine. The deliverable should be a workshop/poster/demo-style product. Evaluation is subjective: motivation, completeness, and the quality of the artifact. AI is encouraged on the project.
 
 <!-- ## Acknowledgement
 The topics and many materials of this class are from database systems courses

@@ -5,7 +5,6 @@ layout: page
 [
 [Home](./index.html) | 
 [Schedule](./schedule.html) |
-[Project](./project.html) |
 [Policy](./policy.html)
 ]
 
