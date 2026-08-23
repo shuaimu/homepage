@@ -51,13 +51,25 @@
   * Required student paper presentations (not voluntary)
   * Dates on the schedule; topics TBA
   * Prepare the slides and send them to me a week before class
+  * Grading is totally subjective
 * Project (30%)
   * Teams of about 3
-  * Any database-related project
-  * Deliverable: workshop paper, poster, or demo
-  * Evaluation is subjective: motivation, completeness, quality of the artifact
+  * Imagine you are submitting a workshop paper or a poster to a conference
+  * Usually 2–6 double-column pages, plus a presentation
+  * Should land on one of these:
+    * a useful, impactful tool
+    * an interesting / cool research idea
+    * a reexamination or evaluation of existing ideas or projects, with different conclusions
+  * Grading is totally subjective
   * AI is encouraged on the project, not on exams
   * Lightning talks Oct 14; poster session Dec 7
+* Subjective ratings (presentation and project)
+  * Excellent: 10 / 10
+  * Good: 8 / 10
+  * Meeting expectation: 6 / 10
+  * Need improvement: 4 / 10
+  * Not acceptable quality: 2 / 10
+  * Missing submission: 0 / 10
 * Grading standard
   * A: achieve >= 90 in score, or ranking 10%
   * A-: achieve >= 85 in score, or ranking 25%
