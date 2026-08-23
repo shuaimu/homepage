@@ -1,104 +1,125 @@
 
-
 # Course introduction
+
+## This is not "Theory of Database"
+
+* Same course number (CSE 532), different course
+* Systems course on database design and implementation
+* Papers from production systems (Spanner, TiDB, MongoDB, CockroachDB, Postgres, RocksDB, ...)
+* No labs this year
 
 ## Prerequisites
 
-* Familiar with OS & networking
-* System-level C/C++ programming experience 
-* Comfortable with concurrency and threading
-* Paper reading experience
+* Official: data structures and algorithms; a prior database course; system-level programming
+* You will read a systems / database paper for almost every lecture
+* Concurrency experience helps (transactions, replication)
 
 ## Course readings
 
 * Lectures are based on research papers
-* Check webpage for schedules
+* Check the webpage for the schedule
 * Lectures assume you have read the assigned papers
 * No textbook
+* Today: [How to Read a Paper](../readings/paper-reading.pdf)
 
 ## Ways to get your questions answered
 
-* Piazza (fastest)
-* Office hour
-* Email (slowest) 
+* Piazza (fastest) — join today: https://piazza.com/stonybrook/fall2026/cse532
+* Office hour: MW 1–2pm, NCS 351 (book a GCal slot if you want a locked-in time)
+* Email (slowest)
 
 ## "This course is so hard!"
-* Some thinks this is one of the hardest courses
-* Take it with caution, do not take this class if: 
-  * you are "underload" and you do not have much time 
+
+* Paper-heavy: exams are on the papers
+* Take it with caution, do not take this class if:
+  * you are "underload" and you do not have much time to read
   * you expect an automatic C
-  * you don't have much systems experience
-* Some thinks this is an easy course
-  * lectures and exams are based on the papers; the project is a workshop/poster/demo
+  * you have no database or systems background
+* Some think this is an easy course
+  * no labs
+  * lectures and exams are based on the papers
+  * the project is a workshop / poster / demo
 
 ## How are you evaluated?
+
 * Exams (60%)
-  * Three in-class exams; we keep the two best scores (30% each)
+  * Three in-class exams: Sep 28, Oct 28, Dec 2
+  * We keep the two best scores (30% each)
   * You may skip one exam
-  * No makeup tests
+  * No makeup tests (a miss is a zero; the drop covers it if you take the other two)
 * Presentations (10%)
-  * Student paper presentations; dates on the schedule, topics TBA
+  * Required student paper presentations (not voluntary)
+  * Dates on the schedule; topics TBA
   * Prepare the slides and send them to me a week before class
+  * Grading is totally subjective
 * Project (30%)
   * Teams of about 3
-  * Any database-related project; the product should be a workshop paper, poster, or demo
+  * Imagine you are submitting a workshop paper or a poster to a conference
+  * Usually 2–6 double-column pages, plus a presentation
+  * Should land on one of these:
+    * a useful, impactful tool
+    * an interesting / cool research idea
+    * a reexamination or evaluation of existing ideas or projects, with different conclusions
+  * Grading is totally subjective
   * AI is encouraged on the project, not on exams
+  * Lightning talks Oct 14; poster session Dec 7
+* Subjective ratings (presentation and project)
+  * Excellent: 10 / 10
+  * Good: 8 / 10
+  * Meeting expectation: 6 / 10
+  * Need improvement: 4 / 10
+  * Not acceptable quality: 2 / 10
+  * Missing submission: 0 / 10
 * Grading standard
-  * A: achieve >= 90 in score, or ranking 10% 
-  * A-: achieve >= 85 in score, or ranking 25% 
-  * B+: score >= 80, or ranking 35% 
-  * B: score >= 75, or ranking 50% 
-  * B-: score >= 70, or ranking 65% 
+  * A: achieve >= 90 in score, or ranking 10%
+  * A-: achieve >= 85 in score, or ranking 25%
+  * B+: score >= 80, or ranking 35%
+  * B: score >= 75, or ranking 50%
+  * B-: score >= 70, or ranking 65%
   * C+: score >= 65, or ranking 80%
   * C: score >= 60, or ranking 95%
   * F: score < 60 and last 5%
-* Other bonus 
+* Other bonus
   * reporting a technical error I made (lecture) gives you 1 point, up to 20 points
- 
-## Integrity policies 
 
-* The work that you turn in must be yours.
-* You must acknowledge your influences.
-* You must not look at, or use, solutions from prior years or the Web, or seek assistance from the Internet.
-* You must take reasonable steps to protect your work.
-* You must not publish your solutions.
-* If there are inexplicable discrepancies between exam and project contribution, we will over-weight the exam and interview you.
+## Integrity policies
+
+* The work that you turn in must be yours
+  * Project: your team's work; do not copy another team
+  * Exams: work alone
+* You must acknowledge your influences (papers, code, people)
+  * Material from lecture does not require citation
+* Exams: no collaboration and no AI
+  * Do not post exam questions on the Web
+* AI is allowed on the project; you still have to understand what you submit
+* Do not publish exam solutions or another team's project
+* If there are inexplicable discrepancies between exam and project contribution, we will over-weight the exam and interview you
 
 ## Penalty
-* Violate policy -> F, report to the department   
+
+* Violate policy -> F, report to the department
   * We are serious: in 19fa we caught ~20 students, and they all failed.
-* Attempt to negotiate on grading -> 10% off per each attempt 
+* If you find a grading error, tell us
+  * Do not negotiate for extra points or extra work
 
-## What are distributed systems?
+## What are database systems?
 
-* Machines communicate to provide some service for applications
-* Multiple hosts
-* A local or wide area network
+* Shared, persistent data for applications
+* A data model and a query interface (usually SQL)
+* Concurrent access with correctness (transactions)
+* Survive failures (recovery / durability)
 
-## Why distributed systems?
+## Why database systems?
 
-* ease-of-use (web, NFS)
-* availability/reliability (hardware/software failures)
-* scalable capacity (CPU, memory, storage)
-* modular functionality (authentication service)
+* Applications should not reinvent storage, concurrency, and recovery
+* Declarative queries: say what you want; the optimizer picks a plan
+* Scale: many cores, many machines, geo-distributed / cloud
 
-## Downside
-* "A distributed system is one in which the failure of a computer you didn't even know existed can render your own computer unusable." -- Leslie Lamport
+## Main challenges / topics this semester
 
-## Main challenges/topics in distributed systems
-
-* Abstraction/Interface
-  * different system requirements: file system/database/disk 
-  * simple, flexible, implementation-friendly
-* System architecture
-  * data center / wide area
-  * client-server / peer-to-peer
-* Fault Tolerance
-  * backup/replication
-  * backup fail-over 
-* Consistency
-  * keep replicas identical
-  * keep replicas non-identical
-* Performance
-  * throughput (parallelism/divide load)
-  * latency (queuing, minimize critical path)
+* Architecture — Postgres, TiDB
+* Replication and consensus — Raft, MongoDB
+* Indexes and storage — LSM-tree, RocksDB, B+ trees, Masstree
+* Transactions — serializability, Spanner
+* SQL and query optimization — Selinger, Spanner SQL
+* Weaker isolation and consistency — ANSI/SI, CockroachDB / MVCC
