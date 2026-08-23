@@ -29,36 +29,36 @@ table td:first-child {
 | Date &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;  | Topic &nbsp;                    |
 |--------|---------------------------------------------------------------------|
 |        | Session I: Welcome and Architecture                                             |
-| Aug 24 | [Overview](notes/overview.html)<br>[How to Read a Paper](readings/paper-reading.pdf) |
+| Aug 24 | Overview ([notes](notes/overview.html))<br>[How to Read a Paper](readings/paper-reading.pdf) |
 | Aug 26 | Architecture I<br>[The Design of POSTGRES](readings/postgres.pdf)<br>[Looking Back at Postgres](readings/postgres-looking-back.pdf) |
 | Aug 31 | Architecture II<br>[TiDB: A Raft-based HTAP Database](readings/tidb.pdf) |
 |        | Session II: Replication                                             |
-| Sep 02 | [Raft](notes/raft.html)<br>[In Search of an Understandable Consensus Algorithm](readings/raft.pdf) |
+| Sep 02 | Raft ([notes](notes/raft.html))<br>[In Search of an Understandable Consensus Algorithm](readings/raft.pdf) |
 | Sep 07 | No class (Labor Day)                                                |
 | Sep 09 | MongoDB Replication<br>[Fault-Tolerant Replication with Pull-Based Consensus in MongoDB](readings/mongodb-nsdi.pdf) |
 | Sep 14 | Student presentation |
 |        | Session III: Index and Storage                                             |
 | Sep 16 | LSM-Tree<br>[The Log-Structured Merge-Tree (LSM-Tree)](readings/lsm.pdf) |
-| Sep 21 | [RocksDB](notes/rocksdb.html)<br>[Evolution of Development Priorities in Key-value Stores Serving Large-scale Applications: The RocksDB Experience](readings/rocksdb.pdf) |
+| Sep 21 | RocksDB ([notes](notes/rocksdb.html))<br>[Evolution of Development Priorities in Key-value Stores Serving Large-scale Applications: The RocksDB Experience](readings/rocksdb.pdf) |
 | Sep 23 | Student presentation |
 | Sep 28 | **Exam 1** |
 |        | Session IV: B+ Trees |
 | Sep 30 | B+ Tree<br>[Efficient Locking for Concurrent Operations on B-Trees](readings/lehman-yao.pdf) |
-| Oct 05 | [Masstree](notes/masstree.html)<br>[Cache Craftiness for Fast Multicore Key-Value Storage](readings/masstree.pdf) |
+| Oct 05 | Masstree ([notes](notes/masstree.html))<br>[Cache Craftiness for Fast Multicore Key-Value Storage](readings/masstree.pdf) |
 | Oct 07 | Student presentation |
 | Oct 12 | No class (Fall break) |
 | Oct 14 | Project lightning talks |
 |        | Session V: Transaction |
-| Oct 19 | [Serializability](notes/serializability.html)<br>[Concurrency Control and Recovery](readings/franklin97concurrency.pdf) |
-| Oct 21 | [Spanner](notes/spanner.html)<br>[Spanner: Google’s Globally-Distributed Database](readings/spanner.pdf) |
+| Oct 19 | Serializability ([notes](notes/serializability.html))<br>[Concurrency Control and Recovery](readings/franklin97concurrency.pdf) |
+| Oct 21 | Spanner ([notes](notes/spanner.html))<br>[Spanner: Google’s Globally-Distributed Database](readings/spanner.pdf) |
 | Oct 26 | Student presentation |
 | Oct 28 | **Exam 2** |
 |        | Session VI: SQL |
 | Nov 02 | Query Optimization<br>[Access Path Selection in a Relational Database Management System](readings/selinger.pdf) |
-| Nov 04 | [Spanner SQL](notes/spanner-sql.html)<br>[Spanner: Becoming a SQL System](readings/spanner-sql.pdf) |
+| Nov 04 | Spanner SQL ([notes](notes/spanner-sql.html))<br>[Spanner: Becoming a SQL System](readings/spanner-sql.pdf) |
 | Nov 09 | Student presentation |
 |        | Session VII: Weaker Isolation and Consistency |
-| Nov 11 | [More Isolation Levels](notes/isolations.html)<br>[A Critique of ANSI SQL Isolation Levels](readings/si.pdf) |
+| Nov 11 | More Isolation Levels ([notes](notes/isolations.html))<br>[A Critique of ANSI SQL Isolation Levels](readings/si.pdf) |
 | Nov 16 | MVCC<br>[CockroachDB: The Resilient Geo-Distributed SQL Database](https://doi.org/10.1145/3318464.3386134) |
 | Nov 18 | Student presentation |
 | Nov 25 | No class (Thanksgiving break) |
