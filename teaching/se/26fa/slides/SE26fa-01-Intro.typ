@@ -100,8 +100,24 @@
 
 #section-slide[A little history of the class…]
 
+#slide[Era 1: J2EE + UML][
+  - The old 416: Java, J2EE, and a lot of UML
+    - Use-case diagrams, class diagrams, sequence diagrams — then code
+  - Lectures taught *the* process and *the* stack
+  - You designed on paper (or in a modeling tool) before you shipped
+  - A fine way to learn vocabulary. A slow way to ship a product.
+]
+
+#slide[Era 2: Python / Node / MERN][
+  - Then the class became a web-app class
+    - Django, Flask, Node, React, Mongo — MERN and friends
+  - Still a prescribed stack. Still a lot of lectures on how to type it.
+  - You built *a* web app, not *your* product
+  - Faster than J2EE. Still last decade’s default internship stack.
+]
+
 #slide[This year is different][
-  - Older 416 offerings had more lectures and a more prescribed stack
+  - Those two eras assumed you would type the stack by hand
   - Last year: one shared project (an IPFS-like blockchain) in a fixed stack
   - This year: *you* pick the product
     - Web or desktop; no required domain, architecture, or tech stack
@@ -142,23 +158,65 @@
 #section-slide[The project is the course]
 
 #slide[Class project][
-  - Default: pick something you actually want to ship by December
-  - Web app or desktop app or mobile app — all fine
-  - We will *not* assign a topic, a stack, or an architecture
-  - It has to be designed as a *real product with real users*
-    - Accounts; something people can log into and actually use
-    - Enough scope for a semester — AI makes coding faster, not a
-      thin utility page into a product
+  - Pick something you actually want to ship by December
+    - Web, desktop, or mobile. We will *not* assign a topic, stack, or architecture.
+  - It has to be a *product* with real users — not a one-purpose tool
+    - Accounts; login; something they actually do after they are in
+    - Several screens, shared data, more than one kind of user or workflow
+    - AI makes coding faster; it does not turn a thin page into a product
+  - You should be able to say who the users are and why they come back
   - Do not want to invent a product? Two staff projects below.
+    If unsure, ask *before* you lock it in.
 ]
 
-#slide[What counts][
-  - Something like Mint / Monarch (money management)
-  - A shopping site
-  - A Piazza-like discussion system
-  - A complex enough game
-  - If you are unsure whether an idea is a semester of work, ask *before* you lock it in
+#slide[You do not have to invent the idea][
+  - Eric Schmidt (ex-CEO of Google) to Stanford students, 2024:
+    - Tell your LLM: *“Make me a copy of TikTok … produce this program …
+      release it.”*
+  - That is a fine way to pick *this* project
+    - Choose a popular product people already use. Clone the *idea*.
+  - Build *your* version: your code, your name, your users
+    - Do *not* take their logo, music, trademarks, or data
 ]
+
+#let framed-shot(path, height) = block(
+  clip: true,
+  radius: 3pt,
+  stroke: 0.5pt + luma(200),
+  image(path, height: height),
+)
+
+#let shot-slide(title, path, caption) = page[
+  #text(size: 26pt, weight: "bold", fill: orange, title)
+  #h(0.35cm)
+  #text(size: 15pt, caption)
+  #v(0.28cm)
+  #align(center, framed-shot(path, 12.35cm))
+]
+
+#shot-slide(
+  [Example: Monarch],
+  "img/monarch.jpg",
+  [Money app — accounts, transactions, reports.],
+)
+
+#shot-slide(
+  [Example: AwardWallet],
+  "img/awardwallet.jpg",
+  [Loyalty / trips — many accounts, not a scraper page.],
+)
+
+#shot-slide(
+  [Example: Piazza],
+  "img/piazza.jpg",
+  [Q&A / discussion — accounts, posts, a real class.],
+)
+
+#shot-slide(
+  [Example: Stardew Valley],
+  "img/stardew.jpg",
+  [A video game.],
+)
 
 #slide[What does not count][
   - A thin utility page, even if it technically has visitors
@@ -294,6 +352,15 @@ a course vs. a real project?][
   - Bring a short demo or walkthrough
 ]
 
+#slide[Override: ship something people actually use][
+  - One way around the usual milestone grading
+  - If the product has *real* daily active users for *at least two weeks*:
+    - 1000+ DAU → course grade *A*
+    - 500+ DAU → course grade *A−*
+  - We will check the numbers
+    - Classmates clicking a link, bots, and fake accounts do not count
+]
+
 #section-slide[We live in a revolutionary age of AI]
 
 #slide[Use AI as much as possible][
@@ -335,6 +402,7 @@ a course vs. a real project?][
 
 #slide[TODO this week][
   - Join #link("https://piazza.com/stonybrook/fall2026/cse41603")[Piazza] today
+  - Wednesday (Aug 26): a *3-minute* lightning talk on the ideas you want to do
   - Aug 26 and Aug 31: form a team and brainstorm a project
   - Lock in something you actually want to build
   - Once the team exists, share a GitHub (or similar) repo with the staff
