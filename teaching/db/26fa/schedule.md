@@ -18,7 +18,7 @@ Office hour: MW 1-2pm NCS 351 (If you want to lock in a time, you can [book a me
 
 <!-- <iframe src="https://docs.google.com/spreadsheets/d/e/2PACX-1vRAGmy_JuMcY5_Jv4z4y8H6WTwPWlb1Rq72sVI2ARAFV7nYetQh0tPJZWX_NsB7gqbgjpLvulzYdY2U/pubhtml?gid=0&amp;single=true&amp;widget=true&amp;headers=false"></iframe> -->
 
-The schedule is tentative and subject to change. Each student-presentation day has **five slots**; pick from the [paper candidates](./paper-candidates.html).
+The schedule is tentative and subject to change. Each student-presentation day has **five slots**; pick from the [paper candidates](./paper-candidates.html). Sign up for a paper and slot on [this sheet](https://docs.google.com/spreadsheets/d/1amP8o7XHVNn9HLepa6tZs9prrsA8kRXaIu9Mdbjukas/edit?usp=sharing) (requires SBU login).
 
 <style>
 table td:first-child {
