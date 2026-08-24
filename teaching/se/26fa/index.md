@@ -34,7 +34,7 @@ policy. -->
 
 ## Course project
 
-You will work in a team on a semester-long software project of your own choosing (web or desktop). It needs real users (accounts, something people can actually use) and enough complexity for a semester; a thin utility page does not count. We will carry the project through its complete lifecycle (proposal, design, implementation, testing, and release), checked at six milestones. See the [syllabus](./syllabus.html) for what counts and what is disallowed.
+You will work in a team on a semester-long software project. Default: pick your own (web, desktop, or mobile). It needs real users (accounts, something people can actually use) and enough complexity for a semester; a thin utility page does not count. If you would rather not invent a product, you can join a staff project and work with the instructor: **Chiral Network — a blockchain** (resource sharing, Internet Computer–style hosted functions) or a **Supabase-like cloud database**. Both are large systems projects. See the [syllabus](./syllabus.html).
 
 AI is encouraged; use it as much as you can.
 
@@ -53,7 +53,7 @@ Milestone grades consider the quality of what the team delivers and each student
 
 ## Schedule 
 
-- **Aug 24**: Course Overview (Syllabus)
+- **Aug 24**: [Course Overview (Syllabus)](./slides/SE26fa-01-Intro.pdf)
 - **Aug 26**: Free session: Team up and brainstorm
 - **Aug 31**: Free session: Team up and brainstorm
 - **Sep 2**: Lecture: Software Engineering Tech Overview

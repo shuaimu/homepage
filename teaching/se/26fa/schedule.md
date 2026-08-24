@@ -15,14 +15,12 @@ Office hour: MW 1-2pm NCS 351
 
 The schedule is tentative and subject to change.
 
-Note: Downloading the notes requires your logging into Google with your stonybrook.edu account. Please do not use the "Request Access" feature to email me (I cannot disable this feature on Google). Doing so may cause my spam filter to add your email address to the blacklist and then block your future emails to me.
-
 | Date   | Topic &nbsp;                                                                   | Comments                                                                                    |
 |--------|--------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------|
-| Aug 24 | Course Overview (Syllabus)                    | |
+| Aug 24 | [Course Overview (Syllabus)](./slides/SE26fa-01-Intro.pdf)                    | |
 | Aug 26 | Free session: Team up and brainstorm          | |
-| Aug 31 | Free session: Team up and brainstorm          | |
-| Sep 2 | Lecture: Software Engineering Tech Overview   | |
+| Aug 31 | Lecture: Project introduction   | |
+| Sep 2 | Lightning talks of projects          | |
 | Sep 7 | No class                                       | Labor Day |
 | Sep 9 | Lecture: Software Modeling, Diagrams, Spec Driven Dev | |
 | Sep 14 | Milestone 1: Proposal and Requirements        | |

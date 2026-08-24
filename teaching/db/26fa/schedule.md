@@ -18,7 +18,7 @@ Office hour: MW 1-2pm NCS 351 (If you want to lock in a time, you can [book a me
 
 <!-- <iframe src="https://docs.google.com/spreadsheets/d/e/2PACX-1vRAGmy_JuMcY5_Jv4z4y8H6WTwPWlb1Rq72sVI2ARAFV7nYetQh0tPJZWX_NsB7gqbgjpLvulzYdY2U/pubhtml?gid=0&amp;single=true&amp;widget=true&amp;headers=false"></iframe> -->
 
-The schedule is tentative and subject to change. Each session includes one student presentation; topics TBA.
+The schedule is tentative and subject to change. Each student-presentation day has **five slots**; pick from the [paper candidates](./paper-candidates.html).
 
 <style>
 table td:first-child {
@@ -37,7 +37,7 @@ table td:first-child {
 | Sep 07 | No class (Labor Day)                                                |
 | Sep 09 | MongoDB Replication<br>[Fault-Tolerant Replication with Pull-Based Consensus in MongoDB](readings/mongodb-nsdi.pdf) |
 | Sep 14 | Student presentation |
-|        | Session III: Index and Storage                                             |
+|        | Session III: LSM-Tree                                             |
 | Sep 16 | LSM-Tree<br>[The Log-Structured Merge-Tree (LSM-Tree)](readings/lsm.pdf) |
 | Sep 21 | RocksDB ([notes](notes/rocksdb.html))<br>[Evolution of Development Priorities in Key-value Stores Serving Large-scale Applications: The RocksDB Experience](readings/rocksdb.pdf) |
 | Sep 23 | Student presentation |

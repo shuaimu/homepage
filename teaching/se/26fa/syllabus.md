@@ -59,6 +59,13 @@ By the end of the course, you should be able to:
 
 The project is the course. Work in a team. Pick something you actually want to ship by December. A web app or a desktop app are both fine. We will not assign you a topic, a stack, or an architecture.
 
+If you would rather not invent a product from scratch, you can join a **staff project** and work with the instructor. There are two tracks, both large systems projects:
+
+* **Chiral Network — a blockchain.** Last year’s project, continued. Resource sharing (storage, compute, bandwidth, …) and hosted functions on the chain, in the spirit of the Internet Computer. Not just a token.
+* **Cloud database** — a cloud database in the spirit of Supabase: auth, storage, a query API, Postgres-shaped and meant to be a real backend for apps.
+
+Same milestones and grading as everyone else. Say so when you form teams; seats are limited. These are a good fit if you like systems. They are not a shortcut.
+
 It needs to be (designed to be) a real product with **real users**: accounts, something people can log into and actually use, and enough functionality that it is a semester of work. A thin utility page does not count, even if it technically has visitors. A campus map of Stony Brook, a torrent search site, or any similar one-purpose tool page is too easy.
 
 A few examples about what does count: something like Mint or Monarch (money management), a shopping site, or a Piazza-like discussion system, or a complex enough game. If you are unsure whether an idea is complex enough, ask before you lock it in.
