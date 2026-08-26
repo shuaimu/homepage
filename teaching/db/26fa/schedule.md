@@ -30,7 +30,7 @@ table td:first-child {
 |--------|---------------------------------------------------------------------|
 |        | Session I: Welcome and Architecture                                             |
 | Aug 24 | Overview ([notes](notes/overview.html))<br>[How to Read a Paper](readings/paper-reading.pdf) |
-| Aug 26 | Architecture I<br>[The Design of POSTGRES](readings/postgres.pdf)<br>[Looking Back at Postgres](readings/postgres-looking-back.pdf) |
+| Aug 26 | Architecture I ([notes](notes/postgres.html))<br>[The Design of POSTGRES](readings/postgres.pdf)<br>[Looking Back at Postgres](readings/postgres-looking-back.pdf) |
 | Aug 31 | Architecture II<br>[TiDB: A Raft-based HTAP Database](readings/tidb.pdf) |
 |        | Session II: Replication                                             |
 | Sep 02 | Raft ([notes](notes/raft.html))<br>[In Search of an Understandable Consensus Algorithm](readings/raft.pdf) |

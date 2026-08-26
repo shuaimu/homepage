@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>Postgres | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="Postgres" />
+<meta property="og:locale" content="en_US" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="Postgres" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"Postgres","url":"/teaching/db/26fa/notes/postgres.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"><link type="application/atom+xml" rel="alternate" href="/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>Postgres</h1>
+         </header> -->
+
+  <section>
+    
+<h1 id="postgres">Postgres</h1>
+
+<h2 id="context">Context</h2>
+<ul>
+  <li>INGRES (1970s, Berkeley) was Stonebraker’s first system
+    <ul>
+      <li>proved the relational model could be implemented</li>
+    </ul>
+  </li>
+  <li>Postgres:
+    <ul>
+      <li>mid-1980s: INGRES was “hacked up enough” that big new features would not fit</li>
+      <li>so they built a <em>new</em> system: POSTGRES = POST inGRES</li>
+    </ul>
+  </li>
+  <li>Motivating applications were not payroll
+    <ul>
+      <li>CAD, GIS, graphics, etc.</li>
+      <li>polygons, rectangles, text, nested objects — not just ints and strings</li>
+    </ul>
+  </li>
+  <li>Hellerstein: this is Stonebraker’s most ambitious project
+    <ul>
+      <li>a “second system” that <em>succeeded</em> (Brooks usually predicts the opposite)</li>
+      <li>today’s PostgreSQL is still recognizably that architecture</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="design-goals-1986-paper">Design goals (1986 paper)</h2>
+<ol>
+  <li>Complex objects</li>
+  <li>User-extendible types, operators, and access methods</li>
+  <li>Active databases: alerters, triggers, inferencing</li>
+  <li>Simpler crash recovery</li>
+  <li>New hardware: optical disks, multiprocessor workstations, custom VLSI</li>
+  <li>Change the relational model as little as possible</li>
+</ol>
+
+<h2 id="why-a-conventional-rdbms-fails-on-objects">Why a conventional RDBMS fails on “objects”</h2>
+
+<p>Example from the paper: paint a map.</p>
+
+<ul>
+  <li>polygons, circles, lines each in their own relation</li>
+  <li>a DISPLAY relation holds color / position / scale, plus <code class="language-plaintext highlighter-rouge">(obj-type, object-id)</code></li>
+  <li>to draw the screen you issue <em>one query per object type</em></li>
+  <li>too many round trips; you cannot paint in 1–2 seconds</li>
+</ul>
+
+<p>What they wanted:</p>
+<ul>
+  <li>store the object <em>in a field</em> of DISPLAY</li>
+  <li>one query fetches the whole thing</li>
+</ul>
+
+<p>This is the object-relational bet:</p>
+<ul>
+  <li>keep tables as the outermost type</li>
+  <li>let columns be nested / opaque / user-defined</li>
+  <li>“have your cake and eat it too” vs flattening everything into 1NF</li>
+</ul>
+
+<h2 id="complex-objects-and-adts">Complex objects and ADTs</h2>
+
+<h3 id="nested-data">Nested data</h3>
+<ul>
+  <li>a column can hold nested tuples or tables</li>
+  <li>also “QUEL as a data type”: a field whose value is a query</li>
+  <li>later: XML, JSON — same idea, new syntax</li>
+  <li>Hellerstein: every “NoSQL then add queries” cycle ends here</li>
+</ul>
+
+<h3 id="opaque-adts--udfs">Opaque ADTs + UDFs</h3>
+<ul>
+  <li>store a type the core engine does <em>not</em> interpret
+    <ul>
+      <li>Codd already allowed any atomic type with predicates</li>
+      <li>the software problem is registering operators</li>
+    </ul>
+  </li>
+  <li>User-defined functions (UDFs) and aggregates (UDAs)
+    <ul>
+      <li>put in the catalog, call them from queries</li>
+    </ul>
+  </li>
+  <li>Why in the DBMS instead of the application?
+    <ul>
+      <li>push code to data, not data to code</li>
+      <li>modest catalog + foreign-code invocation</li>
+      <li>query language and architecture stay relational</li>
+    </ul>
+  </li>
+</ul>
+
+<p>Security was not a 1980s concern.</p>
+<ul>
+  <li>Illustra / Informix DataBlades ran unprotected C on the server</li>
+  <li>Oracle’s marketing used that</li>
+  <li>today: UDFs exist, with sandboxes</li>
+</ul>
+
+<p>MapReduce / Big Data UDFs are the same architecture with parallelism bolted on.</p>
+
+<h3 id="extensible-access-methods">Extensible access methods</h3>
+<ul>
+  <li>B-trees: equality + 1-D range</li>
+  <li>GIS / CAD want 2-D range → R-trees (Guttman, Stonebraker group)</li>
+  <li>inventing an index is not enough
+    <ul>
+      <li>can you <em>plug it in</em>?</li>
+      <li>can the optimizer <em>recognize</em> when to use it?</li>
+      <li>concurrency / recovery for the new structure?</li>
+    </ul>
+  </li>
+  <li>Postgres: register an access method + the operators it supports
+    <ul>
+      <li>B-tree works for any operator set that obeys the usual order axioms</li>
+      <li>optimizer gets: pages touched, tuples examined, join method legality</li>
+    </ul>
+  </li>
+  <li>Survived: B-tree, GiST, SP-GiST, GIN, PostGIS
+    <ul>
+      <li>GiST = templated “generalized search tree” (later Hellerstein work)</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="active-databases-alerters-triggers-rules">Active databases: alerters, triggers, rules</h2>
+<ul>
+  <li><strong>Alerters / triggers</strong> (<code class="language-plaintext highlighter-rouge">always</code>): run <em>forever</em>
+    <ul>
+      <li>alerter: retrieve that fires when matching data changes</li>
+      <li>trigger: append / replace / delete that fires on a condition</li>
+      <li>example: <code class="language-plaintext highlighter-rouge">delete always DEPT where count(employees in that dept) = 0</code></li>
+    </ul>
+  </li>
+</ul>
+
+<p>Implementation idea (1986): special locks</p>
+<ul>
+  <li><strong>I-locks</strong> (“invalidate me”): cached plan / answer; a write invalidates</li>
+  <li><strong>T-locks</strong>: sleeping <code class="language-plaintext highlighter-rouge">always</code> command; a write wakes it</li>
+  <li><strong>D-locks</strong>: <code class="language-plaintext highlighter-rouge">demand</code> rule; a read <em>rewrites</em> the query (query modification)</li>
+</ul>
+
+<p>Two implementation styles (Hellerstein / PRS2):</p>
+<ul>
+  <li>query rewrite (Ingres-style view modification)</li>
+  <li>row-level triggers (locks that run an action instead of waiting)</li>
+</ul>
+
+<p>Neither “won.” PostgreSQL still has statement-level <em>and</em> row-level triggers.
+The AI-winter problem remains: a pile of rules becomes unintelligible.
+Fast deployments often just avoid triggers.</p>
+
+<p>Descendants: materialized views, CEP, streaming.</p>
+
+<h2 id="process-structure">Process structure</h2>
+<ul>
+  <li>DBMS must be a <em>separate process</em> from the app (protection)</li>
+  <li>two models:
+    <ul>
+      <li><strong>process-per-user</strong>: one backend per client — simpler, worse sharing</li>
+      <li><strong>server</strong>: one DBMS for all clients — better, needs a mini-OS</li>
+    </ul>
+  </li>
+  <li>they chose process-per-user on 4.3BSD (“limited programming resources”)</li>
+  <li>POSTMASTER: one per machine, started at boot
+    <ul>
+      <li>lock manager (no shared memory segments on 4.3BSD)</li>
+      <li>demons (compile queries in the background, vacuum, …)</li>
+    </ul>
+  </li>
+  <li>POSTGRES backend: executes commands for one app</li>
+  <li>request/answer messages; frontend <em>pulls</em> a bounded number of tuples
+    <ul>
+      <li>unlike INGRES, the backend does not flood the channel</li>
+    </ul>
+  </li>
+</ul>
+
+<p>This process model is still how PostgreSQL looks: postmaster + one backend per connection.</p>
+
+<h2 id="storage-log-as-data-no-overwrite">Storage: log as data (no overwrite)</h2>
+
+<p>Stonebraker’s “missionary zeal to do something different.”
+Commercial systems used WAL. INGRES already had a WAL-ish manager.
+They did not want to write another one — especially if users can add access methods
+(recovery code must stay simple).</p>
+
+<h3 id="tuple-format">Tuple format</h3>
+<p>Every tuple carries:</p>
+<ul>
+  <li>immutable 64-bit tuple id</li>
+  <li><code class="language-plaintext highlighter-rouge">tmin</code>, <code class="language-plaintext highlighter-rouge">BXID</code> — when / which xact created it</li>
+  <li><code class="language-plaintext highlighter-rouge">tmax</code>, <code class="language-plaintext highlighter-rouge">EXID</code> — when / which xact killed it</li>
+  <li>version pointer, descriptor (null bitmap / field offsets)</li>
+</ul>
+
+<p>Update = insert a new tuple + stamp <code class="language-plaintext highlighter-rouge">tmax</code> on the old one.
+<strong>No in-place overwrite.</strong></p>
+
+<p>To read as of time <code class="language-plaintext highlighter-rouge">T</code>, find tuples with <code class="language-plaintext highlighter-rouge">tmin &lt; T &lt; tmax</code> whose creating xact committed
+(and whose deleter has not committed, depending on the case).</p>
+
+<h3 id="the-log">The “log”</h3>
+<ul>
+  <li>xact ids assigned sequentially</li>
+  <li>commit: force dirty pages, then write <em>one bit</em> (committed / aborted / in-progress)</li>
+  <li>assumed a little non-volatile “secure main memory” for the tail of this bit log</li>
+  <li>vacuum:
+    <ul>
+      <li>drop aborted versions</li>
+      <li>migrate old committed tuples to optical disk</li>
+      <li>after that, archive needs no log — everything there committed</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="why-this-was-counter-cultural">Why this was counter-cultural</h3>
+<ul>
+  <li>TPC winners were competing on fancy WAL</li>
+  <li>log shipping / replication is natural with WAL, awkward here</li>
+  <li>Postgres storage never won on OLTP speed</li>
+</ul>
+
+<h3 id="what-postgresql-actually-does-today-hellerstein">What PostgreSQL actually does today (Hellerstein)</h3>
+<ul>
+  <li>no-overwrite time travel was <em>removed</em></li>
+  <li>replaced by WAL</li>
+  <li>but they <em>kept</em> versioned tuples for MVCC / snapshot isolation
+    <ul>
+      <li>that was <em>not</em> a Berkeley Postgres goal</li>
+      <li>result: WAL complexity <em>plus</em> version overhead</li>
+    </ul>
+  </li>
+  <li>echoes elsewhere:
+    <ul>
+      <li>NoSQL: replication instead of fancy WAL</li>
+      <li>in-memory DBs: multi-version + a compressed commit log</li>
+      <li>cheap storage + streaming: time travel is due for a comeback</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="what-survived-vs-what-died">What survived vs what died</h2>
+
+<p>Survived (in PostgreSQL or the industry):</p>
+<ul>
+  <li>object-relational: UDFs, nested types, JSON/XML</li>
+  <li>extensible indexes (GiST, PostGIS)</li>
+  <li>postmaster / process-per-user</li>
+  <li>SQL (added by the pickup team, not the 1986 design)</li>
+  <li>triggers (rewritten, both granularities)</li>
+  <li>extension / DataBlade ecosystem (MADlib, Citus, …)</li>
+  <li>a pile of companies</li>
+</ul>
+
+<p>Died or was replaced:</p>
+<ul>
+  <li>POSTQUEL</li>
+  <li>no-overwrite + time travel as primary storage</li>
+  <li>optical-disk vacuum</li>
+  <li>the original rules implementations</li>
+  <li>expensive-UDF optimizer (temporarily)</li>
+</ul>
+
+<p>Hellerstein’s number (2019): PostgreSQL among the most popular independent open-source DBMSs;
+Postgres-based companies totaling &gt; $2.6B in acquisitions.</p>
+
+<h2 id="lessons-hellerstein">Lessons (Hellerstein)</h2>
+<ul>
+  <li>extensibility let the second system carry too many ideas <em>without</em> collapsing
+    <ul>
+      <li>try many extensions; the strong ones stick</li>
+    </ul>
+  </li>
+  <li>“one size fits many” can beat “one size fits all is dead”
+    <ul>
+      <li>later “MIT Stonebraker” argued specialization; Postgres is the counterexample</li>
+    </ul>
+  </li>
+  <li>open-sourcing a research prototype can outlive the lab
+    <ul>
+      <li>Stonebraker: a pickup team, none of them Berkeley, shepherded it after 1995</li>
+      <li>“do something important and set it free”</li>
+    </ul>
+  </li>
+</ul>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
+<script async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script>
+</body>
+
+</html>
