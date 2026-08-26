@@ -18,7 +18,7 @@ The schedule is tentative and subject to change.
 | Date   | Topic &nbsp;                                                                   | Comments                                                                                    |
 |--------|--------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------|
 | Aug 24 | [Course Overview (Syllabus)](./slides/SE26fa-01-Intro.pdf)                    | |
-| Aug 26 | Free session: Team up and brainstorm          | |
+| Aug 26 | Lightning talks (3 min); team up and brainstorm | Upload slides to [this folder](https://drive.google.com/drive/folders/1mOiTfarYjGSmUsUiBFF-8OBuuhYwFuL8?usp=drive_link). Sign up on [this sheet](https://docs.google.com/spreadsheets/d/1RDysWENJuoEb9IJj31MlC2PzoKLIb0w11f6V-Lq-H8g/edit?usp=sharing) (SBU login). |
 | Aug 31 | Lecture: Project introduction   | |
 | Sep 2 | Lightning talks of projects          | |
 | Sep 7 | No class                                       | Labor Day |
