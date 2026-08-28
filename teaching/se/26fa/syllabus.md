@@ -39,7 +39,6 @@ CSE 305, CSE 333, CSE 336, CSE 337, and CSE 356 are not required. Depending on w
 
 * Join [Piazza](https://piazza.com/stonybrook/fall2026/cse41603). Course announcements go there.
 * Form a team during the Aug 26 and Aug 31 sessions. It is your responsibility to join a team.
-* Aug 26 lightning talks (3 minutes): upload slides to [this folder](https://drive.google.com/drive/folders/1mOiTfarYjGSmUsUiBFF-8OBuuhYwFuL8?usp=drive_link), then add an entry on [this sheet](https://docs.google.com/spreadsheets/d/1RDysWENJuoEb9IJj31MlC2PzoKLIb0w11f6V-Lq-H8g/edit?usp=sharing) (SBU login).
 * Lock in a project idea you actually want to build. There is no assigned domain.
 * Presentation topics will be assigned after teams are set.
 
@@ -166,7 +165,7 @@ The schedule is tentative. [SBU undergraduate calendar](https://www.stonybrook.e
 | Date | Topic |
 | --- | --- |
 | Aug 24 | Course Overview (Syllabus) |
-| Aug 26 | Lightning talks (3 min); team up and brainstorm |
+| Aug 26 | Free session: Team up and brainstorm |
 | Aug 31 | Free session: Team up and brainstorm |
 | Sep 2 | Lecture: Software Engineering Tech Overview |
 | Sep 7 | No class (Labor Day) |

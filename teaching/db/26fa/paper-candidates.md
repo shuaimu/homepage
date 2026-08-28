@@ -10,9 +10,9 @@ layout: page
 
 # Paper candidates for student presentations
 
-Each presentation day has **five slots**. Pick **one paper** from the list that  
-matches your date. Email the staff the title before you start preparing slides  
-(first come, first served).
+Each presentation day has **four slots** (~15 min talk plus ~3 min Q&A). Pick  
+**one paper** from the list that matches your date. Email the staff the title  
+before you start preparing slides (first come, first served).
 
 A paper may appear under more than one session if it fits both.
 

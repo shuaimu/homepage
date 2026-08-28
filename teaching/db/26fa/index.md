@@ -58,7 +58,7 @@ They are listed in rough order of usefulness.
 ## Exams, Project, and Grading
 
 * **Exams (60%)**. Three in-class exams. We keep your **two best scores** (30% each). You may skip one exam. **No makeup tests will be offered.**
-* **Presentations (10%)**. Five student talks per presentation day. See the [schedule](./schedule.html) for dates. Grading is subjective.
+* **Presentations (10%)**. Four student talks per presentation day (~15 min plus ~3 min Q&A). See the [schedule](./schedule.html) for dates. Grading is subjective.
 * **Project (30%)**. A team project (~3 people). Treat it as a workshop paper or conference poster: usually 2–6 double-column pages, plus a presentation. It should be a useful/impactful tool, a cool research idea, or a reexamination of existing work with different conclusions. Grading is subjective. AI is encouraged on the project.
 * **Subjective ratings** (presentation and project): Excellent 10, Good 8, Meeting expectation 6, Need improvement 4, Not acceptable 2, Missing 0 (out of 10).
 

@@ -17,7 +17,6 @@ Location: NCS 120
 
 ## Announcements
 
-* (Aug 26, 2026) Lightning talks today (3 minutes). Upload your slides to [this folder](https://drive.google.com/drive/folders/1mOiTfarYjGSmUsUiBFF-8OBuuhYwFuL8?usp=drive_link), then add an entry on [this sheet](https://docs.google.com/spreadsheets/d/1RDysWENJuoEb9IJj31MlC2PzoKLIb0w11f6V-Lq-H8g/edit?usp=sharing) (SBU login).
 * (Aug 24, 2026) Please join [Piazza](https://piazza.com/stonybrook/fall2026/cse41603) for class notifications and discussions.
 <!-- * (Apr 15, 2019) Final exam date: May 20, 2:15pm, Humanities 1003 -->
 <!-- * Notes/slides are in this [folder](https://drive.google.com/drive/folders/1imZgiq2q5rvcrOs336eLrBWOLXWCp07o?usp=sharing) (requires SBU login).  -->
@@ -28,7 +27,6 @@ policy. -->
 ## Quick links (requires SBU login):
 * [Syllabus](./syllabus.html) ([PDF](./syllabus.pdf))
 * [Piazza](https://piazza.com/stonybrook/fall2026/cse41603)
-* Lightning talks: [slides folder](https://drive.google.com/drive/folders/1mOiTfarYjGSmUsUiBFF-8OBuuhYwFuL8?usp=drive_link), [signup sheet](https://docs.google.com/spreadsheets/d/1RDysWENJuoEb9IJj31MlC2PzoKLIb0w11f6V-Lq-H8g/edit?usp=sharing) (SBU login)
 <!-- * [Notes/slides](https://drive.google.com/drive/folders/1imZgiq2q5rvcrOs336eLrBWOLXWCp07o?usp=sharing)  -->
 <!-- * [Voluntary Presentation](https://drive.google.com/drive/folders/1ZsE4_GKKfu02G8XZLIav1vYzxvrpRZnu?usp=sharing) -->
 <!-- * [Milestone Review](https://drive.google.com/drive/folders/1fappfUmtHpRLG_EL6RjSTqLdpl9Ki5JV?usp=sharing) -->
@@ -56,7 +54,7 @@ Milestone grades consider the quality of what the team delivers and each student
 ## Schedule 
 
 - **Aug 24**: [Course Overview (Syllabus)](./slides/SE26fa-01-Intro.pdf)
-- **Aug 26**: Lightning talks (3 min); team up and brainstorm. [Slides folder](https://drive.google.com/drive/folders/1mOiTfarYjGSmUsUiBFF-8OBuuhYwFuL8?usp=drive_link), [signup sheet](https://docs.google.com/spreadsheets/d/1RDysWENJuoEb9IJj31MlC2PzoKLIb0w11f6V-Lq-H8g/edit?usp=sharing) (SBU login)
+- **Aug 26**: Free session: Team up and brainstorm
 - **Aug 31**: Free session: Team up and brainstorm
 - **Sep 2**: Lecture: Software Engineering Tech Overview
 - **Sep 7**: No class (Labor Day)
