@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>TiDB | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="TiDB" />
+<meta property="og:locale" content="en_US" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="TiDB" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"TiDB","url":"/teaching/db/26fa/notes/tidb.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"><link type="application/atom+xml" rel="alternate" href="/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>TiDB</h1>
+         </header> -->
+
+  <section>
+    
+<h1 id="tidb">TiDB</h1>
+
+<p>Paper: Huang et al., <em>TiDB: A Raft-based HTAP Database</em> (PVLDB 2020, PingCAP).</p>
+
+<p>Last time: Postgres — one machine, heap + indexes, extend the type system. Today: how do you get SQL + ACID when the data no longer fits on one box? The full Raft paper is Wednesday; below is only the background TiDB assumes.</p>
+
+<h2 id="a-little-history">A little history</h2>
+
+<h3 id="the-problem-they-were-selling">The problem they were selling</h3>
+<ul>
+  <li>LAMP in 2000s: Linux, Apache, MySQL, PHP
+    <ul>
+      <li>e.g. Facebook</li>
+    </ul>
+  </li>
+  <li>Mid-2010s “NewSQL”: people had outgrown one MySQL / one Postgres
+    <ul>
+      <li>writes do not scale on a single primary</li>
+      <li>the industry answer was shard in the app (proxy, <code class="language-plaintext highlighter-rouge">user_id % N</code>)</li>
+    </ul>
+  </li>
+  <li>Bigtable / Spanner showed a prettier picture: range shards + consensus + SQL
+    <ul>
+      <li>not something you could download and point JDBC at</li>
+    </ul>
+  </li>
+  <li>PingCAP (~2015, China): a Spanner-shaped system that existing apps can speak to</li>
+</ul>
+
+<h3 id="why-the-mysql-wire-not-postgres">Why the MySQL <em>wire</em>, not Postgres</h3>
+<ul>
+  <li>Who they were selling to.
+    <ul>
+      <li>China internet was LAMP: MySQL + sharding proxies, not Postgres</li>
+      <li>Huang (CTO): MySQL</li>
+    </ul>
+  </li>
+  <li>CockroachDB / Yugabyte later took the Postgres wire — different home market</li>
+</ul>
+
+<h3 id="why-not-mysql--a-distributed-storage-engine">Why not MySQL + a distributed storage engine?</h3>
+<ul>
+  <li>first week they tried “MySQL + a distributed storage engine”
+    <ul>
+      <li>dropped it: MySQL’s optimizer / executor are single-node</li>
+    </ul>
+  </li>
+  <li>So: new SQL layer (Go) + TiKV (Rust) + MySQL on the wire
+    <ul>
+      <li>pitch: keep the client; hide the shards</li>
+      <li>reuse drivers, ORMs, <code class="language-plaintext highlighter-rouge">mysqldump</code>, DBA tools.</li>
+    </ul>
+  </li>
+</ul>
+
+<p>Takeaway: they cloned Spanner’s architecture, not MySQL’s storage. MySQL is the front door.</p>
+
+<h2 id="architecture">Architecture</h2>
+
+<p>Three processes. You deploy all of them. A lone TiKV is not a database.</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>app  --MySQL proto--&gt;  TiDB SQL (stateless)  --&gt;  TiKV (rows)
+                              |                    ^
+                              +-----&gt;  PD  --------+
+</code></pre></div></div>
+
+<ul>
+  <li>TiDB SQL: parse, optimize, execute. No durable rows. Scale by adding nodes</li>
+  <li>PD (Placement Driver): control plane — where is this key, who should move, timestamps</li>
+  <li>TiKV: data plane — the shards, Raft, RocksDB</li>
+</ul>
+
+<h3 id="from-a-table-to-a-key-value-map">From a table to a key-value map</h3>
+<p>No Postgres heap file. The whole cluster is one ordered KV map:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>key   = {tableID, rowID}     (rowID often the PK)
+value = {col0, col1, …}
+</code></pre></div></div>
+
+<p>Secondary indexes are more KV pairs (index key → primary key).<br />
+The SQL engine is a translator from SQL to KV reads/writes.</p>
+
+<h3 id="raft-background-for-this-lecture">Raft background (for this lecture)</h3>
+<ul>
+  <li>The network is asynchronous
+    <ul>
+      <li>messages can be delayed, dropped, reordered; the network can partition</li>
+      <li>no shared clock; a node cannot tell crash from “slow”</li>
+    </ul>
+  </li>
+  <li>Split brain: two servers both think they are primary and accept writes
+    <ul>
+      <li>replicas diverge; no single copy is truth</li>
+    </ul>
+  </li>
+  <li>Consensus (Raft): agree on a log of commands so everyone applies the same sequence
+    <ul>
+      <li>leader + majority (quorum)</li>
+      <li>any two majorities overlap → two leaders cannot both commit</li>
+      <li>a minority can be down or partitioned; they just do not get to decide</li>
+    </ul>
+  </li>
+  <li>Log: an array of log entries
+    <ul>
+      <li>each entry has a command or a group of commands</li>
+      <li>committed = a majority has the entry, and it will not be forgotten</li>
+    </ul>
+  </li>
+  <li>Wednesday: the full details of Raft</li>
+</ul>
+
+<h3 id="region--range--raft-group">Region = range + Raft group</h3>
+<p>Cut the map into Regions: contiguous key ranges.</p>
+
+<ul>
+  <li>paper default: ~96 MB.</li>
+  <li>one Region = one Raft group (usually 3 peers; one leader serves reads/writes)</li>
+  <li>many groups on one machine = multi-Raft</li>
+  <li>PD places groups so replicas sit on different TiKV nodes (and AZs)</li>
+</ul>
+
+<p>Why many Raft groups, not one group per machine?</p>
+
+<ul>
+  <li>Raft group = unit of placement and failover</li>
+  <li>Region A’s copies can live on <code class="language-plaintext highlighter-rouge">{1,2,3}</code>, Region B’s on <code class="language-plaintext highlighter-rouge">{1,4,5}</code></li>
+  <li>move / split a hot range without shipping the rest of the node</li>
+  <li>many leaders ⇒ write parallelism</li>
+</ul>
+
+<p>Split / merge are themselves Raft commands (metadata). Idle groups heartbeat more slowly.</p>
+
+<p>PD vs TiKV:</p>
+<ul>
+  <li>PD has the cluster-wide Region map + TSO.</li>
+  <li>TiKV has only local peers. It does not answer “which node has this key?” for the whole cluster</li>
+</ul>
+
+<h3 id="tikv-write--read-path-oltp">TiKV write / read path (OLTP)</h3>
+<p>Naive Raft is one request at a time (append, ship, wait majority, apply, reply). Leader is the bottleneck.
+Tricks in the paper:</p>
+<ul>
+  <li>append locally in parallel with shipping to followers</li>
+  <li>batch log RPCs</li>
+  <li>pipeline: don’t wait for ack before the next batch</li>
+  <li>async apply on another thread once committed</li>
+</ul>
+
+<p>Linearizable reads without a dummy log entry per read:</p>
+
+<ul>
+  <li>Read index: record commit index, heartbeat to prove you are still leader, wait until applied</li>
+  <li>Lease read: during a lease, no extra RPCs (clocks must be close enough)</li>
+  <li>Follower read: follower asks the leader for a read index, then waits — spreads hot Region reads</li>
+</ul>
+
+<h3 id="transactions">Transactions</h3>
+<ul>
+  <li>A transaction: a group of reads/writes that should commit all-or-nothing and look isolated from other txns</li>
+  <li>One SQL txn can touch many Regions — i.e. many Raft groups</li>
+  <li>Raft only orders the log inside one Region. It does not run the SQL txn</li>
+  <li>So you still need:
+    <ul>
+      <li>timestamps to order txns (PD’s TSO = timestamp oracle)</li>
+      <li>a commit protocol across Regions (two-phase commit; the paper uses Google Percolator)</li>
+    </ul>
+  </li>
+  <li>Locks live next to the keys in TiKV, not in a central lock manager</li>
+  <li>MVCC: keep old versions so a reader can see a consistent snapshot</li>
+</ul>
+
+<h2 id="htap-oltp--olap">HTAP: OLTP + OLAP</h2>
+
+<p>OLTP and OLAP want different layouts and different machines.</p>
+
+<ul>
+  <li>OLTP (online transaction processing): many small reads/writes, indexes, latest row
+    <ul>
+      <li>“debit this account,” <code class="language-plaintext highlighter-rouge">SELECT … WHERE pk = ?</code></li>
+    </ul>
+  </li>
+  <li>OLAP (online analytic processing): scan lots of rows, few columns, aggregations / joins
+    <ul>
+      <li><code class="language-plaintext highlighter-rouge">SUM(bal) GROUP BY region</code> over the whole table</li>
+    </ul>
+  </li>
+  <li>NewSQL (Spanner, CRDB, TiKV) is the first, not the second</li>
+  <li>Stonebraker: “one size does not fit all” — two systems are expensive, and the warehouse is stale</li>
+</ul>
+
+<p>HTAP extra requirements (on top of NewSQL):</p>
+
+<ul>
+  <li>Freshness: how recent is the analytic replica?</li>
+  <li>Isolation: OLAP must not crush OLTP (and vice versa)</li>
+</ul>
+
+<h3 id="why-the-obvious-designs-fail">Why the obvious designs fail</h3>
+<ul>
+  <li>ETL (extract / transform / load) every few hours: dump OLTP into a warehouse; consistent-ish, not fresh</li>
+  <li>Stream the log into a second system: fresher, no global txn story</li>
+  <li>One in-memory engine (HyPer, HANA, MemSQL): fresh, same cores/RAM
+    <ul>
+      <li>why it fails: analytics steal CPU / cache / memory bandwidth from txns (no resource isolation)</li>
+      <li>CH-benCHmark: HANA OLTP ~3× slower with analytics; HyPer ~5×</li>
+    </ul>
+  </li>
+  <li>More Raft <em>followers</em>: still in the quorum
+    <ul>
+      <li>leader waits on a larger majority → OLTP slower</li>
+      <li>a follower can still become leader → not a dedicated OLAP box</li>
+    </ul>
+  </li>
+</ul>
+
+<p>Need: a replica that is up to date, columnar, and not in the write quorum.</p>
+
+<h3 id="idea-raft-learners--a-column-store">Idea: Raft <em>learners</em> + a column store</h3>
+<ul>
+  <li>Standard group: leader + followers (row, OLTP) on TiKV</li>
+  <li>Add a learner (TiFlash) on other machines:
+    <ul>
+      <li>asynchronously tails the leader’s log</li>
+      <li>not in the election / quorum → leader does not wait on it at commit</li>
+      <li>at read time, catch up to a snapshot timestamp, then scan</li>
+    </ul>
+  </li>
+  <li>Apply the log into a column store (not another row store)
+    <ul>
+      <li>drop aborted txns, decode rows, transpose to columns</li>
+      <li>cannot rewrite huge compressed column files on every small write; a plain LSM makes analytic reads merge many files</li>
+      <li>so: stable columnar chunks (good for <code class="language-plaintext highlighter-rouge">SUM</code> / <code class="language-plaintext highlighter-rouge">COUNT</code>) plus a small delta of recent updates (paper: DeltaTree)</li>
+    </ul>
+  </li>
+  <li>Freshness = log lag (paper: often &lt; 1 s). Isolation = other machines.</li>
+</ul>
+
+<h3 id="row-store-vs-column-store">Row store vs column store</h3>
+<p>A row store keeps a tuple together. A column store keeps a column together.</p>
+
+<p>Row store (Postgres heap, InnoDB, TiKV): on disk you see</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>[id=1, name=Ann, bal=10] [id=2, name=Bob, bal=20] …
+</code></pre></div></div>
+
+<ul>
+  <li>one I/O brings the whole row</li>
+  <li>point lookup / UPDATE of a few rows is cheap</li>
+  <li><code class="language-plaintext highlighter-rouge">SUM(bal)</code> still reads <code class="language-plaintext highlighter-rouge">name</code> (and everything else) off the page</li>
+</ul>
+
+<p>Column store (MonetDB, C-Store/Vertica, Parquet, TiFlash): on disk you see</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>id:   [1, 2, 3, …]
+name: [Ann, Bob, …]
+bal:  [10, 20, …]
+</code></pre></div></div>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">SUM(bal)</code> reads only the <code class="language-plaintext highlighter-rouge">bal</code> file</li>
+  <li>values in one column are similar → compress well</li>
+  <li>engines run vectorized loops on arrays of one type</li>
+  <li>reconstructing “row 17” gathers from many files; an UPDATE may touch every column file</li>
+</ul>
+
+<p>So OLTP wants rows; analytics (few columns, many rows) wants columns.
+TiDB’s bet: same logical table, two physical layouts, glued by the Raft log.</p>
+
+<h3 id="query-processing-sql-vs-logical-plan-vs-physical-plan">Query processing: SQL vs logical plan vs physical plan</h3>
+
+<ul>
+  <li>SQL: syntax and sugar (<code class="language-plaintext highlighter-rouge">IN</code> / <code class="language-plaintext highlighter-rouge">EXISTS</code>, views, <code class="language-plaintext highlighter-rouge">SELECT *</code>, join written as comma-FROM)</li>
+  <li>Optimizer pipeline: SQL → (many) logical plans → (many) physical plans → run one.</li>
+  <li>Logical plan: a tree of relational algebra (<code class="language-plaintext highlighter-rouge">σ</code>, <code class="language-plaintext highlighter-rouge">⋈</code>, <code class="language-plaintext highlighter-rouge">π</code>, <code class="language-plaintext highlighter-rouge">γ</code>). What to compute, not how
+    <ul>
+      <li>binding has happened: <code class="language-plaintext highlighter-rouge">bal</code> is now <code class="language-plaintext highlighter-rouge">Account.bal</code> (table id, type)</li>
+      <li>one SQL can rewrite to many equivalent logical trees (join order, unnest a subquery)</li>
+      <li>different SQL can become the same logical join</li>
+    </ul>
+  </li>
+  <li>Physical plan: algorithms + access paths. How to compute it
+    <ul>
+      <li>heap scan vs index vs column store</li>
+      <li>hash join vs index nested-loop vs sort-merge</li>
+      <li>sort vs hash aggregate</li>
+    </ul>
+  </li>
+  <li>Optimizer:
+    <ul>
+      <li>RBO (rule-based optimizer): rewrite with fixed algebraic rules. No “is this table big?”
+        <ul>
+          <li>Push a filter below a join, fold constants, unnest a subquery. Produces a nicer logical plan.</li>
+        </ul>
+      </li>
+      <li>CBO (cost-based optimizer): estimate cost from stats (row counts, tuple/column size, seeks vs scans, Region count) and pick the cheapest physical plan.</li>
+      <li>TiDB: RBO first (logical), then CBO (physical). Three scan shapes: TiKV row, TiKV index, TiFlash column. A plan can mix stores (index into T on TiKV, hash-join S from TiFlash).</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="evaluation-what-to-remember">Evaluation (what to remember)</h3>
+<ul>
+  <li>TPC-C: OLTP — many small txns (new order, payment, …) on a wholesale warehouse schema; indexed lookups and updates</li>
+  <li>TPC-H: OLAP — ~22 long queries (scans, joins, aggregations) on a <em>different</em> sales/supply-chain schema (parts, suppliers, orders)
+    <ul>
+      <li>a manager asking e.g. revenue by nation, not a clerk ringing up an order (“decision support”)</li>
+    </ul>
+  </li>
+  <li>CH-benCHmark = TPC-C txns + TPC-H-<em>style</em> queries rewritten onto the TPC-C schema (same data, both workloads)</li>
+  <li>OLTP: often beats CRDB in their setup</li>
+  <li>OLAP: TiKV + TiFlash together often beats either store alone (joins)</li>
+  <li>HTAP: extra AP clients cut TP by ≤ ~10%; MemSQL TP drops &gt;5×</li>
+  <li>Learner lag: tens–hundreds of ms; ~1 s “fresh enough” on 100 warehouses</li>
+</ul>
+
+<h2 id="questions-to-review">Questions to review</h2>
+<ul>
+  <li>Why MySQL on the wire if they threw away MySQL’s engine?</li>
+  <li>PD vs TiKV: who knows the cluster-wide key → node map?</li>
+  <li>Why many Raft groups but one RocksDB per node?</li>
+  <li>Region 96 MB: too big? too small? who splits?</li>
+  <li>Why encode a row as <code class="language-plaintext highlighter-rouge">{tableID,rowID} → columns</code> instead of a heap file like Postgres?</li>
+  <li>SQL vs logical plan: same query, two join orders — which object changed?</li>
+  <li>Row store vs column store: why is <code class="language-plaintext highlighter-rouge">SUM(bal)</code> cheaper on TiFlash? why is <code class="language-plaintext highlighter-rouge">UPDATE</code> cheaper on TiKV?</li>
+  <li>Percolator vs “one Raft group for the whole txn”?</li>
+  <li>Why not ETL? Why not “just add Raft followers”?</li>
+  <li>Learner vs follower: who waits at write time? at read time?</li>
+  <li>Will the analytic replica always match the leader before the client’s OLTP commit returns?</li>
+  <li>Percolator logs on the learner: why compact rollbacks before building columns?</li>
+  <li>DeltaTree vs feeding TiFlash from RocksDB: what hurts analytic reads?</li>
+  <li>When is an index join on TiKV cheaper than a hash join on TiFlash?</li>
+  <li>PD as timestamp oracle: what breaks if PD is partitioned from TiKV?</li>
+  <li>“One size fits all is dead” vs TiDB: one system, or two stores glued by a log?</li>
+</ul>
+
+<h2 id="extra-details">Extra details</h2>
+
+<h3 id="one-rocksdb-many-regions">One RocksDB, many Regions</h3>
+<p>Default TiKV (the paper, and still Dedicated / self-managed):</p>
+
+<ul>
+  <li>one KV RocksDB per node — all Regions on that machine share it</li>
+  <li>one log store per node (paper: another RocksDB; today usually Raft Engine)</li>
+  <li>Region id is in the key prefix; the LSM does not know about Raft</li>
+</ul>
+
+<p>Why not one RocksDB per Region? A node has thousands of Regions. RocksDB is heavy (memtables, WAL, open SSTs, compaction). A 96–256 MB tree is a lot of overhead per byte. One shared LSM batches puts into one WAL and one compaction pipeline.</p>
+
+<p>Cost they accepted: compacting or moving one range rewrites mixed SSTs.<br />
+(Later they tried “one RocksDB per Region” — still experimental. Cloud elastic tiers use a new per-Region LSM on S3, TiDB X. Not this paper.)</p>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
+<script async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script>
+</body>
+
+</html>
