@@ -39,6 +39,7 @@ I'm particularly interested in:
 If you are interested, email me a brief resume.
 
 ## News ([see all](news.html))
+* Aug 2026, Lion accepted to SOSP '26!
 * Jun 2026, Jetpack accepted to OSDI '26!
 * Jun 2026, Weihai defended his PhD dissertation! Congratulations!
 * Sep 2025, AutoMan and Tiga accepted to SOSP '25!
