@@ -321,7 +321,8 @@ a course vs. a real project?][
 ]
 
 #slide[Class presentations][
-  - One talk per team; everyone speaks
+  - One *30-minute* talk per team; everyone speaks
+  - Split one big story, or each person tells a smaller story on the same topic
   - Tell a *story*: how a company, an incident, or a real project actually does this
     - What they do, what it is for, what happened
     - Interesting failures count

@@ -19,14 +19,14 @@ The schedule is tentative and subject to change.
 |--------|--------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------|
 | Aug 24 | [Course Overview (Syllabus)](./slides/SE26fa-01-Intro.pdf)                    | |
 | Aug 26 | Free session: Team up and brainstorm          | |
-| Aug 31 | Lecture: Project introduction   | |
-| Sep 2 | Lightning talks of projects          | |
+| Aug 31 | Free session: Team up and brainstorm          | |
+| Sep 2 | [Lecture: Milestone reviews and presentations](./slides/SE26fa-02-Milestones.pdf) | |
 | Sep 7 | No class                                       | Labor Day |
 | Sep 9 | Lecture: Software Modeling, Diagrams, Spec Driven Dev | |
 | Sep 14 | Milestone 1: Proposal and Requirements        | |
 | Sep 16 | Milestone 1: Proposal and Requirements        | |
-| Sep 21 | Presentation 1: Project Management Tools and Practices | |
-| Sep 23 | Presentation 2: Software Architecture and Design Patterns | |
+| Sep 21 | Presentation 1: User Experience (UI/UX and user study) | |
+| Sep 23 | Presentation 2: Architecture and Tech Stack | |
 | Sep 28 | Milestone 2: Design and Setup                 | |
 | Sep 30 | Milestone 2: Design and Setup                 | |
 | Oct 5 | Presentation 3: Prompt Engineering and AI-Assisted Development | |
@@ -52,4 +52,4 @@ The schedule is tentative and subject to change.
 
 
 
-[SBU undergrad calendar](https://www.stonybrook.edu/registrar/academic-calendar/current-terms/undergrad-calendar-fall-2026.html) 
+[SBU undergrad calendar](https://www.stonybrook.edu/registrar/academic-calendar/current-terms/undergrad-calendar-fall-2026.html)

@@ -80,7 +80,7 @@ Each milestone has an in-class review. Teams are graded on the day they present.
 
 Every milestone review is about 10 minutes. Cover (1) what you finished, (2) the design choices and why, and (3) how the team (including AI) worked together in this phase.
 
-**Milestone 1 — Proposal and Requirements (10%).** Problem, users, why this is a semester of work (and not a weekend with ChatGPT), related systems, initial scope, and who does what. Artifacts: written proposal, functional and non-functional requirements, initial user stories or equivalent, team roles, rough architecture sketch.
+**Milestone 1 — Proposal and Requirements (10%).** Problem, users, why this is a semester of work (and not a weekend with ChatGPT), related systems, initial scope, and who does what. Artifacts: written proposal, requirements (what the product does, and how usable it is: speed, not losing data), initial user stories or equivalent, team roles, rough architecture sketch.
 
 **Milestone 2 — Design and Setup (10%).** Architecture, tech stack, and a demo of whatever is already running. Artifacts: design document (diagrams as needed), stack justification, repository with a CI skeleton, a minimal prototype.
 
@@ -97,7 +97,7 @@ Every milestone review is about 10 minutes. Cover (1) what you finished, (2) the
 ## Grading
 
 * **Course project (80%)**, in six milestones: 10% + 10% + 10% + 10% + 10% + 30%.
-* **Class presentation (20%)**, one talk per group.
+* **Class presentation (20%)**, one 30-minute talk per group.
 
 No exams. Milestone grades consider the quality of what the team delivers and each student's contribution. We will ask you to assess your teammates at milestones.
 
@@ -105,7 +105,7 @@ If you find a grading error, tell us. Do not negotiate for extra points or extra
 
 ## Class presentations
 
-Each team gives one presentation on a software-engineering topic. All members are expected to speak.
+Each team gives one **30-minute** presentation on a software-engineering topic. All members are expected to speak (about four or five people). You can split one big story across the team, or each person can tell a different smaller story on the same topic.
 
 The talk should be a **story**, not a lecture. Pick a real use case: how a company, a well-known incident, or a concrete project actually practices this topic. What do they do, what is it for, and what happened? Interesting failures count. We want to hear how the work is actually done, not a recap of the textbook.
 
@@ -117,8 +117,8 @@ Send slides at least 72 hours before your slot.
 
 | Date | Topic |
 | --- | --- |
-| Sep 21 | Presentation 1: Project Management Tools and Practices |
-| Sep 23 | Presentation 2: Software Architecture and Design Patterns |
+| Sep 21 | Presentation 1: User Experience (UI/UX and user study) |
+| Sep 23 | Presentation 2: Architecture and Tech Stack |
 | Oct 5 | Presentation 3: Prompt Engineering and AI-Assisted Development |
 | Oct 7 | Presentation 4: API Design and Documentation |
 | Oct 14 | Presentation 5: CI/CD and DevOps |
@@ -158,41 +158,5 @@ If you have a physical, psychological, medical, or learning disability that may 
 
 Stony Brook University expects students to respect the rights, privileges, and property of other people. Faculty are required to report to the Office of Student Conduct and Community Standards any disruptive behavior that interrupts their ability to teach, compromises the safety of the learning environment, or inhibits students' ability to learn. Further information about most academic matters can be found in the Undergraduate Bulletin, the Undergraduate Class Schedule, and the Faculty-Employee Handbook.
 
-## Schedule
+The class calendar is on the [schedule](./schedule.html) page.
 
-The schedule is tentative. [SBU undergraduate calendar](https://www.stonybrook.edu/registrar/academic-calendar/current-terms/undergrad-calendar-fall-2026.html).
-
-| Date | Topic |
-| --- | --- |
-| Aug 24 | Course Overview (Syllabus) |
-| Aug 26 | Free session: Team up and brainstorm |
-| Aug 31 | Free session: Team up and brainstorm |
-| Sep 2 | Lecture: Software Engineering Tech Overview |
-| Sep 7 | No class (Labor Day) |
-| Sep 9 | Lecture: Software Modeling, Diagrams, Spec Driven Dev |
-| Sep 14 | Milestone 1: Proposal and Requirements |
-| Sep 16 | Milestone 1: Proposal and Requirements |
-| Sep 21 | Presentation 1: Project Management Tools and Practices |
-| Sep 23 | Presentation 2: Software Architecture and Design Patterns |
-| Sep 28 | Milestone 2: Design and Setup |
-| Sep 30 | Milestone 2: Design and Setup |
-| Oct 5 | Presentation 3: Prompt Engineering and AI-Assisted Development |
-| Oct 7 | Presentation 4: API Design and Documentation |
-| Oct 12 | No class (Fall Break) |
-| Oct 14 | Presentation 5: CI/CD and DevOps |
-| Oct 19 | Milestone 3: MVP |
-| Oct 21 | Milestone 3: MVP |
-| Oct 26 | Presentation 6: Software Testing |
-| Oct 28 | Presentation 7: Debugging and Observability |
-| Nov 2 | Milestone 4: Feature-Complete |
-| Nov 4 | Milestone 4: Feature-Complete |
-| Nov 9 | Presentation 8: Software Security and Secure Coding Practices |
-| Nov 11 | Presentation 9: Software Maintenance, Technical Debt and Refactoring |
-| Nov 16 | Milestone 5: Testing and Integration |
-| Nov 18 | Milestone 5: Testing and Integration |
-| Nov 23 | Presentation 10: Responsible and Ethical Tech |
-| Nov 25 | No class (Thanksgiving Break) |
-| Nov 30 | Milestone 6: Final Demo |
-| Dec 2 | Milestone 6: Final Demo |
-| Dec 7 | Poster Session |
-{:.table-striped}

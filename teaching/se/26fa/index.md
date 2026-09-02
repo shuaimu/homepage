@@ -6,7 +6,7 @@ permalink: /teaching/se/26fa/
 
 [
 [Home](./index.html) |
-[Syllabus](./syllabus.html) |
+[Syllabus](./syllabus.pdf) |
 [Schedule](./schedule.html)
 ]
 # CSE 416-03 (89837) Software Engineering (Fall 2026)
@@ -25,7 +25,8 @@ policy](policy.html); Enrollment in this class suggests you have accepted the
 policy. -->
 
 ## Quick links (requires SBU login):
-* [Syllabus](./syllabus.html) ([PDF](./syllabus.pdf))
+* [Syllabus (PDF)](./syllabus.pdf)
+* [Schedule](./schedule.html)
 * [Piazza](https://piazza.com/stonybrook/fall2026/cse41603)
 <!-- * [Notes/slides](https://drive.google.com/drive/folders/1imZgiq2q5rvcrOs336eLrBWOLXWCp07o?usp=sharing)  -->
 <!-- * [Voluntary Presentation](https://drive.google.com/drive/folders/1ZsE4_GKKfu02G8XZLIav1vYzxvrpRZnu?usp=sharing) -->
@@ -34,7 +35,7 @@ policy. -->
 
 ## Course project
 
-You will work in a team on a semester-long software project. Default: pick your own (web, desktop, or mobile). It needs real users (accounts, something people can actually use) and enough complexity for a semester; a thin utility page does not count. If you would rather not invent a product, you can join a staff project and work with the instructor: **Chiral Network — a blockchain** (resource sharing, Internet Computer–style hosted functions) or a **Supabase-like cloud database**. Both are large systems projects. See the [syllabus](./syllabus.html).
+You will work in a team on a semester-long software project. Default: pick your own (web, desktop, or mobile). It needs real users (accounts, something people can actually use) and enough complexity for a semester; a thin utility page does not count. If you would rather not invent a product, you can join a staff project and work with the instructor: **Chiral Network — a blockchain** (resource sharing, Internet Computer–style hosted functions) or a **Supabase-like cloud database**. Both are large systems projects. See the [syllabus (PDF)](./syllabus.pdf).
 
 AI is encouraged; use it as much as you can.
 
@@ -47,46 +48,11 @@ AI is encouraged; use it as much as you can.
   * Milestone 4: Feature-Complete — 10%
   * Milestone 5: Testing and Integration — 10%
   * Milestone 6: Final Product — 30%
-* **Class presentation (20%)**, performed by the group.
+* **Class presentation (20%)**, one 30-minute talk per group. Either split one story or each tell a smaller one.
 
 Milestone grades consider the quality of what the team delivers and each student's contribution. Teams are graded on the day they present.
 
-## Schedule 
-
-- **Aug 24**: [Course Overview (Syllabus)](./slides/SE26fa-01-Intro.pdf)
-- **Aug 26**: Free session: Team up and brainstorm
-- **Aug 31**: Free session: Team up and brainstorm
-- **Sep 2**: Lecture: Software Engineering Tech Overview
-- **Sep 7**: No class (Labor Day)
-- **Sep 9**: Lecture: Software Modeling, Diagrams, Spec Driven Dev
-- **Sep 14**: Milestone 1: Proposal and Requirements
-- **Sep 16**: Milestone 1: Proposal and Requirements
-- **Sep 21**: Presentation 1: Project Management Tools and Practices
-- **Sep 23**: Presentation 2: Software Architecture and Design Patterns
-- **Sep 28**: Milestone 2: Design and Setup
-- **Sep 30**: Milestone 2: Design and Setup
-- **Oct 5**: Presentation 3: Prompt Engineering and AI-Assisted Development
-- **Oct 7**: Presentation 4: API Design and Documentation
-- **Oct 12**: No class (Fall Break)
-- **Oct 14**: Presentation 5: CI/CD and DevOps
-- **Oct 19**: Milestone 3: MVP
-- **Oct 21**: Milestone 3: MVP
-- **Oct 26**: Presentation 6: Software Testing
-- **Oct 28**: Presentation 7: Debugging and Observability
-- **Nov 2**: Milestone 4: Feature-Complete
-- **Nov 4**: Milestone 4: Feature-Complete
-- **Nov 9**: Presentation 8: Software Security and Secure Coding Practices
-- **Nov 11**: Presentation 9: Software Maintenance, Technical Debt and Refactoring
-- **Nov 16**: Milestone 5: Testing and Integration
-- **Nov 18**: Milestone 5: Testing and Integration
-- **Nov 23**: Presentation 10: Responsible and Ethical Tech
-- **Nov 25**: No class (Thanksgiving Break)
-- **Nov 30**: Milestone 6: Final Demo
-- **Dec 2**: Milestone 6: Final Demo
-- **Dec 7**: Poster Session
-
-* [SBU Academic Calendar](https://www.stonybrook.edu/registrar/academic-calendar/current-terms/undergrad-calendar-fall-2026.html)
-
+The class calendar is on the [schedule](./schedule.html) page.
 
 ## Office hours
 
