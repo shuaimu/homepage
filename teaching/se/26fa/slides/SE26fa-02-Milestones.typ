@@ -359,6 +359,13 @@
   - M1 fails if the “requirement” is “build an app with AI.”
 ]
 
+#slide[The format is flexible][
+  - Flexible: Markdown, a wiki, user stories, a spec, a structured prompt, something you can use to coordinate with your team 
+  - It has to be a *document* a person can read. Not a chat dump, not a 40-page IEEE template
+  - Enough detail to *move forward*: another human, or an agent, could start implementing from it
+  - If the next person still has to invent the product, the doc is not done
+]
+
 #slide[M2 — Design and setup (10%)][
   - Architecture: boxes and arrows for *your* system (clients, APIs, data, jobs)
   - Stack: what you picked, and *one sentence why* (agents good at it is a valid why)
@@ -407,33 +414,6 @@
   - Bugs you found and *fixed* — a log of that is evidence
   - Something we can run or visit without your laptop magic
   - Artifacts: tests and results, deployed or otherwise runnable, updated docs
-]
-
-#slide[Tests, in one picture][
-  #v(0.1cm)
-  #align(center, {
-    let layer(w, label, sub, fill) = block(
-      width: w,
-      fill: fill,
-      radius: 4pt,
-      inset: 9pt,
-      align(center)[
-        #text(size: 14pt, weight: "bold", fill: white, label)
-        #h(0.35cm)
-        #text(size: 12.5pt, fill: white, sub)
-      ],
-    )
-    stack(
-      dir: ttb,
-      spacing: 7pt,
-      layer(64%, [E2E / UI], [click through the core path], rgb("#1ABC9C")),
-      layer(82%, [Integration], [API + DB together], rgb("#48C9B0")),
-      layer(100%, [Unit], [one function, fast, lots of them], rgb("#76D7C4")),
-    )
-  })
-  #v(0.45cm)
-  - You do not need a perfect pyramid. You need *evidence* that the core path cannot silently rot.
-  - Do not outsource “is this correct?” to the same model that wrote the code.
 ]
 
 #slide[M6 — Final product (30%) + poster][
@@ -826,12 +806,12 @@
   - Refactor: change shape, keep behavior. Rewrite: you bet the company on a date you do not control
 ]
 
-#story-page[Python 2 → 3][
-  - Python 3 broke Python 2 on purpose: `print` became a function, text became Unicode
-  - That was a language-level rewrite, not a quiet refactor
-  - Companies and popular packages stayed on 2 for a decade. Official EOL: 2020
-  - Two worlds: docs, CI, and “which interpreter is this file even for”
-  - Debt is work you still owe. A breaking change with no bridge is a bill you send to everyone else
+#story-page(pic: story-photo("img/eve-online.jpg", cap: [EVE Online — New Eden]))[EVE Online: Python 2 → 3][
+  - EVE launched in 2003 on Stackless Python. Last bump: 2.7 in 2010. Sixteen years on the same version
+  - Python 2.7 died in 2020. The game kept flying: 2.4 million lines, about 20k files, Tranquility almost never down
+  - Aug 2026: Stage 1 — make it Python 3-ready *while it still runs 2.7* (Python-Future / 2to3)
+  - Parsing is the easy hill (about 3,300 blocking lines). About 20,000 lines compile on both but *behave* differently (`1 / 2` is 0 vs 0.5)
+  - EVE Frontier already runs Carbon on Python 3. Success: players notice nothing
 ]
 
 #section-slide[10 · Responsible and ethical tech]
