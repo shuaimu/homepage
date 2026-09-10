@@ -21,24 +21,24 @@ Stony Brook University <br>
 ## Teaching
 
 Distributed Systems (SBU CSE-535)
- * [19 Fall](ds/19fa)
- * [19 Spring](ds/19sp)
- * [20 Fall](ds/20fa)
- * [22 Fall](ds/22fa)
+ * [19 Fall](/teaching/ds/19fa/)
+ * [19 Spring](/19sp/)
+ * [20 Fall](/teaching/ds/20fa/)
+ * [22 Fall](/teaching/ds/22fa/)
 
 Reliable System Programming (SBU CSE-590)
- * [25 Spring](sf/25sp/)
- * [26 Spring](sf/26sp/)
+ * [25 Spring](/teaching/sf/25sp/)
+ * [26 Spring](/teaching/sf/26sp/)
 
 Database Systems (SBU CSE-532)
- * [25 Fall](db/25fa/)
- * [26 Fall](db/26fa/)
+ * [25 Fall](/teaching/db/25fa/)
+ * [26 Fall](/teaching/db/26fa/)
   
 Software Engineering (SBU CSE-416)
- * [22 Spring](se/22sp)
- * [24 Fall](se/24fa/)
- * [25 Fall](se/25fa/)
- * [26 Fall](se/26fa/) 
+ * [22 Spring](/teaching/se/22sp/)
+ * [24 Fall](/teaching/se/24fa/)
+ * [25 Fall](/teaching/se/25fa/)
+ * [26 Fall](/teaching/se/26fa/)
 
 Computer Systems Organization (NYU CSCI-UA.0201)
- * [18 Spring](cso18spring/index.html)
+ * [18 Spring](/teaching/cso18spring/)

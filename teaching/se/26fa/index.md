@@ -53,7 +53,3 @@ AI is encouraged; use it as much as you can.
 Milestone grades consider the quality of what the team delivers and each student's contribution. Teams are graded on the day they present.
 
 The class calendar is on the [schedule](./schedule.html) page.
-
-## Office hours
-
-MW 1-2pm NCS 351 (Please [book a GCal meeting](https://calendar.app.google/5fEbJJZW86Gcgije6) at least a day before)
