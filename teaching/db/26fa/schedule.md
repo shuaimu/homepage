@@ -35,7 +35,7 @@ table td:first-child {
 |        | Session II: Replication                                             |
 | Sep 02 | Raft ([notes](notes/raft.html))<br>[In Search of an Understandable Consensus Algorithm](readings/raft.pdf) |
 | Sep 07 | No class (Labor Day)                                                |
-| Sep 09 | MongoDB Replication<br>[Fault-Tolerant Replication with Pull-Based Consensus in MongoDB](readings/mongodb-nsdi.pdf) |
+| Sep 09 | MongoDB Replication ([notes](notes/mongodb.html))<br>[Fault-Tolerant Replication with Pull-Based Consensus in MongoDB](readings/mongodb-nsdi.pdf) |
 | Sep 14 | Student presentation |
 |        | Session III: LSM-Tree                                             |
 | Sep 16 | LSM-Tree<br>[The Log-Structured Merge-Tree (LSM-Tree)](readings/lsm.pdf) |

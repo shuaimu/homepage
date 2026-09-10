@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>MongoDB Replication | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="MongoDB Replication" />
+<meta property="og:locale" content="en_US" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="MongoDB Replication" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"MongoDB Replication","url":"/teaching/db/26fa/notes/mongodb.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"><link type="application/atom+xml" rel="alternate" href="/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>MongoDB Replication</h1>
+         </header> -->
+
+  <section>
+    
+<h1 id="mongodb-replication">MongoDB Replication</h1>
+
+<p>Paper: Zhou and Mu, <em>Fault-Tolerant Replication with Pull-Based Consensus in MongoDB</em> (NSDI 2021).</p>
+
+<h3 id="election-competition">Election competition</h3>
+<ul>
+  <li>Majority vote. Two candidates at once → often <em>neither</em> wins (split vote)</li>
+  <li>Then everyone times out, increments the term, tries again — unavailability stretches</li>
+  <li>Raft’s fix: randomized election timeout
+    <ul>
+      <li>why random?</li>
+      <li>why does the <em>spread</em> have to be relatively large?
+        <ul>
+          <li>if two timeouts fire within one RTT of each other, both campaign</li>
+          <li>the random window needs to be ≫ broadcast time, so typically one candidate starts well before the others</li>
+        </ul>
+      </li>
+      <li>why is the timeout itself large compared to the heartbeat?
+        <ul>
+          <li>heartbeat ≪ election timeout, or a slow RPC looks like leader death</li>
+          <li>the Raft paper’s example is 150–300 ms; production is often seconds (MongoDB default 10 s)</li>
+          <li>tradeoff: slower failover vs fewer spurious elections</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>planned failover (upgrade, step-down): do you still want to sit out a random 10 s? (leadership transfer)</li>
+</ul>
+
+<h3 id="a-half-isolated-node-that-keeps-incrementing-its-term">A half-isolated node that keeps incrementing its term</h3>
+<ul>
+  <li>Partition: S5 cannot hear the leader. It times out, <code class="language-plaintext highlighter-rouge">currentTerm++</code>, campaigns, gets no majority, times out, term++ …</li>
+  <li>Half-isolated: can talk to <em>some</em> nodes, never a majority — so it can never win, but it <em>can</em> deliver a higher term</li>
+  <li>When a <code class="language-plaintext highlighter-rouge">RequestVote</code> with term 10,000 reaches the leader (or the partition heals):
+    <ul>
+      <li>everyone adopts the high term</li>
+      <li>the real leader steps down</li>
+      <li>cluster is unavailable while they elect again</li>
+      <li>S5 still cannot win (log is stale) → it will do this again</li>
+    </ul>
+  </li>
+  <li>Safety is fine. Availability is not</li>
+  <li>What do implementations do?
+    <ul>
+      <li>Pre-vote (Dryrun): ask “would you vote for me?” <em>before</em> incrementing <code class="language-plaintext highlighter-rouge">currentTerm</code>. If you cannot win, don’t bump the term</li>
+      <li>Check-quorum: leader stays leader only while it can hear a majority — a minority’s term bump cannot depose it by itself (details vary)</li>
+    </ul>
+  </li>
+  <li>Priority-based “please elect me” policies make this worse if you skip pre-vote</li>
+</ul>
+
+<h3 id="learners-and-other-extra-replicas">Learners (and other extra replicas)</h3>
+<ul>
+  <li>Recall TiFlash (TiDB lecture) is a Raft learner: gets the log, not in the election, not in the commit quorum</li>
+  <li>Why not just add another follower?
+    <ul>
+      <li>majority gets larger → writes wait on more nodes (including the analytic box)</li>
+      <li>that node can become leader — you may not want the OLAP replica taking writes</li>
+    </ul>
+  </li>
+  <li>Learner = copy of the log that cannot vote and does not count toward commit
+    <ul>
+      <li>leader does not wait on it at commit time</li>
+      <li>it cannot win an election (until you promote it)</li>
+    </ul>
+  </li>
+  <li>Other extra roles people invent:
+    <ul>
+      <li>witness / arbiter: votes, stores <em>no</em> data (cheap tie-break)</li>
+      <li>read-only geo copies, a node that is still catching up, …</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="linearizable-reads-the-leader-cannot-just-serve-locally">Linearizable reads: the leader cannot just serve locally</h3>
+<ul>
+  <li>Tempting: reads dominate, they do not change state, the leader already has the log</li>
+  <li>Why that is wrong:
+    <ul>
+      <li>leader is partitioned; majority elects a new leader; new leader commits writes</li>
+      <li>old leader does not know; a client reads from it → stale value, <em>after</em> another client already saw the new write</li>
+      <li>linearizability forbids that</li>
+    </ul>
+  </li>
+  <li>Strawman that is correct: treat the read like a write. Append a no-op (or the read itself), wait until it commits, then answer
+    <ul>
+      <li>every read pays a majority round trip and dirties the log</li>
+    </ul>
+  </li>
+  <li>
+    <p>Two standard bypasses (do not log the read):</p>
+
+    <ol>
+      <li>Read leases
+        <ul>
+          <li>leader holds a lease of length T. Followers will not elect (or the new leader will not serve reads) until T has passed since the old leader’s last heartbeat</li>
+          <li>clocks must be close enough — the lease is a time bound</li>
+          <li>while the lease is valid, this node is the only one allowed to serve linearizable reads → local, no RPC</li>
+          <li>cost: clock assumption, and a new leader must wait out the remaining lease</li>
+          <li>TiDB’s “lease read”; later MongoDB work (LeaseGuard) is this problem done carefully</li>
+        </ul>
+      </li>
+      <li>Wait until the next write succeeds
+        <ul>
+          <li>do not append a dummy. Record “linearize me with the next commit” (or with some write already in flight)</li>
+          <li>when that write hits a majority, you have proof you were still leader, and the read sits after every write that committed before that point</li>
+          <li>if a write is already replicating: piggyback — no extra log entry</li>
+          <li>if the system is idle: wait for the next client write, or fall back to a no-op</li>
+          <li>still a round trip when you have to wait; still leader only</li>
+        </ul>
+      </li>
+    </ol>
+  </li>
+  <li>Weak / stale reads on followers are a different product knob — not this problem</li>
+</ul>
+
+<h3 id="speculative-apply-and-rollback">Speculative apply and rollback</h3>
+<ul>
+  <li>Raft textbook: append to the log, wait for commit, <em>then</em> apply to the state machine
+    <ul>
+      <li>applied prefix = committed prefix</li>
+      <li>failover only truncates an uncommitted <em>log</em> tail; state is always a prefix of committed history</li>
+    </ul>
+  </li>
+  <li>Production KVs often apply before commit (speculative)
+    <ul>
+      <li>why: weak / read-your-writes without waiting for a majority; hide apply latency on the leader; leftover of primary-backup (“ack after local apply”)</li>
+      <li>linearizable clients still wait for commit</li>
+    </ul>
+  </li>
+  <li>Cost: failover may throw away log entries you already applied
+    <ul>
+      <li>truncating the log is not enough — those writes are already in the state machine</li>
+      <li>you need rollback of state, not just of the log</li>
+    </ul>
+  </li>
+  <li>How do you roll state back?
+    <ul>
+      <li>undo log: one compensating op per speculative entry</li>
+      <li>or MVCC / timestamped versions: revert to a snapshot timestamp, then optionally replay forward to the last common log entry</li>
+      <li>or speculate only on the leader — still a problem when that leader is deposed</li>
+    </ul>
+  </li>
+  <li>Invariant: a linearizable read must not see a speculative write; a committed write must survive rollback</li>
+  <li>This paper: every replica speculates (weak-consistency product); rollback via timestamp revert, not an undo log</li>
+</ul>
+
+<h3 id="a-few-more-you-will-hit">A few more you will hit</h3>
+<ul>
+  <li>catching up a far-behind replica: snapshot, or clone + replay?</li>
+  <li>membership change without two leaders of two configs? (Raft §6 — we are not redoing that today)</li>
+</ul>
+
+<h2 id="what-mongodb-is-for-this-lecture">What MongoDB is (for this lecture)</h2>
+
+<p>History of one product’s replication, not a green-field Raft KV.</p>
+
+<h3 id="single-node">Single node</h3>
+<ul>
+  <li>10gen / MongoDB (~2007–2009): a document store on one machine
+    <ul>
+      <li>BSON documents in collections (JSON-ish rows)</li>
+      <li>crash the box, the database is down</li>
+    </ul>
+  </li>
+  <li>That is the product people adopted. Replication is bolted on later — unlike Spanner / TiDB, which started as replicated systems</li>
+</ul>
+
+<h3 id="primary-backup-replica-set-pre-consensus">Primary-backup (replica set, pre-consensus)</h3>
+<ul>
+  <li>From 1.0: replica set = one primary, some secondaries, a logical copy of the DB</li>
+  <li>Data plane is pull, not the usual push-from-primary
+    <ul>
+      <li>a secondary fetches the oplog from some other node (often not the primary)</li>
+      <li>this predates Raft in the codebase; it is why they will refuse vanilla <code class="language-plaintext highlighter-rouge">AppendEntries</code></li>
+    </ul>
+  </li>
+  <li>Failover is <em>not</em> consensus:
+    <ul>
+      <li>either a human appoints the new primary, or</li>
+      <li>they assume a semi-synchronous network: if you have not heard in 30 s, the node is dead</li>
+    </ul>
+  </li>
+  <li>What that cannot do:
+    <ul>
+      <li>a partition looks like death → two primaries (split brain)</li>
+      <li>a slow network looks like death → spurious failover</li>
+      <li>no majority commit, no Leader Completeness — “the primary said so” is the durability story</li>
+    </ul>
+  </li>
+  <li>Weaker consistency knobs already exist here (ack after primary apply, after one extra copy, …). Those knobs never went away — they will force speculative apply and primary catchup later</li>
+  <li>Sharding, when it comes, is many replica sets. Today is one set</li>
+</ul>
+
+<h3 id="then-raft-from-2015">Then Raft (from 2015)</h3>
+<ul>
+  <li>Demand: linearizability + survive any minority, in an asynchronous network (arbitrary delay/loss; no perfect failure detector)</li>
+  <li>No drop-in protocol: Paxos / Raft push from the leader; they needed to keep pull</li>
+  <li>Remodel the replica set as a Raft group
+    <ul>
+      <li>same elections (terms, majority, up-to-date log)</li>
+      <li>same commit-on-majority</li>
+      <li>data sync still pull, between <em>any</em> two replicas</li>
+    </ul>
+  </li>
+  <li>Autonomous failover; election timeout drops from “30 s means dead” to ~10 s</li>
+  <li>This paper (NSDI 2021) is that protocol: Raft safety with the old pull data plane</li>
+</ul>
+
+<h2 id="why-pull-not-vanilla-raft">Why pull, not vanilla Raft?</h2>
+
+<p>MongoDB: any replica can fetch from any other replica.</p>
+<ul>
+  <li>Topology control. Users (esp. multi-DC / cloud) want to pick the path.
+    <ul>
+      <li>Intra-DC traffic is cheap/fast; cross-DC is billed and bandwidth-limited</li>
+    </ul>
+  </li>
+  <li>Backward compatibility. MongoDB had pull-based replication long before Raft. Keep the programming model, put consensus underneath</li>
+</ul>
+
+<p>Takeaway: the paper is not “a better Raft.” It is “Raft’s safety, with the data plane of an old pull-based primary-backup system.”</p>
+
+<h2 id="split-appendentries-into-two-rpcs">Split AppendEntries into two RPCs</h2>
+
+<p>Raft <code class="language-plaintext highlighter-rouge">AppendEntries</code> does three jobs at once: ship entries, learn matchIndex, heartbeat.</p>
+
+<p>MongoDB splits that:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Job</th>
+      <th>Who initiates</th>
+      <th>RPC</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>fetch new entries</td>
+      <td>secondary (any → any)</td>
+      <td><code class="language-plaintext highlighter-rouge">PullEntries</code></td>
+    </tr>
+    <tr>
+      <td>report log position so the primary can commit</td>
+      <td>secondary, forwarded hop-by-hop toward the primary</td>
+      <td><code class="language-plaintext highlighter-rouge">UpdatePosition</code></td>
+    </tr>
+    <tr>
+      <td>liveness, commit-point gossip, sync-source selection</td>
+      <td>everyone ↔ everyone</td>
+      <td><code class="language-plaintext highlighter-rouge">Heartbeat</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Elections still use <code class="language-plaintext highlighter-rouge">RequestVote</code> (same as Raft).</p>
+
+<p>Principle: decouple the data path from the commit path. Data can flow on a chain. Commit still needs a majority at the primary.</p>
+
+<h3 id="pullentries">PullEntries</h3>
+
+<ul>
+  <li>Syncing server = the puller. Sync source = who it pulls from (need not be the primary)</li>
+  <li>Request carries the last local log index</li>
+  <li>Source returns entries at/after that index, or empty if it is behind
+    <ul>
+      <li>if logs are equal, wait ~5 s for new data (avoid busy loop)</li>
+    </ul>
+  </li>
+  <li>On reply, concatenate only if the first received entry matches the last local entry</li>
+  <li>If they don’t line up and the received log is <em>newer</em>: walk the source’s log back to the last common entry, truncate the local tail, then append
+    <ul>
+      <li>same idea as Raft log rollback, but the <em>follower</em> drives it</li>
+      <li>extra work because of speculative apply (opening question)</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="updateposition">UpdatePosition</h3>
+
+<ul>
+  <li>After a successful pull, the secondary tells its sync source its last log position</li>
+  <li>Each hop forwards toward the primary (batch: keep the highest position per server; at most one in-flight)</li>
+  <li>Primary keeps a volatile <code class="language-plaintext highlighter-rouge">lastPosition[]</code> map (Raft’s <code class="language-plaintext highlighter-rouge">matchIndex</code>)</li>
+  <li>Commit rule (same <em>shape</em> as Raft Figure 2):
+    <ul>
+      <li>some entry <code class="language-plaintext highlighter-rouge">e</code> with <code class="language-plaintext highlighter-rouge">e.term == currentTerm</code></li>
+      <li>a majority of <code class="language-plaintext highlighter-rouge">lastPosition[i] ≥ e</code></li>
+      <li>then <code class="language-plaintext highlighter-rouge">lastCommitted ← e</code> (and everything before it)</li>
+    </ul>
+  </li>
+  <li><code class="language-plaintext highlighter-rouge">lastCommitted</code> rides back on heartbeats and <code class="language-plaintext highlighter-rouge">PullEntries</code> replies</li>
+</ul>
+
+<h2 id="the-change-is-not-a-rename">The change is <em>not</em> a rename</h2>
+
+<p><code class="language-plaintext highlighter-rouge">PullEntries</code> does not check that the sync source’s term ≥ the puller’s term.</p>
+
+<p>In Raft, after you vote in term 3 you refuse <code class="language-plaintext highlighter-rouge">AppendEntries</code> from a term-2 leader. In MongoDB you can still <em>pull</em> that term-2 entry, because the pull does not carry “I am the current leader of term T.”</p>
+
+<p>That is the whole protocol hazard.</p>
+
+<h3 id="figure-2-why-on-a-majority-is-not-committed">Figure 2 (why “on a majority” is not “committed”)</h3>
+
+<p>Five servers. Entry at index 1 is term 1 everywhere. Then:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>              (a) start          (b) Raft            (c) MongoDB pull     (d) A sees term 3    (e) later
+A  term 2     1  2               1  2                1  2                 1  2  (steps down)   1  3
+B  term 2     1                  1  2  ← from A      1  2                 1  2                 1  3
+C  term 3     1                  1     (rejects A)   1  2  ← from A       1  2  → UpdatePos    1  3
+D  term 3     1                  1     (rejects A)   1  2  ← from A       1  2  → UpdatePos    1  3
+E  term 3     1  3               1  3                1  3                 1  3                 1  3
+</code></pre></div></div>
+
+<ul>
+  <li>(a) A won term 2 (votes A/B/C), wrote a local entry. E won term 3 (votes C/D/E), wrote a <em>different</em> entry at the same index</li>
+  <li>(b) Raft: only B will accept A’s <code class="language-plaintext highlighter-rouge">AppendEntries</code>. C/D/E already have a higher term</li>
+  <li>(c) MongoDB: if A is the sync source, B/C/D will all take A’s term-2 entry — it is “newer” than what they have</li>
+  <li>If A now used Raft’s naive rule (“I created this entry and it is on a majority → commit”), the term-2 entry would be committed</li>
+  <li>Then E’s term-3 entry can overwrite it → committed entry lost</li>
+</ul>
+
+<p>Same bug Raft already warns about as “counting replicas, not replies.” Here it shows up because pull does not refuse a stale primary.</p>
+
+<h3 id="the-fix-put-the-pullers-term-on-updateposition">The fix: put the puller’s term on UpdatePosition</h3>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">UpdatePosition</code> carries the syncing server’s current term</li>
+  <li>Recipient adopts a higher term. A stale primary steps down before advancing <code class="language-plaintext highlighter-rouge">lastCommitted</code></li>
+  <li>In the picture: C/D send <code class="language-plaintext highlighter-rouge">UpdatePosition</code> with term 3 → A steps down. Term-2 entry is on a majority, but not committed. Later it can be rolled back (e)</li>
+</ul>
+
+<p>Invariant they are restoring: Raft’s Leader Completeness.</p>
+
+<p>To commit an entry in term <em>T</em>, the primary of <em>T</em> needs <code class="language-plaintext highlighter-rouge">UpdatePosition</code> with term T from a majority.<br />
+A later primary of term <em>U &gt; T</em> also needs a majority of votes. The two majorities share a voter:</p>
+
+<ul>
+  <li>that voter sent <code class="language-plaintext highlighter-rouge">UpdatePosition</code> in <em>T</em> <em>before</em> voting → by log matching, the new leader already has the committed entry, or</li>
+  <li>that voter voted first, then sent <code class="language-plaintext highlighter-rouge">UpdatePosition</code> with a term <em>&gt; T</em> → the old primary stepped down and did not commit</li>
+</ul>
+
+<p>Either way, a committed entry is on every later leader.</p>
+
+<h3 id="a-useful-quirk-not-a-bug">A useful quirk, not a bug</h3>
+
+<p>A newly elected primary (or candidate) may keep pulling old-term entries after voting for itself, <em>until it appends its first new-term entry</em>.</p>
+
+<p>Vanilla Raft would not do this: the new leader’s log is already “the” log. MongoDB uses the quirk for primary catchup (preserve uncommitted writes after failover).</p>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
+<script async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script>
+</body>
+
+</html>

@@ -22,7 +22,7 @@ The schedule is tentative and subject to change.
 | Aug 31 | Free session: Team up and brainstorm          | |
 | Sep 2 | [Lecture: Milestone reviews and presentations](./slides/SE26fa-02-Milestones.pdf) | |
 | Sep 7 | No class                                       | Labor Day |
-| Sep 9 | Lecture: Software Modeling, Diagrams, Spec Driven Dev | |
+| Sep 9 | [Lecture: Working with coding agents](./slides/SE26fa-03-Agents.pdf) | Prompts, context, specifications, the agent loop |
 | Sep 14 | Milestone 1: Proposal and Requirements        | |
 | Sep 16 | Milestone 1: Proposal and Requirements        | |
 | Sep 21 | Presentation 1: User Experience (UI/UX and user study) | |

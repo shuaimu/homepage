@@ -312,7 +312,7 @@ a course vs. a real project?][
     [*Lectures*], [*Milestones (in class)*],
     [Aug 24  Overview (today)], [Sep 14–16  M1 Proposal],
     [Sep 2  SE tech overview], [Sep 28–30  M2 Design & setup],
-    [Sep 9  Modeling / spec-driven], [Oct 19–21  M3 MVP],
+    [Sep 9  Working with agents], [Oct 19–21  M3 MVP],
     [Sep 7, Oct 12, Nov 25  no class], [Nov 2–4  M4 Feature-complete],
     [], [Nov 16–18  M5 Testing & integration],
     [*Presentations*  (10 topics)], [Nov 30–Dec 2  M6 Final demo],

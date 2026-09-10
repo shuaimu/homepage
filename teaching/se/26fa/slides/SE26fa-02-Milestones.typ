@@ -184,7 +184,7 @@
 #title-slide[Milestones and presentations][CSE-416-03  ·  Sep 2, 2026]
 
 #slide[Today][
-  - Teams should be forming. Next class (Sep 9): modeling / spec-driven.
+  - Teams should be forming. Next class (Sep 9): working with coding agents.
   - Then the rest of the semester is mostly *reviews* and *talks*.
   - Today is the vocabulary for those two things:
     - What a milestone *is*, and what we will look at
@@ -497,6 +497,13 @@
 ]
 */
 
+#story-page(pic: story-photo("img/bestbuy-guest.jpg", cap: [Best Buy — Checkout as Guest]))[The “\$300 million button”][
+  - Jared Spool (UIE). Large store site — rumored Best Buy; he never named it
+  - Checkout opened on *Register*. People thought they had to join a club
+  - Returning customers who forgot a password bounced rather than recover an account
+  - Button became *Continue*. About 45% more purchasers, ~\$300 million that year
+]
+
 #story-page(pic: story-photo("img/blackberry-iphone.jpg"))[BlackBerry keyboard vs iPhone glass][
   - BlackBerry bet professionals needed keys they could feel, email on the train, no looking down
   - The screen was small because the keys were the product. RIM sold “a tool, not a toy”
@@ -504,13 +511,6 @@
   - Enterprises said they would never switch. Then they did, a second phone, then the only one
   - The market chose a worse typer and a better phone
   - There is also another story of iPhone vs "PDA"
-]
-
-#story-page(pic: story-photo("img/bestbuy-guest.jpg", cap: [Best Buy — Checkout as Guest]))[The “\$300 million button”][
-  - Jared Spool (UIE). Large store site — rumored Best Buy; he never named it
-  - Checkout opened on *Register*. People thought they had to join a club
-  - Returning customers who forgot a password bounced rather than recover an account
-  - Button became *Continue*. About 45% more purchasers, ~\$300 million that year
 ]
 
 #section-slide[2 · Architecture and tech stack]
@@ -875,7 +875,7 @@
 
 #slide[This week and next][
   - Sep 7: no class (Labor Day)
-  - Sep 9: modeling, diagrams, spec-driven — useful for M1/M2
+  - Sep 9: working with coding agents — prompts, context, specifications, the loop. Useful for M1/M2
   - Sep 14–16: *Milestone 1* in class
 ]
 
