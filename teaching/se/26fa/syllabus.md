@@ -5,7 +5,6 @@ layout: page
 [
 [Home](./index.html) |
 [Syllabus](./syllabus.html) |
-[PDF](./syllabus.pdf) |
 [Schedule](./schedule.html)
 ]
 
