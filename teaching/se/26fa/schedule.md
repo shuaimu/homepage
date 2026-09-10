@@ -11,7 +11,8 @@ layout: page
 # Schedule 
 
 Lecture: MW 2:00-3:20pm (Aug 24 -- Dec 7), NCS 120
-Office hour: MW 1-2pm NCS 351
+
+Office hour: MW 1-2pm NCS 351 (Feel free to drop by. If you want to lock in a longer time, you can [book a meeting with GCal](https://calendar.app.google/5fEbJJZW86Gcgije6))
 
 The schedule is tentative and subject to change.
 

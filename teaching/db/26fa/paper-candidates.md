@@ -11,10 +11,7 @@ layout: page
 # Paper candidates for student presentations
 
 Each presentation day has **four slots** (~15 min talk plus ~3 min Q&A). Pick  
-**one paper** from the list that matches your date. Email the staff the title  
-before you start preparing slides (first come, first served).
-
-A paper may appear under more than one session if it fits both.
+**one paper** from the list and use [this sheet](https://docs.google.com/spreadsheets/d/1amP8o7XHVNn9HLepa6tZs9prrsA8kRXaIu9Mdbjukas/edit?usp=sharing) (requires SBU login) to claim a slot, first come first served.
 
 ---
 
