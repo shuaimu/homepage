@@ -144,7 +144,8 @@ If you are interested, email me a brief resume.
 * [Zihao Zhang](https://zhangzihao270.github.io/) (Post-doc)
 * [Jinkun Geng](https://www.gengjinkun.com/) (Post-doc, co-advised with Anirudh Sivaraman)
 <!-- * [Santa Shithil](https://sites.google.com/grad.cse.buet.ac.bd/santa-maria-shithil/about) (PhD) -->
-* Ze Tang (PhD)
+* [Ze Tang](https://mintgreentz.github.io/) (PhD)
+* Zeyu Yang (PhD)
 <!-- * Kumar Shivam (PhD) -->
 * [Ti Zhou (PhD)](https://coladog.github.io/)
 <!-- * Sethu Karthikeyan (MS) -->
