@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>LSM-Tree | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="LSM-Tree" />
+<meta property="og:locale" content="en_US" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="LSM-Tree" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"LSM-Tree","url":"/teaching/db/26fa/notes/lsm.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"><link type="application/atom+xml" rel="alternate" href="/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>LSM-Tree</h1>
+         </header> -->
+
+  <section>
+    
+<h1 id="lsm-tree">LSM-Tree</h1>
+
+<p>Paper: O’Neil, Cheng, Gawlick, and O’Neil, <em>The Log-Structured Merge-Tree (LSM-Tree)</em> (Acta Informatica 1996).</p>
+
+<h2 id="the-job">The job</h2>
+
+<ul>
+  <li>A table that is mostly <em>appended to</em>, plus an index on it</li>
+  <li>Paper’s running example: TPC-A at 1000 transactions per second
+    <ul>
+      <li>each txn writes a 50-byte History row (account, teller, amount, time)</li>
+      <li>people occasionally ask: recent History rows for this account?</li>
+    </ul>
+  </li>
+  <li>Without an index on <code class="language-plaintext highlighter-rouge">(account, time)</code>: scan the whole History table</li>
+  <li>With a B-tree index: every txn does <em>another</em> random leaf I/O
+    <ul>
+      <li>Account-table updates already need ~50 disk arms</li>
+      <li>the History index doubles that</li>
+    </ul>
+  </li>
+  <li>We want: inserts cheap
+    <ul>
+      <li>finds possible (not a full scan), but they can be rarer than inserts</li>
+      <li>History / logs / audit trails are the intended workload</li>
+      <li>if your workload is find-heavy, a B-tree is already the right answer</li>
+    </ul>
+  </li>
+  <li>1995 hardware, not SSDs
+    <ul>
+      <li>scarce resource is the <em>disk arm</em> (seek + rotation), not flash wear</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="why-a-b-tree-insert-is-expensive">Why a B-tree insert is expensive</h2>
+
+<ul>
+  <li>A B-tree keeps keys sorted in page-sized nodes on disk</li>
+  <li>To insert a random key:
+    <ol>
+      <li>Walk down the tree to the leaf (directory nodes may be cached)</li>
+      <li>Read that leaf page</li>
+      <li>Put the new entry in</li>
+      <li>Write the leaf page back</li>
+    </ol>
+  </li>
+  <li>Two costs hide in that random I/O:
+    <ul>
+      <li>seek + rotation (~15–20 ms) dwarf the actual transfer of 4 KB (~1–2 ms)</li>
+      <li>you paid that for <em>one</em> new entry</li>
+    </ul>
+  </li>
+  <li>Strawman we will keep coming back to:
+    <ul>
+      <li>if we could (a) write sequentially, and (b) put many new entries on a page per trip to disk, inserts would get cheap</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="strawman-1-keep-the-index-in-memory">Strawman 1: keep the index in memory</h2>
+
+<ul>
+  <li>Inserts become pointer wiggles</li>
+  <li>Finds are fast</li>
+  <li>RAM in 1995 is ~100× the $ per MB of disk
+    <ul>
+      <li>History index is gigabytes</li>
+      <li>you cannot buy that much memory for an index that is mostly cold</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="strawman-2-append-every-insert-to-a-disk-log">Strawman 2: append every insert to a disk log</h2>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  disk:  [k=9][k=3][k=47][k=3][k=12] ...   // arrival order
+</code></pre></div></div>
+
+<ul>
+  <li>Writes are sequential — one arm, no seeks. That is cheap</li>
+  <li>Finds: scan the log
+    <ul>
+      <li>the query that motivated the index is now a sequential scan of everything</li>
+      <li>useless</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="strawman-3-buffer-in-memory-dump-a-sorted-run">Strawman 3: buffer in memory, dump a sorted run</h2>
+
+<ul>
+  <li>Combine 1 and 2</li>
+  <li>Keep a small sorted index C0 in RAM (the piece we could afford)</li>
+  <li>Insert always goes into C0. No disk I/O</li>
+  <li>When C0 hits a size limit: write its contents out as one <em>sorted</em> file (a “run”) and empty C0</li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  memory C0:  3, 9, 12, 47          // sorted, small
+
+  disk:       run1: 1, 4, 8, 20     // previous flush, sorted
+              run2: 3, 9, 12, 47    // this flush, sorted
+</code></pre></div></div>
+
+<ul>
+  <li>Writes are sequential (dump a sorted array)</li>
+  <li>Finds: search C0, then each run</li>
+  <li>Problem: after a day you have thousands of runs
+    <ul>
+      <li>a find checks all of them</li>
+      <li>inserts stayed cheap; finds died</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="strawman-4-merge-the-runs-one-pass">Strawman 4: merge the runs (one pass)</h2>
+
+<ul>
+  <li>When there are too many runs: read two of them and write one bigger sorted run</li>
+  <li>Same algorithm as merging two sorted lists:</li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  run A:  1, 4, 8, 20
+  run B:  3, 9, 12, 47
+  ---------------- merge, left to right, once ----------------
+  run C:  1, 3, 4, 8, 9, 12, 20, 47
+</code></pre></div></div>
+
+<ul>
+  <li>I/O is sequential on both sides</li>
+  <li>After the merge, a find checks <em>one</em> file instead of two</li>
+  <li>Throw away A and B</li>
+  <li>This is the “merge” in “log-structured merge”
+    <ul>
+      <li>“Log-structured” is from Rosenblum and Ousterhout’s Log-Structured File System</li>
+      <li>always write new sequential blocks, never overwrite in place</li>
+    </ul>
+  </li>
+  <li>We now have the idea
+    <ul>
+      <li>the paper’s contribution is a specific data structure that does this with two (then K) <em>trees</em>, not a pile of files</li>
+      <li>the paper moves data with a “rolling” cursor a little at a time</li>
+      <li>we ignore that and always merge in one full pass, as above</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="a-two-layer-component-lsm-tree">A two-layer (component) LSM-tree</h2>
+
+<ul>
+  <li>Two trees</li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>   C1 tree                         C0 tree
+   (big, on disk)                  (small, all in memory)
+
+        / \                             / \
+       ...                               ...
+</code></pre></div></div>
+
+<ul>
+  <li>C0
+    <ul>
+      <li>entirely in RAM</li>
+      <li>any in-memory search tree (AVL, 2-3, …)</li>
+      <li>nodes are <em>not</em> disk-page sized — C0 never goes to disk as a tree</li>
+      <li>every insert / delete-note lands here first. Zero I/O</li>
+    </ul>
+  </li>
+  <li>C1
+    <ul>
+      <li>on disk, B-tree <em>shaped</em>: page-sized nodes, separators in directory pages, a leaf level in key order</li>
+      <li>leaves packed 100% full (a B-tree is typically ~70% full — wasted space, extra arms)</li>
+      <li>leaves grouped into multi-page blocks (~256 KB in the paper)
+        <ul>
+          <li>sequential I/O for merge and for long range scans</li>
+        </ul>
+      </li>
+      <li>point finds walk <em>single pages</em> down the directory
+        <ul>
+          <li>you do not pull a 256 KB block to look up one key</li>
+        </ul>
+      </li>
+      <li>hot directory pages sit in the buffer pool like any B-tree</li>
+    </ul>
+  </li>
+  <li>Search: look in C0, then in C1
+    <ul>
+      <li>unique keys: stop when you hit</li>
+      <li>recent inserts are still in C0 — C0 is also a cache for “what just happened”</li>
+    </ul>
+  </li>
+  <li>Durability of C0
+    <ul>
+      <li>the ordinary transactional log already recorded the History row</li>
+      <li>after a crash, replay that log and rebuild C0</li>
+      <li>C1 is on disk</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="merge-one-pass">Merge, one pass</h3>
+
+<ul>
+  <li>C0 cannot grow forever</li>
+  <li>When it hits a size threshold:
+    <ol>
+      <li>Freeze this C0. New inserts go into a fresh empty C0 (so the system keeps taking writes)</li>
+      <li>Merge the frozen C0 with C1, left to right, once — the same two-list merge as strawman 4</li>
+      <li>Write the result as a <em>new</em> C1 (sequential blocks, new disk addresses). Do not overwrite the old C1</li>
+      <li>Point the directory at the new C1. Drop the frozen C0 and the old C1</li>
+    </ol>
+  </li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  frozen C0:   3, 4, 7, 20
+  old C1:      1, 2, 5, 6, 8, 9, 16, 18
+  -------------------------------- merge once ----------------
+  new C1:      1, 2, 3, 4, 5, 6, 7, 8, 9, 16, 18, 20
+</code></pre></div></div>
+
+<ul>
+  <li>A page is 4 KB: one C1 leaf, and the unit of a point-find I/O</li>
+  <li>A multi-page block is many consecutive pages (~256 KB)</li>
+  <li>Writes during the merge go to the new C0
+    <ul>
+      <li>they are not in this pass</li>
+      <li>they will be in the next merge, when <em>that</em> C0 fills</li>
+    </ul>
+  </li>
+  <li>Finds look in (live C0, then frozen C0 if it is still around, then C1), newest first</li>
+</ul>
+
+<h3 id="two-batching-effects-this-is-why-it-beats-a-b-tree">Two batching effects (this is why it beats a B-tree)</h3>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">COSTP</code> = cost of one <em>random</em> page I/O (you pay a seek)</li>
+  <li><code class="language-plaintext highlighter-rouge">COSTπ</code> = cost of one page I/O <em>inside</em> a multi-page sequential block (seek amortized)</li>
+  <li>1995 SCSI numbers in the paper:
+    <ul>
+      <li>random ~16 ms/page</li>
+      <li>64-page sequential ~1.5 ms/page</li>
+      <li>so <code class="language-plaintext highlighter-rouge">COSTπ / COSTP ≈ 1/10</code></li>
+      <li>hardware, not a tree-size ratio</li>
+    </ul>
+  </li>
+  <li>B-tree insert:</li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>COSTB ≈ COSTP * (De + 1)
+</code></pre></div></div>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">De</code> ≈ 2 directory misses + 1 dirty leaf write. About three random I/Os</li>
+  <li>LSM insert: the insert only touches C0 in RAM
+    <ul>
+      <li>disk cost shows up in the merge</li>
+      <li>per C1 leaf you sequentially read it and sequentially write it (<code class="language-plaintext highlighter-rouge">2 * COSTπ</code>)</li>
+      <li>those two I/Os are shared by the <code class="language-plaintext highlighter-rouge">M</code> new C0 keys that land in that leaf:</li>
+    </ul>
+  </li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>COSTLSM ≈ 2 * COSTπ / M
+</code></pre></div></div>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">M</code> is a key count, not the size ratio <code class="language-plaintext highlighter-rouge">r = |C1| / |C0|</code>
+    <ul>
+      <li>a packed leaf holds <code class="language-plaintext highlighter-rouge">P = 250</code> keys</li>
+      <li>if C0 is 1/25 of C1 (<code class="language-plaintext highlighter-rouge">r = 25</code>), about <code class="language-plaintext highlighter-rouge">250 / 25 = 10</code> keys on that leaf came from C0, so <code class="language-plaintext highlighter-rouge">M ≈ 10</code></li>
+      <li>paper: <code class="language-plaintext highlighter-rouge">M = P × |C0| / (|C0|+|C1|)</code></li>
+      <li>when C0 is much smaller than C1, that is <code class="language-plaintext highlighter-rouge">≈ P / r</code></li>
+    </ul>
+  </li>
+  <li>Same number, other angle — a full one-pass merge reads <em>every</em> old C1 page and writes <em>every</em> new C1 page, then divide by <code class="language-plaintext highlighter-rouge">|C0|</code> inserts:</li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  I/Os per insert = (2r + 1) / P ≈ 2 / M
+</code></pre></div></div>
+
+<ul>
+  <li>With <code class="language-plaintext highlighter-rouge">r = 25</code>, <code class="language-plaintext highlighter-rouge">P = 250</code>, <code class="language-plaintext highlighter-rouge">M = 10</code>: <code class="language-plaintext highlighter-rouge">(50+1)/250 = 0.204</code> and <code class="language-plaintext highlighter-rouge">2/10 = 0.2</code>
+    <ul>
+      <li>rolling step vs full pass are the same cost, just leaf-by-leaf vs all-pages-at-once</li>
+    </ul>
+  </li>
+  <li>Cost vs B-tree:</li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>COSTLSM / COSTB ≈ (2/(De+1)) × (COSTπ/COSTP) × (1/M)
+                 ≈     0.67     ×      1/10        ×   1/10
+</code></pre></div></div>
+
+<ul>
+  <li>The last <code class="language-plaintext highlighter-rouge">1/10</code> is <code class="language-plaintext highlighter-rouge">1/M</code> with <code class="language-plaintext highlighter-rouge">M = 10</code>
+    <ul>
+      <li>the middle <code class="language-plaintext highlighter-rouge">1/10</code> is sequential vs random</li>
+      <li>neither is <code class="language-plaintext highlighter-rouge">r = 25</code></li>
+    </ul>
+  </li>
+  <li>What this does <em>not</em> include:
+    <ul>
+      <li>C0 disk I/O (there is none)</li>
+      <li>a separate memtable log (use the History WAL)</li>
+      <li>C1 directory I/O</li>
+    </ul>
+  </li>
+  <li>Larger C0 (smaller <code class="language-plaintext highlighter-rouge">r</code>) → larger <code class="language-plaintext highlighter-rouge">M</code> → cheaper inserts, more RAM</li>
+  <li>Tiny C0 → <code class="language-plaintext highlighter-rouge">M</code> near 0 → you still rewrite all of C1
+    <ul>
+      <li>that is why a later section adds C2</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="finds-immediate">Finds (immediate)</h3>
+
+<ul>
+  <li>Exact-match or range, needed <em>now</em>: search C0, then C1
+    <ul>
+      <li>two directories — some extra CPU</li>
+      <li>with only two components, usually not extra I/O beyond what a B-tree find would do on C1 (C0 is RAM)</li>
+    </ul>
+  </li>
+  <li>Optimizations the paper lists:
+    <ul>
+      <li>unique keys: stop at the first hit</li>
+      <li>“I only want rows from the last τ seconds”: if you refuse to merge entries younger than τ out of C0, the find never goes to disk</li>
+      <li>UNDO-log indexes for short transactions sit almost entirely in C0</li>
+    </ul>
+  </li>
+  <li>Immediate finds are the operation LSM does <em>not</em> try to make cheaper than a B-tree
+    <ul>
+      <li>if they dominate, do not use this structure</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="deletes-updates-and-dropping-old-data">Deletes, updates, and dropping old data</h2>
+
+<ul>
+  <li>If the key is in C0, delete it there</li>
+  <li>If not, insert a delete-note (a tombstone) into C0, keyed the same way
+    <ul>
+      <li>the next merge sees the note and the live entry together</li>
+      <li>they <em>annihilate</em> and both disappear</li>
+    </ul>
+  </li>
+  <li>Finds must honor delete-notes
+    <ul>
+      <li>the note sits in an <em>earlier</em> component than the live entry</li>
+      <li>so you see it first and know not to return the row</li>
+    </ul>
+  </li>
+  <li>Update of an indexed value = delete-note + insert of the new key
+    <ul>
+      <li>the paper says this is unusual</li>
+    </ul>
+  </li>
+  <li>Predicate delete: “drop everything with timestamp older than 20 days”
+    <ul>
+      <li>do not probe the index</li>
+      <li>when you next merge the <em>largest</em> component, drop those keys as you rewrite it</li>
+      <li>that is how the 20-day History window stays bounded without a B-tree-style random delete per expired row</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="why-two-components-are-not-enough">Why two components are not enough</h2>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">COSTLSM ≈ 2 COSTπ / M</code>
+    <ul>
+      <li><code class="language-plaintext highlighter-rouge">M</code> is larger when C0 is larger compared to C1</li>
+    </ul>
+  </li>
+  <li>If C0 is huge, RAM cost dominates</li>
+  <li>If C0 is tiny, each merge still rewrites all of C1 for almost no new keys</li>
+  <li>The cost-optimal two-component C0 is often still a lot of RAM</li>
+  <li>So add a disk-resident stepping stone:</li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  CK (largest, disk)  ...  C2 (disk)  C1 (disk)  C0 (RAM)
+         ^ merge ^            ^ merge ^    ^ merge ^
+</code></pre></div></div>
+
+<ul>
+  <li>When <code class="language-plaintext highlighter-rouge">Ci-1</code> fills, freeze it and merge it into <code class="language-plaintext highlighter-rouge">Ci</code> in one pass</li>
+  <li>An entry is born in C0 and walks out to CK through K merges</li>
+  <li>Components grow geometrically
+    <ul>
+      <li>Theorem 3.1: to minimize merge I/O given a fixed RAM budget <code class="language-plaintext highlighter-rouge">S0</code> and a fixed largest component <code class="language-plaintext highlighter-rouge">SK</code>, pick one ratio <code class="language-plaintext highlighter-rouge">r</code></li>
+    </ul>
+  </li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>S_i = r * S_{i-1}
+</code></pre></div></div>
+
+<ul>
+  <li>Sizes are <code class="language-plaintext highlighter-rouge">S0, r S0, r² S0, …, r^K S0</code></li>
+  <li>Intuition:
+    <ul>
+      <li>each merge “pays” sequential I/O proportional to how much bigger the destination is than the source</li>
+      <li>equal ratios spread that tax evenly</li>
+    </ul>
+  </li>
+  <li>More components:
+    <ul>
+      <li>smaller C0 (less RAM)</li>
+      <li>more sequential I/O layers</li>
+      <li>a find may do one extra page I/O per disk component</li>
+      <li>the paper is explicit: this is an insert-mostly structure</li>
+    </ul>
+  </li>
+  <li>TPC History numbers (Example 3.3), inserts only, 20 days, 1000 entries/s:
+    <ul>
+      <li>B-tree: ~$50k of disk arms + ~$6k to cache the directory ≈ $56k</li>
+      <li>two-component LSM: 9.2 GB packed on disk ($9.2k) + 20 MB of C0 ($2k) ≈ $11k
+        <ul>
+          <li>disk full <em>and</em> sequential arms full</li>
+        </ul>
+      </li>
+      <li>pump the insert rate 10× (Example 3.4):
+        <ul>
+          <li>B-tree arms blow up</li>
+          <li>a third component starts to win</li>
+          <li>two-component C0 would have to grow (or you spread C1 across idle capacity) to keep <code class="language-plaintext highlighter-rouge">M</code> sane</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>The paper’s temperature picture (cold / warm / hot data):
+    <ul>
+      <li>a B-tree History index is <em>warm</em> — you buy arms, not capacity</li>
+      <li>LSM’s sequential batched inserts push that temperature toward <em>cold</em> (capacity-limited)</li>
+      <li>memory buffering in a B-tree only helps once data is <em>hot</em></li>
+      <li>LSM is a way to stay off that slope for mergeable operations (insert, delete)</li>
+    </ul>
+  </li>
+</ul>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
+<script async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script>
+</body>
+
+</html>
