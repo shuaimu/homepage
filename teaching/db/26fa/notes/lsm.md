@@ -152,61 +152,21 @@ Paper: O'Neil, Cheng, Gawlick, and O'Neil, *The Log-Structured Merge-Tree (LSM-T
   * they will be in the next merge, when *that* C0 fills
 * Finds look in (live C0, then frozen C0 if it is still around, then C1), newest first
 
-### Two batching effects (this is why it beats a B-tree)
+### Why it beats a B-tree
 
-* `COSTP` = cost of one *random* page I/O (you pay a seek)
-* `COSTπ` = cost of one page I/O *inside* a multi-page sequential block (seek amortized)
-* 1995 SCSI numbers in the paper:
-  * random ~16 ms/page
-  * 64-page sequential ~1.5 ms/page
-  * so `COSTπ / COSTP ≈ 1/10`
-  * hardware, not a tree-size ratio
-* B-tree insert:
-
-```
-COSTB ≈ COSTP * (De + 1)
-```
-
-* `De` ≈ 2 directory misses + 1 dirty leaf write. About three random I/Os
-* LSM insert: the insert only touches C0 in RAM
-  * disk cost shows up in the merge
-  * per C1 leaf you sequentially read it and sequentially write it (`2 * COSTπ`)
-  * those two I/Os are shared by the `M` new C0 keys that land in that leaf:
-
-```
-COSTLSM ≈ 2 * COSTπ / M
-```
-
-* `M` is a key count, not the size ratio `r = |C1| / |C0|`
-  * a packed leaf holds `P = 250` keys
-  * if C0 is 1/25 of C1 (`r = 25`), about `250 / 25 = 10` keys on that leaf came from C0, so `M ≈ 10`
-  * paper: `M = P × |C0| / (|C0|+|C1|)`
-  * when C0 is much smaller than C1, that is `≈ P / r`
-* Same number, other angle — a full one-pass merge reads *every* old C1 page and writes *every* new C1 page, then divide by `|C0|` inserts:
-
-```
-  I/Os per insert = (2r + 1) / P ≈ 2 / M
-```
-
-* With `r = 25`, `P = 250`, `M = 10`: `(50+1)/250 = 0.204` and `2/10 = 0.2`
-  * rolling step vs full pass are the same cost, just leaf-by-leaf vs all-pages-at-once
-* Cost vs B-tree:
-
-```
-COSTLSM / COSTB ≈ (2/(De+1)) × (COSTπ/COSTP) × (1/M)
-                 ≈     0.67     ×      1/10        ×   1/10
-```
-
-* The last `1/10` is `1/M` with `M = 10`
-  * the middle `1/10` is sequential vs random
-  * neither is `r = 25`
-* What this does *not* include:
-  * C0 disk I/O (there is none)
-  * a separate memtable log (use the History WAL)
-  * C1 directory I/O
-* Larger C0 (smaller `r`) → larger `M` → cheaper inserts, more RAM
-* Tiny C0 → `M` near 0 → you still rewrite all of C1
-  * that is why a later section adds C2
+* B-tree insert: a random leaf read + write, paid for *one* new key
+  * `COSTP` = cost of one *random* page I/O (you pay a seek)
+* LSM insert: RAM only; disk cost is the merge
+* Two things make that merge cheap:
+  * sequential I/O (multi-page blocks) instead of random seeks
+    * `COSTπ` = cost of one page I/O *inside* a sequential block (seek amortized)
+    * paper's disks: `COSTπ / COSTP ≈ 1/10`
+  * many new C0 keys share each C1 leaf's read+write
+    * a packed leaf holds ~250 keys; if C0 is 1/25 of C1, about `M = 10` new keys land in that leaf
+    * so `COSTLSM ≈ 2 * COSTπ / M`
+    * same story from the other side: one merge rewrites all of C1, divided across all of C0
+* Larger C0 → larger `M` → cheaper inserts, more RAM
+* Tiny C0 → you still rewrite all of C1 for almost nothing → later: add C2
 
 ### Finds (immediate)
 
@@ -238,46 +198,19 @@ COSTLSM / COSTB ≈ (2/(De+1)) × (COSTπ/COSTP) × (1/M)
 
 ## Why two components are not enough
 
-* `COSTLSM ≈ 2 COSTπ / M`
-  * `M` is larger when C0 is larger compared to C1
-* If C0 is huge, RAM cost dominates
-* If C0 is tiny, each merge still rewrites all of C1 for almost no new keys
-* The cost-optimal two-component C0 is often still a lot of RAM
-* So add a disk-resident stepping stone:
+* Two-component tradeoff:
+  * big C0: inserts cheap (many keys share each C1 rewrite), RAM is expensive
+  * small C0: little RAM, but each merge rewrites all of C1 for almost no new keys
+* Often neither end is acceptable → put a disk tree in between
 
 ```
   CK (largest, disk)  ...  C2 (disk)  C1 (disk)  C0 (RAM)
          ^ merge ^            ^ merge ^    ^ merge ^
 ```
 
-* When `Ci-1` fills, freeze it and merge it into `Ci` in one pass
-* An entry is born in C0 and walks out to CK through K merges
-* Components grow geometrically
-  * Theorem 3.1: to minimize merge I/O given a fixed RAM budget `S0` and a fixed largest component `SK`, pick one ratio `r`
-
-```
-S_i = r * S_{i-1}
-```
-
-* Sizes are `S0, r S0, r² S0, …, r^K S0`
-* Intuition:
-  * each merge "pays" sequential I/O proportional to how much bigger the destination is than the source
-  * equal ratios spread that tax evenly
-* More components:
-  * smaller C0 (less RAM)
-  * more sequential I/O layers
-  * a find may do one extra page I/O per disk component
-  * the paper is explicit: this is an insert-mostly structure
-* TPC History numbers (Example 3.3), inserts only, 20 days, 1000 entries/s:
-  * B-tree: ~$50k of disk arms + ~$6k to cache the directory ≈ $56k
-  * two-component LSM: 9.2 GB packed on disk ($9.2k) + 20 MB of C0 ($2k) ≈ $11k
-    * disk full *and* sequential arms full
-  * pump the insert rate 10× (Example 3.4):
-    * B-tree arms blow up
-    * a third component starts to win
-    * two-component C0 would have to grow (or you spread C1 across idle capacity) to keep `M` sane
-* The paper's temperature picture (cold / warm / hot data):
-  * a B-tree History index is *warm* — you buy arms, not capacity
-  * LSM's sequential batched inserts push that temperature toward *cold* (capacity-limited)
-  * memory buffering in a B-tree only helps once data is *hot*
-  * LSM is a way to stay off that slope for mergeable operations (insert, delete)
+* When a component fills, freeze it and merge into the next one
+* An entry is born in C0 and walks out through K merges
+* Size the layers geometrically: each about `r` times the previous
+  * same tax at every merge, instead of one huge C0→C1 rewrite
+* More layers: less RAM, more sequential merge I/O, a find may touch one extra component
+* Built for insert-mostly; if finds dominate, stop adding layers (or use a B-tree)

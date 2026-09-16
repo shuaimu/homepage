@@ -270,87 +270,34 @@
   <li>Finds look in (live C0, then frozen C0 if it is still around, then C1), newest first</li>
 </ul>
 
-<h3 id="two-batching-effects-this-is-why-it-beats-a-b-tree">Two batching effects (this is why it beats a B-tree)</h3>
+<h3 id="why-it-beats-a-b-tree">Why it beats a B-tree</h3>
 
 <ul>
-  <li><code class="language-plaintext highlighter-rouge">COSTP</code> = cost of one <em>random</em> page I/O (you pay a seek)</li>
-  <li><code class="language-plaintext highlighter-rouge">COSTπ</code> = cost of one page I/O <em>inside</em> a multi-page sequential block (seek amortized)</li>
-  <li>1995 SCSI numbers in the paper:
+  <li>B-tree insert: a random leaf read + write, paid for <em>one</em> new key
     <ul>
-      <li>random ~16 ms/page</li>
-      <li>64-page sequential ~1.5 ms/page</li>
-      <li>so <code class="language-plaintext highlighter-rouge">COSTπ / COSTP ≈ 1/10</code></li>
-      <li>hardware, not a tree-size ratio</li>
+      <li><code class="language-plaintext highlighter-rouge">COSTP</code> = cost of one <em>random</em> page I/O (you pay a seek)</li>
     </ul>
   </li>
-  <li>B-tree insert:</li>
-</ul>
-
-<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>COSTB ≈ COSTP * (De + 1)
-</code></pre></div></div>
-
-<ul>
-  <li><code class="language-plaintext highlighter-rouge">De</code> ≈ 2 directory misses + 1 dirty leaf write. About three random I/Os</li>
-  <li>LSM insert: the insert only touches C0 in RAM
+  <li>LSM insert: RAM only; disk cost is the merge</li>
+  <li>Two things make that merge cheap:
     <ul>
-      <li>disk cost shows up in the merge</li>
-      <li>per C1 leaf you sequentially read it and sequentially write it (<code class="language-plaintext highlighter-rouge">2 * COSTπ</code>)</li>
-      <li>those two I/Os are shared by the <code class="language-plaintext highlighter-rouge">M</code> new C0 keys that land in that leaf:</li>
+      <li>sequential I/O (multi-page blocks) instead of random seeks
+        <ul>
+          <li><code class="language-plaintext highlighter-rouge">COSTπ</code> = cost of one page I/O <em>inside</em> a sequential block (seek amortized)</li>
+          <li>paper’s disks: <code class="language-plaintext highlighter-rouge">COSTπ / COSTP ≈ 1/10</code></li>
+        </ul>
+      </li>
+      <li>many new C0 keys share each C1 leaf’s read+write
+        <ul>
+          <li>a packed leaf holds ~250 keys; if C0 is 1/25 of C1, about <code class="language-plaintext highlighter-rouge">M = 10</code> new keys land in that leaf</li>
+          <li>so <code class="language-plaintext highlighter-rouge">COSTLSM ≈ 2 * COSTπ / M</code></li>
+          <li>same story from the other side: one merge rewrites all of C1, divided across all of C0</li>
+        </ul>
+      </li>
     </ul>
   </li>
-</ul>
-
-<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>COSTLSM ≈ 2 * COSTπ / M
-</code></pre></div></div>
-
-<ul>
-  <li><code class="language-plaintext highlighter-rouge">M</code> is a key count, not the size ratio <code class="language-plaintext highlighter-rouge">r = |C1| / |C0|</code>
-    <ul>
-      <li>a packed leaf holds <code class="language-plaintext highlighter-rouge">P = 250</code> keys</li>
-      <li>if C0 is 1/25 of C1 (<code class="language-plaintext highlighter-rouge">r = 25</code>), about <code class="language-plaintext highlighter-rouge">250 / 25 = 10</code> keys on that leaf came from C0, so <code class="language-plaintext highlighter-rouge">M ≈ 10</code></li>
-      <li>paper: <code class="language-plaintext highlighter-rouge">M = P × |C0| / (|C0|+|C1|)</code></li>
-      <li>when C0 is much smaller than C1, that is <code class="language-plaintext highlighter-rouge">≈ P / r</code></li>
-    </ul>
-  </li>
-  <li>Same number, other angle — a full one-pass merge reads <em>every</em> old C1 page and writes <em>every</em> new C1 page, then divide by <code class="language-plaintext highlighter-rouge">|C0|</code> inserts:</li>
-</ul>
-
-<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  I/Os per insert = (2r + 1) / P ≈ 2 / M
-</code></pre></div></div>
-
-<ul>
-  <li>With <code class="language-plaintext highlighter-rouge">r = 25</code>, <code class="language-plaintext highlighter-rouge">P = 250</code>, <code class="language-plaintext highlighter-rouge">M = 10</code>: <code class="language-plaintext highlighter-rouge">(50+1)/250 = 0.204</code> and <code class="language-plaintext highlighter-rouge">2/10 = 0.2</code>
-    <ul>
-      <li>rolling step vs full pass are the same cost, just leaf-by-leaf vs all-pages-at-once</li>
-    </ul>
-  </li>
-  <li>Cost vs B-tree:</li>
-</ul>
-
-<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>COSTLSM / COSTB ≈ (2/(De+1)) × (COSTπ/COSTP) × (1/M)
-                 ≈     0.67     ×      1/10        ×   1/10
-</code></pre></div></div>
-
-<ul>
-  <li>The last <code class="language-plaintext highlighter-rouge">1/10</code> is <code class="language-plaintext highlighter-rouge">1/M</code> with <code class="language-plaintext highlighter-rouge">M = 10</code>
-    <ul>
-      <li>the middle <code class="language-plaintext highlighter-rouge">1/10</code> is sequential vs random</li>
-      <li>neither is <code class="language-plaintext highlighter-rouge">r = 25</code></li>
-    </ul>
-  </li>
-  <li>What this does <em>not</em> include:
-    <ul>
-      <li>C0 disk I/O (there is none)</li>
-      <li>a separate memtable log (use the History WAL)</li>
-      <li>C1 directory I/O</li>
-    </ul>
-  </li>
-  <li>Larger C0 (smaller <code class="language-plaintext highlighter-rouge">r</code>) → larger <code class="language-plaintext highlighter-rouge">M</code> → cheaper inserts, more RAM</li>
-  <li>Tiny C0 → <code class="language-plaintext highlighter-rouge">M</code> near 0 → you still rewrite all of C1
-    <ul>
-      <li>that is why a later section adds C2</li>
-    </ul>
-  </li>
+  <li>Larger C0 → larger <code class="language-plaintext highlighter-rouge">M</code> → cheaper inserts, more RAM</li>
+  <li>Tiny C0 → you still rewrite all of C1 for almost nothing → later: add C2</li>
 </ul>
 
 <h3 id="finds-immediate">Finds (immediate)</h3>
@@ -409,15 +356,13 @@
 <h2 id="why-two-components-are-not-enough">Why two components are not enough</h2>
 
 <ul>
-  <li><code class="language-plaintext highlighter-rouge">COSTLSM ≈ 2 COSTπ / M</code>
+  <li>Two-component tradeoff:
     <ul>
-      <li><code class="language-plaintext highlighter-rouge">M</code> is larger when C0 is larger compared to C1</li>
+      <li>big C0: inserts cheap (many keys share each C1 rewrite), RAM is expensive</li>
+      <li>small C0: little RAM, but each merge rewrites all of C1 for almost no new keys</li>
     </ul>
   </li>
-  <li>If C0 is huge, RAM cost dominates</li>
-  <li>If C0 is tiny, each merge still rewrites all of C1 for almost no new keys</li>
-  <li>The cost-optimal two-component C0 is often still a lot of RAM</li>
-  <li>So add a disk-resident stepping stone:</li>
+  <li>Often neither end is acceptable → put a disk tree in between</li>
 </ul>
 
 <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  CK (largest, disk)  ...  C2 (disk)  C1 (disk)  C0 (RAM)
@@ -425,59 +370,15 @@
 </code></pre></div></div>
 
 <ul>
-  <li>When <code class="language-plaintext highlighter-rouge">Ci-1</code> fills, freeze it and merge it into <code class="language-plaintext highlighter-rouge">Ci</code> in one pass</li>
-  <li>An entry is born in C0 and walks out to CK through K merges</li>
-  <li>Components grow geometrically
+  <li>When a component fills, freeze it and merge into the next one</li>
+  <li>An entry is born in C0 and walks out through K merges</li>
+  <li>Size the layers geometrically: each about <code class="language-plaintext highlighter-rouge">r</code> times the previous
     <ul>
-      <li>Theorem 3.1: to minimize merge I/O given a fixed RAM budget <code class="language-plaintext highlighter-rouge">S0</code> and a fixed largest component <code class="language-plaintext highlighter-rouge">SK</code>, pick one ratio <code class="language-plaintext highlighter-rouge">r</code></li>
+      <li>same tax at every merge, instead of one huge C0→C1 rewrite</li>
     </ul>
   </li>
-</ul>
-
-<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>S_i = r * S_{i-1}
-</code></pre></div></div>
-
-<ul>
-  <li>Sizes are <code class="language-plaintext highlighter-rouge">S0, r S0, r² S0, …, r^K S0</code></li>
-  <li>Intuition:
-    <ul>
-      <li>each merge “pays” sequential I/O proportional to how much bigger the destination is than the source</li>
-      <li>equal ratios spread that tax evenly</li>
-    </ul>
-  </li>
-  <li>More components:
-    <ul>
-      <li>smaller C0 (less RAM)</li>
-      <li>more sequential I/O layers</li>
-      <li>a find may do one extra page I/O per disk component</li>
-      <li>the paper is explicit: this is an insert-mostly structure</li>
-    </ul>
-  </li>
-  <li>TPC History numbers (Example 3.3), inserts only, 20 days, 1000 entries/s:
-    <ul>
-      <li>B-tree: ~$50k of disk arms + ~$6k to cache the directory ≈ $56k</li>
-      <li>two-component LSM: 9.2 GB packed on disk ($9.2k) + 20 MB of C0 ($2k) ≈ $11k
-        <ul>
-          <li>disk full <em>and</em> sequential arms full</li>
-        </ul>
-      </li>
-      <li>pump the insert rate 10× (Example 3.4):
-        <ul>
-          <li>B-tree arms blow up</li>
-          <li>a third component starts to win</li>
-          <li>two-component C0 would have to grow (or you spread C1 across idle capacity) to keep <code class="language-plaintext highlighter-rouge">M</code> sane</li>
-        </ul>
-      </li>
-    </ul>
-  </li>
-  <li>The paper’s temperature picture (cold / warm / hot data):
-    <ul>
-      <li>a B-tree History index is <em>warm</em> — you buy arms, not capacity</li>
-      <li>LSM’s sequential batched inserts push that temperature toward <em>cold</em> (capacity-limited)</li>
-      <li>memory buffering in a B-tree only helps once data is <em>hot</em></li>
-      <li>LSM is a way to stay off that slope for mergeable operations (insert, delete)</li>
-    </ul>
-  </li>
+  <li>More layers: less RAM, more sequential merge I/O, a find may touch one extra component</li>
+  <li>Built for insert-mostly; if finds dominate, stop adding layers (or use a B-tree)</li>
 </ul>
 
   </section>
