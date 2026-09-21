@@ -1,0 +1,64 @@
+# D2 0.9.0. The same source is rendered in clean and sketch modes.
+# Numbers identify the ordinary WAL-enabled write path. Flush is asynchronous.
+direction: right
+style.fill: "#ffffff"
+classes: {
+  object: {
+    style: {
+      fill: "#ffffff"
+      stroke: "#222222"
+      stroke-width: 2
+      border-radius: 0
+      font-size: 25
+      font-color: "#222222"
+      shadow: false
+    }
+  }
+}
+put: Put(k, v) {
+  shape: text
+  style.font-size: 30
+  style.font-color: "#222222"
+}
+memory: RAM {
+  direction: down
+  style: {
+    fill: "#ffffff"
+    stroke: "#999999"
+    stroke-width: 1
+    stroke-dash: 4
+    font-size: 23
+    font-color: "#666666"
+  }
+  active: memtable\nordered by key {class: object}
+  frozen: immutable memtable\nwaiting to flush {class: object}
+  active -> frozen: freeze {
+    style.stroke: "#555555"
+    style.font-color: "#555555"
+    style.font-size: 21
+  }
+}
+wal: WAL\nappend in write order {
+  class: object
+  shape: page
+  style.stroke: "#a82025"
+}
+sst: L0 SST\nsorted records {
+  class: object
+  shape: page
+}
+put -> wal: 1. append {
+  style.stroke: "#a82025"
+  style.font-color: "#a82025"
+  style.font-size: 23
+}
+put -> memory.active: 2. insert {
+  style.stroke: "#222222"
+  style.font-color: "#222222"
+  style.font-size: 23
+}
+memory.frozen -> sst: flush {
+  style.stroke: "#222222"
+  style.font-color: "#222222"
+  style.font-size: 23
+}

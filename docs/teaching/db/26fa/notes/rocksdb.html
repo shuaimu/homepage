@@ -37,372 +37,287 @@
          </header> -->
 
   <section>
-    <h1 id="rocksdb">RocksDB</h1>
-<h2 id="goals">Goals</h2>
+    
+<h1 id="rocksdb">RocksDB</h1>
+
+<p>Paper: Dong, Kryczka, Jin, and Stumm, <em>Evolution of Development Priorities in Key-value Stores Serving Large-scale Applications: The RocksDB Experience</em> (FAST 2021).</p>
+
+<p>Last time: 1996 LSM — C0 in RAM, C1…CK on disk, geometric sizes, one-pass merge, tombstones.</p>
+
+<p>This paper is not a new tree. It is eight years of running LevelDB’s grandchild as an embedded engine at Facebook, and watching the bottleneck <em>move</em>.</p>
+
+<h2 id="what-it-is">What it is</h2>
+
 <ul>
-  <li>Persistent key-value store for large-scale distributed systems
+  <li>A KV <em>library</em> on one machine. Not a distributed database
     <ul>
-      <li>Optimized for SSDs (flash memory)</li>
-      <li>Embedded library (single node)</li>
-      <li>Highly customizable for different workloads</li>
+      <li>TiKV, MyRocks, ZippyDB, Flink state, MongoRocks sit <em>on top</em></li>
+      <li>replication, sharding, SQL, checkpoints: the application’s job</li>
+      <li>RocksDB’s job: durable sorted Get / Put / Iterator on local files, plus hooks so those jobs are possible</li>
     </ul>
   </li>
-  <li>Support diverse use cases
+  <li>Fork of Google LevelDB (2012), aimed at local SSDs</li>
+  <li>Highly configurable — that is both the product and the headache</li>
+  <li>Why one engine for 30+ Facebook services (and MySQL, TiDB, Kafka Streams, …)?
     <ul>
-      <li>Databases (MySQL, MongoDB, TiDB)</li>
-      <li>Stream processing (Flink, Kafka Streams)</li>
-      <li>Logging/queuing services</li>
-      <li>Index services</li>
-      <li>SSD caching</li>
+      <li>checksums, crash consistency, <code class="language-plaintext highlighter-rouge">fsync</code> order, file-system errors: you do not want every team inventing this</li>
+      <li>same dashboards, same debug tools, same on-call lore</li>
     </ul>
   </li>
 </ul>
 
-<h2 id="problem-ssds-have-unique-characteristics">Problem: SSDs have unique characteristics</h2>
-<ul>
-  <li>Asymmetric read/write performance</li>
-  <li>Limited write endurance (P/E cycles)</li>
-  <li>High IOPS but write amplification matters</li>
-  <li>Shifted bottleneck: I/O → Network/CPU</li>
-</ul>
+<h2 id="from-last-lecture-to-rocksdb">From last lecture to RocksDB</h2>
 
-<h2 id="key-design-lsm-trees">Key Design: LSM Trees</h2>
-<ul>
-  <li>Log-Structured Merge trees as primary data structure
-    <ul>
-      <li>Writes: MemTable → SSTable (Level 0)</li>
-      <li>Compaction: merge levels to remove dead data</li>
-    </ul>
-  </li>
-  <li>Why multiple levels (not just 2)?
-    <ul>
-      <li>With 2 levels: may rewrite entire dataset on each compaction</li>
-      <li>With N levels: amortize compaction cost</li>
-      <li>Each level ~10x larger than previous</li>
-      <li>Example: 1GB L0 → 10GB L1 → 100GB L2 → 1TB L3</li>
-      <li>Trade-off: more levels = lower write amp but higher read cost</li>
-    </ul>
-  </li>
-  <li>Benefits for SSDs:
-    <ul>
-      <li>Sequential writes (flash-friendly)</li>
-      <li>Tunable write amplification</li>
-      <li>Efficient space reclamation</li>
-    </ul>
-  </li>
-</ul>
-
-<h3 id="reducing-read-cost-bloom-filters">Reducing Read Cost: Bloom Filters</h3>
-<ul>
-  <li>What: probabilistic data structure to test set membership
-    <ul>
-      <li>Can definitively say “key NOT in SSTable”</li>
-      <li>May have false positives (“key might be in SSTable”)</li>
-      <li>Never false negatives</li>
-    </ul>
-  </li>
-  <li>How it works:
-    <ul>
-      <li>Array of bits + multiple hash functions</li>
-      <li>Insert: hash key multiple ways, set corresponding bits to 1</li>
-      <li>Query: hash key, check if all corresponding bits are 1</li>
-    </ul>
-  </li>
-  <li>Use in RocksDB:
-    <ul>
-      <li>Each SSTable has bloom filter in its metadata</li>
-      <li>Read path: check bloom filter before reading SSTable</li>
-      <li>Eliminates ~99% of unnecessary SSTable reads (with 10 bits/key)</li>
-      <li>Critical for read performance with multiple levels</li>
-    </ul>
-  </li>
-  <li>Example read path:
-    <ul>
-      <li>Looking for key “foo”</li>
-      <li>L0: 5 SSTables → check 5 bloom filters → only read 1 SSTable</li>
-      <li>L1: check bloom filter → skip entire level</li>
-      <li>L2: check bloom filter → read SSTable (key found)</li>
-      <li>Saved: 4 unnecessary SSTable reads in L0, entire L1 scan</li>
-    </ul>
-  </li>
-</ul>
-
-<h3 id="compaction-strategies">Compaction Strategies</h3>
-<ul>
-  <li>Leveled: balanced read/write (10-30x write amp)
-    <ul>
-      <li>Each level has non-overlapping key ranges</li>
-      <li>Size limit per level (exponentially increasing)</li>
-      <li>When level full → pick SSTable, merge with overlapping SSTables in next level</li>
-      <li>Maintains sorted runs per level</li>
-    </ul>
-  </li>
-  <li>Tiered: write-optimized (4-10x write amp)
-    <ul>
-      <li>Also called Universal Compaction in RocksDB</li>
-      <li>Can use multiple levels, but differently than leveled compaction</li>
-      <li>Structure:
-        <ul>
-          <li>Smaller sorted runs: stored as files in Level 0</li>
-          <li>Larger sorted runs: stored as “levels” (L1, L2, etc.) with partitioned SSTables</li>
-          <li>Each sorted run contains non-overlapping keys within itself</li>
-          <li>Different sorted runs can have overlapping key ranges</li>
-        </ul>
-      </li>
-      <li>Level usage:
-        <ul>
-          <li>num_levels=1: all sorted runs in L0 (limited by 4GB file size)</li>
-          <li>num_levels&gt;1: larger sorted runs promoted to higher levels for partitioning</li>
-        </ul>
-      </li>
-      <li>Compaction triggers:
-        <ul>
-          <li>Too many sorted runs (e.g., &gt; 10-12)</li>
-          <li>Space amplification too high (total size / largest run &gt; threshold)</li>
-        </ul>
-      </li>
-      <li>When triggered: merge multiple sorted runs into one larger sorted run</li>
-      <li>Example:
-        <ul>
-          <li>L0: Run1(1GB), Run2(1GB), Run3(1GB) - smaller runs</li>
-          <li>L1: Run4(10GB split into multiple SSTs) - larger run</li>
-          <li>Read key A: must check all sorted runs</li>
-        </ul>
-      </li>
-      <li>Trade-offs:
-        <ul>
-          <li>Lower write amp: data written fewer times</li>
-          <li>Higher read cost: must check all sorted runs</li>
-          <li>Higher space overhead: duplicate keys across runs</li>
-        </ul>
-      </li>
-    </ul>
-  </li>
-  <li>FIFO: cache workloads (2x write amp)
-    <ul>
-      <li>NO levels at all - just a queue of SSTable files</li>
-      <li>Simply discard old files when DB hits size limit</li>
-      <li>Minimal compaction (only within Level 0 for deduplication)</li>
-    </ul>
-  </li>
-</ul>
-
-<h2 id="evolution-of-optimization-targets">Evolution of Optimization Targets</h2>
-
-<h3 id="write-amplification-2012-2015">Write Amplification (2012-2015)</h3>
-<ul>
-  <li>Initial focus: minimize flash wear</li>
-  <li>Leveled compaction: 10-30x write amplification</li>
-  <li>Tiered compaction: 4-10x write amplification</li>
-  <li>Trade-off: write amp vs read performance</li>
-</ul>
-
-<h3 id="space-amplification-2015-2018">Space Amplification (2015-2018)</h3>
-<ul>
-  <li>Shift: flash endurance less critical than space</li>
-  <li>Dynamic Leveled Compaction:
-    <ul>
-      <li>Automatically adjust level sizes</li>
-      <li>Reduce dead data to ~13% overhead</li>
-      <li>Previous: up to 90% worst-case overhead</li>
-    </ul>
-  </li>
-  <li>Result: 50% space reduction for Facebook UDB</li>
-</ul>
-
-<h3 id="cpu-utilization-2018-present">CPU Utilization (2018-present)</h3>
-<ul>
-  <li>Current bottleneck: CPU efficiency</li>
-  <li>Most workloads space-constrained (not IOPS)</li>
-  <li>Optimizations:
-    <ul>
-      <li>Prefix bloom filters</li>
-      <li>Parallel compactions</li>
-      <li>Batched MultiGet with parallel I/O</li>
-    </ul>
-  </li>
-</ul>
-
-<h2 id="lessons-from-large-scale-systems">Lessons from Large-Scale Systems</h2>
-
-<h3 id="resource-management">Resource Management</h3>
-<ul>
-  <li>Challenge: multiple instances per host (10s-100s)</li>
-  <li>Global limits needed:
-    <ul>
-      <li>Memory (write buffer, block cache)</li>
-      <li>Compaction I/O bandwidth</li>
-      <li>Compaction threads</li>
-      <li>Disk usage</li>
-    </ul>
-  </li>
-  <li>Resource controllers for fairness</li>
-</ul>
-
-<h3 id="data-format-compatibility">Data Format Compatibility</h3>
-<ul>
-  <li>Problem: incremental software rollouts</li>
-  <li>Solution: forward + backward compatibility
-    <ul>
-      <li>Understand old formats indefinitely</li>
-      <li>Forward compatible for ≥1 year</li>
-      <li>Generic encoding (Protocol Buffers)</li>
-    </ul>
-  </li>
-</ul>
-
-<h3 id="configuration-management">Configuration Management</h3>
-<ul>
-  <li>Problem: too many knobs (100s of options)</li>
-  <li>25+ distinct configs across 39 ZippyDB deployments</li>
-  <li>Current focus: automatic adaptivity</li>
-  <li>Challenge: optimal config depends on workload</li>
-</ul>
-
-<h3 id="wal-treatment">WAL Treatment</h3>
-<ul>
-  <li>Traditional: sync every write (durability)</li>
-  <li>RocksDB options:
-    <ul>
-      <li>Synchronous writes</li>
-      <li>Buffered writes (periodic flush)</li>
-      <li>No WAL (rely on replication)</li>
-    </ul>
-  </li>
-  <li>Distributed systems often have own logs (Paxos)</li>
-</ul>
-
-<h2 id="failure-handling">Failure Handling</h2>
-
-<h3 id="corruption-frequency">Corruption Frequency</h3>
-<ul>
-  <li>~1 corruption per 3 months per 100PB</li>
-  <li>40% already propagated to replicas</li>
-  <li>Sources: CPU/memory bitflips, software bugs</li>
-</ul>
-
-<h3 id="multi-layer-checksums">Multi-Layer Checksums</h3>
-<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Application → Per-KV checksums (planned)
-     ↓
-MemTable/Cache → Currently unprotected
-     ↓
-SSTable → Block checksums + File checksums
-     ↓
-File System → Handoff checksums
-     ↓
-Storage Device → ECC/CRC
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>C0            → MemTable (skiplist) + optional WAL
+frozen C0     → immutable memtable, flushed as an L0 SSTable
+C1 … CK       → levels of SSTables
+one-pass merge → compaction
+delete-note   → tombstone, dropped when compacted
 </code></pre></div></div>
 
-<h3 id="detection-strategy">Detection Strategy</h3>
 <ul>
-  <li>Detect early at every layer</li>
-  <li>Block checksums: on every read</li>
-  <li>File checksums: on file transfer (2020)</li>
-  <li>Handoff checksums: write-time verification</li>
-  <li>End-to-end KV checksums: future work</li>
-</ul>
-
-<h3 id="error-handling">Error Handling</h3>
-<ul>
-  <li>Differentiated by severity:
+  <li>Disk side is a pile of <em>files</em>, not one B-tree per component
     <ul>
-      <li>Transient (network): auto-retry</li>
-      <li>Permanent (corruption): fail fast</li>
-      <li>Out-of-space: automatic recovery</li>
+      <li>last lecture: that packaging is later; here it is</li>
     </ul>
   </li>
-  <li>Periodic retry for transient errors</li>
+  <li>SSTable = sorted string table: key order, ~block-sized chunks, an index for binary search</li>
+  <li>Level 0 is special: several files, key ranges <em>overlap</em> (each flush is a full sorted run)</li>
+  <li>Later levels: one sorted run, cut into files with <em>non-overlapping</em> ranges</li>
+  <li>Classic size ratio: each level ~10× the previous (the modern default; not the 1996 worked example)</li>
 </ul>
 
-<h2 id="key-value-interface-evolution">Key-Value Interface Evolution</h2>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  MemTable  ──flush──►  L0  (overlapping files)
+                          │ compact
+                          ▼
+                        L1  (one run, partitioned)   ~10× L0
+                          │
+                          ▼
+                        L2  ~10× L1   …   LK
+</code></pre></div></div>
 
-<h3 id="current-limitations">Current Limitations</h3>
 <ul>
-  <li>No built-in versioning</li>
-  <li>No cross-shard consistent reads</li>
-  <li>Performance issues with timestamps in keys/values</li>
+  <li>Write: Put goes to the memtable (and maybe the WAL). Memtable full → freeze it, open a new one, write the frozen one out as an L0 file</li>
+  <li>Read: memtables, then every L0 file that might contain the key, then at most one file per later level. Newest wins</li>
+  <li>Compaction: pick file(s) at L, merge with overlapping files at L+1, write new files, drop the old. Same two-list merge as last time, file at a time rather than rewriting a whole component</li>
 </ul>
 
-<h3 id="user-defined-timestamps">User-Defined Timestamps</h3>
+<h2 id="why-lsm-on-flash-short">Why LSM on flash (short)</h2>
+
 <ul>
-  <li>New feature: timestamps as metadata</li>
-  <li>Benefits:
+  <li>1996 scarce resource: disk arm. 2012 scarce resource: flash <em>erase cycles</em>, then <em>space</em></li>
+  <li>SSD: huge IOPS, writes wear the device, you cannot sustain peak write bandwidth</li>
+  <li>B-tree: rewrite a page per small update. LSM: append new files, drop dead data at compaction</li>
+  <li>Local SSD is often faster than the network → embed the engine in the app (TiKV on the box, not a remote disk service)</li>
+  <li>Paper in 2021: LSM is still the right shape. People still want <em>lower</em> write amp than leveled LSM gives → BlobDB (values in a separate log, keys stay in the tree; WiscKey’s idea)</li>
+</ul>
+
+<h2 id="compaction-is-the-design-knob">Compaction is the design knob</h2>
+
+<p>One engine, three merge policies. That is how the same library is “read friendly” or “write friendly.”</p>
+
+<ul>
+  <li>Leveled (from LevelDB)
     <ul>
-      <li>1.2-2x throughput improvement</li>
-      <li>Point lookups instead of scans</li>
-      <li>Bloom filter effectiveness</li>
+      <li>L1+ files do not overlap. When L is full, compact <em>one</em> file into the overlapping files in L+1</li>
+      <li>write amp ~10–30. Space tight. A point Get is about one SST per level</li>
+      <li>databases (MyRocks, ZippyDB)</li>
     </ul>
   </li>
-  <li>Use cases:
+  <li>Tiered (Universal in RocksDB)
     <ul>
-      <li>MVCC transactions</li>
-      <li>Distributed transactions</li>
-      <li>Multi-master replication</li>
+      <li>lazily merge several whole sorted runs, when there are too many or space amp is high</li>
+      <li>write amp ~4–10. More overlapping runs → more files a Get must consider. More leftover copies of old values</li>
+      <li>logging, stream processing</li>
     </ul>
   </li>
-</ul>
-
-<h2 id="hardware-trends">Hardware Trends</h2>
-
-<h3 id="remotedisaggregated-storage">Remote/Disaggregated Storage</h3>
-<ul>
-  <li>Current priority with faster networks</li>
-  <li>Benefits: independent CPU/storage scaling</li>
-  <li>Challenges: I/O latency, parallelization</li>
-</ul>
-
-<h3 id="storage-class-memory-scm">Storage Class Memory (SCM)</h3>
-<ul>
-  <li>Options being explored:
+  <li>FIFO
     <ul>
-      <li>DRAM extension</li>
-      <li>Main storage (but space-constrained)</li>
-      <li>WAL storage only</li>
+      <li>size-capped cache: drop the oldest files. Almost no merge</li>
+      <li>SSD caches that can lose data (EVCache, Redis overflow)</li>
     </ul>
   </li>
 </ul>
 
-<h3 id="future-technologies">Future Technologies</h3>
+<p>Paper microbench (Table 3), gist:</p>
+
 <ul>
-  <li>Open-channel SSDs: limited benefit (space-constrained)</li>
-  <li>Multi-stream SSDs: minority of workloads</li>
-  <li>ZNS: delegation to file system</li>
-  <li>In-storage computing: unclear benefits</li>
+  <li>leveled: write amp ~16, space overhead ~10%, Get with bloom ~1 I/O</li>
+  <li>tiered: write amp ~5, space overhead ~45–90%, more I/Os if you skip the filter</li>
+  <li>FIFO: write amp ~2; without a filter a Get can be hundreds of I/Os</li>
 </ul>
 
-<h2 id="performance-characteristics">Performance Characteristics</h2>
+<p>Lazier merge: cheaper writes, worse reads and space. Application picks. Write-heavy services compact less; databases compact more.</p>
+
+<h3 id="bloom-filters-why-l0-does-not-kill-reads">Bloom filters (why L0 does not kill reads)</h3>
+
 <ul>
-  <li>Write amplification:
+  <li>A Get may have to consider <em>every</em> L0 file, plus one file per later level</li>
+  <li>Each SST carries a filter: “this key is definitely not in this file” (or “maybe”)
     <ul>
-      <li>Leveled: 10-30x</li>
-      <li>Tiered: 4-10x</li>
-      <li>FIFO: 2x</li>
+      <li>never a false negative; false positives just cost an extra SST read</li>
     </ul>
   </li>
-  <li>Space overhead:
+  <li>Check the filter before touching the file. Misses skip the I/O</li>
+  <li>This is how many levels stay tolerable for point reads. Scans still visit every level</li>
+</ul>
+
+<h2 id="the-bottleneck-moved">The bottleneck moved</h2>
+
+<p>The paper’s thesis: they did not change the tree. They changed <em>what they optimized</em>.</p>
+
+<ul>
+  <li>~2012: write amplification (save flash P/E)
     <ul>
-      <li>Dynamic leveled: ~13%</li>
-      <li>Traditional leveled: up to 90%</li>
+      <li>leveled 10–30 is already much better than a B-tree (LinkBench / MyRocks: ~5% of InnoDB’s writes)</li>
+      <li>still too high for ingest-heavy services → add tiered</li>
     </ul>
   </li>
-  <li>Resource utilization (typical):
+  <li>Then they measured the fleet: most deployments are <em>space</em>-bound, not IOPS- or endurance-bound
     <ul>
-      <li>CPU: 11-47%</li>
-      <li>Space: 45-78%</li>
-      <li>Flash endurance: &lt;10%</li>
-      <li>Read bandwidth: 1-10%</li>
+      <li>flash endurance often a few percent of the 2–5 year budget</li>
+      <li>read bandwidth similarly idle</li>
+      <li>write amp stopped being the #1 goal</li>
+    </ul>
+  </li>
+  <li>Space amplification = extra bytes from dead / not-yet-compacted data
+    <ul>
+      <li>static level size caps: overhead wanders; worst case ~90% extra</li>
+      <li><em>dynamic</em> leveled: size each level off the <em>actual</em> last level → ~13% overhead, stable</li>
+      <li>UDB: replacing InnoDB with RocksDB cut space about in half</li>
+    </ul>
+  </li>
+  <li>CPU later
+    <ul>
+      <li>not “SSD is so fast the software cannot keep up” on their boxes — a decent CPU saturates one SSD</li>
+      <li>most hosts not CPU-full (headroom for growth and DC failure)</li>
+      <li>CPU and DRAM got expensive relative to flash → prefix bloom, filter before the index, parallel compaction, batched <code class="language-plaintext highlighter-rouge">MultiGet</code></li>
+      <li>a write-heavy workload plus heavy compression <em>can</em> CPU-bound; then lighter compression, or that workload should not live on flash</li>
     </ul>
   </li>
 </ul>
 
-<h2 id="key-insights">Key Insights</h2>
+<p>Hardware they mostly <em>did not</em> specialize for:</p>
+
 <ul>
-  <li>Space efficiency dominates for SSD workloads</li>
-  <li>CPU efficiency increasingly important</li>
-  <li>LSM trees remain good fit for SSDs</li>
-  <li>Customizability essential for diverse workloads</li>
-  <li>Early corruption detection critical</li>
-  <li>Forward compatibility necessary for operations</li>
+  <li>open-channel / multi-stream / ZNS: help latency and erase cycles — minority of their apps; maybe the FS should absorb this</li>
+  <li>in-storage compute: unclear who benefits</li>
+  <li>they <em>are</em> chasing remote / disaggregated SSD: provision CPU and flash independently; long I/O, transient failures, QoS</li>
+  <li>storage-class memory: DRAM extension? main store? WAL only? WAL-only may not pay for the device</li>
+</ul>
+
+<h2 id="lessons-from-running-at-scale">Lessons from running at scale</h2>
+
+<h3 id="many-instances-per-host">Many instances per host</h3>
+
+<ul>
+  <li>Shard = one RocksDB. A server holds tens to hundreds of shards</li>
+  <li>Caps needed <em>per host</em>, not just per instance: memtable + block cache, compaction bandwidth, compaction threads, disk, file-delete rate</li>
+  <li>Caps per instance too, so one shard cannot eat the box</li>
+  <li>Liberally spawning threads: context-switch storms, I/O spikes, undebuggable. Use a pool</li>
+  <li>Separate processes: even harder. Conservative local config (leave unused capacity) vs gossip about usage</li>
+</ul>
+
+<h3 id="wal-is-optional">WAL is optional</h3>
+
+<ul>
+  <li>Textbook DB: <code class="language-plaintext highlighter-rouge">fsync</code> the WAL on every write</li>
+  <li>Replicated system already has a Raft / Paxos log. Then the memtable WAL is a second log — often skip it</li>
+  <li>Three modes: sync, buffered (periodic, low priority), none</li>
+  <li>Same split you saw in TiKV / Mongo: consensus log is the durability story; the storage engine can be less paranoid</li>
+</ul>
+
+<h3 id="deleting-files-can-stall-reads">Deleting files can stall reads</h3>
+
+<ul>
+  <li>Compaction drops old SSTs. The FS issues TRIM. SSD firmware journals the map and may GC</li>
+  <li>A burst of deletes → latency spike on <em>foreground</em> I/O</li>
+  <li>Fix: rate-limit file deletion. (Not in the 1996 paper.)</li>
+</ul>
+
+<h3 id="formats-and-knobs">Formats and knobs</h3>
+
+<ul>
+  <li>Monthly release, rolling upgrade <em>and</em> rollback, copy SST files between hosts on different versions</li>
+  <li>Must read every old on-disk format forever. Aim for ~1 year of <em>forward</em> compatibility (protobuf-style “ignore unknown fields”)</li>
+  <li>Config: 25+ distinct setups among 39 ZippyDB deployments
+    <ul>
+      <li>changing a default on upgrade surprises people</li>
+      <li>string options, an options file next to the DB, a validator, a (limited) migrator</li>
+      <li>they want adaptivity; they still cannot drop the knobs</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="replication-and-backup-are-outside">Replication and backup are outside</h3>
+
+<ul>
+  <li>Logical copy: iterate keys, write them on the new replica (scan without trashing the block cache; bulk-load on the destination)</li>
+  <li>Physical copy: copy the SST files
+    <ul>
+      <li>RocksDB will list files as of a point in time and <em>pin</em> them so compaction cannot delete them mid-copy</li>
+      <li>this is why they stay on a filesystem rather than talking to the SSD FTL / a raw device — each app already has copy tools</li>
+    </ul>
+  </li>
+  <li>Backup ≈ the same choice, plus retaining several copies. They ship a small backup engine for the simple case</li>
+</ul>
+
+<h2 id="failures">Failures</h2>
+
+<ul>
+  <li>Silent corruption at the RocksDB layer: roughly once per 3 months per 100 PB (MyRocks: primary vs secondary index disagree)
+    <ul>
+      <li>40% of those already on another replica</li>
+    </ul>
+  </li>
+  <li>Copy path is sloppier: ~17 checksum mismatches per PB transferred (bugs, not cosmic rays)</li>
+  <li>Checksums at every layer, catch <em>early</em> (or you replace the last good replica too late):
+    <ul>
+      <li>block checksum, inherited from LevelDB: verify on every read, do not serve garbage</li>
+      <li>file checksum (2020): backups and SST shipping</li>
+      <li>WAL handoff checksum: catch a bad write at write time — local FS often will not</li>
+      <li>per-KV checksum (then in progress): memtable and block cache are otherwise unprotected; a bitflip there can be <em>flushed</em> and become permanent</li>
+    </ul>
+  </li>
+  <li>Errors are not one severity:
+    <ul>
+      <li>transient (remote disk, network): retry, do not make the operator restart the instance</li>
+      <li>permanent corruption: fail fast, throw the replica away</li>
+      <li>early RocksDB: return the error or halt all writes. That was the wrong default</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="the-kv-api-is-too-small">The KV API is too small</h2>
+
+<ul>
+  <li>Get / Put / Iterator is portable and enough for almost every workload — that is why KV stores won</li>
+  <li>Pain they hit:
+    <ul>
+      <li>transactions (they added them for MyRocks)</li>
+      <li>versioning is an internal 56-bit sequence number plus snapshots. The app cannot name a time. No snapshot of the past. No cross-shard consistent read (each instance numbers itself)</li>
+      <li>stuffing a timestamp <em>in the key</em>: a point Get becomes a scan; bloom helps less</li>
+      <li>stuffing it <em>in the value</em>: out-of-order writes and old versions are ugly</li>
+    </ul>
+  </li>
+  <li>User-defined timestamps as metadata, not part of key or value
+    <ul>
+      <li>point Get + bloom + “this SST’s time range cannot contain what you asked”</li>
+      <li>their microbench: ~1.2–2× vs timestamp-in-key</li>
+      <li>intended for MVCC, distributed transactions, multi-master — at the cost of a pickier API and extra space</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="what-to-remember">What to remember</h2>
+
+<ul>
+  <li>Same LSM as last time, packaged as memtable + SSTables + compaction</li>
+  <li>The <em>choice</em> is how lazily you merge (leveled vs tiered vs FIFO), not a new structure</li>
+  <li>Bottleneck walked: write amp → space → CPU / DRAM; LSM survived all three</li>
+  <li>A library used under 100 shards/box is an ops problem: global resource caps, optional WAL, rate-limited deletes, forward-compatible files, pin files for physical copy</li>
+  <li>Detect corruption at every layer, early; retry only the errors that are actually transient</li>
+  <li>A byte-array KV API will get you adopted, then you will wish timestamps were first-class</li>
 </ul>
 
   </section>

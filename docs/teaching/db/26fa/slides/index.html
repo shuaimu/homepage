@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>CSE 532 RocksDB lecture | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="CSE 532 RocksDB lecture" />
+<meta property="og:locale" content="en_US" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="CSE 532 RocksDB lecture" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"CSE 532 RocksDB lecture","url":"/teaching/db/26fa/slides/","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"><link type="application/atom+xml" rel="alternate" href="/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>CSE 532 RocksDB lecture</h1>
+         </header> -->
+
+  <section>
+    <h1 id="cse-532-rocksdb-lecture">CSE 532 RocksDB lecture</h1>
+
+<p>September 21, 2026. Follows <code class="language-plaintext highlighter-rouge">../notes/rocksdb.md</code> and Dong et al.,
+<em>Evolution of Development Priorities in Key-value Stores Serving Large-scale
+Applications: The RocksDB Experience</em> (FAST 2021).</p>
+
+<h2 id="present-and-share">Present and share</h2>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">DB26fa-RocksDB.pdf</code>: 72 logical slides, 77 PDF pages, including five incremental
+reveals. Present this version and advance one PDF page per click.</li>
+  <li><code class="language-plaintext highlighter-rouge">DB26fa-RocksDB-handout.pdf</code>: 72 pages with each slide’s final state, for students.</li>
+  <li><code class="language-plaintext highlighter-rouge">DB26fa-RocksDB.pdfpc</code>: presenter notes and overlay metadata for pdfpc. Keep it
+next to the presentation PDF. Other PDF viewers can display the slides normally.</li>
+</ul>
+
+<p>Slides 1–64 form the core lecture. The suggested timings in the speaker notes
+total 96 minutes, including discussion and the separate compaction-policy examples.
+For an 80-minute route, omit the prior-lecture review on slides 6–13 (10 minutes)
+and the discussion activities on slides 23 and 62–63 (7 minutes), leaving one minute
+for transitions. Slide 65 opens the appendix; slides 66–72 are optional material on hardware,
+key/value separation, read costs, project history, the original utilization
+chart, and the talk’s amplification estimates. Presenting all appendices adds
+approximately 12 minutes; they are also included in the student handout.</p>
+
+<p>Slides 2–3 introduce LevelDB’s origins and Facebook’s RocksDB fork, using
+<a href="https://opensource.googleblog.com/2011/07/leveldb-fast-persistent-key-value-store.html">Google’s 2011 announcement</a>
+and <a href="https://engineering.fb.com/2013/11/21/core-infra/under-the-hood-building-and-open-sourcing-rocksdb/">Facebook’s 2013 announcement</a>.
+These add about two minutes before the lecture’s central question.</p>
+
+<p>Slide 14 opens the section with “Why do we need LSM on SSD?”
+Slides 15–17 introduce flash write costs with matched four-page diagrams: an HDD
+overwrites one page in place; an SSD writes the updated page and copies the three
+live pages to fresh space before erasing the old block, producing 4× write
+amplification in this example. The SSD diagram combines an update with later
+reclamation; it does not imply copying a block on every update. Slide 17 connects
+these costs to LSM batching and compaction. Page sizes and counts are illustrative.
+Background:
+<a href="https://pages.cs.wisc.edu/~remzi/OSTEP/file-ssd.pdf">OSTEP’s SSD chapter</a>.
+Slide 18 introduces the compaction-policy section.
+Slides 19–21 give leveled, universal/tiered, and FIFO one worked diagram each;
+mechanics were checked against the <a href="https://github.com/facebook/rocksdb/wiki/Compaction">RocksDB compaction documentation</a>
+and <a href="https://github.com/facebook/rocksdb/wiki/FIFO-compaction-style">FIFO documentation</a>.
+Slide 22 compares the measurements and defines write amplification and space
+overhead beneath the table; slide 23 closes the section
+with suggested policies and reasons beside each application. Source links and qualifications stay in
+the speaker notes.</p>
+
+<p>Slides 24–29 introduce Bloom filters from first principles: a title divider,
+membership testing, construction with hashes, definite absence, false positives,
+and RocksDB’s use of filters to skip SST lookups. One eight-bit example carries
+through construction and queries; its hash outputs are illustrative. The section
+takes about nine minutes, seven more than the earlier single-slide introduction.
+Background: <a href="https://www.cs.princeton.edu/courses/archive/spr05/cos598E/bib/p422-bloom.pdf">Bloom’s original paper</a>
+and <a href="https://github.com/facebook/rocksdb/wiki/RocksDB-Bloom-Filter">RocksDB’s filter documentation</a>.</p>
+
+<p>After the concept review, title-only dividers mark the remaining parts:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Divider slide</th>
+      <th>Part</th>
+      <th>Content slides</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>30</td>
+      <td>Resource optimization</td>
+      <td>31–35</td>
+    </tr>
+    <tr>
+      <td>36</td>
+      <td>Data integrity and recovery</td>
+      <td>37–45</td>
+    </tr>
+    <tr>
+      <td>46</td>
+      <td>Operating RocksDB at scale</td>
+      <td>47–53</td>
+    </tr>
+    <tr>
+      <td>54</td>
+      <td>Versions and timestamps</td>
+      <td>55–60</td>
+    </tr>
+    <tr>
+      <td>61</td>
+      <td>Discussion and takeaways</td>
+      <td>62–64</td>
+    </tr>
+    <tr>
+      <td>65</td>
+      <td>Appendix</td>
+      <td>66–72</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>The dividers use the same style as the flash, compaction, and Bloomfilter title
+pages. They add transitions without changing the suggested content timings.</p>
+
+<p>The later slides define terms and explain the mechanisms directly on the page:
+checksum boundaries, recovery, shared host budgets, WAL durability, file pinning,
+and timestamped reads. Short additions explain checksum creation and verification
+(37), WAL recovery (48), independent shard sequence numbers (57), and
+one worked answer to the design discussion (63). Concrete examples supplement
+the existing diagrams without reducing type size or line spacing. Suggested
+timings are redistributed within those topics; the core now totals 96 minutes.</p>
+
+<p>Slides 55–56 compare sequence numbers with user timestamps and show two versions
+carrying both fields. The worked reads demonstrate that a snapshot’s sequence limit
+and the application’s timestamp limit both apply. Local sequence numbers do not
+provide a common clock across shards. These explanations use the
+<a href="https://github.com/facebook/rocksdb/wiki/User-defined-Timestamp">RocksDB timestamp documentation</a>
+and <a href="https://github.com/facebook/rocksdb/wiki/Snapshot">snapshot documentation</a>
+to clarify the paper’s concepts, without treating newer APIs as 2021 features.</p>
+
+<p>The deck was checked against all 48 pages of the
+<a href="https://www.usenix.org/sites/default/files/conference/protected-files/fast21_slides_dong.pdf">official FAST 2021 slides</a>.
+See <a href="/teaching/db/26fa/slides/FAST21-coverage.html">FAST21-coverage.md</a> for the original-page-to-lecture-slide
+mapping, gaps found and filled, and the distinction between talk estimates and
+paper measurements. Substantive talk content is covered in the core or appendix;
+section dividers, repeated reveal frames, and closing branding are consolidated.</p>
+
+<p>Speaker notes retain the paper and talk links with section, table, figure, and
+page references. Citation footnotes are omitted from the projected slides.
+Measurements and feature status describe the 2021 paper and talk, not current
+RocksDB releases. The key/value examples and diagrams are teaching illustrations.</p>
+
+<p>The full lecture uses the selected textbook style: serif titles, white pages,
+thin black rules, and red highlights for the active record or operation.
+Body text uses 1.5× baseline spacing (36pt for 24pt type); separate bullets use
+1.65× spacing (39.6pt). Explicit Typst text edges make this independent of font
+metrics. The full lecture, including reveal states, and the handout were rendered
+and visually reviewed after the explanatory revisions.
+The figures show records and sequence numbers, sorted key ranges, Bloom bits,
+file layouts, and timelines. The original theme study and clean/sketch D2
+comparison remain in <a href="/teaching/db/26fa/slides/style-study/"><code class="language-plaintext highlighter-rouge">style-study/</code></a>.</p>
+
+<h2 id="build">Build</h2>
+
+<p>Requires Typst 0.15 or later (checked with 0.15.1). Imports pin Touying 0.7.4 and
+CeTZ 0.5.2. Typst downloads packages on the first build and caches them outside
+this repository.</p>
+
+<div class="language-sh highlighter-rouge"><div class="highlight"><pre class="highlight"><code>make <span class="nt">-C</span> teaching/db/26fa/slides
+</code></pre></div></div>
+
+<p>Or, from this directory:</p>
+
+<div class="language-sh highlighter-rouge"><div class="highlight"><pre class="highlight"><code>typst compile DB26fa-RocksDB.typ
+typst compile <span class="nt">--input</span> <span class="nv">handout</span><span class="o">=</span><span class="nb">true </span>DB26fa-RocksDB.typ DB26fa-RocksDB-handout.pdf
+typst <span class="nb">eval</span> <span class="nt">--in</span> DB26fa-RocksDB.typ <span class="nt">--pretty</span> <span class="s1">'query(&lt;pdfpc-file&gt;).first().value'</span> <span class="o">&gt;</span> DB26fa-RocksDB.pdfpc
+</code></pre></div></div>
+
+<p>For an explicit external package cache:</p>
+
+<div class="language-sh highlighter-rouge"><div class="highlight"><pre class="highlight"><code>make <span class="nt">-C</span> teaching/db/26fa/slides <span class="nv">TYPST_FLAGS</span><span class="o">=</span><span class="s1">'--package-cache-path /tmp/typst-packages'</span>
+</code></pre></div></div>
+
+<p><code class="language-plaintext highlighter-rouge">rocksdb-theme.typ</code> defines the typography and layout. Titles use STIX Two Text /
+Times New Roman; body text uses Helvetica Neue / Arial; records use Menlo /
+DejaVu Sans Mono. On Linux, install STIX Two Text and set <code class="language-plaintext highlighter-rouge">sans-font</code> to an
+installed font such as Liberation Sans. Changing fonts can change wrapping,
+so inspect the regenerated PDF on another platform.
+<code class="language-plaintext highlighter-rouge">rocksdb-diagrams.typ</code> contains the editable CeTZ drawings. The original survey
+chart is retained as a source image in <code class="language-plaintext highlighter-rouge">assets/</code>, with provenance in its README.
+Slide text, source
+references, and speaker notes are in <code class="language-plaintext highlighter-rouge">DB26fa-RocksDB.typ</code>.</p>
+
+<p>To preview the homepage, run from the repository root with a throwaway Jekyll
+destination. Explicitly loading the existing compatibility shim also works with
+the Ruby 4 installation used to check this deck:</p>
+
+<div class="language-sh highlighter-rouge"><div class="highlight"><pre class="highlight"><code>bundle <span class="nb">exec </span>ruby <span class="nt">-r</span> ./_plugins/ruby4_compat.rb <span class="nt">-S</span> jekyll serve <span class="nt">--destination</span> /tmp/rocksdb-site
+</code></pre></div></div>
+
+<p>Building these slides does not require Jekyll. Avoid regenerating the tracked
+<code class="language-plaintext highlighter-rouge">docs/</code> tree unless publishing intentionally.</p>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
+<script async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script>
+</body>
+
+</html>

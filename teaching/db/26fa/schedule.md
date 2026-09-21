@@ -39,7 +39,7 @@ table td:first-child {
 | Sep 14 | Student presentation |
 |        | Session III: LSM-Tree                                             |
 | Sep 16 | LSM-Tree ([notes](notes/lsm.html))<br>[The Log-Structured Merge-Tree (LSM-Tree)](readings/lsm.pdf) |
-| Sep 21 | RocksDB ([notes](notes/rocksdb.html))<br>[Evolution of Development Priorities in Key-value Stores Serving Large-scale Applications: The RocksDB Experience](readings/rocksdb.pdf) |
+| Sep 21 | RocksDB ([notes](notes/rocksdb.html), [slides](slides/DB26fa-RocksDB.pdf), [handout](slides/DB26fa-RocksDB-handout.pdf))<br>[Evolution of Development Priorities in Key-value Stores Serving Large-scale Applications: The RocksDB Experience](readings/rocksdb.pdf) |
 | Sep 23 | Student presentation |
 | Sep 28 | **Exam 1** |
 |        | Session IV: B+ Trees |

@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>RocksDB visual study | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="RocksDB visual study" />
+<meta property="og:locale" content="en_US" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="RocksDB visual study" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"RocksDB visual study","url":"/teaching/db/26fa/slides/style-study/","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"><link type="application/atom+xml" rel="alternate" href="/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>RocksDB visual study</h1>
+         </header> -->
+
+  <section>
+    <h1 id="rocksdb-visual-study">RocksDB visual study</h1>
+
+<p>Three sample pages to compare a restrained textbook theme and diagram renderers:</p>
+
+<ol>
+  <li>A CeTZ compaction figure with actual keys, values, sequence numbers, and
+discarded versions. Thin black rules, white cells, and a single red accent.</li>
+  <li>A WAL-enabled write-path diagram, laid out with D2/ELK and rendered cleanly.</li>
+  <li>The same D2 source rendered with <code class="language-plaintext highlighter-rouge">--sketch</code>.</li>
+</ol>
+
+<p>The theme uses STIX Two Text titles and Helvetica Neue / Arial body text. It is
+the prototype chosen for the full lecture’s redesign.
+The figures are teaching illustrations, not reproductions of a paper figure.</p>
+
+<h2 id="build">Build</h2>
+
+<p>The SVG outputs are included, so rebuilding the PDF only needs Typst and CeTZ:</p>
+
+<div class="language-sh highlighter-rouge"><div class="highlight"><pre class="highlight"><code>typst compile rocksdb-style-study.typ
+</code></pre></div></div>
+
+<p>To regenerate the diagrams, install <a href="https://d2lang.com/tour/install/">D2</a>.
+These samples were built with D2 0.9.0:</p>
+
+<div class="language-sh highlighter-rouge"><div class="highlight"><pre class="highlight"><code>d2 <span class="nt">--layout</span> elk <span class="nt">--theme</span> 0 <span class="nt">--pad</span> 16 write-path.d2 write-path-clean.svg
+d2 <span class="nt">--layout</span> elk <span class="nt">--theme</span> 0 <span class="nt">--sketch</span> <span class="nt">--pad</span> 16 write-path.d2 write-path-sketch.svg
+typst compile rocksdb-style-study.typ
+</code></pre></div></div>
+
+<p>D2 SVGs embed their own fonts for browser viewing. Typst may substitute installed
+fonts when importing these SVGs; inspect the PDF after changing the renderer or
+fonts. The PDF was rendered and visually checked on the lecture’s build machine.</p>
+
+<h2 id="design-direction">Design direction</h2>
+
+<ul>
+  <li>Encode a concept with its structure: sorted record cells, append-only logs,
+file offsets, and ranges drawn on a shared key axis.</li>
+  <li>Use red for the operation or records currently under discussion. Avoid a
+separate pastel panel for every noun.</li>
+  <li>Keep coordinates stable between successive steps of the same example.</li>
+  <li>Use CeTZ for exact data-structure geometry, and D2 for high-level relationships.
+Sketch strokes alone do not improve the explanatory structure of a figure.</li>
+  <li>For drawings edited by hand, <a href="https://github.com/excalidraw/excalidraw">Excalidraw</a>
+is another option: retain the editable <code class="language-plaintext highlighter-rouge">.excalidraw</code> file and export SVG to Typst.</li>
+</ul>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
+<script async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script>
+</body>
+
+</html>

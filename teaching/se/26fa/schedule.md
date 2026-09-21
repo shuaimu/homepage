@@ -28,7 +28,7 @@ The schedule is tentative and subject to change.
 | Sep 9 | [Lecture: Working with coding agents](./slides/SE26fa-03-Agents.pdf) |
 | Sep 14 | Milestone 1: Proposal and Requirements |
 | Sep 16 | Milestone 1: Proposal and Requirements |
-| Sep 21 | Presentation 1: User Experience (UI/UX and user study) |
+| Sep 21 | [UI/UX: learning from examples](./slides/SE26fa-04-UIUX.pdf) — Presentation 1: User Experience (UI/UX and user study) |
 | Sep 23 | Presentation 2: Architecture and Tech Stack |
 | Sep 28 | Milestone 2: Design and Setup |
 | Sep 30 | Milestone 2: Design and Setup |
