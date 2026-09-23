@@ -1,5 +1,20 @@
 # AGENTS.md
 
+## Slide visual review
+
+- After creating or editing slides, render the entire final deck and visually inspect
+  every slide at a readable size, including all incremental reveal states and appendices.
+- Check spacing between text groups, especially conclusions below lists or tables,
+  captions below diagrams, and question/answer reveals. Also check text wrapping,
+  alignment, label collisions, clipping, and clearance from headers and footers.
+- Use at least 1.5× baseline spacing for slide body text and lists: a half-font-size
+  gap beyond a one-em line box (e.g. 36pt baseline spacing for 24pt text). Allow
+  extra space between separate bullets. Reflow or split dense slides instead of
+  shrinking their type or tightening the spacing to fit.
+- Fix visual glitches and re-render the affected slides before delivery. Compilation,
+  text extraction, and automated bounds checks supplement visual inspection; they do
+  not replace it. Verify both presentation and handout exports when both are provided.
+
 ## Cursor Cloud specific instructions
 
 This repository is a **Jekyll static site** (an academic homepage) served via the `github-pages`
