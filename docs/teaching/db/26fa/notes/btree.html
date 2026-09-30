@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>B-link Tree | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="B-link Tree" />
+<meta property="og:locale" content="en_US" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="B-link Tree" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"B-link Tree","url":"/teaching/db/26fa/notes/btree.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"><link type="application/atom+xml" rel="alternate" href="/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>B-link Tree</h1>
+         </header> -->
+
+  <section>
+    
+<h1 id="b-link-tree">B-link Tree</h1>
+
+<p>Paper: Lehman and Yao, <em>Efficient Locking for Concurrent Operations on B-Trees</em> (ACM TODS 1981).</p>
+
+<h2 id="the-job">The job</h2>
+
+<ul>
+  <li>A B+ tree index on disk. Many processes search and insert at once</li>
+  <li>Wanted:
+    <ul>
+      <li>correct: a search finds the key if it is there</li>
+      <li>searches never wait. Reads dominate; an index that blocks readers on every insert is useless</li>
+      <li>inserts hold few locks, briefly. A lock held across a 20 ms disk I/O stalls everyone behind it</li>
+      <li>no deadlock</li>
+    </ul>
+  </li>
+  <li>Storage model (Section 2). Keep it in mind; the whole trick depends on it
+    <ul>
+      <li>disk is pages; a page is a node</li>
+      <li><code class="language-plaintext highlighter-rouge">A ← get(x)</code> reads a whole page into a process’s <em>private</em> memory; <code class="language-plaintext highlighter-rouge">put(A, x)</code> writes it back</li>
+      <li>each <code class="language-plaintext highlighter-rouge">get</code> / <code class="language-plaintext highlighter-rouge">put</code> is atomic: you see a page as it was before a write or after it, never half</li>
+      <li><code class="language-plaintext highlighter-rouge">lock(x)</code> is exclusive. You must hold it to <code class="language-plaintext highlighter-rouge">put</code> x. It does <em>not</em> stop anyone from <code class="language-plaintext highlighter-rouge">get</code>-ing x</li>
+      <li>a process has a few page buffers of its own. No shared memory between processes</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="b-tree-1979-edition">B+ tree, 1979 edition</h2>
+
+<ul>
+  <li>The paper says B*-tree (Wedekind’s variant). It is what we now call a B+ tree</li>
+  <li>Every root-to-leaf path has the same length</li>
+  <li>Keys and record pointers live in the leaves. Nonleaf nodes hold separator keys and child pointers</li>
+  <li>A node is one page: up to <code class="language-plaintext highlighter-rouge">2k</code> entries, at least <code class="language-plaintext highlighter-rouge">k</code> (except the root)</li>
+  <li>Fanout in the hundreds, so three or four levels cover millions of keys</li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  nonleaf:  [ P0 | 20 | P1 | 40 | P2 ]      P1 covers the keys in (20, 40]
+  leaf:     [ 21 | 25 | 33 | 38 ]           each key + a pointer to its record
+</code></pre></div></div>
+
+<ul>
+  <li>Search: start at the root. In each node find the slot whose range holds v, follow it. At the leaf, look for v</li>
+  <li>Insert: search to the leaf. If it has room, put v in. Otherwise split
+    <ul>
+      <li>make two half-full nodes out of one</li>
+      <li>push a separator and a pointer to the new node into the parent</li>
+      <li>the parent may be full too; splits can cascade up to the root</li>
+    </ul>
+  </li>
+  <li><em>Safe</em> node: has room (fewer than <code class="language-plaintext highlighter-rouge">2k</code> entries). <em>Unsafe</em> node: full, an insert here will split it</li>
+  <li>The sequential code is a few dozen lines. Now run it from two processes</li>
+</ul>
+
+<h2 id="the-race-papers-figure-5">The race (paper’s Figure 5)</h2>
+
+<ul>
+  <li>Parent <code class="language-plaintext highlighter-rouge">x</code> says: keys in (8, 20] are in leaf <code class="language-plaintext highlighter-rouge">y</code>. <code class="language-plaintext highlighter-rouge">y = [10 12 15 18]</code> is full (<code class="language-plaintext highlighter-rouge">k = 2</code>)</li>
+  <li>Process S searches for 15. Process I inserts 9</li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  search(15)                          insert(9)
+  1. read x; 15 is in y
+  2.                                  read x; 9 is in y
+  3.                                  read y = [10 12 15 18]     full
+  4.                                  split: y = [9 10 12], y' = [15 18]
+  5.                                  write y', write y
+  6.                                  add (12 → y') to x
+  7. read y = [9 10 12]
+  8. 15 not found                     wrong: 15 is in the tree
+</code></pre></div></div>
+
+<ul>
+  <li>Nothing was torn: every page S read was a consistent node</li>
+  <li>The bug is about <em>position</em>: S holds a pointer it got from <code class="language-plaintext highlighter-rouge">x</code> <em>before</em> <code class="language-plaintext highlighter-rouge">y</code> changed. By the time it reads <code class="language-plaintext highlighter-rouge">y</code>, the key it wants has moved to a node S has no way to reach</li>
+  <li>Every concurrency scheme for B-trees is an answer to this one race</li>
+</ul>
+
+<h2 id="strawman-1-one-lock-on-the-whole-tree">Strawman 1: one lock on the whole tree</h2>
+
+<ul>
+  <li>Correct, trivially</li>
+  <li>Zero concurrency. Every operation does a few disk I/Os at ~20 ms each; all of them serialize</li>
+  <li>The multiprogramming the database exists for is gone</li>
+</ul>
+
+<h2 id="strawman-2-lock-the-path-samadi-1976">Strawman 2: lock the path (Samadi 1976)</h2>
+
+<ul>
+  <li>An insert can only change nodes on its root-to-leaf path. So: exclusive-lock the path, top down, then work</li>
+  <li>Readers must lock too, or they hit the race above</li>
+  <li>The root is on every path. Every insert locks the root; everyone queues behind it</li>
+  <li>You hold locks across disk I/O all the way down</li>
+</ul>
+
+<h2 id="strawman-3-lock-coupling-bayer-and-schkolnick-1977">Strawman 3: lock coupling (Bayer and Schkolnick 1977)</h2>
+
+<ul>
+  <li>Observation: a split stops at the nearest <em>safe</em> ancestor. Below a safe node, the damage is contained</li>
+  <li>Reader: hold the parent’s lock while acquiring the child’s, then release the parent. Never hold a pointer that nobody is protecting (“crabbing”)</li>
+  <li>Inserter: same descent with write locks; when you pass a safe node, release everything above it — a split cannot climb past it
+    <ul>
+      <li>refinement: lock the upper levels with a writer-exclusion lock (blocks writers, not readers). Take exclusive locks only where you actually write, mostly near the leaves</li>
+      <li>or be optimistic: descend with read locks assuming the leaf is safe; if not, start over with write locks</li>
+    </ul>
+  </li>
+  <li>Deadlock-free: everybody locks top down</li>
+  <li>What it costs:
+    <ul>
+      <li>every search locks and unlocks a node per level. Every search touches the root’s lock</li>
+      <li>a writer sits on a subtree while it does disk I/O; readers under it wait</li>
+      <li>the number of locks held depends on where the nearest safe node is; a cascade near the root holds the root</li>
+    </ul>
+  </li>
+  <li>Two properties we would rather have: searches read without any lock, and an inserter holds a constant number of locks. The paper’s Section 1 says exactly this</li>
+</ul>
+
+<h2 id="look-at-the-race-again">Look at the race again</h2>
+
+<ul>
+  <li>S’s pointer to <code class="language-plaintext highlighter-rouge">y</code> was not <em>wrong</em>. <code class="language-plaintext highlighter-rouge">y</code> still exists and still holds a subset of the keys it had</li>
+  <li>What changed: some keys moved <em>right</em>, into a new node <code class="language-plaintext highlighter-rouge">y'</code>, and S has no path to <code class="language-plaintext highlighter-rouge">y'</code></li>
+  <li>So do not stop I from splitting. Instead, let S notice and recover:
+    <ol>
+      <li><strong>Detect.</strong> A node should say what range it covers. Store its upper bound in the node: the <em>high key</em>. If v is larger than the high key, the node split after we read its parent
+        <ul>
+          <li>the bound has to live <em>in the node</em>: it changes exactly when the node’s contents change, in the same atomic <code class="language-plaintext highlighter-rouge">put</code>. A bound remembered from the parent is stale in the same way the pointer is</li>
+        </ul>
+      </li>
+      <li><strong>Recover.</strong> From <code class="language-plaintext highlighter-rouge">y</code> there should be a path to <code class="language-plaintext highlighter-rouge">y'</code> that does not go through the parent. Give every node a pointer to its right sibling: the <em>link</em>. Splits always move keys to the right, so the moved keys are always one link away</li>
+    </ol>
+  </li>
+  <li>That is the B-link tree: a B+ tree plus one key and one pointer per node</li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  y  = [ 9 | 10 | 12 || high 12 | link → y' ]
+  y' = [ 15 | 18     || high 20 | link → z  ]
+</code></pre></div></div>
+
+<ul>
+  <li>Now step 7 above reads <code class="language-plaintext highlighter-rouge">y</code>, sees 15 &gt; 12, follows the link, and finds 15 in <code class="language-plaintext highlighter-rouge">y'</code></li>
+  <li>The split node and its right twin, joined by the link, behave like one big node until the parent gets its pointer
+    <ul>
+      <li>so the parent’s pointer can be added <em>later</em>, in a separate step</li>
+      <li>a node with a left twin but no parent pointer is a <em>valid</em> tree. It is reachable</li>
+      <li>rule: the link to a new node exists before the pointer from its parent. Link first, parent second</li>
+    </ul>
+  </li>
+  <li>Every node on a level is now in a linked list. Rightmost node: null link, high key +∞
+    <ul>
+      <li>a leaf-level scan (range query) walks the links and never goes back up</li>
+    </ul>
+  </li>
+  <li>Price: one key and one pointer per node; an extra page read on the rare occasion you follow a link. Splits are rare</li>
+</ul>
+
+<h2 id="search-no-locks">Search: no locks</h2>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  search(v):
+    current ← root; A ← get(current)
+    while current is not a leaf:
+        current ← scannode(v, A)         // a child pointer, or the link if v &gt; high key
+        A ← get(current)
+    while scannode(v, A) is the link of A:   // at the leaf level: keep moving right
+        current ← link; A ← get(current)
+    return v ∈ A
+</code></pre></div></div>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">scannode(v, A)</code>: if v &gt; high key of A, return the link. Else return the child pointer whose range holds v</li>
+  <li>This is the sequential search plus one comparison per node. It never locks. It may read a page another process has locked; the lock is only against other <em>writers</em></li>
+  <li>Why it is right:
+    <ul>
+      <li>every page it reads is a consistent node (<code class="language-plaintext highlighter-rouge">get</code> is atomic)</li>
+      <li>the only thing that can be wrong is <em>where</em> it is. Because keys only move right and every move leaves a link, it can be too far left, never too far right. Too far left is repaired by following links</li>
+      <li>nothing ever moves keys to the left (see Delete below). That is the invariant the whole design rests on</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="insert">Insert</h2>
+
+<h3 id="descend-then-lock-then-go-up">Descend, then lock, then go up</h3>
+
+<ul>
+  <li>Descend exactly like a search — no locks — remembering the rightmost node visited at each level (a stack)</li>
+  <li>At the leaf: <code class="language-plaintext highlighter-rouge">lock</code> it, then <code class="language-plaintext highlighter-rouge">get</code> it <em>again</em>. The copy from the descent is unlocked and may be stale</li>
+  <li><code class="language-plaintext highlighter-rouge">move_right</code>: while v &gt; high key, lock the right neighbor, unlock the current node, step right. Left-to-right, hand over hand</li>
+  <li>Now we hold the leaf where v belongs, and the lock on it</li>
+  <li>If v is already there: unlock, done</li>
+  <li>If the leaf is safe: insert, <code class="language-plaintext highlighter-rouge">put</code>, unlock. One lock, held for one page write</li>
+  <li>If the leaf is unsafe: split</li>
+</ul>
+
+<h3 id="the-split-in-the-right-order">The split, in the right order</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  u ← allocate a new page
+  A, B ← split A plus the new entry;  link(B) ← link(A);  link(A) ← u
+  y ← max key in A                     // A's new high key, and the separator for the parent
+  put(B, u)                            // first
+  put(A, current)                      // second
+</code></pre></div></div>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">put(B, u)</code> first: nothing in the tree points at <code class="language-plaintext highlighter-rouge">u</code> yet, so this write changes nothing anyone can see. <code class="language-plaintext highlighter-rouge">B</code> is the parentless right twin, which we said is legal</li>
+  <li><code class="language-plaintext highlighter-rouge">put(A, current)</code> second: one atomic page write that both shrinks <code class="language-plaintext highlighter-rouge">A</code> and links <code class="language-plaintext highlighter-rouge">B</code> in. Lemma 2: the two writes are one change to the tree</li>
+  <li>Other order: rewrite <code class="language-plaintext highlighter-rouge">A</code> first and a reader following its link lands on an unwritten page</li>
+  <li>As far as correctness goes, the split is finished here. The parent does not know yet; searches for the moved keys pay one extra link. Fixing the parent is a performance matter, and we can do it separately</li>
+</ul>
+
+<h3 id="go-up">Go up</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  oldnode ← current
+  (v, w) ← (y, u)                      // what goes into the parent: separator y, pointer to B
+  current ← pop(stack); lock(current); A ← get(current)
+  move_right                           // the parent may have split since we passed it
+  unlock(oldnode)
+  repeat from "if A is safe"
+</code></pre></div></div>
+
+<ul>
+  <li>The parent we remembered may have split too. Its right twins are reachable by links, so <code class="language-plaintext highlighter-rouge">move_right</code> at that level finds the correct place</li>
+  <li>We keep the child locked until the parent is locked, then drop it. The pair <code class="language-plaintext highlighter-rouge">(y, u)</code> describes the child as it is; and it keeps the locking order simple (below)</li>
+  <li>The parent gets <code class="language-plaintext highlighter-rouge">(12 → y')</code> inserted next to its existing pointer to <code class="language-plaintext highlighter-rouge">y</code>: <code class="language-plaintext highlighter-rouge">[ .. 8 | y | 12 | y' | 20 | .. ]</code></li>
+  <li>If the parent is safe: insert, <code class="language-plaintext highlighter-rouge">put</code>, unlock. Done. Otherwise split it the same way and go up again</li>
+  <li>The paper does not spell out the root split (pop an empty stack): allocate a new root and switch the root pointer. An implementation needs a place to keep that pointer (Postgres: a metapage)</li>
+</ul>
+
+<h3 id="how-many-locks">How many locks?</h3>
+
+<ul>
+  <li>Usually one: the node being written</li>
+  <li>Going up: the child plus the parent, briefly</li>
+  <li>Worst case three: the child, the parent, and the parent’s right neighbor while moving right. Then the parent is unlocked</li>
+  <li>Constant, independent of tree height and of where the nearest safe node is. Compare crabbing, which holds a path</li>
+  <li>Note what is <em>not</em> locked: anything on the way down. We lock only what we write, and we lock going <em>up</em>. That is only possible because a half-propagated split is a valid tree</li>
+</ul>
+
+<h3 id="deadlock">Deadlock</h3>
+
+<ul>
+  <li>Order the nodes: lower level before higher level; within a level, left before right</li>
+  <li>An inserter locks in that order: leaf, then right along the leaf level, then the parent, then right along the parent level, and so on. Once it holds a node it never locks one below it or to its left</li>
+  <li>The order is stable: a split creates a node to the <em>right</em> of an existing one, never to the left</li>
+  <li>Fixed global lock order → no cycle → no deadlock. Searches take no locks at all</li>
+</ul>
+
+<h2 id="why-it-is-correct-section-6-in-words">Why it is correct (Section 6, in words)</h2>
+
+<ul>
+  <li>Three facts do the work:
+    <ol>
+      <li>Every disk write is a whole page, on a locked node, atomic. So the tree on disk is a valid tree at every instant (Theorem 2)</li>
+      <li>Keys only move right, and a new node is linked before it is pointed to. So any pointer you hold is either right or too far left, and links repair too far left (Theorem 3)</li>
+      <li>Inserters re-read a node after locking it. The decision to insert into it is made on current contents, not on the copy from the descent</li>
+    </ol>
+  </li>
+  <li>Reader vs. inserter, node <code class="language-plaintext highlighter-rouge">n</code>
+    <ul>
+      <li>reader read <code class="language-plaintext highlighter-rouge">n</code> after the change: it sees a valid tree and proceeds normally</li>
+      <li>reader read <code class="language-plaintext highlighter-rouge">n</code> before the change, <code class="language-plaintext highlighter-rouge">n</code> a leaf: same result as if the reader had run first (it will not see the new key, which is fine)</li>
+      <li>reader read <code class="language-plaintext highlighter-rouge">n</code> before the change, <code class="language-plaintext highlighter-rouge">n</code> nonleaf: it may follow a pointer that is now one node too far left. One link fixes it</li>
+    </ul>
+  </li>
+  <li>Inserter vs. inserter
+    <ul>
+      <li>descending: it is a reader</li>
+      <li>going up: the remembered parent may have split, move right</li>
+      <li>both want the same node: the second waits for the lock, re-reads, and is then in the “after the change” case</li>
+    </ul>
+  </li>
+  <li>Livelock, not deadlock: a very slow process could keep chasing links created by faster ones. The paper argues it is negligible (splits are rare, a level has finitely many nodes) and suggests age-based priority if it ever matters</li>
+</ul>
+
+<h2 id="delete">Delete</h2>
+
+<ul>
+  <li>Lock the leaf, remove the entry, <code class="language-plaintext highlighter-rouge">put</code>, unlock. One lock</li>
+  <li>Allow underflow: a leaf may end up with fewer than <code class="language-plaintext highlighter-rouge">k</code> entries. No merging, no borrowing from a neighbor</li>
+  <li>Nonleaf keys are only upper bounds; they are never removed</li>
+  <li>Why refuse to merge? A merge moves keys <em>left</em> and deletes a node. Both break fact 2 above: a reader could be too far right, or hold a pointer to a page that is gone. Half-empty leaves are the price; fix them with an offline reorganization (or a whole-tree lock) when it gets bad</li>
+  <li>Assumption behind the price: inserts outnumber deletes</li>
+</ul>
+
+<h2 id="what-we-got">What we got</h2>
+
+<ul>
+  <li>Searches: the sequential algorithm plus one comparison per node, zero locks</li>
+  <li>Inserts: at most three locks, held only while writing; nothing locked on the way down</li>
+  <li>Data structure: one extra key and one extra pointer per node. The sequential code barely changes</li>
+  <li>The general recipe (their Section 9): do not prevent other processes from invalidating your position. Make the invalidation <em>detectable</em> and <em>recoverable</em> with a small addition to the data structure</li>
+  <li>What made it work: <code class="language-plaintext highlighter-rouge">get</code> and <code class="language-plaintext highlighter-rouge">put</code> are atomic, and every process reads into its own private copy. Nobody can observe a node half-written. Hold on to that; it is the assumption that breaks next</li>
+</ul>
+
+<h2 id="where-the-idea-went">Where the idea went</h2>
+
+<ul>
+  <li>Postgres’s B-tree (<code class="language-plaintext highlighter-rouge">nbtree</code>) is a Lehman-Yao tree: high keys, right links, split right and fix the parent afterwards
+    <ul>
+      <li>but pages sit in a <em>shared</em> buffer pool, not a private copy per process. A writer could change the bytes while a reader looks at them. So readers do take a short shared lock on the page while examining it. The paper’s “no read locks” needs the private-copy model</li>
+      <li>it also deletes pages for real: left links, “half-dead” pages, and reclamation delayed until no scan can still be on the page</li>
+    </ul>
+  </li>
+  <li>Masstree (next class): in memory, one process, many cores. There are no pages and no atomic <code class="language-plaintext highlighter-rouge">get</code>
+    <ul>
+      <li>a reader can see a node mid-update. Replacement: a version number in each node. Snapshot the version, read, check the version again, retry if it changed</li>
+      <li>same shape as today: readers do not lock; writers lock only what they modify; a split leaves a trail the reader can follow. Hand-over-hand <em>validation</em> instead of hand-over-hand locking</li>
+    </ul>
+  </li>
+</ul>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
+<script async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script>
+</body>
+
+</html>

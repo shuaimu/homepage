@@ -43,14 +43,14 @@ table td:first-child {
 | Sep 23 | Student presentation |
 | Sep 28 | **Exam 1** |
 |        | Session IV: B+ Trees |
-| Sep 30 | B+ Tree<br>[Efficient Locking for Concurrent Operations on B-Trees](readings/lehman-yao.pdf) |
+| Sep 30 | B+ Tree ([notes](notes/btree.html))<br>[Efficient Locking for Concurrent Operations on B-Trees](readings/lehman-yao.pdf) |
 | Oct 05 | Masstree ([notes](notes/masstree.html))<br>[Cache Craftiness for Fast Multicore Key-Value Storage](readings/masstree.pdf) |
 | Oct 07 | Student presentation |
 | Oct 12 | No class (Fall break) |
 | Oct 14 | Project lightning talks |
 |        | Session V: Transaction |
-| Oct 19 | Serializability ([notes](notes/serializability.html))<br>[Concurrency Control and Recovery](readings/franklin97concurrency.pdf) |
-| Oct 21 | Spanner ([notes](notes/spanner.html))<br>[Spanner: Google’s Globally-Distributed Database](readings/spanner.pdf) |
+| Oct 19 | Spanner ([notes](notes/spanner.html))<br>[Spanner: Google’s Globally-Distributed Database](readings/spanner.pdf) |
+| Oct 21 | Mako<br>[Mako: Speculative Distributed Transactions with Geo-Replication](readings/mako.pdf) |
 | Oct 26 | Student presentation |
 | Oct 28 | **Exam 2** |
 |        | Session VI: SQL |

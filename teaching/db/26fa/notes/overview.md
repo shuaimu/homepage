@@ -120,6 +120,6 @@
 * Architecture — Postgres, TiDB
 * Replication and consensus — Raft, MongoDB
 * Indexes and storage — LSM-tree, RocksDB, B+ trees, Masstree
-* Transactions — serializability, Spanner
+* Transactions — Spanner, Mako
 * SQL and query optimization — Selinger, Spanner SQL
 * Weaker isolation and consistency — ANSI/SI, CockroachDB / MVCC

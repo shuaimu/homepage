@@ -78,7 +78,7 @@ indexes. Not vector ANN.
 
 ## Session V — Transaction
 
-Lectures: serializability (Franklin); Spanner. Distributed commit, OCC/2PL,
+Lectures: Spanner; Mako. Distributed commit, OCC/2PL,
 geo-transactions, deterministic scheduling.
 
 - Tiga: Accelerating Geo-Distributed Transactions with Synchronized Clocks. SOSP 2025. Jinkun Geng, Shuai Mu, Anirudh Sivaraman, Balaji Prabhakar.
