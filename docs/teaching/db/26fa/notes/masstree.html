@@ -37,247 +37,586 @@
          </header> -->
 
   <section>
-    <h1 id="masstree">Masstree</h1>
-<h2 id="goals">Goals</h2>
+    
+<h1 id="masstree">Masstree</h1>
+
+<p>Paper: Mao, Kohler, and Morris, <a href="/teaching/db/26fa/readings/masstree.pdf"><em>Cache Craftiness for Fast Multicore Key-Value Storage</em></a> (EuroSys 2012).</p>
+
+<h2 id="around-2010-the-database-fits-in-memory">Around 2010: the database fits in memory</h2>
+
 <ul>
-  <li>Fast key-value store for multicore servers
+  <li>Cheaper, larger RAM lets more databases fit in memory. Systems such as <a href="https://hstore.cs.brown.edu/papers/hstore-endofera.pdf">H-Store</a>/VoltDB, Redis, and memcached explore this opportunity</li>
+  <li>Without disk reads, CPU work, cache misses, and synchronization become the bottlenecks</li>
+  <li>Masstree (2012): an ordered index in shared memory, accessed by many cores. Last lecture’s B-link tree assumed atomic, private page reads; that assumption is gone</li>
+</ul>
+
+<h2 id="in-memory-does-not-mean-equally-fast">In memory does not mean equally fast</h2>
+
+<ul>
+  <li>The CPU still has a hierarchy between its execution units and DRAM (illustrative modern x86 sizes and latencies; hardware-dependent)
     <ul>
-      <li>All data fits in memory (in-memory)</li>
-      <li>Persistent across crashes</li>
-      <li>Support range queries</li>
+      <li>L1 data: ~48 KB per core, close to the core — ~1 ns</li>
+      <li>L2: ~1–2 MB per core, usually private — ~5 ns</li>
+      <li>L3: ~32 MB shared among cores on a chip or chiplet — ~15 ns</li>
+      <li>DRAM: much larger, off chip — ~100 ns, ~300 CPU cycles</li>
     </ul>
   </li>
-  <li>Handle hard workloads
+  <li>Fetching from memory to cache: cache line, 64 bytes.
     <ul>
-      <li>Skewed key popularity</li>
-      <li>Small key-value pairs</li>
-      <li>Many puts (writes)</li>
-      <li>Variable-length arbitrary keys</li>
+      <li>Cache misses means CPU is empty waiting for that 300 cycles.</li>
     </ul>
   </li>
 </ul>
 
-<h2 id="problem-dram-is-the-bottleneck">Problem: DRAM is the bottleneck</h2>
-<ul>
-  <li>Network/disk can be optimized away</li>
-  <li>Binary tree: O(log N) serial DRAM latencies</li>
-  <li>Cache-craftiness: careful use of cache and memory</li>
-</ul>
+<h2 id="the-job">The job</h2>
 
-<h2 id="key-design-trie-of-b-trees">Key Design: Trie of B+ Trees</h2>
 <ul>
-  <li>Each trie level = B+ tree indexed by 8-byte key slice
+  <li>One server, many cores; all keys and values fit in DRAM</li>
+  <li><code class="language-plaintext highlighter-rouge">get(k)</code>, <code class="language-plaintext highlighter-rouge">put(k, v)</code>, <code class="language-plaintext highlighter-rouge">remove(k)</code>, <code class="language-plaintext highlighter-rouge">iterate(k, n)</code>
     <ul>
-      <li>Level 0: k[0:7], Level 1: k[8:15], …</li>
+      <li>arbitrary-length binary keys and values</li>
     </ul>
   </li>
-  <li>Combines benefits:
+  <li>many keys with long common prefixes
     <ul>
-      <li>B+ tree: balanced, wide fanout</li>
-      <li>Trie: handles long common prefixes efficiently</li>
+      <li>e.g., reverse-domain URLs: <code class="language-plaintext highlighter-rouge">edu.harvard.seas.www/...</code></li>
+      <li>db table names, like “user_tbl/alice”</li>
     </ul>
   </li>
-  <li>Example: keys with P-byte prefix
-    <ul>
-      <li>Masstree: O(log N) comparisons and DRAM accesses</li>
-      <li>Single B+ tree: O(P log N) for both</li>
-    </ul>
+  <li>Two problems to solve:
+    <ol>
+      <li>a single lookup spends too long waiting for memory</li>
+      <li>many lookups interfere with each other, even when they only want to read</li>
+    </ol>
   </li>
 </ul>
 
-<h2 id="cache-crafty-optimizations">Cache-Crafty Optimizations</h2>
+<h2 id="strawman-1-a-hash-table">Strawman 1: a hash table</h2>
 
-<h3 id="integer-key-comparison-intcmp">Integer Key Comparison (IntCmp)</h3>
 <ul>
-  <li>Store 8-byte key slices as 64-bit integers</li>
-  <li>Single CPU integer comparison vs byte-by-byte loops</li>
-  <li>15-24% performance improvement</li>
-  <li>Little-endian challenge:
-    <ul>
-      <li>String “ABCDEFGH” in memory: <code class="language-plaintext highlighter-rouge">41 42 43 44 45 46 47 48</code></li>
-      <li>Loaded as int: <code class="language-plaintext highlighter-rouge">0x4847464544434241</code> (reversed!)</li>
-      <li>Solution: byte-swap to <code class="language-plaintext highlighter-rouge">0x4142434445464748</code></li>
-      <li>Now integer <code class="language-plaintext highlighter-rouge">&lt;</code> gives same result as string comparison</li>
-    </ul>
-  </li>
+  <li>Good point lookups. Compute a hash, go almost directly to the bucket</li>
+  <li>But a hash destroys key order. Finding the next 100 keys after k now needs another index or a scan</li>
+  <li>We asked for range queries. Keep an ordered index</li>
+  <li>Remember this choice at evaluation time: a faster hash table does not implement the same interface</li>
 </ul>
 
-<h3 id="wide-fanout-4-tree--b-tree">Wide Fanout (4-tree → B+ tree)</h3>
+<h2 id="strawman-2-the-b-tree-we-already-have-in-ram">Strawman 2: the B-tree we already have, in RAM</h2>
+
 <ul>
-  <li>4-tree: fanout 4, one cache line per node
+  <li>It works, with suitable synchronization. But the cost model changed</li>
+  <li>On disk: minimize page I/Os. A large node amortizes seek time over many keys</li>
+  <li>In memory: minimize <em>dependent cache misses</em>
     <ul>
-      <li>½ levels vs binary tree → ½ DRAM latencies</li>
-      <li>Problem: unbalanced for sequential inserts</li>
-    </ul>
-  </li>
-  <li>B+ tree: fanout 15, balanced
-    <ul>
-      <li>4 cache lines per node (256 bytes)</li>
+      <li>CPU asks for a cache line, waits for DRAM, then learns the next address</li>
+      <li>a pointer chase cannot fetch the next node until it has examined this one</li>
+      <li>hot upper nodes may be cached; lower levels of a large tree usually are not</li>
     </ul>
   </li>
 </ul>
 
-<h3 id="why-256-bytes-4-cache-lines">Why 256 Bytes (4 Cache Lines)?</h3>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  read root → choose child → read child → choose child → read leaf
+               next address unknown until the previous read finishes
+</code></pre></div></div>
+
 <ul>
-  <li>Hardware constraints:
+  <li>A useful cost model:
     <ul>
-      <li>CPU loads in 64-byte cache lines</li>
-      <li>Limited prefetch queue (4-16 outstanding requests)</li>
-      <li>L1 cache only 32KB (512 lines total)</li>
+      <li>lookup time ≈ memory latency * tree height * work within node</li>
+      <li>A disk-sized B-tree node goes too far the other way: too many cache lines within a node</li>
+      <li>multicore throughput also depends on memory bandwidth and cache-line ownership transfers</li>
     </ul>
   </li>
-  <li>Tradeoffs:
+  <li>Let us reduce the node size to make fewer trips to memory per node?
     <ul>
-      <li>128 bytes → fanout 7 → deeper tree</li>
-      <li>256 bytes → fanout 15 → optimal balance</li>
-      <li>512 bytes → fanout 31 → wastes cache (nodes 75% full)</li>
+      <li>A balanced binary tree on roughly 1 million keys has about 20 levels</li>
     </ul>
   </li>
-  <li>Performance impact:
+  <li>What should an <em>in-memory</em> B-tree node look like?</li>
+</ul>
+
+<h2 id="fewer-trips-more-work-per-trip">Fewer trips, more work per trip</h2>
+
+<ul>
+  <li>Put several separators and child pointers together
     <ul>
-      <li>256 bytes = 0.78% of L1 cache</li>
-      <li>Can prefetch all 4 lines in parallel</li>
-      <li>Balances tree depth vs cache pollution</li>
+      <li>wider fanout → fewer levels</li>
+      <li>comparisons within a fetched node are much cheaper than another DRAM round trip</li>
+    </ul>
+  </li>
+  <li>Put the bytes needed for routing <em>in the node</em>
+    <ul>
+      <li>an array of pointers to separately allocated strings adds another pointer chase per comparison</li>
+      <li>start by storing a short piece of each key directly</li>
+    </ul>
+  </li>
+  <li>A node can span several cache lines. Fetch those lines together
+    <ul>
+      <li>as soon as we know the node’s address, issue software prefetches for its lines</li>
+      <li>the addresses within one node are known, so their fetches can overlap</li>
+      <li>the next child address is still unknown. Prefetching does not remove the dependency between levels</li>
+    </ul>
+  </li>
+  <li>Why not make the node enormous?
+    <ul>
+      <li>more bandwidth, more cache pollution, more comparisons, and limited outstanding memory requests</li>
+      <li>a wider node only helps if the time saved by fewer levels exceeds these costs</li>
+    </ul>
+  </li>
+  <li>The paper’s tuning point: width 15, with a target of about four 64-byte cache lines of node data
+    <ul>
+      <li>15 key slots; an interior node can have 16 children</li>
+      <li>metadata and key suffix storage also consume space</li>
+      <li>an empirical compromise on their hardware, not a universal best node size</li>
+    </ul>
+  </li>
+  <li>So far: a small, wide B+ tree, with inline key pieces and prefetching</li>
+</ul>
+
+<h2 id="long-keys-spoil-the-plan">Long keys spoil the plan</h2>
+
+<ul>
+  <li>Suppose keys share a 64-byte prefix and differ near the end</li>
+  <li>Ordinary string comparisons keep checking that same prefix
+    <ul>
+      <li>at the root, at the next level, several times inside each node</li>
+      <li>storing only the first few bytes inline does not help distinguish these keys</li>
+      <li>following pointers to the rest of the string brings back the memory stalls</li>
+    </ul>
+  </li>
+  <li>A byte-at-a-time trie avoids repeated prefix comparisons
+    <ul>
+      <li>consume one byte, follow an edge, consume the next byte</li>
+      <li>but a long prefix becomes a long chain of nodes</li>
+      <li>an array of 256 child pointers per byte can waste a lot of memory</li>
+    </ul>
+  </li>
+  <li>We want the trie’s habit of consuming a prefix once, with the B-tree’s compact, balanced search among alternatives</li>
+</ul>
+
+<h2 id="consume-eight-bytes-at-a-time">Consume eight bytes at a time</h2>
+
+<ul>
+  <li>Slice the key into 8-byte pieces</li>
+  <li>At each trie position, use a B+ tree to index the next slice
+    <ul>
+      <li>the B+ tree stores only slices that actually occur; no enormous array of all possible 64-bit values</li>
+      <li>if keys agree on this slice, descend to another B+ tree for the next slice</li>
+    </ul>
+  </li>
+  <li>That is Masstree: a trie whose nodes are B+ trees
+    <ul>
+      <li><em>layer</em>: which 8-byte slice we are examining</li>
+      <li><em>level</em>: how far down one of those B+ trees we are</li>
+      <li>a layer can contain many B+ trees, one per prefix. A single B+ tree can have several levels</li>
+    </ul>
+  </li>
+  <li>The leaves are called <strong>border nodes</strong>: their entries can lead to values or to the next layer</li>
+</ul>
+
+<h3 id="build-one-by-hand">Build one by hand</h3>
+
+<ul>
+  <li>Insert <code class="language-plaintext highlighter-rouge">user0001/alice</code>
+    <ul>
+      <li>layer 0 indexes <code class="language-plaintext highlighter-rouge">user0001</code>; store the remaining <code class="language-plaintext highlighter-rouge">/alice</code> as a suffix alongside its value</li>
+      <li>no reason to allocate another tree for one key</li>
+    </ul>
+  </li>
+  <li>Insert <code class="language-plaintext highlighter-rouge">user0001/bob</code>
+    <ul>
+      <li>same first slice, different suffix. Now we need a second layer</li>
+      <li>replace the suffix/value entry by a pointer to a new B+ tree holding both suffixes</li>
+    </ul>
+  </li>
+  <li>Insert <code class="language-plaintext highlighter-rouge">user0002/alice</code>: different first slice; another entry in layer 0</li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  layer 0: B+ tree on bytes 0..7
+      ... → border node
+              user0001 ─────────────────────────────┐
+              user0002 → suffix /alice, value C     │
+                                                    │
+                                                    v
+  layer 1, prefix user0001:       B+ tree on bytes 8..15
+                                     /alice → value A
+                                     /bob   → value B
+</code></pre></div></div>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">get(user0001/bob)</code>:
+    <ol>
+      <li>search the layer-0 tree for <code class="language-plaintext highlighter-rouge">user0001</code></li>
+      <li>entry says next layer; consume eight bytes</li>
+      <li>search that tree for <code class="language-plaintext highlighter-rouge">/bob</code>, find B</li>
+    </ol>
+  </li>
+  <li>If the suffixes share another full slice, repeat. Create layers only when needed</li>
+  <li>If only one long key occupies a slice, keep its unmatched suffix and compare it at the end
+    <ul>
+      <li>avoids a chain of mostly empty trees just to represent one key</li>
+    </ul>
+  </li>
+  <li>Keys in a layer-h tree all share the same first <code class="language-plaintext highlighter-rouge">8h</code> bytes</li>
+  <li>For keys sharing a long prefix of length P, followed by short distinguishing suffixes:
+    <ul>
+      <li>ordinary full-string B-tree comparisons can cost O(P log N)</li>
+      <li>Masstree consumes the prefix once along the path: O(P + log N) comparison work</li>
+      <li>it still traverses the prefix layers. A 64-byte shared prefix does not disappear for free</li>
+      <li>general worst case for maximum key length L remains O(L log N); the shape depends on the keys</li>
     </ul>
   </li>
 </ul>
 
-<h3 id="prefetching">Prefetching</h3>
+<h3 id="why-eight-bytes">Why eight bytes?</h3>
+
 <ul>
-  <li>Software prefetch all cache lines of a node</li>
-  <li>Result: 1 DRAM latency per node (vs 2-4)</li>
-  <li>9-31% throughput improvement</li>
+  <li>A slice fits in a machine word: one integer comparison instead of a string-comparison loop</li>
+  <li>Need integer order to match byte-string order</li>
 </ul>
 
-<h3 id="permuter">Permuter</h3>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  bytes of "ABCDEFGH":        41 42 43 44 45 46 47 48
+  little-endian integer load:  0x4847464544434241
+  comparison representation:  0x4142434445464748
+</code></pre></div></div>
 <ul>
-  <li>Problem: B+ tree inserts rearrange keys → intermediate states</li>
-  <li>Solution: store keys unsorted, use 64-bit permutation field
-    <ul>
-      <li>Encodes sort order + number of keys</li>
-      <li>Insert appears atomic to concurrent lookups</li>
-    </ul>
-  </li>
-  <li>No retry needed for concurrent reads</li>
+  <li>Byte-swap on little-endian machines; compare as an <em>unsigned</em> integer</li>
 </ul>
 
-<h2 id="concurrency-control">Concurrency Control</h2>
+<h2 id="multi-thread-safety-the-assumption-from-last-time-breaks">Multi-thread safety: the assumption from last time breaks</h2>
+
 <ul>
-  <li>Optimistic concurrency control (OCC) for reads
+  <li>Node read/write is no longer atomic.</li>
+  <li>Writer inserting 20 into a sorted array might move 30 and 40 before installing 20</li>
+  <li>Reader can observe keys from one moment, child pointers or values from another
     <ul>
-      <li>No locks, no writing to shared data</li>
-      <li>Version checking: retry if inconsistent</li>
+      <li>a right link repairs a stale <em>position</em>, not an inconsistent node</li>
     </ul>
   </li>
-  <li>Fine-grained locking for writes
-    <ul>
-      <li>Lock only affected nodes (≤ 3 per operation)</li>
-      <li>Allows parallel updates to different parts</li>
-    </ul>
-  </li>
+  <li>First repair: give each node a version and a dirty marker</li>
 </ul>
 
-<h3 id="rcu-read-copy-update">RCU (Read-Copy-Update)</h3>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  writer, holding node lock:        reader:
+    mark node dirty                  v1 ← stable version of node
+    change keys / pointers           read the needed fields
+    increment version                v2 ← node version
+    clear dirty                      accept only if unchanged and clean
+</code></pre></div></div>
+
 <ul>
-  <li>Masstree inspired by RCU techniques</li>
-  <li>What is RCU?
+  <li>Dirty marker detects an update in progress; version detects one that finished between the two reads</li>
+  <li>The reader may have observed nonsense. It must validate before accepting the result
     <ul>
-      <li>Synchronization mechanism allowing reads without locks</li>
-      <li>Readers access data structures without synchronization</li>
-      <li>Writers create new versions instead of modifying in-place</li>
-      <li>Old versions kept until all readers finish</li>
+      <li>including a “not found” result</li>
     </ul>
   </li>
-  <li>In Masstree:
+  <li>Conservative scheme: record versions for the whole path, validate all of them before returning, restart on any change
     <ul>
-      <li>Readers never block or use locks</li>
-      <li>Writers update by creating new versions</li>
-      <li>Epoch-based reclamation for garbage collection</li>
-      <li>Ensures readers always see consistent data</li>
+      <li>correct with the required ordering and memory-lifetime rules, but lots of unnecessary retries</li>
     </ul>
   </li>
+  <li>Can we make common writes safe to observe, so they do not force a retry at all?</li>
 </ul>
 
-<h3 id="version-management">Version Management</h3>
-<ul>
-  <li>Version field per node includes:
-    <ul>
-      <li>locked bit (for writers)</li>
-      <li>inserting/splitting bits (dirty markers)</li>
-      <li>vinsert/vsplit counters</li>
-    </ul>
-  </li>
-  <li>Writers mark dirty → make changes → clear &amp; increment</li>
-  <li>Readers snapshot version → read → check version</li>
-</ul>
+<h2 id="update-a-value-publish-one-pointer">Update a value: publish one pointer</h2>
 
-<h2 id="handling-splits">Handling Splits</h2>
 <ul>
-  <li>Problem: splits move keys between nodes</li>
-  <li>Solution: hand-over-hand validation
+  <li>Suppose a put changes an existing value</li>
+  <li>If it fits in an atomically writable slot: replace that slot in one aligned write</li>
+  <li>For a larger value, especially multiple columns:
+    <ol>
+      <li>lock the border node against other writers</li>
+      <li>allocate and initialize a replacement value object, copying unchanged columns</li>
+      <li>atomically publish its pointer in the existing slot</li>
+      <li>unlock</li>
+    </ol>
+  </li>
+  <li>A reader sees either the old object or the new one, never half the column updates</li>
+  <li>The node’s key layout did not change. No node-version increment is needed for this update</li>
+  <li>But do <strong>not</strong> immediately free the old object
     <ul>
-      <li>Check child version before parent</li>
-      <li>Detect splits via vsplit counter change</li>
-      <li>Retry from root on split detection</li>
+      <li>a reader may already hold its pointer</li>
+      <li>an atomic pointer replacement solves publication, not reclamation</li>
     </ul>
   </li>
 </ul>
 
-<h2 id="performance-results">Performance Results</h2>
+<h2 id="insert-a-key-stop-moving-the-old-keys">Insert a key: stop moving the old keys</h2>
+
 <ul>
-  <li>140M keys, 16 cores:
-    <ul>
-      <li>Binary tree: 3.7M ops/sec</li>
-      <li>Masstree: 5.8M puts/sec, 8M gets/sec</li>
-    </ul>
-  </li>
-  <li>1.7× improvement from cache-craftiness</li>
-  <li>Scales to 12× on 16 cores</li>
+  <li>A conventional leaf keeps physical slots in sorted order</li>
+  <li>Inserting in the middle means shifting keys and values. Too many writes to publish atomically</li>
+  <li>What actually needs to be sorted? The <em>order in which we search</em>, not the physical slots</li>
+  <li>Leave entries where they are. Store a separate permutation describing their sorted order</li>
 </ul>
 
-<h2 id="tradeoffs">Tradeoffs</h2>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  physical slot:       0     1     2     3
+  key:                30    10    40    --
+  logical order:      [1, 0, 2]             count = 3
 
-<h3 id="single-tree-vs-partitioning">Single Tree vs Partitioning</h3>
+  insert 20:
+    fill slot 3:      30    10    40    20
+    publish order:    [1, 3, 0, 2]          count = 4
+</code></pre></div></div>
+
 <ul>
-  <li>Partitioned (per-core trees):
+  <li>Reader loads the permutation once, then uses that saved order to examine the slots
     <ul>
-      <li>Pro: no remote DRAM, no concurrency control</li>
-      <li>Con: load imbalance with skewed workloads</li>
+      <li>old permutation: does not inspect slot 3</li>
+      <li>new permutation: sees the initialized key/value in slot 3</li>
+      <li>no intermediate order is visible</li>
     </ul>
   </li>
-  <li>Masstree (single shared tree):
+  <li>Fifteen slots make this fit in one 64-bit word:
     <ul>
-      <li>Pro: handles skew well (3.5× better at δ=9)</li>
-      <li>Con: 1.5× slower for uniform workloads</li>
+      <li>4 bits for the count, 15 × 4 bits for slot indexes</li>
+      <li>unused indexes identify available slots</li>
+    </ul>
+  </li>
+  <li>Writer locks the node, fills an unused slot, then publishes the new permutation in one aligned write
+    <ul>
+      <li>initialization must become visible before the permutation; fences enforce this order</li>
+      <li>no key movement, no dirty interval, no version increment for this ordinary insert</li>
+    </ul>
+  </li>
+  <li>The lock bit and the dirty bits are deliberately different
+    <ul>
+      <li>lock: another <em>writer</em> must wait</li>
+      <li>dirty: a <em>reader</em> cannot trust the layout</li>
+      <li>a locked node can still be perfectly safe to read</li>
+    </ul>
+  </li>
+  <li>This is the <strong>permuter</strong>. A concurrency optimization comes from changing the data layout</li>
+  <li>Two exceptions are still waiting for us: a full node must split, and a previously removed slot cannot always be reused this way</li>
+</ul>
+
+<h2 id="delete-the-slot-reuse-trap">Delete: the slot-reuse trap</h2>
+
+<ul>
+  <li>To remove an entry, publish a permutation that omits its slot</li>
+  <li>Leave the old slot contents intact: a reader may still be using an old permutation</li>
+  <li>Why not immediately treat that slot as an ordinary free slot?</li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  reader get(10)                      writer
+  old permutation says 10 is slot 1
+                                      remove 10 from permutation
+                                      reuse slot 1 for key 99, value V99
+  read value from slot 1
+  return V99 for key 10                wrong
+</code></pre></div></div>
+
+<ul>
+  <li>Returning the old value for 10 could be legal: the get overlapped the remove</li>
+  <li>Returning 99’s value for 10 is never legal</li>
+  <li>Therefore reusing a removed slot must use the dirty/version protocol and change <code class="language-plaintext highlighter-rouge">vinsert</code>
+    <ul>
+      <li>the old reader detects the change and retries</li>
+      <li>“inserts never cause retries” was only true for the simple case using an unused slot</li>
+    </ul>
+  </li>
+  <li>No merging, but empty nodes can be unlinked; empty ancestors can be removed too
+    <ul>
+      <li>deletion marks</li>
+    </ul>
+  </li>
+  <li>Unlinked does not mean safe to free</li>
+</ul>
+
+<h2 id="reclamation-who-might-still-hold-a-pointer">Reclamation: who might still hold a pointer?</h2>
+
+<ul>
+  <li>This applies to replaced values, removed nodes, and old suffix storage</li>
+  <li>A writer cannot inspect another core’s registers to see whether it still has a pointer</li>
+  <li>Epoch-based reclamation:
+    <ul>
+      <li>threads announce progress through read-side epochs</li>
+      <li>removed objects are retired first</li>
+      <li>free them only after every reader that could have seen them has passed the relevant epoch</li>
+    </ul>
+  </li>
+  <li>A reader can finish using an old value while later readers see the replacement</li>
+  <li>This is the RCU-like part of the design. Masstree does <strong>not</strong> copy the whole tree or every node on each write
+    <ul>
+      <li>values may be replaced by copying; tree nodes are often changed in place</li>
+      <li>atomic publication, version validation, and delayed freeing solve different problems</li>
+    </ul>
+  </li>
+  <li>Readers take no tree locks, but may spin on a dirty node or retry
+    <ul>
+      <li>no read locks is not a guarantee of bounded completion time</li>
     </ul>
   </li>
 </ul>
 
-<h3 id="range-queries-vs-hash-table">Range Queries vs Hash Table</h3>
-<ul>
-  <li>Hash table: 2.5× Masstree throughput</li>
-  <li>Cost of range query support: 2.5× performance</li>
-</ul>
+<h2 id="what-does-a-scan-promise">What does a scan promise?</h2>
 
-<h2 id="system-components">System Components</h2>
 <ul>
-  <li>Network: 10Gb NIC with multiple queues</li>
-  <li>Logging: per-core logs to multiple SSDs
+  <li>Search for the first key ≥ k, enumerate entries in permutation order, and walk border-node links</li>
+  <li>At a next-layer entry, traverse that subtree in order, then resume the enclosing layer
     <ul>
-      <li>Batch writes, force every 200ms</li>
+      <li>every suffix below one prefix sorts together</li>
+      <li>layer traversal makes this more involved than walking one flat leaf list</li>
     </ul>
   </li>
-  <li>Checkpointing: periodic snapshots for recovery</li>
-  <li>Values: multi-column support with atomic updates</li>
+  <li>Individual observations need the same validation and memory-lifetime rules as point lookups</li>
+  <li>The paper explicitly does <strong>not</strong> make <code class="language-plaintext highlighter-rouge">getrange</code> atomic with respect to concurrent inserts and updates
+    <ul>
+      <li>a scan can combine observations from different times</li>
+      <li>a transactionally consistent snapshot needs another mechanism</li>
+    </ul>
+  </li>
+  <li>Ordered access, atomic updates to one key, and transactions across multiple keys are separate promises</li>
 </ul>
 
-<h2 id="key-insights">Key Insights</h2>
+<h2 id="did-the-design-choices-matter">Did the design choices matter?</h2>
+
 <ul>
-  <li>DRAM latency dominates performance</li>
-  <li>Wide fanout + prefetching reduces tree depth</li>
-  <li>Permuter enables lock-free reads during inserts</li>
-  <li>Trie structure efficiently handles long prefixes</li>
-  <li>Single tree better for skewed workloads</li>
+  <li>Read the experiments as tests of the mechanisms, not a current database ranking
+    <ul>
+      <li>2012 hardware/software; up to 16 cores, small keys/values, large memory-resident datasets</li>
+    </ul>
+  </li>
+  <li>Factor analysis (Figure 8, Section 6.2): start with a concurrent binary tree, add changes cumulatively
+    <ul>
+      <li>allocator and huge pages also matter: tree traversal is not the only source of memory overhead</li>
+      <li>integer comparison, wider nodes, prefetching, then the permuter and trie layers</li>
+      <li>generated inside the server: <strong>no network or logging</strong> in this figure</li>
+    </ul>
+  </li>
+  <li>Does the tree still matter in a complete server? Section 6.3 turns network and logging on
+    <ul>
+      <li>140-million-key workload, 16 cores: about 8.03 M gets/s and 5.78 M puts/s</li>
+      <li>1.90× get and 1.53× put throughput of the optimized binary-tree baseline</li>
+      <li>do not mix these absolute numbers with Figure 8’s in-process experiment</li>
+    </ul>
+  </li>
+  <li>Sharing versus partitioning (Figure 11): the tradeoff we predicted
+    <ul>
+      <li>uniform reads: static per-core trees are 1.5× faster, largely from local DRAM access</li>
+      <li>one partition gets 40% of requests: the shared tree is 3.5× faster</li>
+      <li>evidence about this static-partition experiment, not proof that sharing always wins</li>
+    </ul>
+  </li>
+  <li>Cost of order (Section 6.4): a favorable hash-table baseline gets 2.5× the throughput on its tested workload
+    <ul>
+      <li>it cannot answer range queries. The extra interface has a real cost</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="a-split-really-changes-the-search-path">A split really changes the search path</h2>
+
+<ul>
+  <li>Full border node: allocate a right sibling and move the higher keys into it</li>
+  <li>Now old entries disappear from one node and appear in another. One permutation store cannot publish the whole change</li>
+  <li>Use the version protocol for structural changes
+    <ul>
+      <li><code class="language-plaintext highlighter-rouge">locked</code>: writer exclusion</li>
+      <li><code class="language-plaintext highlighter-rouge">inserting</code>, <code class="language-plaintext highlighter-rouge">splitting</code>: dirty markers</li>
+      <li><code class="language-plaintext highlighter-rouge">vinsert</code>, <code class="language-plaintext highlighter-rouge">vsplit</code>: counters for completed changes of the two kinds</li>
+      <li>also root, border, and deleted flags</li>
+    </ul>
+  </li>
+  <li>Why two counters?
+    <ul>
+      <li>an interior insertion adds a separator/child; a reader can search that same node again</li>
+      <li>a split may move responsibility for the key to a different node; rereading the old node may never find it</li>
+    </ul>
+  </li>
+  <li>Interior inserts still rearrange entries. The permuter above is for <em>border</em> nodes</li>
+</ul>
+
+<h3 id="writers-go-up">Writers go up</h3>
+
+<ul>
+  <li>Descend without locks, like a reader. Lock the target border node, then recheck that it is still the right node</li>
+  <li>To split n:
+    <ol>
+      <li>allocate n’; mark n and n’ splitting before moving entries</li>
+      <li>distribute entries, with the higher keys in n’; link border siblings</li>
+      <li>lock n’s parent; check that it is still the parent (it may itself have split)</li>
+      <li>mark the parent inserting and add n’</li>
+      <li>finish version changes and unlock</li>
+    </ol>
+  </li>
+  <li>If the parent is full: mark it splitting and propagate upward
+    <ul>
+      <li>transfer the protection upward before releasing the lower nodes</li>
+      <li>create a new root if necessary</li>
+    </ul>
+  </li>
+  <li>Splits use at most three node locks at once: the splitting node, its new sibling, and its parent</li>
+  <li>As in Lehman-Yao, structural writers acquire existing-node locks upward; they do not lock the root on every insert</li>
+  <li>The split markings matter as much as the locks. Locks coordinate writers; markings explain the change to readers</li>
+</ul>
+
+<h3 id="readers-need-an-overlap-between-parent-and-child">Readers need an overlap between parent and child</h3>
+
+<ul>
+  <li>Tempting algorithm: read parent, validate parent, then read child’s version and contents</li>
+  <li>Still wrong. Each node can look consistent while the <em>path</em> is stale</li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  reader wants a key under X          writer splits interior node B
+  read A; choose child B
+  validate A: unchanged
+                                      move child X from B to new B'
+                                      add B' to A; finish split
+  read B's new version and contents
+  validate B: unchanged
+  search below B                      wrong subtree: X is under B'
+</code></pre></div></div>
+
+<ul>
+  <li>Fix: snapshot the child’s stable version <strong>before</strong> validating the parent</li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  vA ← stableversion(A)
+  B  ← choose_child(A, key)
+  vB ← stableversion(B)                // take this before releasing A logically
+  validate A against vA               // ignore a change in the lock bit alone
+  if valid:
+      continue in B, carrying vB      // do not replace it with a fresh snapshot
+</code></pre></div></div>
+
+<ul>
+  <li><strong>Hand-over-hand validation</strong>, in place of hand-over-hand locking</li>
+  <li>Why the split cannot fall through the gap:
+    <ul>
+      <li>writer marks B splitting <em>before</em> changing A, and carries the split protection upward</li>
+      <li>if reader captured B before the split, its saved vB exposes the split when it next validates B</li>
+      <li>if reader waits through B’s split to obtain a stable vB, the change to A is already detectable</li>
+      <li>if reader follows the new pointer to B’, the moved children were installed before that pointer was published</li>
+    </ul>
+  </li>
+  <li>Version changed during an interior-node search?
+    <ul>
+      <li>only insertion changed: retry at that node</li>
+      <li>split counter changed: restart at the root of this B+ tree layer</li>
+    </ul>
+  </li>
+  <li>This replaces remembering and revalidating the entire path</li>
+</ul>
+
+<h3 id="at-the-border-recover-to-the-right">At the border, recover to the right</h3>
+
+<ul>
+  <li>Border nodes have sibling links. Interior nodes in Masstree do not</li>
+  <li>Each border node owns a half-open slice range <code class="language-plaintext highlighter-rouge">[lowkey, highkey)</code>
+    <ul>
+      <li>its low boundary stays fixed for its lifetime</li>
+      <li>splitting moves higher keys right; the next node’s low boundary tells us whether to move there</li>
+    </ul>
+  </li>
+  <li>If border-node validation fails: obtain a stable version, check the next sibling’s low boundary, move right as needed, and try the lookup again</li>
+  <li>This is last lecture’s repair idea, with version checking added because nodes are no longer atomic pages</li>
+  <li>A deleted node forces a restart</li>
+  <li>A saved layer-root pointer can also become stale after a root split
+    <ul>
+      <li>the root flag and parent pointer let traversal find the new root</li>
+      <li>“restart at root” means the current root, not blindly trusting an old pointer</li>
+    </ul>
+  </li>
 </ul>
 
   </section>

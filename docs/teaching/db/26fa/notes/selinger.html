@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>Query Optimization (System R) | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="Query Optimization (System R)" />
+<meta property="og:locale" content="en_US" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="Query Optimization (System R)" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"Query Optimization (System R)","url":"/teaching/db/26fa/notes/selinger.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"><link type="application/atom+xml" rel="alternate" href="/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>Query Optimization (System R)</h1>
+         </header> -->
+
+  <section>
+    
+<h1 id="query-optimization-system-r">Query Optimization (System R)</h1>
+
+<p>Paper: Selinger, Astrahan, Chamberlin, Lorie, and Price, <em>Access Path Selection in a Relational Database Management System</em> (SIGMOD 1979).</p>
+
+<ul>
+  <li>So far the storage engine gave us Get / Put / scan and indexes (Postgres, LSM, B-trees)</li>
+  <li>SQL says <em>what</em> rows you want, not <em>how</em> to get them</li>
+  <li>Today: how the DBMS picks the <em>how</em>. We will reinvent the System R optimizer piece by piece</li>
+  <li>Optional companion: Leis et al., <em>How Good Are Query Optimizers, Really?</em> (VLDB 2015) — what held up after 36 years</li>
+</ul>
+
+<h2 id="the-job">The job</h2>
+
+<ul>
+  <li>Paper’s running example: clerks in Denver, with their department and job title</li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>SELECT NAME, TITLE, SAL, DNAME
+FROM   EMP, DEPT, JOB
+WHERE  TITLE = 'CLERK'
+  AND  LOC = 'DENVER'
+  AND  EMP.DNO = DEPT.DNO
+  AND  EMP.JOB = JOB.JOB
+</code></pre></div></div>
+
+<ul>
+  <li>The user did not say:
+    <ul>
+      <li>which table to read first</li>
+      <li>whether to use an index, and which one</li>
+      <li>which join algorithm</li>
+      <li>in what order to join three tables</li>
+    </ul>
+  </li>
+  <li>All of those change the running time by orders of magnitude; none change the answer</li>
+  <li>Goal: a plan whose cost is close to the best one
+    <ul>
+      <li>not <em>the</em> best: the paper is explicit that estimates are rough</li>
+      <li>cheap enough to run at compile time, then amortize over many executions</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="from-text-to-a-tree">From text to a tree</h2>
+
+<ul>
+  <li>Parse
+    <ul>
+      <li>a query block = SELECT list + FROM list + WHERE tree</li>
+      <li>a predicate can contain another query → more blocks (nested queries, later)</li>
+    </ul>
+  </li>
+  <li>Catalog lookup
+    <ul>
+      <li>do the tables and columns exist, what are the types</li>
+      <li>also: statistics about the tables and their indexes (below)</li>
+    </ul>
+  </li>
+  <li>Relational algebra: the tree the optimizer works on
+    <ul>
+      <li><code class="language-plaintext highlighter-rouge">σ</code> select (filter rows), <code class="language-plaintext highlighter-rouge">π</code> project (drop columns), <code class="language-plaintext highlighter-rouge">⋈</code> join, <code class="language-plaintext highlighter-rouge">×</code> cross product</li>
+    </ul>
+  </li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>        π NAME,TITLE,SAL,DNAME
+              |
+        σ TITLE='CLERK' ∧ LOC='DENVER' ∧ EMP.DNO=DEPT.DNO ∧ EMP.JOB=JOB.JOB
+              |
+           × (EMP, DEPT, JOB)
+</code></pre></div></div>
+
+<ul>
+  <li>Everything downstream is: pick an <em>equivalent</em> tree, then an algorithm for each node</li>
+  <li>Rewrite (System R does a little; later systems a lot)
+    <ul>
+      <li>WHERE → conjunctive normal form; each conjunct is a boolean factor</li>
+      <li>every output row satisfies every boolean factor, so each can be applied as early as you like</li>
+      <li>push filters down to the table they mention; push projections down</li>
+      <li>expand views, flatten simple subqueries</li>
+    </ul>
+  </li>
+  <li>Physical plan: each node becomes an operator with an algorithm (segment scan, index scan, nested loop, merge)</li>
+  <li>Code generation
+    <ul>
+      <li>System R compiled the plan to machine code; Postgres interprets; Spanner (next class) does its own thing</li>
+      <li>plan is stored for programs and rerun many times → optimization cost is amortized</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="strawman-1-run-the-tree-as-parsed">Strawman 1: run the tree as parsed</h2>
+
+<ul>
+  <li>Cross product first, filter last
+    <ul>
+      <li>10,000 EMP × 100 DEPT × 50 JOB = 50 M intermediate rows to build and throw away</li>
+    </ul>
+  </li>
+  <li>Fix: pushdown. <code class="language-plaintext highlighter-rouge">σ TITLE='CLERK'</code> sits on EMP, <code class="language-plaintext highlighter-rouge">σ LOC='DENVER'</code> on DEPT, and the equality predicates turn <code class="language-plaintext highlighter-rouge">×</code> into <code class="language-plaintext highlighter-rouge">⋈</code></li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>                 ⋈ EMP.JOB=JOB.JOB
+                /               \
+        ⋈ EMP.DNO=DEPT.DNO      JOB
+        /             \
+  σ TITLE='CLERK'   σ LOC='DENVER'
+      EMP               DEPT
+</code></pre></div></div>
+
+<ul>
+  <li>Rewriting removes the obviously stupid plans. It does not tell you which of the remaining ones is good</li>
+</ul>
+
+<h2 id="strawman-2-fixed-rules">Strawman 2: fixed rules</h2>
+
+<ul>
+  <li>Always use an index if one exists. Always join in FROM order. Filters as early as possible</li>
+  <li>Where it breaks
+    <ul>
+      <li>index on TITLE, but a quarter of employees are clerks: a non-clustered index touches a data page per <em>tuple</em>; a plain scan touches each page once and wins</li>
+      <li>FROM order <code class="language-plaintext highlighter-rouge">EMP, DEPT, JOB</code> may be the worst of the six orders; the user did not mean anything by it</li>
+      <li>whether to sort for a merge join depends on how many rows are left after the filters</li>
+    </ul>
+  </li>
+  <li>Lesson: the right choice depends on the <em>data</em>. Rules that ignore the data pick wrong on some data</li>
+  <li>So: estimate the cost of each candidate, pick the cheapest. Three things to invent
+    <ol>
+      <li>a cost measure</li>
+      <li>statistics about the data</li>
+      <li>a way to search the candidates without enumerating all of them</li>
+    </ol>
+  </li>
+</ul>
+
+<h2 id="cost-what-are-we-minimizing">Cost: what are we minimizing</h2>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>COST = PAGE FETCHES + W × RSI CALLS
+</code></pre></div></div>
+
+<ul>
+  <li>Page fetches: I/O. RSI calls: tuples handed up from the storage layer, a stand-in for CPU</li>
+  <li><code class="language-plaintext highlighter-rouge">W</code> is a knob: how many tuple-handoffs equal one disk page</li>
+  <li>Single-user total resource use, not latency; no parallelism, no memory pressure, no network
+    <ul>
+      <li>every later optimizer widens this (Spanner: network and shard fan-out)</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="statistics">Statistics</h2>
+
+<ul>
+  <li>Per table <code class="language-plaintext highlighter-rouge">T</code>
+    <ul>
+      <li><code class="language-plaintext highlighter-rouge">NCARD(T)</code> rows</li>
+      <li><code class="language-plaintext highlighter-rouge">TCARD(T)</code> pages holding rows of <code class="language-plaintext highlighter-rouge">T</code></li>
+      <li><code class="language-plaintext highlighter-rouge">P(T)</code> fraction of the segment’s pages that hold <code class="language-plaintext highlighter-rouge">T</code> (tables can share a segment)</li>
+    </ul>
+  </li>
+  <li>Per index <code class="language-plaintext highlighter-rouge">I</code>
+    <ul>
+      <li><code class="language-plaintext highlighter-rouge">ICARD(I)</code> distinct keys</li>
+      <li><code class="language-plaintext highlighter-rouge">NINDX(I)</code> index pages</li>
+    </ul>
+  </li>
+  <li>Refreshed by a manual UPDATE STATISTICS, not on every write
+    <ul>
+      <li>updating the catalog on every INSERT would make the catalog a hot lock</li>
+      <li>Postgres <code class="language-plaintext highlighter-rouge">ANALYZE</code> is the same decision</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="selectivity-how-many-rows-survive-a-predicate">Selectivity: how many rows survive a predicate</h2>
+
+<ul>
+  <li>Each boolean factor gets a selectivity factor <code class="language-plaintext highlighter-rouge">F</code>: expected fraction of rows that pass</li>
+  <li>Paper’s Table 1, abridged:</li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>col = v            1/ICARD(col)        if indexed, else 1/10
+col1 = col2        1/max(ICARD(col1), ICARD(col2))
+col &gt; v            (high − v)/(high − low)  if numeric, else 1/3
+col BETWEEN a,b    (b − a)/(high − low)     if numeric, else 1/4
+col IN (list)      n × F(col = v), at most 1/2
+p1 OR p2           F1 + F2 − F1·F2
+p1 AND p2          F1 · F2
+NOT p              1 − F
+</code></pre></div></div>
+
+<ul>
+  <li>Result size of a block: <code class="language-plaintext highlighter-rouge">QCARD = Π NCARD(T) × Π F(boolean factors)</code></li>
+  <li>Rows the storage layer hands up: <code class="language-plaintext highlighter-rouge">RSICARD</code> uses only the <em>sargable</em> factors
+    <ul>
+      <li>sargable = <code class="language-plaintext highlighter-rouge">column op constant</code>; can be pushed into the scan as a search argument, filtered below the RSI</li>
+    </ul>
+  </li>
+  <li>Read the assumptions
+    <ul>
+      <li>uniform: every key value equally common</li>
+      <li>independent: <code class="language-plaintext highlighter-rouge">AND</code> multiplies</li>
+      <li>magic constants (1/10, 1/3, 1/4) when there is no index to consult</li>
+      <li><code class="language-plaintext highlighter-rouge">LOC='DENVER'</code> and <code class="language-plaintext highlighter-rouge">ZIP LIKE '802%'</code> are not independent. Multiply and you underestimate by a lot</li>
+      <li>this is the piece that aged worst; hold that thought for the end</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="one-table-pick-an-access-path">One table: pick an access path</h2>
+
+<ul>
+  <li>Access paths on a table
+    <ul>
+      <li>segment scan: every page of the segment, once</li>
+      <li>index scan: B-tree leaves in key order; optional start/stop keys; clustered or not</li>
+      <li>both accept search arguments so rejected rows never cross the RSI</li>
+    </ul>
+  </li>
+  <li>An index <em>matches</em> a boolean factor if the factor is sargable and its column is a prefix of the index key
+    <ul>
+      <li><code class="language-plaintext highlighter-rouge">(NAME, LOCATION)</code> index matches <code class="language-plaintext highlighter-rouge">NAME='SMITH' AND LOCATION='SAN JOSE'</code></li>
+    </ul>
+  </li>
+  <li>Cost per path (Table 2, abridged; <code class="language-plaintext highlighter-rouge">F</code> = product of matched factors)</li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>unique index, equality             1 + 1 + W
+clustered index, matching          F × (NINDX + TCARD) + W × RSICARD
+non-clustered index, matching      F × (NINDX + NCARD) + W × RSICARD
+                                   (TCARD instead of NCARD if the pages fit in the buffer)
+segment scan                       TCARD / P + W × RSICARD
+</code></pre></div></div>
+
+<ul>
+  <li>Why clustered vs non-clustered differ: <code class="language-plaintext highlighter-rouge">TCARD</code> vs <code class="language-plaintext highlighter-rouge">NCARD</code>
+    <ul>
+      <li>clustered: rows in key order on disk, one page fetch per <em>page</em></li>
+      <li>non-clustered: one page fetch per <em>row</em>, and the same page can come back many times</li>
+    </ul>
+  </li>
+  <li>Worked: EMP has 10,000 rows on 500 pages, non-clustered TITLE index, 4 titles
+    <ul>
+      <li>index path: <code class="language-plaintext highlighter-rouge">1/4 × (NINDX + 10,000)</code> ≈ 2,500+ pages</li>
+      <li>segment scan: 500 pages</li>
+      <li>the “obvious” index loses by 5×</li>
+    </ul>
+  </li>
+  <li>Interesting orders
+    <ul>
+      <li>an index scan or a sort produces rows in some order</li>
+      <li>an order is <em>interesting</em> if GROUP BY / ORDER BY (or, later, a join column) wants it</li>
+      <li>keep the cheapest path for each interesting order <em>and</em> the cheapest unordered path</li>
+      <li>at the end compare “ordered path” vs “cheapest path + sort”</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="two-tables-join-algorithms">Two tables: join algorithms</h2>
+
+<ul>
+  <li>Outer and inner: read one outer row, then find its matches in the inner</li>
+  <li>Nested loops
+    <ul>
+      <li>for each outer row, scan the inner for matches</li>
+      <li>with an index on the inner join column that scan is an index probe</li>
+      <li><code class="language-plaintext highlighter-rouge">C = C_outer + N × C_inner</code>, <code class="language-plaintext highlighter-rouge">N</code> = outer rows that survive their predicates</li>
+    </ul>
+  </li>
+  <li>Merge scan
+    <ul>
+      <li>both inputs in join-column order; sort whichever is not</li>
+      <li>walk both once; the inner “scan” per outer row is the contiguous group with the same key</li>
+      <li><code class="language-plaintext highlighter-rouge">C = C_outer + N × C_inner</code>, same shape, but <code class="language-plaintext highlighter-rouge">C_inner</code> is tiny</li>
+      <li>sorted temp: <code class="language-plaintext highlighter-rouge">C_inner ≈ TEMPPAGES / N + W × RSICARD</code></li>
+    </ul>
+  </li>
+  <li>Why only two: Blasgen and Eswaran (1976) found one of these was near-optimal except for tiny tables
+    <ul>
+      <li>hash join is a 1980s addition; today most engines have all three</li>
+    </ul>
+  </li>
+  <li>Equi-join only for merge; other join predicates become ordinary filters on the composite</li>
+  <li>n-way join = a chain of 2-way joins: composite-so-far is the outer, the new table is the inner
+    <ul>
+      <li>pipelined: a composite row can flow into the next join as soon as it exists</li>
+      <li>materialize only when the next step needs a sort</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="many-tables-the-order-problem">Many tables: the order problem</h2>
+
+<ul>
+  <li>Join result does not depend on order; join cost does, hugely</li>
+  <li>Candidates: <code class="language-plaintext highlighter-rouge">n!</code> orders × join methods × access paths. 3 tables: 6 orders. 8 tables: 40,320</li>
+  <li>Observation that saves you
+    <ul>
+      <li>once the first <code class="language-plaintext highlighter-rouge">k</code> tables are joined, the best way to add the <code class="language-plaintext highlighter-rouge">(k+1)</code>-th depends only on <em>which</em> <code class="language-plaintext highlighter-rouge">k</code> tables, not on how they were ordered</li>
+      <li>same predicates apply, same interesting orders, same methods</li>
+    </ul>
+  </li>
+  <li>So: dynamic programming over <em>subsets</em></li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>for each single table:      best plan (per interesting order + unordered)
+for each pair of tables:    best of (best plan for {A}) ⋈ B, (best plan for {B}) ⋈ A, each method
+for each triple:            best of (best plan for each pair) ⋈ remaining table
+...
+</code></pre></div></div>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">2^n</code> subsets instead of <code class="language-plaintext highlighter-rouge">n!</code> orders; each subset keeps one plan per interesting order</li>
+  <li>Two heuristics on top
+    <ul>
+      <li>no cross products unless unavoidable: only add a table that has a join predicate with the set so far. <code class="language-plaintext highlighter-rouge">T1-T3-T2</code> is skipped if T1 and T3 have no predicate</li>
+      <li>left-deep: the inner is always a base table. Bushy trees (join two composites) are not considered
+        <ul>
+          <li>base-table inner means an index probe is possible</li>
+          <li>composites pipeline without being stored</li>
+          <li>search space shrinks again</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>Interesting-order equivalence classes: <code class="language-plaintext highlighter-rouge">E.DNO = D.DNO</code> and <code class="language-plaintext highlighter-rouge">D.DNO = F.DNO</code> make all three the same order, so one plan covers them</li>
+  <li>The paper’s example, in prose
+    <ul>
+      <li>singles: EMP via DNO index (DNO order), EMP via JOB index (JOB order), EMP scan pruned; DEPT via DNO index; JOB via index and via scan, both kept</li>
+      <li>pairs: nested loop EMP→DEPT using DEPT.DNO index; EMP→JOB using JOB.JOB index; merge EMP(DNO order)⋈DEPT(DNO order) with no sort; or sort EMP by DNO first</li>
+      <li>for each (set, order) keep the cheapest, drop the rest</li>
+      <li>triples: extend each surviving pair with the remaining table, both methods</li>
+    </ul>
+  </li>
+  <li>Cost of optimizing: “a few thousand bytes and a few tenths of a second”; 8 tables in seconds on a 370/158
+    <ul>
+      <li>a 2-way join costs about 5–20 page retrievals to optimize</li>
+    </ul>
+  </li>
+  <li>What lives on
+    <ul>
+      <li>Postgres runs exactly this DP up to ~12 tables, then a genetic search</li>
+      <li>Cascades-style optimizers (SQL Server, Calcite, CockroachDB, Spanner) do the same subset memoization top-down with rules</li>
+      <li>most also consider bushy plans now</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="nested-queries">Nested queries</h2>
+
+<ul>
+  <li>Uncorrelated subquery: evaluate once, before the outer block; plug in the value or the list</li>
+  <li>Correlated subquery (references the outer row): re-evaluate per outer row
+    <ul>
+      <li>a nested-loop join wearing a different syntax</li>
+      <li>if the referenced column repeats, reuse the last result; sort the outer on it if that pays</li>
+    </ul>
+  </li>
+  <li>System R stops there. Turning correlated subqueries into joins (unnesting) is later work</li>
+</ul>
+
+<h2 id="what-held-up-what-did-not">What held up, what did not</h2>
+
+<ul>
+  <li>Paper’s own check: absolute costs often wrong, <em>ranking</em> of plans usually right</li>
+  <li>Leis et al. 2015, real data (IMDB), 113 queries
+    <ul>
+      <li>cardinality estimates off by orders of magnitude, mostly <em>under</em>, because of independence</li>
+      <li>bad cardinalities hurt far more than a crude cost model</li>
+      <li>exhaustive enumeration is still worth it; DP with bad estimates still beats heuristics</li>
+      <li>the 1979 <em>search</em> survived; the 1979 <em>statistics</em> did not</li>
+    </ul>
+  </li>
+  <li>Not in 1979: hash join, histograms, bushy plans, parallel plans, re-optimizing when estimates turn out wrong, plan caching that notices data changed</li>
+</ul>
+
+<h2 id="the-design-assembled">The design, assembled</h2>
+
+<ol>
+  <li>Parse into blocks; rewrite to CNF, push filters and projections</li>
+  <li>Cost = pages + W × tuples</li>
+  <li>Catalog statistics, refreshed by hand</li>
+  <li>Per-predicate selectivity from Table 1; multiply</li>
+  <li>Per table: cheapest access path per interesting order</li>
+  <li>Two join methods; nested loop vs merge decided by cost</li>
+  <li>Left-deep, no cross products, DP over subsets keeping one plan per (subset, order)</li>
+  <li>Nested queries evaluated once if uncorrelated, per outer row if correlated</li>
+</ol>
+
+<h2 id="questions-to-review">Questions to review</h2>
+
+<ul>
+  <li>Why is <code class="language-plaintext highlighter-rouge">×</code> then <code class="language-plaintext highlighter-rouge">σ</code> the same answer as <code class="language-plaintext highlighter-rouge">σ</code> then <code class="language-plaintext highlighter-rouge">⋈</code>? Which rewrite made strawman 1 die?</li>
+  <li>Give a query where “use the index” is wrong. Which two statistics tell you so?</li>
+  <li>Why is <code class="language-plaintext highlighter-rouge">W</code> a knob rather than a constant?</li>
+  <li>What breaks if <code class="language-plaintext highlighter-rouge">LOC</code> and <code class="language-plaintext highlighter-rouge">ZIP</code> are correlated and the optimizer multiplies their selectivities? Over- or underestimate?</li>
+  <li>Clustered vs non-clustered index: which statistic switches from <code class="language-plaintext highlighter-rouge">TCARD</code> to <code class="language-plaintext highlighter-rouge">NCARD</code>, and why?</li>
+  <li>What is a sargable predicate? Why does the optimizer care whether a filter runs below the RSI?</li>
+  <li>What is an interesting order? Why keep a more expensive plan that produces one?</li>
+  <li>Nested loop and merge scan have the same cost shape. Where does merge win?</li>
+  <li>Why can the best plan for <code class="language-plaintext highlighter-rouge">{EMP, DEPT, JOB}</code> be built from the best plans for its 2-subsets? Where does that argument need “per interesting order”?</li>
+  <li>What does left-deep rule out? What does it buy?</li>
+  <li>When is a cross product unavoidable?</li>
+  <li>A correlated subquery: which join algorithm is it secretly?</li>
+  <li>Leis 2015: if the cost model is crude and the estimates are bad, why does exhaustive DP still help?</li>
+</ul>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
+<script async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script>
+</body>
+
+</html>

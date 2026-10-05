@@ -54,13 +54,14 @@ table td:first-child {
 | Oct 26 | Student presentation |
 | Oct 28 | **Exam 2** |
 |        | Session VI: SQL |
-| Nov 02 | Query Optimization<br>[Access Path Selection in a Relational Database Management System](readings/selinger.pdf) |
+| Nov 02 | Query Optimization ([notes](notes/selinger.html))<br>[Access Path Selection in a Relational Database Management System](readings/selinger.pdf) |
 | Nov 04 | Spanner SQL ([notes](notes/spanner-sql.html))<br>[Spanner: Becoming a SQL System](readings/spanner-sql.pdf) |
 | Nov 09 | Student presentation |
 |        | Session VII: Weaker Isolation and Consistency |
 | Nov 11 | More Isolation Levels ([notes](notes/isolations.html))<br>[A Critique of ANSI SQL Isolation Levels](readings/si.pdf) |
 | Nov 16 | MVCC<br>[CockroachDB: The Resilient Geo-Distributed SQL Database](https://doi.org/10.1145/3318464.3386134) |
 | Nov 18 | Student presentation |
+| Nov 23 | Guest Lecture (TBD) |
 | Nov 25 | No class (Thanksgiving break) |
 | Dec 02 | **Exam 3** |
 | Dec 07 | Final project poster presentations |
