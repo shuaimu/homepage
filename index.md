@@ -15,7 +15,7 @@ Stony Brook University <br>
 Office: New Computer Science RM-351 <br>
 Email: shuai at cs stonybrook edu<br>
 Links: 
-<a href="cv.pdf">CV</a>,
+<!-- <a href="cv.pdf">CV</a>,  -->
 <a href="./blog.html">Blog</a>, 
 <a href="https://calendar.google.com/calendar/embed?src=shuai%40cs.stonybrook.edu&ctz=America%2FNew_York">Calendar</a>, 
 <a href="https://scholar.google.com/citations?user=wcbyR5UAAAAJ&hl=en">Google Scholar</a> 
