@@ -3,15 +3,15 @@
  <meta charset="utf-8">
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
-<title>Two Phase Locking with two-phase commit (2PL+2PC) | Home</title>
+<title>Spanner: Distributed Transactions with two-phase locking and two-phase commit (2PL+2PC) | Home</title>
 <meta name="generator" content="Jekyll v3.9.0" />
-<meta property="og:title" content="Two Phase Locking with two-phase commit (2PL+2PC)" />
+<meta property="og:title" content="Spanner: Distributed Transactions with two-phase locking and two-phase commit (2PL+2PC)" />
 <meta property="og:locale" content="en_US" />
 <meta property="og:site_name" content="Home" />
 <meta name="twitter:card" content="summary" />
-<meta property="twitter:title" content="Two Phase Locking with two-phase commit (2PL+2PC)" />
+<meta property="twitter:title" content="Spanner: Distributed Transactions with two-phase locking and two-phase commit (2PL+2PC)" />
 <script type="application/ld+json">
-{"@type":"WebPage","headline":"Two Phase Locking with two-phase commit (2PL+2PC)","url":"/teaching/db/26fa/notes/spanner.html","@context":"https://schema.org"}</script>
+{"@type":"WebPage","headline":"Spanner: Distributed Transactions with two-phase locking and two-phase commit (2PL+2PC)","url":"/teaching/db/26fa/notes/spanner.html","@context":"https://schema.org"}</script>
 <!-- End Jekyll SEO tag -->
 <link rel="stylesheet" href="/assets/main.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"><link type="application/atom+xml" rel="alternate" href="/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
@@ -33,18 +33,29 @@
           <article>
 
     <!-- <header>
-         <h1>Two Phase Locking with two-phase commit (2PL+2PC)</h1>
+         <h1>Spanner: Distributed Transactions with two-phase locking and two-phase commit (2PL+2PC)</h1>
          </header> -->
 
   <section>
-    <h1 id="two-phase-locking-with-two-phase-commit-2pl2pc">Two Phase Locking with two-phase commit (2PL+2PC)</h1>
+    <h1 id="spanner-distributed-transactions-with-two-phase-locking-and-two-phase-commit-2pl2pc">Spanner: Distributed Transactions with two-phase locking and two-phase commit (2PL+2PC)</h1>
+
+<h2 id="acid-properties">ACID properties</h2>
+<ul>
+  <li>Atomicity: all or nothing</li>
+  <li>Consistency: data is always in a valid state</li>
+  <li>Isolation: concurrent transactions are isolated from each other, e.g., serializability</li>
+  <li>Durability: data is always persisted through crash recovery</li>
+</ul>
+
 <h2 id="how-to-ensure-a-serializable-schedule">How to ensure a serializable schedule?</h2>
 <ul>
   <li>Locking-based approach</li>
+  <li>Strawman solution 0: global lock</li>
   <li>Strawman solution 1:
     <ul>
-      <li>Grab global lock when transaction starts</li>
-      <li>release global lock when transaction finishes committing</li>
+      <li>Fine-grained locks, grab locks on all items when transaction starts</li>
+      <li>release all locks when transaction finishes</li>
+      <li>Problem: how do you know all items when transaction starts?</li>
     </ul>
   </li>
   <li>Strawman solution 2:
@@ -67,7 +78,7 @@
 </ul>
 
 <h2 id="extra-question-how-about-read-locks-must-it-also-be-held-till-transaction-commits">(Extra question) How about read locks, must it also be held till transaction commits?</h2>
-<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>R_3(C), R_1(C), R_1(S), W_1(S), W_1(S), Commit1, R_3(S), Commit3
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>R_3(C), R_1(C), R_1(S), W_1(C), W_1(S), Commit1, R_3(S), Commit3
 </code></pre></div></div>
 <ul>
   <li>This is a non-serializable schedule
@@ -98,10 +109,19 @@
         <ul>
           <li>grab locks in order? not always possible</li>
           <li>(central) system detects deadlock cycles and aborts involved transactions</li>
-          <li>deadlock prevention
+          <li>deadlock prevention: give every transaction a timestamp when it starts; older = smaller = higher priority
             <ul>
-              <li>wound-wait</li>
-              <li>wait-die</li>
+              <li>wound-wait: T requests a lock that U holds
+                <ul>
+                  <li>T older than U: T <em>wounds</em> U. U aborts, releases its locks, and restarts later <em>with its original timestamp</em>. T takes the lock</li>
+                  <li>T younger than U: T waits</li>
+                  <li>no deadlock: a transaction only ever waits for an older one, so wait-for edges all point toward older transactions and cannot form a cycle</li>
+                  <li>no starvation: a wounded transaction keeps its timestamp, so it only gets older and eventually wounds everyone in its way</li>
+                  <li>cost: aborts that a detector would not have needed. In practice a transaction that is already committing is not wounded</li>
+                  <li>Spanner uses this for reads inside read-write transactions</li>
+                </ul>
+              </li>
+              <li>wait-die: the mirror image. Older waits; younger aborts (dies) and retries with its old timestamp</li>
             </ul>
           </li>
         </ul>
@@ -178,6 +198,156 @@ read(b = 0)</li>
       </li>
     </ul>
   </li>
+</ul>
+
+<h2 id="truetime-and-read-only-transactions">TrueTime and read-only transactions</h2>
+<ul>
+  <li>TrueTime: <code class="language-plaintext highlighter-rouge">TT.now()</code> returns an interval <code class="language-plaintext highlighter-rouge">[earliest, latest]</code> guaranteed to contain true time
+    <ul>
+      <li>the interval is a few ms wide; <code class="language-plaintext highlighter-rouge">TT.after(t)</code> / <code class="language-plaintext highlighter-rouge">TT.before(t)</code> are shorthand for comparing against it</li>
+    </ul>
+  </li>
+  <li>Writers (read-write transactions) pay for it. The coordinator leader picks the commit timestamp <code class="language-plaintext highlighter-rouge">s</code> by three rules
+    <ul>
+      <li><code class="language-plaintext highlighter-rouge">s ≥</code> every participant’s prepare timestamp (each participant picked one above anything it assigned before, and logged it with its prepare record)</li>
+      <li><code class="language-plaintext highlighter-rouge">s &gt; TT.now().latest</code>, read when the coordinator received the commit request. So <code class="language-plaintext highlighter-rouge">s</code> is above any time at which the client could have been told “go”</li>
+      <li><code class="language-plaintext highlighter-rouge">s &gt;</code> any timestamp this leader assigned earlier, so a leader’s timestamps are monotonic
+        <ul>
+          <li>across leaders of one group this holds too: leader leases are disjoint in time, and a new leader must not assign below the old lease</li>
+        </ul>
+      </li>
+      <li>then <em>commit wait</em>: do not apply, release locks, or reply until <code class="language-plaintext highlighter-rouge">TT.after(s)</code>
+        <ul>
+          <li>so when anyone learns of a commit, true time is already past <code class="language-plaintext highlighter-rouge">s</code>. A transaction that starts afterwards gets a bigger <code class="language-plaintext highlighter-rouge">s</code> (external consistency)</li>
+        </ul>
+      </li>
+      <li>non-coordinator participants’ prepare timestamps obey rules 2 and 3 as well; the coordinator skips its own prepare</li>
+    </ul>
+  </li>
+  <li>Read-only transaction: no locks, no 2PC, never blocks a writer. Pick a timestamp, then read at it
+    <ul>
+      <li>pick <code class="language-plaintext highlighter-rouge">s_read = TT.now().latest</code> (one Paxos group: the leader’s last committed timestamp works too and is smaller)</li>
+      <li>why it sees every earlier commit: a transaction that committed before this read started had true time pass its <code class="language-plaintext highlighter-rouge">s</code> first (commit wait), and <code class="language-plaintext highlighter-rouge">TT.now().latest ≥</code> true time, so <code class="language-plaintext highlighter-rouge">s &lt; s_read</code>. No clock agreement between machines needed; each trusts only its own interval</li>
+      <li>why it is a stable snapshot: a replica serves the read only once its safe time <code class="language-plaintext highlighter-rouge">t_safe ≥ s_read</code>
+        <ul>
+          <li><code class="language-plaintext highlighter-rouge">t_safe = min(</code> last Paxos write applied, smallest prepare timestamp of any prepared-but-uncommitted transaction minus one <code class="language-plaintext highlighter-rouge">)</code></li>
+          <li>leaders hand out timestamps monotonically, so nothing can still commit at or below <code class="language-plaintext highlighter-rouge">t_safe</code></li>
+        </ul>
+      </li>
+      <li>cost: <code class="language-plaintext highlighter-rouge">TT.now().latest</code> is a little ahead of true time and <code class="language-plaintext highlighter-rouge">t_safe</code> a little behind it, so the read may wait briefly for <code class="language-plaintext highlighter-rouge">t_safe</code> to catch up. Any sufficiently caught-up replica can serve it, not just the leader</li>
+      <li>snapshot read: the same with a client-supplied timestamp</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="serializability-the-correctness-condition">Serializability: the correctness condition</h2>
+
+<p>Review from the <a href="serializability.html">serializability notes</a>, to connect the schedules above to a precise correctness test.</p>
+
+<ul>
+  <li>A <strong>serial schedule</strong> runs one transaction at a time, with no interleaving.</li>
+  <li>A <strong>serializable schedule</strong> may interleave transactions, but has the same effect on the database and the same results for each transaction as some serial execution.
+    <ul>
+      <li>Matching the final database state alone is insufficient: a read-only transaction might have observed an impossible intermediate state.</li>
+      <li>The equivalent serial order need not be the order in which transactions started.</li>
+    </ul>
+  </li>
+  <li>Running example: initially <code class="language-plaintext highlighter-rouge">C = 100</code>, <code class="language-plaintext highlighter-rouge">S = 100</code>.
+    <ul>
+      <li><code class="language-plaintext highlighter-rouge">T1</code>: transfer $10 from checking (<code class="language-plaintext highlighter-rouge">C</code>) to savings (<code class="language-plaintext highlighter-rouge">S</code>).</li>
+      <li><code class="language-plaintext highlighter-rouge">T2</code>: withdraw $20 from checking.</li>
+      <li><code class="language-plaintext highlighter-rouge">T3</code>: read <code class="language-plaintext highlighter-rouge">C + S</code>.</li>
+      <li>With only <code class="language-plaintext highlighter-rouge">T1</code> and <code class="language-plaintext highlighter-rouge">T2</code>, either serial order ends at <code class="language-plaintext highlighter-rouge">C = 70</code>, <code class="language-plaintext highlighter-rouge">S = 110</code>.</li>
+      <li>With only <code class="language-plaintext highlighter-rouge">T1</code> and <code class="language-plaintext highlighter-rouge">T3</code>, either serial order makes <code class="language-plaintext highlighter-rouge">T3</code> return <code class="language-plaintext highlighter-rouge">200</code>.</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="conflict-serializability-and-the-serialization-graph">Conflict serializability and the serialization graph</h2>
+
+<ul>
+  <li>A schedule orders operations while preserving each transaction’s own operation order. Below, <code class="language-plaintext highlighter-rouge">R_i(X)</code> and <code class="language-plaintext highlighter-rouge">W_i(X)</code> mean a read and a write of <code class="language-plaintext highlighter-rouge">X</code> by <code class="language-plaintext highlighter-rouge">Ti</code>; all transactions commit.</li>
+  <li>Two operations <strong>conflict</strong> if they belong to different transactions, access the same item, and at least one is a write.
+    <ul>
+      <li>Read/write, write/read, and write/write conflict; read/read does not.</li>
+    </ul>
+  </li>
+  <li>Two schedules are <strong>conflict equivalent</strong> if they contain the same operations and preserve the order of every conflicting pair.
+    <ul>
+      <li>Swapping adjacent non-conflicting operations preserves conflict equivalence.</li>
+    </ul>
+  </li>
+  <li>Construct the <strong>serialization graph</strong> (also called the precedence graph):
+    <ul>
+      <li>One vertex per transaction.</li>
+      <li>Add <code class="language-plaintext highlighter-rouge">Ti → Tj</code> when an operation of <code class="language-plaintext highlighter-rouge">Ti</code> comes before a conflicting operation of <code class="language-plaintext highlighter-rouge">Tj</code>.</li>
+      <li>The edge means that any conflict-equivalent serial schedule must put <code class="language-plaintext highlighter-rouge">Ti</code> before <code class="language-plaintext highlighter-rouge">Tj</code>.</li>
+    </ul>
+  </li>
+  <li>A schedule is <strong>conflict serializable if and only if this graph is acyclic</strong>.
+    <ul>
+      <li>If acyclic, a topological ordering gives an equivalent serial order.</li>
+      <li>A cycle imposes contradictory ordering constraints.</li>
+      <li>This is a test for conflict serializability, a sufficient condition for serializability; it does not characterize every possible serializable schedule.</li>
+    </ul>
+  </li>
+</ul>
+
+<h3 id="example-1-lost-update">Example 1: lost update</h3>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>R_1(C), R_1(S), R_2(C), W_2(C), Commit2, W_1(C), W_1(S), Commit1
+</code></pre></div></div>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">R_1(C)</code> before <code class="language-plaintext highlighter-rouge">W_2(C)</code> gives <code class="language-plaintext highlighter-rouge">T1 → T2</code>.</li>
+  <li><code class="language-plaintext highlighter-rouge">R_2(C)</code> before <code class="language-plaintext highlighter-rouge">W_1(C)</code> gives <code class="language-plaintext highlighter-rouge">T2 → T1</code>.</li>
+  <li>The graph has a cycle. Both transactions read <code class="language-plaintext highlighter-rouge">C = 100</code>; <code class="language-plaintext highlighter-rouge">T2</code> writes <code class="language-plaintext highlighter-rouge">80</code>, then <code class="language-plaintext highlighter-rouge">T1</code> overwrites it with <code class="language-plaintext highlighter-rouge">90</code>.</li>
+  <li>Final state: <code class="language-plaintext highlighter-rouge">C = 90</code>, <code class="language-plaintext highlighter-rouge">S = 110</code>. The withdrawal is lost, unlike either serial order.</li>
+</ul>
+
+<h3 id="example-2-interleaved-but-serializable">Example 2: interleaved, but serializable</h3>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>R_1(C), R_1(S), R_3(C), R_3(S), Commit3, W_1(C), W_1(S), Commit1
+</code></pre></div></div>
+
+<ul>
+  <li>The only edge is <code class="language-plaintext highlighter-rouge">T3 → T1</code>: <code class="language-plaintext highlighter-rouge">T3</code> reads both items before <code class="language-plaintext highlighter-rouge">T1</code> writes them.</li>
+  <li>The early reads of <code class="language-plaintext highlighter-rouge">T1</code> do not conflict with the reads of <code class="language-plaintext highlighter-rouge">T3</code>.</li>
+  <li>Equivalent serial order: <code class="language-plaintext highlighter-rouge">T3</code>, then <code class="language-plaintext highlighter-rouge">T1</code>, even though <code class="language-plaintext highlighter-rouge">T1</code> started first.</li>
+  <li><code class="language-plaintext highlighter-rouge">T3</code> sees <code class="language-plaintext highlighter-rouge">100 + 100 = 200</code>.</li>
+</ul>
+
+<h3 id="example-3-the-mixed-snapshot-from-strawman-2">Example 3: the mixed snapshot from strawman 2</h3>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>R_1(C), R_1(S), W_1(C), R_3(C), R_3(S), Commit3, W_1(S), Commit1
+</code></pre></div></div>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">W_1(C)</code> before <code class="language-plaintext highlighter-rouge">R_3(C)</code> gives <code class="language-plaintext highlighter-rouge">T1 → T3</code>.</li>
+  <li><code class="language-plaintext highlighter-rouge">R_3(S)</code> before <code class="language-plaintext highlighter-rouge">W_1(S)</code> gives <code class="language-plaintext highlighter-rouge">T3 → T1</code>.</li>
+  <li>The cycle explains the anomaly: <code class="language-plaintext highlighter-rouge">T3</code> sees <code class="language-plaintext highlighter-rouge">90 + 100 = 190</code>, although either serial order would return <code class="language-plaintext highlighter-rouge">200</code>.</li>
+  <li>The final database state is correct for the transfer; the read result is not.</li>
+</ul>
+
+<h2 id="why-2pl-prevents-these-cycles">Why 2PL prevents these cycles</h2>
+
+<ul>
+  <li>A transaction’s <strong>lock point</strong> is when it acquires its final lock.</li>
+  <li>Suppose a conflict gives <code class="language-plaintext highlighter-rouge">Ti → Tj</code>. Their locks on that item are incompatible, so <code class="language-plaintext highlighter-rouge">Ti</code> must release its lock before <code class="language-plaintext highlighter-rouge">Tj</code> acquires its lock.</li>
+  <li>Under 2PL, <code class="language-plaintext highlighter-rouge">Ti</code>’s lock point precedes that release; <code class="language-plaintext highlighter-rouge">Tj</code>’s lock point is at or after that acquisition.</li>
+  <li>Every edge therefore points forward in lock-point order. A cycle is impossible.</li>
+  <li>Basic 2PL forbids acquiring locks after releasing one; it does not require holding every lock until commit. Holding all read and write locks until commit/abort is the stronger <strong>rigorous (strong strict) 2PL</strong> used by the practical scheme above. It also prevents other transactions from reading or overwriting uncommitted writes. See <a href="https://15445.courses.cs.cmu.edu/spring2024/slides/17-twophaselocking.pdf">CMU’s 2PL notes</a>.</li>
+  <li>Do not confuse the serialization graph with the <strong>wait-for graph</strong> used for deadlock detection: the former records ordering of executed conflicting operations; the latter records transactions currently waiting for locks. 2PL prevents cycles in the former, but can still deadlock.</li>
+</ul>
+
+<h2 id="from-serializability-to-spanners-external-consistency">From serializability to Spanner’s external consistency</h2>
+
+<ul>
+  <li><strong>Strict serializability</strong> adds a real-time requirement: if <code class="language-plaintext highlighter-rouge">T1</code> finishes committing before <code class="language-plaintext highlighter-rouge">T2</code> begins, the equivalent serial order must put <code class="language-plaintext highlighter-rouge">T1</code> before <code class="language-plaintext highlighter-rouge">T2</code>. Ordinary serializability alone does not impose that requirement.</li>
+  <li>Spanner’s 2PL controls conflicting read-write transactions; 2PC coordinates their commit decision across groups. Atomic commit alone does not ensure serializability.</li>
+  <li>TrueTime and commit wait make Spanner’s timestamp order respect that real-time requirement. Read-only transactions join this order by reading a consistent snapshot at their chosen timestamp. See the <a href="https://research.google.com/archive/spanner-osdi2012.pdf">Spanner paper, Section 4</a>.</li>
+  <li>The graph examples above use a single-version model. For Spanner’s multiversion reads, account for the version being read: a read that physically executes later can still read a version logically before a concurrent writer.</li>
+  <li>An explicitly requested historical snapshot intentionally observes an earlier state; it is not a promise to include every commit completed before the read request.</li>
 </ul>
 
   </section>

@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>Speculative 2PC (Mako) | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="Speculative 2PC (Mako)" />
+<meta property="og:locale" content="en_US" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="Speculative 2PC (Mako)" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"Speculative 2PC (Mako)","url":"/teaching/db/26fa/notes/mako.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"><link type="application/atom+xml" rel="alternate" href="/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>Speculative 2PC (Mako)</h1>
+         </header> -->
+
+  <section>
+    
+<h1 id="speculative-2pc-mako">Speculative 2PC (Mako)</h1>
+<p>Paper: <em>Mako: Speculative Distributed Transactions with Geo-Replication</em> (OSDI 2025)</p>
+
+<h2 id="setting">Setting</h2>
+<ul>
+  <li>sharded key-value store, serializable transactions</li>
+  <li>each shard is a Paxos group: leader + followers in other datacenters</li>
+  <li>shard leaders are (usually) in the same datacenter
+    <ul>
+      <li>leader to leader: LAN, fast</li>
+      <li>leader to follower: WAN, tens of ms</li>
+    </ul>
+  </li>
+  <li>one-shot transactions: client sends the whole transaction to a shard leader</li>
+  <li>running example: shard A holds <code class="language-plaintext highlighter-rouge">Alice.bal</code>, shard B holds <code class="language-plaintext highlighter-rouge">Bob.bal</code>, shard C holds <code class="language-plaintext highlighter-rouge">Charlie.bal</code>
+    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>T1: Alice transfers 100 to Bob
+if Alice.bal &gt; 100:
+  Alice.bal -= 100        (shard A)
+  Bob.bal += 100          (shard B)
+</code></pre></div>    </div>
+  </li>
+</ul>
+
+<h2 id="what-is-slow-in-spanner">What is slow in Spanner?</h2>
+<ul>
+  <li>every 2PC step (prepare, commit) is replicated via Paxos before the next step
+    <ul>
+      <li>A and B each replicate their YES before answering; each replicates COMMIT before applying</li>
+    </ul>
+  </li>
+  <li>T1 holds its locks across two WAN round trips. the next transaction on Alice or Bob waits</li>
+  <li>can we hide it with more concurrent transactions? no
+    <ul>
+      <li>more concurrent transactions –&gt; more conflicts –&gt; more aborts/waits</li>
+      <li>throughput is limited by contention, not by the number of in-flight requests</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="idea-run-2pc-first-replicate-later">Idea: run 2PC first, replicate later</h2>
+<ul>
+  <li>execute + 2PC among leaders only (LAN). no replication inside</li>
+  <li>once 2PC passes, writes are visible to the next transaction. keep going</li>
+  <li>replicate in the background</li>
+  <li>reply to the client only after replication finishes</li>
+  <li>a transaction that passed 2PC but is not replicated yet: <em>certified</em> (speculative)</li>
+</ul>
+
+<h2 id="problem-a-leader-fails-before-replication">Problem: a leader fails before replication</h2>
+<ul>
+  <li>T1 runs 2PC: A votes YES, B votes YES, coordinator sends COMMIT. A applies it. then A’s leader dies</li>
+  <li>its memory is gone: data, locks, and its part of every 2PC</li>
+  <li>B: did A commit? abort? nobody knows. 2PC is not fault-tolerant
+    <ul>
+      <li>Spanner avoids this by replicating the vote before casting it. we just gave that up</li>
+    </ul>
+  </li>
+  <li>the client has not been answered yet, so we are allowed to roll T1 back on B. fine, if it stopped there. it does not
+    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>A: Alice.bal 100 -&gt; 0        T1
+B: Bob.bal     0 -&gt; 100      T1
+B: Bob.bal   100 -&gt; 0        T2: Bob spends the 100 (read T1's write)
+</code></pre></div>    </div>
+  </li>
+  <li>T2 read T1’s write before T1 was replicated. that was the point: don’t wait</li>
+  <li>T1 rolls back –&gt; Bob never received 100 –&gt; T2 spent money that never existed –&gt; T2 rolls back</li>
+  <li>and whatever read T2’s writes, and so on. cascading rollback</li>
+  <li>same problem on followers: T1’s B half may be replicated while its A half is lost. replaying half of T1 is wrong</li>
+</ul>
+
+<h2 id="strawmen">Strawmen</h2>
+<ul>
+  <li>track exact dependencies (“T2 read from T1”): precise, but a record per read at millions of reads/s. too slow</li>
+  <li>on failure, freeze the whole system, find what is lost, roll back it and its dependents: one dead server halts all shards</li>
+</ul>
+
+<h2 id="what-do-we-actually-need-on-failure">What do we actually need on failure?</h2>
+<ul>
+  <li>not “who read from whom”</li>
+  <li>just a <em>cut</em>: keep a set of transactions such that
+    <ul>
+      <li>every kept transaction is replicated on all shards it wrote</li>
+      <li>everything a kept transaction read from is also kept</li>
+    </ul>
+  </li>
+  <li>roll back everything above the cut. nothing below can be affected</li>
+  <li>so we need a cheap per-transaction summary that is <em>monotone</em>: T2 reads from T1 ==&gt; summary(T2) &gt;= summary(T1)
+    <ul>
+      <li>then “keep everything with summary &lt;= W” is a valid cut, for any W</li>
+    </ul>
+  </li>
+  <li>simplest summary: a timestamp</li>
+</ul>
+
+<h2 id="version--timestamp">Version = timestamp</h2>
+<ul>
+  <li>each shard has a logical clock (Lamport style: bump on every use, jump forward on seeing a larger timestamp)</li>
+  <li>a transaction’s timestamp: fresh clock from every shard it writes, max with the timestamps of everything it read</li>
+  <li>invariant: T2 reads from T1 ==&gt; ts(T2) &gt;= ts(T1) (and transitively)</li>
+  <li>on one shard, a later writer gets a larger timestamp than an earlier writer
+    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>T1  W(Alice) W(Bob)     reads {}          ts 1
+T2  R(Bob) W(Bob)       reads Bob: ts 1   ts 2
+T3  W(Charlie)          reads {}          ts 1
+</code></pre></div>    </div>
+  </li>
+</ul>
+
+<h2 id="execution-and-certification--occ--2pc-among-leaders">Execution and certification (= OCC + 2PC among leaders)</h2>
+<ul>
+  <li>coordinator = the shard leader that received the transaction</li>
+  <li>execute: read newest <em>certified</em> version, record (key, version) in ReadSet. buffer writes in WriteSet</li>
+  <li>certify, 4 rounds among involved leaders:
+    <ol>
+      <li>Lock: lock WriteSet keys. already locked –&gt; abort</li>
+      <li>GetClock: each written shard bumps its clock and returns it. ts = max(fresh clocks, ReadSet timestamps)</li>
+      <li>Validate: every ReadSet key still at the version we read, and unlocked? else abort</li>
+      <li>Install: write WriteSet with version ts. keep old versions (may need to roll back)</li>
+    </ol>
+  </li>
+  <li>step 2 is where the invariant comes from: T1’s timestamp sits in T2’s ReadSet</li>
+  <li>Validate/Install = prepare/commit. now CERTIFIED. no WAN traffic so far</li>
+</ul>
+
+<h2 id="replication-and-the-watermark">Replication and the watermark</h2>
+<ul>
+  <li>each shard appends (writes on this shard, ts) to a log, replicated with Paxos in the background
+    <ul>
+      <li>actually one log per core, no coordination between logs or shards</li>
+    </ul>
+  </li>
+  <li>shard watermark w_i = timestamp of the last replicated transaction, min over shard i’s logs
+    <ul>
+      <li>meaning: every transaction with ts &lt;= w_i is durable on shard i
+        <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>shard A, two logs       replicated | pending
+log-0:  1 3 4 | 8 9      w_A = min(4, 6) = 4
+log-1:  2 5 6 | 7        (6 might be unreplicated in log-0, so not 6)
+</code></pre></div>        </div>
+      </li>
+    </ul>
+  </li>
+  <li>system watermark W = min over all shards of w_i, gossiped between shards</li>
+  <li>commit rule: ts &lt;= W –&gt; COMMITTED, reply to client
+    <ul>
+      <li>own writes durable on every shard (ts &lt;= w_i for all i)</li>
+      <li>everything it read from has a smaller ts, so also &lt;= W, so also durable</li>
+    </ul>
+  </li>
+  <li>followers replay a log entry only when its ts &lt;= W. otherwise wait
+    <ul>
+      <li>T1’s A half lost –&gt; w_A stays 0 –&gt; W stays 0 –&gt; B’s follower never replays T1’s B half, nor T2</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="failure-epochs">Failure: epochs</h2>
+<ul>
+  <li>a replicated configuration manager (CM) detects the dead leader, bumps the <em>epoch</em>, elects a new leader</li>
+  <li>why epochs: every shard must separate “before the failure” from “after”, and the “before” part must be decided once, the same way everywhere</li>
+  <li>every shard <em>closes</em> the old epoch
+    <ul>
+      <li>healthy shard: finish or abort its in-flight old-epoch transactions, then move on</li>
+      <li>new leader of the failed shard: recover from followers what was replicated, fill holes with no-ops</li>
+      <li>new-epoch transactions do not read old-epoch versions until the old epoch is decided</li>
+    </ul>
+  </li>
+  <li>simplest decision, <em>epoch-based rollback</em>: roll back the whole old epoch on every shard
+    <ul>
+      <li>an old-epoch transaction read only from the old epoch or earlier, so nothing surviving depends on it. consistent</li>
+      <li>no watermark needed, nothing to agree on beyond the epoch number
+        <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>old epoch:  T1 (A, B)   T2 (B)   T3: Charlie.bal -= 100 (C)   ... thousands more
+A fails --&gt; roll back T1, T2, T3, and everything else in the old epoch
+</code></pre></div>        </div>
+      </li>
+    </ul>
+  </li>
+  <li>too much: transactions that were fully replicated before the failure die too. and T3 had nothing to do with A</li>
+</ul>
+
+<h2 id="failure-cut-the-old-epoch-at-the-watermark">Failure: cut the old epoch at the watermark</h2>
+<ul>
+  <li>we already have a cut, the watermark. finalize it for the old epoch
+    <ul>
+      <li>new leader of the failed shard: final w_i = min over its recovered logs, as usual</li>
+      <li>healthy shard: append an INF marker to each log and replicate it. final w_i = INF (it lost nothing)</li>
+    </ul>
+  </li>
+  <li>finalized watermark FW = min over shards of the final w_i</li>
+  <li>rule: old-epoch transaction with ts &lt;= FW commits. otherwise roll back on leaders, never replay on followers
+    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>A failed before T1 reached its followers.  w_A = 0, w_B = INF, w_C = INF.  FW = 0
+T1  ts 1   roll back, even though its B half is durable on B
+T2  ts 2   roll back
+T3  ts 1   roll back.  Charlie had nothing to do with A
+had A replicated up to ts 7 before dying: FW = 7, everything with ts &lt;= 7 survives
+</code></pre></div>    </div>
+  </li>
+  <li>why not re-apply T1 from B’s copy of its write? B’s copy may depend on other lost transactions. we don’t know, that was the deal</li>
+  <li>bounded: the set above FW is fixed once FW is. no cascade into the new epoch</li>
+  <li>healthy shards keep running new-epoch transactions that avoid the dead shard</li>
+</ul>
+
+<h2 id="why-correct">Why correct</h2>
+<ul>
+  <li>atomicity: all writes of a transaction carry the same ts, and the decision is “ts &lt;= FW?”, so every shard decides the same
+    <ul>
+      <li>a transaction stuck mid-2PC has a timestamp above its log’s last entry, so above FW: rolled back everywhere</li>
+    </ul>
+  </li>
+  <li>rollback safety: T2 read from T1, T1 rolled back ==&gt; ts(T2) &gt;= ts(T1) &gt; FW ==&gt; T2 rolled back</li>
+  <li>never undo a reply: replied ==&gt; ts &lt;= W &lt;= FW</li>
+</ul>
+
+<h2 id="problem-with-one-timestamp-too-many-rollbacks">Problem with one timestamp: too many rollbacks</h2>
+<ul>
+  <li>the watermark saved the replicated prefix, but T3 still died for nothing. in a big system most transactions are unrelated to the failed shard</li>
+  <li>same thing without failures: W = min over <em>all</em> shards. one slow shard holds W back, so every shard’s transactions wait to commit</li>
+  <li>the timestamp is too coarse: it says “after”, not “after <em>on which shard</em>”</li>
+</ul>
+
+<h2 id="fix-vector-clock">Fix: vector clock</h2>
+<ul>
+  <li>one entry per shard: vc = [v_A, v_B, v_C]</li>
+  <li>same rule, per entry: fresh clock from every shard it writes, element-wise max with the vcs of everything it read</li>
+  <li>same invariant, per entry: T2 reads from T1 ==&gt; vc(T2) &gt;= vc(T1) in every entry</li>
+  <li>watermark becomes a vector W = [w_A, w_B, w_C]; commit rule: vc &lt;= W in every entry</li>
+  <li>unrelated transactions are <em>incomparable</em> and do not wait for each other
+```
+T1  W(Alice) W(Bob)     fresh (1,1,-)   vc [1,1,0]
+T2  R(Bob) W(Bob)       fresh (-,2,-)   vc [1,2,0]     &gt;= [1,1,0]
+T3  W(Charlie)          fresh (-,-,1)   vc [0,0,1]     incomparable with both</li>
+</ul>
+
+<p>A failed.  FVW = [0, INF, INF]
+T3 [0,0,1] &lt;= FVW   keep.  Charlie is fine
+T1 [1,1,0]          roll back
+T2 [1,2,0]          roll back
+```</p>
+<ul>
+  <li>straggler: a slow shard holds back only its own entry. transactions that do not touch it commit as before</li>
+  <li>correctness argument is unchanged: replace &lt;= on numbers with &lt;= on every entry</li>
+  <li>cost: n entries per version. with many shards, merge entries (max of a group of shards). still monotone, so still correct; the fully merged case is the single timestamp above</li>
+</ul>
+
+<h2 id="trade-offs">Trade-offs</h2>
+<ul>
+  <li>throughput: no lock held across the WAN. 8.6x over geo-replicated baselines</li>
+  <li>latency: still one WAN replication before the client hears back</li>
+  <li>rollback is still coarse: a healthy-shard transaction with a large entry for the failed shard dies even if what it read happened to be durable</li>
+  <li>speculative state is visible only inside the system. clients only ever see COMMITTED results</li>
+</ul>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
+<script async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script>
+</body>
+
+</html>

@@ -50,7 +50,7 @@ table td:first-child {
 | Oct 14 | Project lightning talks |
 |        | Session V: Transaction |
 | Oct 19 | Spanner ([notes](notes/spanner.html))<br>[Spanner: Google’s Globally-Distributed Database](readings/spanner.pdf) |
-| Oct 21 | Mako<br>[Mako: Speculative Distributed Transactions with Geo-Replication](readings/mako.pdf) |
+| Oct 21 | Mako ([notes](notes/mako.html))<br>[Mako: Speculative Distributed Transactions with Geo-Replication](readings/mako.pdf) |
 | Oct 26 | Student presentation |
 | Oct 28 | **Exam 2** |
 |        | Session VI: SQL |

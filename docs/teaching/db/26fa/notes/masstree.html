@@ -468,42 +468,6 @@
   <li>Ordered access, atomic updates to one key, and transactions across multiple keys are separate promises</li>
 </ul>
 
-<h2 id="did-the-design-choices-matter">Did the design choices matter?</h2>
-
-<ul>
-  <li>Read the experiments as tests of the mechanisms, not a current database ranking
-    <ul>
-      <li>2012 hardware/software; up to 16 cores, small keys/values, large memory-resident datasets</li>
-    </ul>
-  </li>
-  <li>Factor analysis (Figure 8, Section 6.2): start with a concurrent binary tree, add changes cumulatively
-    <ul>
-      <li>allocator and huge pages also matter: tree traversal is not the only source of memory overhead</li>
-      <li>integer comparison, wider nodes, prefetching, then the permuter and trie layers</li>
-      <li>generated inside the server: <strong>no network or logging</strong> in this figure</li>
-    </ul>
-  </li>
-  <li>Does the tree still matter in a complete server? Section 6.3 turns network and logging on
-    <ul>
-      <li>140-million-key workload, 16 cores: about 8.03 M gets/s and 5.78 M puts/s</li>
-      <li>1.90× get and 1.53× put throughput of the optimized binary-tree baseline</li>
-      <li>do not mix these absolute numbers with Figure 8’s in-process experiment</li>
-    </ul>
-  </li>
-  <li>Sharing versus partitioning (Figure 11): the tradeoff we predicted
-    <ul>
-      <li>uniform reads: static per-core trees are 1.5× faster, largely from local DRAM access</li>
-      <li>one partition gets 40% of requests: the shared tree is 3.5× faster</li>
-      <li>evidence about this static-partition experiment, not proof that sharing always wins</li>
-    </ul>
-  </li>
-  <li>Cost of order (Section 6.4): a favorable hash-table baseline gets 2.5× the throughput on its tested workload
-    <ul>
-      <li>it cannot answer range queries. The extra interface has a real cost</li>
-    </ul>
-  </li>
-</ul>
-
 <h2 id="a-split-really-changes-the-search-path">A split really changes the search path</h2>
 
 <ul>

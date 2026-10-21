@@ -279,26 +279,6 @@ Paper: Mao, Kohler, and Morris, [*Cache Craftiness for Fast Multicore Key-Value 
   * a transactionally consistent snapshot needs another mechanism
 * Ordered access, atomic updates to one key, and transactions across multiple keys are separate promises
 
-## Did the design choices matter?
-
-* Read the experiments as tests of the mechanisms, not a current database ranking
-  * 2012 hardware/software; up to 16 cores, small keys/values, large memory-resident datasets
-* Factor analysis (Figure 8, Section 6.2): start with a concurrent binary tree, add changes cumulatively
-  * allocator and huge pages also matter: tree traversal is not the only source of memory overhead
-  * integer comparison, wider nodes, prefetching, then the permuter and trie layers
-  * generated inside the server: **no network or logging** in this figure
-* Does the tree still matter in a complete server? Section 6.3 turns network and logging on
-  * 140-million-key workload, 16 cores: about 8.03 M gets/s and 5.78 M puts/s
-  * 1.90× get and 1.53× put throughput of the optimized binary-tree baseline
-  * do not mix these absolute numbers with Figure 8's in-process experiment
-* Sharing versus partitioning (Figure 11): the tradeoff we predicted
-  * uniform reads: static per-core trees are 1.5× faster, largely from local DRAM access
-  * one partition gets 40% of requests: the shared tree is 3.5× faster
-  * evidence about this static-partition experiment, not proof that sharing always wins
-* Cost of order (Section 6.4): a favorable hash-table baseline gets 2.5× the throughput on its tested workload
-  * it cannot answer range queries. The extra interface has a real cost
-
-
 ## A split really changes the search path
 
 * Full border node: allocate a right sibling and move the higher keys into it
