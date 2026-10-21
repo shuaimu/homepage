@@ -102,15 +102,15 @@ log-1:  2 5 6 | 7        (6 might be unreplicated in log-0, so not 6)
   * T1's A half lost --> w_A stays 0 --> W stays 0 --> B's follower never replays T1's B half, nor T2
 
 ## Failure: epochs
-* a replicated configuration manager (CM) detects the dead leader, bumps the *epoch*, elects a new leader
-* why epochs: every shard must separate "before the failure" from "after", and the "before" part must be decided once, the same way everywhere
+* why epochs: every shard must separate "before the failure" from "after"
+  * Otherwise, the system pauses for long
 * every shard *closes* the old epoch
   * healthy shard: finish or abort its in-flight old-epoch transactions, then move on
   * new leader of the failed shard: recover from followers what was replicated, fill holes with no-ops
   * new-epoch transactions do not read old-epoch versions until the old epoch is decided
-* simplest decision, *epoch-based rollback*: roll back the whole old epoch on every shard
-  * an old-epoch transaction read only from the old epoch or earlier, so nothing surviving depends on it. consistent
-  * no watermark needed, nothing to agree on beyond the epoch number
+* Rollback safety: roll back the whole old epoch on every shard
+  * key: an old-epoch transaction read only from the old epoch or earlier; it does not depend on any new-epoch transactions
+  * Simple solution: Should we rollback the entire epoch?
 ```
 old epoch:  T1 (A, B)   T2 (B)   T3: Charlie.bal -= 100 (C)   ... thousands more
 A fails --> roll back T1, T2, T3, and everything else in the old epoch

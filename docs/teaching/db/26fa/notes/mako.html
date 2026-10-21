@@ -193,8 +193,11 @@ log-1:  2 5 6 | 7        (6 might be unreplicated in log-0, so not 6)
 
 <h2 id="failure-epochs">Failure: epochs</h2>
 <ul>
-  <li>a replicated configuration manager (CM) detects the dead leader, bumps the <em>epoch</em>, elects a new leader</li>
-  <li>why epochs: every shard must separate “before the failure” from “after”, and the “before” part must be decided once, the same way everywhere</li>
+  <li>why epochs: every shard must separate “before the failure” from “after”
+    <ul>
+      <li>Otherwise, the system pauses for long</li>
+    </ul>
+  </li>
   <li>every shard <em>closes</em> the old epoch
     <ul>
       <li>healthy shard: finish or abort its in-flight old-epoch transactions, then move on</li>
@@ -202,10 +205,10 @@ log-1:  2 5 6 | 7        (6 might be unreplicated in log-0, so not 6)
       <li>new-epoch transactions do not read old-epoch versions until the old epoch is decided</li>
     </ul>
   </li>
-  <li>simplest decision, <em>epoch-based rollback</em>: roll back the whole old epoch on every shard
+  <li>Rollback safety: roll back the whole old epoch on every shard
     <ul>
-      <li>an old-epoch transaction read only from the old epoch or earlier, so nothing surviving depends on it. consistent</li>
-      <li>no watermark needed, nothing to agree on beyond the epoch number
+      <li>key: an old-epoch transaction read only from the old epoch or earlier; it does not depend on any new-epoch transactions</li>
+      <li>Simple solution: Should we rollback the entire epoch?
         <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>old epoch:  T1 (A, B)   T2 (B)   T3: Charlie.bal -= 100 (C)   ... thousands more
 A fails --&gt; roll back T1, T2, T3, and everything else in the old epoch
 </code></pre></div>        </div>
