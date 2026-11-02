@@ -144,35 +144,34 @@ is the cheapest path”). Everything numeric in this deck is derived from the ta
 on slide 4, restated in the catalog’s terms on slide 21, and can be reproduced with a
 calculator.</p>
 
-<p>The deck follows the lecture notes in their order, with their content and vocabulary;
-where the two once disagreed, the notes won. There are three departures. The notes
-define interesting orders under “One table”; the deck explains the idea on slide 46,
-where the subset search first needs it, and says <em>useful order</em> on screen. The merge
-trace on slide 40 walks DEPT with EMP on DNO, the pair the join section prices; the
-notes walk EMP with JOB. The third is the ending: the core route stops after the notes’
-“Many tables” with a recap of its own, and the three parts that follow it in the notes,
-nested queries, what held up and the design assembled, open the appendix. Slides 1–5 are
-the notes’ “The job” and “The tables”. Slide 2 prints the paper’s Figure 1 query
-verbatim, six lines, and the whole hour runs on it. Nothing in its WHERE clause filters
-EMP, the biggest table, and the deck uses that rather than hiding it: rule 2 breaks on
-it (slide 16’s caption), and every EMP index path matches nothing, which is why Table
-2’s two matching-nothing rows, the ones abridgements drop, carry weight on slide 30. An
-earlier version of the deck added a seventh line, <code class="language-plaintext highlighter-rouge">AND EMP.SAL &gt; 20000</code>, so that an
-index on EMP could match; that line is gone and every plan cost changed with it. <code class="language-plaintext highlighter-rouge">SAL &gt;
-20000</code> survives as a separate one-table query, <code class="language-plaintext highlighter-rouge">SELECT NAME FROM EMP WHERE SAL &gt; 20000</code>,
-wherever the lecture needs an index that matches: rule 1’s breaking card (slide 14) and,
-joined to DEPT, rule 2’s (slide 16); slide 24’s speaker note; the access-path section up
-to slide 34; and appendix slides 72 and 79. Each of those slides prints its own SQL or
-says which query it is on. Slide 3 asks the four choices as plain questions, with no
-numbers, because nothing has been explained yet: the join order, scan or index, how to
-join two tables, and whether to sort. It closes on the goal as a question, the same rows
-every way, so which way is cheapest and can it be found fast; its speaker note points at
-the appendix cards from slide 68, which price each question. Slide 4 gives the three
-tables’ sizes, with each index’s kind, values and pages; slide 5 explains “stored in DNO
-order” and draws the two kinds of index, a department’s 100 rows on 5 adjacent pages
-through the clustered DNO index against a job code’s 200 rows scattered through the
-non-clustered JOB index, then gives the answer for scale: 200 clerks, 1 in 10 of them in
-a Denver department, about 20 rows.</p>
+<p>The deck and the lecture notes, <code class="language-plaintext highlighter-rouge">../notes/selinger.md</code>, teach the same content in the
+same order; the notes were brought into line with the deck after its revisions. Both
+introduce interesting orders in the many-tables part, where the subset search first
+needs them (the slides say <em>useful order</em> on screen, the notes give the paper’s term),
+both walk the merge trace on DEPT with EMP, and both end the core route with a recap:
+nested queries, what held up and the design assembled follow as optional reading in the
+notes and open the appendix in the deck. Slides 1–5 are the notes’ “The job” and “The
+tables”. Slide 2 prints the paper’s Figure 1 query verbatim, six lines, and the whole
+hour runs on it. Nothing in its WHERE clause filters EMP, the biggest table, and the
+deck uses that rather than hiding it: rule 2 breaks on it (slide 16’s caption), and
+every EMP index path matches nothing, which is why Table 2’s two matching-nothing rows,
+the ones abridgements drop, carry weight on slide 30. An earlier version of the deck
+added a seventh line, <code class="language-plaintext highlighter-rouge">AND EMP.SAL &gt; 20000</code>, so that an index on EMP could match; that
+line is gone and every plan cost changed with it. <code class="language-plaintext highlighter-rouge">SAL &gt; 20000</code> survives as a separate
+one-table query, <code class="language-plaintext highlighter-rouge">SELECT NAME FROM EMP WHERE SAL &gt; 20000</code>, wherever the lecture needs an
+index that matches: rule 1’s breaking card (slide 14) and, joined to DEPT, rule 2’s
+(slide 16); slide 24’s speaker note; the access-path section up to slide 34; and
+appendix slides 72 and 79. Each of those slides prints its own SQL or says which query
+it is on. Slide 3 asks the four choices as plain questions, with no numbers, because
+nothing has been explained yet: the join order, scan or index, how to join two tables,
+and whether to sort. It closes on the goal as a question, the same rows every way, so
+which way is cheapest and can it be found fast; its speaker note points at the appendix
+cards from slide 68, which price each question. Slide 4 gives the three tables’ sizes,
+with each index’s kind, values and pages; slide 5 explains “stored in DNO order” and
+draws the two kinds of index, a department’s 100 rows on 5 adjacent pages through the
+clustered DNO index against a job code’s 200 rows scattered through the non-clustered
+JOB index, then gives the answer for scale: 200 clerks, 1 in 10 of them in a Denver
+department, about 20 rows.</p>
 
 <p>Slide 8 is the notation card: σ, π, × and ⋈, each read aloud, with ⋈ defined as a × with
 a σ on the join column, since slide 10 is that equivalence read right to left. The
