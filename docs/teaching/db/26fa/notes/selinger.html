@@ -81,6 +81,43 @@ WHERE  TITLE = 'CLERK'
   </li>
 </ul>
 
+<h2 id="the-tables">The tables</h2>
+
+<ul>
+  <li>The paper’s Figure 1 shows the three tables with three or four rows each and no sizes. The sizes here are ours, the same as the slides, picked so the trade-offs show</li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>EMP (NAME, DNO, JOB, SAL)    10,000 rows, 20 to a page: 500 pages, stored in DNO order
+  index on DNO    clustered              100 values, 100 rows each     50 pages
+  index on JOB    non-clustered          50 values, 200 rows each      50 pages
+  index on SAL    non-clustered          values 5,000 to 25,000        40 pages
+
+DEPT (DNO, DNAME, LOC)       100 rows on 5 pages, stored in DNO order
+  index on DNO    clustered, unique                                     2 pages
+  index on LOC    non-clustered          10 cities, 10 rows each        2 pages
+
+JOB (JOB, TITLE)             50 rows on 2 pages, stored in JOB order
+  index on JOB    clustered, unique                                     1 page
+  index on TITLE  non-clustered, unique                                 1 page
+</code></pre></div></div>
+
+<ul>
+  <li>“Stored in DNO order”: EMP’s rows were inserted sorted by DNO and kept that way, so one department’s 100 employees sit together on 5 pages
+    <ul>
+      <li>nothing forces this; it is a choice made when the table was set up, a sensible one if employees are usually fetched by department</li>
+    </ul>
+  </li>
+  <li>An index lists rows in its own column’s order
+    <ul>
+      <li><em>clustered</em>: the table is stored in that same order, so the rows the index finds sit together. EMP’s DNO index</li>
+      <li><em>non-clustered</em>: the table is stored in some other order, so the rows it finds are scattered across pages. EMP’s JOB and SAL indexes</li>
+      <li>a table is stored in one order, so at most one of its indexes is clustered</li>
+    </ul>
+  </li>
+  <li>An index is small next to its table: EMP’s are 40 to 50 pages against 500</li>
+  <li>The query’s answer: 200 clerks (1 job title in 50), 1 in 10 of them in a Denver department, so about 20 rows</li>
+</ul>
+
 <h2 id="from-text-to-a-tree">From text to a tree</h2>
 
 <ul>
@@ -116,8 +153,8 @@ WHERE  TITLE = 'CLERK'
     <ul>
       <li>WHERE → conjunctive normal form; each conjunct is a boolean factor</li>
       <li>every output row satisfies every boolean factor, so each can be applied as early as you like</li>
-      <li>push filters down to the table they mention; push projections down</li>
-      <li>expand views, flatten simple subqueries</li>
+      <li>push filters down to the table they mention</li>
+      <li>later systems add much more: push projections, expand views, flatten and unnest subqueries. System R keeps each subquery as its own block</li>
     </ul>
   </li>
   <li>Physical plan: each node becomes an operator with an algorithm (segment scan, index scan, nested loop, merge)</li>
@@ -137,15 +174,15 @@ WHERE  TITLE = 'CLERK'
       <li>10,000 EMP × 100 DEPT × 50 JOB = 50 M intermediate rows to build and throw away</li>
     </ul>
   </li>
-  <li>Fix: pushdown. <code class="language-plaintext highlighter-rouge">σ TITLE='CLERK'</code> sits on EMP, <code class="language-plaintext highlighter-rouge">σ LOC='DENVER'</code> on DEPT, and the equality predicates turn <code class="language-plaintext highlighter-rouge">×</code> into <code class="language-plaintext highlighter-rouge">⋈</code></li>
+  <li>Fix: pushdown. <code class="language-plaintext highlighter-rouge">σ TITLE='CLERK'</code> sits on JOB, <code class="language-plaintext highlighter-rouge">σ LOC='DENVER'</code> on DEPT, and the equality predicates turn <code class="language-plaintext highlighter-rouge">×</code> into <code class="language-plaintext highlighter-rouge">⋈</code></li>
 </ul>
 
 <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>                 ⋈ EMP.JOB=JOB.JOB
                 /               \
-        ⋈ EMP.DNO=DEPT.DNO      JOB
-        /             \
-  σ TITLE='CLERK'   σ LOC='DENVER'
-      EMP               DEPT
+        ⋈ EMP.DNO=DEPT.DNO    σ TITLE='CLERK'
+        /             \             JOB
+      EMP        σ LOC='DENVER'
+                     DEPT
 </code></pre></div></div>
 
 <ul>
@@ -155,15 +192,47 @@ WHERE  TITLE = 'CLERK'
 <h2 id="strawman-2-fixed-rules">Strawman 2: fixed rules</h2>
 
 <ul>
-  <li>Always use an index if one exists. Always join in FROM order. Filters as early as possible</li>
-  <li>Where it breaks
+  <li>Replace the search with a rule book. Each rule is right on plenty of queries, which is why rule books were the serious alternative in 1979</li>
+  <li>Rough counts, as in strawman 1, on the tables above
     <ul>
-      <li>index on TITLE, but a quarter of employees are clerks: a non-clustered index touches a data page per <em>tuple</em>; a plain scan touches each page once and wins</li>
-      <li>FROM order <code class="language-plaintext highlighter-rouge">EMP, DEPT, JOB</code> may be the worst of the six orders; the user did not mean anything by it</li>
-      <li>whether to sort for a merge join depends on how many rows are left after the filters</li>
+      <li>a disk read brings in a whole page. A scan reads EMP’s 10,000 rows in 500 reads</li>
+      <li>rows found through a clustered index sit together, 20 to a read; through a non-clustered one, about a read per row</li>
     </ul>
   </li>
-  <li>Lesson: the right choice depends on the <em>data</em>. Rules that ignore the data pick wrong on some data</li>
+  <li>Rule 1: always use an index if one exists
+    <ul>
+      <li>Makes sense: <code class="language-plaintext highlighter-rouge">SELECT NAME FROM EMP WHERE DNO = 50</code>
+        <ul>
+          <li>100 rows, stored together: about 5 reads, against 500 for the scan</li>
+          <li>scattered rows win too if they are few: <code class="language-plaintext highlighter-rouge">WHERE JOB = 5</code> is 200 rows, about 200 reads</li>
+        </ul>
+      </li>
+      <li>Breaks: <code class="language-plaintext highlighter-rouge">WHERE SAL &gt; 20000</code> keeps a quarter, 2,500 rows scattered across the table: about 2,500 reads, against 500. The scan wins 5×</li>
+      <li>The index pays per row it finds, the scan per page. Past about 500 scattered rows, scan</li>
+    </ul>
+  </li>
+  <li>Rule 2: always join in FROM order
+    <ul>
+      <li>Makes sense: people tend to name first the table they are filtering
+        <ul>
+          <li><code class="language-plaintext highlighter-rouge">SELECT DNAME, NAME FROM DEPT, EMP WHERE DEPT.LOC = 'DENVER' AND EMP.DNO = DEPT.DNO</code></li>
+          <li>DEPT first keeps 10 rows: 10 lookups into EMP</li>
+          <li>EMP first keeps all 10,000: 10,000 lookups into DEPT</li>
+          <li>the order the user wrote is the best one, and it took no search to find</li>
+        </ul>
+      </li>
+      <li>Breaks: <code class="language-plaintext highlighter-rouge">SELECT DNAME, NAME FROM EMP, DEPT WHERE EMP.SAL &gt; 20000 AND EMP.DNO = DEPT.DNO</code>
+        <ul>
+          <li>EMP is filtered too, but still keeps 2,500 rows: 2,500 lookups into DEPT</li>
+          <li>DEPT first keeps all 100: 100 lookups into EMP</li>
+        </ul>
+      </li>
+      <li>Start from the table that keeps the fewest rows. The FROM list does not know which one that is</li>
+      <li>The paper’s <code class="language-plaintext highlighter-rouge">FROM EMP, DEPT, JOB</code> starts with EMP, the one table its WHERE clause does not filter at all</li>
+    </ul>
+  </li>
+  <li>Filters as early as possible is the rule that survives: it is strawman 1’s fix, and the optimizer keeps it</li>
+  <li>Lesson: each rule is right on some queries and wrong on others, and only the data says which</li>
   <li>So: estimate the cost of each candidate, pick the cheapest. Three things to invent
     <ol>
       <li>a cost measure</li>
@@ -175,12 +244,21 @@ WHERE  TITLE = 'CLERK'
 
 <h2 id="cost-what-are-we-minimizing">Cost: what are we minimizing</h2>
 
-<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>COST = PAGE FETCHES + W × RSI CALLS
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>COST = PAGE FETCHES
 </code></pre></div></div>
 
 <ul>
-  <li>Page fetches: I/O. RSI calls: tuples handed up from the storage layer, a stand-in for CPU</li>
-  <li><code class="language-plaintext highlighter-rouge">W</code> is a knob: how many tuple-handoffs equal one disk page</li>
+  <li>A page fetch is one page read from disk, a data page or an index page. The same unit strawman 2 counted as “reads”
+    <ul>
+      <li>rows matter because they decide how many pages a plan touches: a scan pays per page, a non-clustered index about a page per row it finds, a clustered index per page of matching rows</li>
+    </ul>
+  </li>
+  <li>The paper’s formula has a second, CPU term: <code class="language-plaintext highlighter-rouge">COST = PAGE FETCHES + W × RSI CALLS</code>
+    <ul>
+      <li>RSI calls count the rows the storage layer passes up to the rest of the plan; <code class="language-plaintext highlighter-rouge">W</code> is a machine-specific weight that turns them into page-equivalents</li>
+      <li>the paper gives <code class="language-plaintext highlighter-rouge">W</code> no value, and on one table the term is the same for every path anyway (they all return the same rows). We count pages only</li>
+    </ul>
+  </li>
   <li>Single-user total resource use, not latency; no parallelism, no memory pressure, no network
     <ul>
       <li>every later optimizer widens this (Spanner: network and shard fan-out)</li>
@@ -193,15 +271,31 @@ WHERE  TITLE = 'CLERK'
 <ul>
   <li>Per table <code class="language-plaintext highlighter-rouge">T</code>
     <ul>
-      <li><code class="language-plaintext highlighter-rouge">NCARD(T)</code> rows</li>
-      <li><code class="language-plaintext highlighter-rouge">TCARD(T)</code> pages holding rows of <code class="language-plaintext highlighter-rouge">T</code></li>
-      <li><code class="language-plaintext highlighter-rouge">P(T)</code> fraction of the segment’s pages that hold <code class="language-plaintext highlighter-rouge">T</code> (tables can share a segment)</li>
+      <li><code class="language-plaintext highlighter-rouge">rows(T)</code>: how many rows</li>
+      <li><code class="language-plaintext highlighter-rouge">pages(T)</code>: how many pages hold <code class="language-plaintext highlighter-rouge">T</code>’s rows; a scan reads all of them</li>
     </ul>
   </li>
   <li>Per index <code class="language-plaintext highlighter-rouge">I</code>
     <ul>
-      <li><code class="language-plaintext highlighter-rouge">ICARD(I)</code> distinct keys</li>
-      <li><code class="language-plaintext highlighter-rouge">NINDX(I)</code> index pages</li>
+      <li><code class="language-plaintext highlighter-rouge">distinct(I)</code>: how many distinct key values. For an index on one column, that column’s distinct values, written <code class="language-plaintext highlighter-rouge">distinct(col)</code></li>
+      <li><code class="language-plaintext highlighter-rouge">index_pages(I)</code>: how many pages the index takes</li>
+    </ul>
+  </li>
+  <li>On our tables</li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>EMP             rows 10,000    pages 500         a scan reads 500 pages
+DEPT            rows 100       pages 5
+JOB             rows 50        pages 2
+EMP DNO index   distinct 100   index_pages 50    100 departments
+EMP JOB index   distinct 50    index_pages 50    50 job codes
+</code></pre></div></div>
+
+<ul>
+  <li>The paper’s names, for reading it: <code class="language-plaintext highlighter-rouge">NCARD</code> = rows, <code class="language-plaintext highlighter-rouge">TCARD</code> = pages, <code class="language-plaintext highlighter-rouge">ICARD</code> = distinct, <code class="language-plaintext highlighter-rouge">NINDX</code> = index_pages; below, <code class="language-plaintext highlighter-rouge">QCARD</code> = result_rows
+    <ul>
+      <li>CARD is short for cardinality, “how many”; the letters before it are not consistent (the N in <code class="language-plaintext highlighter-rouge">NCARD</code> counts rows, the N in <code class="language-plaintext highlighter-rouge">NINDX</code> pages), hence the plain names here</li>
+      <li>the paper keeps one more, <code class="language-plaintext highlighter-rouge">P</code>: several tables can share a disk segment, and a scan then reads the whole segment. Here every table has its own, so a scan reads exactly <code class="language-plaintext highlighter-rouge">pages(T)</code></li>
     </ul>
   </li>
   <li>Refreshed by a manual UPDATE STATISTICS, not on every write
@@ -219,8 +313,8 @@ WHERE  TITLE = 'CLERK'
   <li>Paper’s Table 1, abridged:</li>
 </ul>
 
-<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>col = v            1/ICARD(col)        if indexed, else 1/10
-col1 = col2        1/max(ICARD(col1), ICARD(col2))
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>col = v            1/distinct(col)     if indexed, else 1/10
+col1 = col2        1/max(distinct(col1), distinct(col2))
 col &gt; v            (high − v)/(high − low)  if numeric, else 1/3
 col BETWEEN a,b    (b − a)/(high − low)     if numeric, else 1/4
 col IN (list)      n × F(col = v), at most 1/2
@@ -230,10 +324,19 @@ NOT p              1 − F
 </code></pre></div></div>
 
 <ul>
-  <li>Result size of a block: <code class="language-plaintext highlighter-rouge">QCARD = Π NCARD(T) × Π F(boolean factors)</code></li>
-  <li>Rows the storage layer hands up: <code class="language-plaintext highlighter-rouge">RSICARD</code> uses only the <em>sargable</em> factors
+  <li>Why 1/10 when the column has no index
     <ul>
-      <li>sargable = <code class="language-plaintext highlighter-rouge">column op constant</code>; can be pushed into the scan as a search argument, filtered below the RSI</li>
+      <li><code class="language-plaintext highlighter-rouge">distinct</code> is kept per index, so an un-indexed column has no count to divide by: the optimizer knows nothing about its values</li>
+      <li>the paper: “a lack of statistics implies that the relation is small, so an arbitrary factor is chosen”. A big table that people search would have been given an index; no index suggests a small table, where a bad guess costs little</li>
+      <li>the paper says the constants have “no significance” beyond their order. Equality, the most selective test, gets the smallest guess, 1/10; a range gets 1/3, less selective than that but under 1/2, because “few queries use predicates that are satisfied by more than half the tuples”; BETWEEN gets 1/4, “between the default selectivity factors for an equal predicate and a range predicate”</li>
+      <li>Postgres gathers statistics on every column (<code class="language-plaintext highlighter-rouge">ANALYZE</code>), so it rarely needs a default; when it does, it guesses 1/200 for equality and 1/3 for a range</li>
+    </ul>
+  </li>
+  <li>Result size of a block: <code class="language-plaintext highlighter-rouge">result_rows = Π rows(T) × Π F(boolean factors)</code></li>
+  <li>Search arguments: a filter of the form <code class="language-plaintext highlighter-rouge">column op value</code> is <em>sargable</em>. A scan tests it as it reads, so failing rows are dropped at no extra page cost, and an index whose key starts with that column can use it to start and stop its range
+    <ul>
+      <li><code class="language-plaintext highlighter-rouge">SAL &gt; 20000</code> on EMP: <code class="language-plaintext highlighter-rouge">F = (25,000 − 20,000) / (25,000 − 5,000) = 1/4</code>, 2,500 of 10,000 rows</li>
+      <li><code class="language-plaintext highlighter-rouge">column = column</code> inside one table is not sargable: it is tested after the rows are read</li>
     </ul>
   </li>
   <li>Read the assumptions
@@ -252,9 +355,9 @@ NOT p              1 − F
 <ul>
   <li>Access paths on a table
     <ul>
-      <li>segment scan: every page of the segment, once</li>
+      <li>segment scan: every page of the table, once (the paper’s name; a segment is the disk area a table lives in)</li>
       <li>index scan: B-tree leaves in key order; optional start/stop keys; clustered or not</li>
-      <li>both accept search arguments so rejected rows never cross the RSI</li>
+      <li>both test search arguments as they read</li>
     </ul>
   </li>
   <li>An index <em>matches</em> a boolean factor if the factor is sargable and its column is a prefix of the index key
@@ -265,23 +368,27 @@ NOT p              1 − F
   <li>Cost per path (Table 2, abridged; <code class="language-plaintext highlighter-rouge">F</code> = product of matched factors)</li>
 </ul>
 
-<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>unique index, equality             1 + 1 + W
-clustered index, matching          F × (NINDX + TCARD) + W × RSICARD
-non-clustered index, matching      F × (NINDX + NCARD) + W × RSICARD
-                                   (TCARD instead of NCARD if the pages fit in the buffer)
-segment scan                       TCARD / P + W × RSICARD
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>unique index, equality             1 + 1
+clustered index, matching          F × (index_pages + pages)
+non-clustered index, matching      F × (index_pages + rows)
+index matching nothing             index_pages + pages, or index_pages + rows if non-clustered
+segment scan                       pages
 </code></pre></div></div>
 
 <ul>
-  <li>Why clustered vs non-clustered differ: <code class="language-plaintext highlighter-rouge">TCARD</code> vs <code class="language-plaintext highlighter-rouge">NCARD</code>
+  <li>A matching-nothing index scan reads the whole index and the whole table; it is worth it only for the order it delivers (interesting orders, below)</li>
+  <li>
+    <p>The paper adds a buffer variant: if the fetched pages fit in memory, a non-clustered index pays per page, not per row</p>
+  </li>
+  <li>Why clustered vs non-clustered differ (strawman 2): <code class="language-plaintext highlighter-rouge">pages</code> vs <code class="language-plaintext highlighter-rouge">rows</code>
     <ul>
-      <li>clustered: rows in key order on disk, one page fetch per <em>page</em></li>
-      <li>non-clustered: one page fetch per <em>row</em>, and the same page can come back many times</li>
+      <li>clustered: rows were inserted in the index’s key order and kept that way, so matching rows share pages; one page fetch per <em>page</em></li>
+      <li>non-clustered: the table is stored in some other order, so neighbouring index entries point at different pages; one page fetch per <em>row</em>, and the same page can come back many times</li>
     </ul>
   </li>
-  <li>Worked: EMP has 10,000 rows on 500 pages, non-clustered TITLE index, 4 titles
+  <li>Worked: <code class="language-plaintext highlighter-rouge">SAL &gt; 20000</code> on EMP, 10,000 rows on 500 pages, a quarter of them qualify. EMP is stored in DNO order, so the SAL index is non-clustered
     <ul>
-      <li>index path: <code class="language-plaintext highlighter-rouge">1/4 × (NINDX + 10,000)</code> ≈ 2,500+ pages</li>
+      <li>index path: <code class="language-plaintext highlighter-rouge">1/4 × (index_pages + rows)</code> = <code class="language-plaintext highlighter-rouge">1/4 × (40 + 10,000)</code> = 2,510 pages</li>
       <li>segment scan: 500 pages</li>
       <li>the “obvious” index loses by 5×</li>
     </ul>
@@ -289,7 +396,7 @@ segment scan                       TCARD / P + W × RSICARD
   <li>Interesting orders
     <ul>
       <li>an index scan or a sort produces rows in some order</li>
-      <li>an order is <em>interesting</em> if GROUP BY / ORDER BY (or, later, a join column) wants it</li>
+      <li>an order is <em>interesting</em> if GROUP BY / ORDER BY (or, later, a join column) wants it: a merge join, in the join section below, needs both inputs in join-column order</li>
       <li>keep the cheapest path for each interesting order <em>and</em> the cheapest unordered path</li>
       <li>at the end compare “ordered path” vs “cheapest path + sort”</li>
     </ul>
@@ -300,19 +407,43 @@ segment scan                       TCARD / P + W × RSICARD
 
 <ul>
   <li>Outer and inner: read one outer row, then find its matches in the inner</li>
-  <li>Nested loops
+  <li>Nested loops: rule 2’s lookups
     <ul>
       <li>for each outer row, scan the inner for matches</li>
       <li>with an index on the inner join column that scan is an index probe</li>
-      <li><code class="language-plaintext highlighter-rouge">C = C_outer + N × C_inner</code>, <code class="language-plaintext highlighter-rouge">N</code> = outer rows that survive their predicates</li>
+      <li><code class="language-plaintext highlighter-rouge">C = C_outer + outer_rows × C_inner</code>, <code class="language-plaintext highlighter-rouge">outer_rows</code> = outer rows that survive their predicates</li>
     </ul>
   </li>
-  <li>Merge scan
+  <li>Merge scan (a <em>merge join</em>): the other way to join two tables
     <ul>
-      <li>both inputs in join-column order; sort whichever is not</li>
-      <li>walk both once; the inner “scan” per outer row is the contiguous group with the same key</li>
-      <li><code class="language-plaintext highlighter-rouge">C = C_outer + N × C_inner</code>, same shape, but <code class="language-plaintext highlighter-rouge">C_inner</code> is tiny</li>
-      <li>sorted temp: <code class="language-plaintext highlighter-rouge">C_inner ≈ TEMPPAGES / N + W × RSICARD</code></li>
+      <li>walk both tables side by side in join-column order, the way you merge two sorted lists</li>
+      <li>each table is read once, with no lookups. The price: both must be in that order first; sort whichever is not</li>
+      <li>worth it when the lookups would be many (rule 2’s EMP first: 10,000), not few (DEPT first: 10)</li>
+      <li>
+        <p>On the paper’s Figure 1 rows, joining EMP with JOB on <code class="language-plaintext highlighter-rouge">EMP.JOB = JOB.JOB</code>. EMP is stored in DNO order (SMITH, JONES, DOE), so it is sorted into JOB order first</p>
+
+        <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>EMP, in JOB order        JOB, stored in JOB order
+  JONES    5               5  CLERK
+  DOE      5               6  TYPIST
+  SMITH   12               9  SALES
+                          12  MECHANIC
+
+JONES  5  vs   5 CLERK      equal: output (JONES, CLERK), next EMP row
+DOE    5  vs   5 CLERK      equal: output (DOE, CLERK), next EMP row
+SMITH 12  vs   5 CLERK      5 &lt; 12: next JOB row
+SMITH 12  vs   6 TYPIST     6 &lt; 12: next JOB row
+SMITH 12  vs   9 SALES      9 &lt; 12: next JOB row
+SMITH 12  vs  12 MECHANIC   equal: output (SMITH, MECHANIC), next EMP row: none left, done
+</code></pre></div>        </div>
+
+        <ul>
+          <li>the smaller side steps forward: both sides are sorted, so nothing later on the other side can match it. TYPIST and SALES have no employees and are passed over</li>
+          <li>on a match only EMP moves on: JOB values are unique in JOB, but the next EMP row may share one (DOE after JONES)</li>
+        </ul>
+      </li>
+      <li>the inner “scan” per outer row is the contiguous group with the same key</li>
+      <li><code class="language-plaintext highlighter-rouge">C = C_outer + outer_rows × C_inner</code>, same shape, but <code class="language-plaintext highlighter-rouge">C_inner</code> is tiny</li>
+      <li>a sorted inner is read once in total: summed over all outer rows, <code class="language-plaintext highlighter-rouge">outer_rows × C_inner</code> is its pages, once</li>
     </ul>
   </li>
   <li>Why only two: Blasgen and Eswaran (1976) found one of these was near-optimal except for tiny tables
@@ -334,7 +465,7 @@ segment scan                       TCARD / P + W × RSICARD
 <ul>
   <li>Join result does not depend on order; join cost does, hugely</li>
   <li>Candidates: <code class="language-plaintext highlighter-rouge">n!</code> orders × join methods × access paths. 3 tables: 6 orders. 8 tables: 40,320</li>
-  <li>Observation that saves you
+  <li>Observation that saves us
     <ul>
       <li>once the first <code class="language-plaintext highlighter-rouge">k</code> tables are joined, the best way to add the <code class="language-plaintext highlighter-rouge">(k+1)</code>-th depends only on <em>which</em> <code class="language-plaintext highlighter-rouge">k</code> tables, not on how they were ordered</li>
       <li>same predicates apply, same interesting orders, same methods</li>
@@ -366,7 +497,7 @@ for each triple:            best of (best plan for each pair) ⋈ remaining tabl
   <li>Interesting-order equivalence classes: <code class="language-plaintext highlighter-rouge">E.DNO = D.DNO</code> and <code class="language-plaintext highlighter-rouge">D.DNO = F.DNO</code> make all three the same order, so one plan covers them</li>
   <li>The paper’s example, in prose
     <ul>
-      <li>singles: EMP via DNO index (DNO order), EMP via JOB index (JOB order), EMP scan pruned; DEPT via DNO index; JOB via index and via scan, both kept</li>
+      <li>singles: EMP via DNO index (DNO order), EMP via JOB index (JOB order), EMP scan pruned; DEPT via DNO index; JOB via index and via scan, both kept (the paper’s assumed costs; on our sizes EMP’s 500-page scan is the cheapest unordered path and is kept, and JOB’s 2-page scan ties its TITLE index, so only one of them is kept)</li>
       <li>pairs: nested loop EMP→DEPT using DEPT.DNO index; EMP→JOB using JOB.JOB index; merge EMP(DNO order)⋈DEPT(DNO order) with no sort; or sort EMP by DNO first</li>
       <li>for each (set, order) keep the cheapest, drop the rest</li>
       <li>triples: extend each surviving pair with the remaining table, both methods</li>
@@ -374,12 +505,12 @@ for each triple:            best of (best plan for each pair) ⋈ remaining tabl
   </li>
   <li>Cost of optimizing: “a few thousand bytes and a few tenths of a second”; 8 tables in seconds on a 370/158
     <ul>
-      <li>a 2-way join costs about 5–20 page retrievals to optimize</li>
+      <li>a 2-way join costs about 5–20 database retrievals to optimize (calls into the storage system, not page fetches)</li>
     </ul>
   </li>
   <li>What lives on
     <ul>
-      <li>Postgres runs exactly this DP up to ~12 tables, then a genetic search</li>
+      <li>Postgres runs the same subset DP, bushy joins included, below 12 FROM items (<code class="language-plaintext highlighter-rouge">geqo_threshold</code>), then a genetic search</li>
       <li>Cascades-style optimizers (SQL Server, Calcite, CockroachDB, Spanner) do the same subset memoization top-down with rules</li>
       <li>most also consider bushy plans now</li>
     </ul>
@@ -407,8 +538,8 @@ for each triple:            best of (best plan for each pair) ⋈ remaining tabl
     <ul>
       <li>cardinality estimates off by orders of magnitude, mostly <em>under</em>, because of independence</li>
       <li>bad cardinalities hurt far more than a crude cost model</li>
-      <li>exhaustive enumeration is still worth it; DP with bad estimates still beats heuristics</li>
-      <li>the 1979 <em>search</em> survived; the 1979 <em>statistics</em> did not</li>
+      <li>exhaustive enumeration still pays, in the tail and with rich indexes; with primary-key indexes only, a greedy heuristic ties DP at the median (journal version, 2018)</li>
+      <li>the 1979 <em>enumeration</em> survived, though its left-deep search space had to widen to bushy plans; the 1979 <em>statistics</em> did not</li>
     </ul>
   </li>
   <li>Not in 1979: hash join, histograms, bushy plans, parallel plans, re-optimizing when estimates turn out wrong, plan caching that notices data changed</li>
@@ -418,7 +549,7 @@ for each triple:            best of (best plan for each pair) ⋈ remaining tabl
 
 <ol>
   <li>Parse into blocks; rewrite to CNF, push filters and projections</li>
-  <li>Cost = pages + W × tuples</li>
+  <li>Cost = page fetches (the paper adds a CPU term we leave out)</li>
   <li>Catalog statistics, refreshed by hand</li>
   <li>Per-predicate selectivity from Table 1; multiply</li>
   <li>Per table: cheapest access path per interesting order</li>
@@ -432,10 +563,10 @@ for each triple:            best of (best plan for each pair) ⋈ remaining tabl
 <ul>
   <li>Why is <code class="language-plaintext highlighter-rouge">×</code> then <code class="language-plaintext highlighter-rouge">σ</code> the same answer as <code class="language-plaintext highlighter-rouge">σ</code> then <code class="language-plaintext highlighter-rouge">⋈</code>? Which rewrite made strawman 1 die?</li>
   <li>Give a query where “use the index” is wrong. Which two statistics tell you so?</li>
-  <li>Why is <code class="language-plaintext highlighter-rouge">W</code> a knob rather than a constant?</li>
+  <li>Why is cost counted in pages rather than rows? What would rule 1 look like if it were rows?</li>
   <li>What breaks if <code class="language-plaintext highlighter-rouge">LOC</code> and <code class="language-plaintext highlighter-rouge">ZIP</code> are correlated and the optimizer multiplies their selectivities? Over- or underestimate?</li>
-  <li>Clustered vs non-clustered index: which statistic switches from <code class="language-plaintext highlighter-rouge">TCARD</code> to <code class="language-plaintext highlighter-rouge">NCARD</code>, and why?</li>
-  <li>What is a sargable predicate? Why does the optimizer care whether a filter runs below the RSI?</li>
+  <li>Clustered vs non-clustered index: which statistic switches from <code class="language-plaintext highlighter-rouge">pages</code> to <code class="language-plaintext highlighter-rouge">rows</code>, and why?</li>
+  <li>What is a sargable predicate, and what can a scan or an index do with one?</li>
   <li>What is an interesting order? Why keep a more expensive plan that produces one?</li>
   <li>Nested loop and merge scan have the same cost shape. Where does merge win?</li>
   <li>Why can the best plan for <code class="language-plaintext highlighter-rouge">{EMP, DEPT, JOB}</code> be built from the best plans for its 2-subsets? Where does that argument need “per interesting order”?</li>

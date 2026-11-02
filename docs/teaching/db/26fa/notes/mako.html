@@ -282,13 +282,6 @@ T2 [1,2,0]          roll back
   <li>cost: n entries per version. with many shards, merge entries (max of a group of shards). still monotone, so still correct; the fully merged case is the single timestamp above</li>
 </ul>
 
-<h2 id="trade-offs">Trade-offs</h2>
-<ul>
-  <li>throughput: no lock held across the WAN. 8.6x over geo-replicated baselines</li>
-  <li>latency: still one WAN replication before the client hears back</li>
-  <li>rollback is still coarse: a healthy-shard transaction with a large entry for the failed shard dies even if what it read happened to be durable</li>
-  <li>speculative state is visible only inside the system. clients only ever see COMMITTED results</li>
-</ul>
 
   </section>
 
