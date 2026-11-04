@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>CSE 532 Spanner SQL lecture | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="CSE 532 Spanner SQL lecture" />
+<meta property="og:locale" content="en_US" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="CSE 532 Spanner SQL lecture" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"CSE 532 Spanner SQL lecture","url":"/teaching/db/26fa/slides/README-SpannerSQL.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"><link type="application/atom+xml" rel="alternate" href="/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>CSE 532 Spanner SQL lecture</h1>
+         </header> -->
+
+  <section>
+    <h1 id="cse-532-spanner-sql-lecture">CSE 532 Spanner SQL lecture</h1>
+
+<p>November 4, 2026. Follows <code class="language-plaintext highlighter-rouge">../notes/spanner-sql.md</code> section by section and Bacon, Bales,
+Bruno, Cooper, Dickinson, Fikes, Fraser, Gubarev, Joshi, Kogan, Lloyd, Melnik, Rao, Shue,
+Taylor, van der Holst, and Woodford, <em>Spanner: Becoming a SQL System</em> (SIGMOD 2017,
+pages 331–343). It comes two days after the query-optimization lecture
+(<code class="language-plaintext highlighter-rouge">README-QueryOpt.md</code>) and builds on it: Apply is last lecture’s nested-loop join, the
+range-extraction strawman is last lecture’s matching index. The filter tree, with System
+R’s CNF and Table 1 as its foils, is in the lecture notes, not on slides.</p>
+
+<h2 id="present-and-share">Present and share</h2>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">DB26fa-SpannerSQL.pdf</code>: 50 logical slides, 102 PDF pages. Twenty slides build in steps,
+one click per step: slide 2 three (one bullet per click); slide 3 five (the System R
+column, then Spanner’s side one row per click); slide 4 two (SQL beside the store, then
+inside it); slide 9 two (Q1, then what it does in words); slide 10 two (strawman 1 with
+the array, then without it); slide 11 four (the parallel-database plan, then one reason
+it fails per click); slide 13 three (the rewrite, then the compiled tree, then the
+run-time calls); slide 14 four (slide 13’s compiled tree with a pull-up arrow, then one
+bullet per click); slide 16 six (the operators with the question, then one row’s verdict
+per click); slide 17 four (the split rule with its three operators, then one row’s local
+and final parts per click); slide 19 three (the interleaved tables, then the plan before,
+then after the two unions merge); slide 20 six (the start, then one per pull-up step of Q1);
+slide 22 three (the array, its points, the shards called); slide 24 three (Q2 and the
+index, then where each Denver customer lives, then Q2 as a join); slide 30 two (the one
+range, then the wanted seek per document); slide 31 six (Scan1, Scan2, the CrossApply
+that runs Scan2 per project, Scan3, the CrossApply that runs Scan3 per path, then a
+summary); slide 33 four (a long query and its stream, then one failure per click); slide
+34 four (the three strawmen, then each one’s cost per click); slide 36 two (a row
+returned twice, then a row never returned); and slide 38 four (server A stops, the
+token, the merged shard on server B, the resume). Each
+slide’s speaker note starts with its timing and, where it has any, its states. Present
+this version and advance one PDF page per click.</li>
+  <li><code class="language-plaintext highlighter-rouge">DB26fa-SpannerSQL-handout.pdf</code>: 50 pages with each slide’s final state, for students.</li>
+  <li><code class="language-plaintext highlighter-rouge">DB26fa-SpannerSQL.pdfpc</code>: presenter notes for all 102 pages and overlay metadata for
+pdfpc. Keep it next to the presentation PDF.</li>
+  <li><code class="language-plaintext highlighter-rouge">DB26fa-SpannerSQL.html</code>: the same slides as one self-contained page (about 4.8 MB,
+works offline) that counts 50 slides, not 102 pages; the keys are those of the
+query-optimization player (→ next step, ↓ / ↑ next or previous slide, S speaker
+window, O overview, F full screen, ? for the list). Build it with
+<code class="language-plaintext highlighter-rouge">make -C teaching/db/26fa/slides spannersql-export</code> (Python 3 and typst only; poppler’s
+pdftotext and pdfinfo add slide titles if present); it is generated from the
+presentation PDF and the pdfpc file, so rebuild it after any slide change. Like the
+query-optimization player it is a local build product and is not committed.</li>
+  <li><code class="language-plaintext highlighter-rouge">DB26fa-SpannerSQL.pptx</code>: a PowerPoint copy, built on request with
+<code class="language-plaintext highlighter-rouge">make -C teaching/db/26fa/slides DB26fa-SpannerSQL.pptx</code>: one slide per logical slide,
+each reveal step a full-slide picture that appears on click, and no speaker notes.
+Also a local build product, not committed.</li>
+</ul>
+
+<h2 id="route-and-timing">Route and timing</h2>
+
+<p>The deck has two parts: a main route sized for about 44 slides, and five backup slides.</p>
+
+<p>Slides 1–44 are the main route, ending on the recap, slide 44. They keep the four
+mechanisms the paper is about and the setup they need: the machine and interleaving
+(6–7), Q1 and the two strawmen (9–11), distribution as an operator with
+partitionability, joins written as Apply (18) and the walk that distributes Q1, then shard
+pruning (13–22), batched
+distributed joins (24–27), range extraction from the start/stop-key strawman to one scan
+per key column (29–31), and restarts up to resharding
+(33–38), then, after a “Spanner Lessons” divider (39), four lessons from production, a
+figure each: users wanted SQL, plans must not regress, scale first, then go relational, and
+SQL vs. NoSQL with one size fits all (40–43). The speaker-note timings total 61 minutes; they assume a brisk pace, so a slower one, with
+questions, fills an 80-minute
+slot.</p>
+
+<p>Slide 45 opens the backup: five self-contained slides, about a minute each, for when the
+main route finishes early, usable in any order: one call per Paxos group and shard
+affinity (46), Q2’s two-level plan (47), location hints (48), parallel consumers (49),
+and locking rows that are not there yet, a preview of Nov 11 (50).</p>
+
+<p>The backup’s speaker-note timings total 5 minutes. The handout carries both parts. Earlier
+versions also had an appendix: the slides cut from the main route (shards moving, Q1 on
+one machine, how Scan2 skips, one predicate’s three uses, the filter tree and the slides
+that prepare it, why extraction is safe, tokens across reruns and releases, what restarts
+bought, why inside, not beside), the pull-up rule cards, the notes’ optional parts (one
+SQL dialect, Ressi, the paper’s full lessons), the design assembled, where the idea went
+and the review questions. It was removed before publishing; the lecture notes cover all
+of it.</p>
+
+<p>The main route covers what the cut slides used to show in two ways. Slide 6’s speaker
+note says aloud that shards split, merge and move between groups at any time, which
+strawman 2 (slide 11) needs. Q1’s plan tree first appears as the start of the walk,
+slide 20, and strawman 1 (slide 10) speaks of running “all of Q1” rather than its tree.
+Otherwise it claims nothing that only the backup shows: the recap (44) shows six topics
+with a few reminder words each, no sentences, and its note says the line behind each,
+with Paxos-group calls and affinity left to backup slide 46. The notes of slides 22, 28
+and 44 point to the lecture notes for one predicate’s three uses, predicates with OR and
+NOT, and why extracted ranges may be too big but never too small, and the recap’s note
+points to the review questions at the end of the lecture notes.</p>
+
+<p>If time is shorter still, skip slides 2 (why Spanner became SQL), 14 (pull the
+union up) and 38 (resharding) first. Never skip slides
+15–16 and 20, partitionability and the walk that distributes Q1; slide 27, where
+batching makes the index pay per shard touched; slide 31, one scan per key column; or
+slides 35–36, the restart token and its timestamp.</p>
+
+<p>Title-only dividers mark the parts:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Divider slide</th>
+      <th>Part</th>
+      <th>Content slides</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>—</td>
+      <td>The job</td>
+      <td>1–4</td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td>Revisit Spanner</td>
+      <td>6–7</td>
+    </tr>
+    <tr>
+      <td>8</td>
+      <td>Example Query</td>
+      <td>9–11</td>
+    </tr>
+    <tr>
+      <td>12</td>
+      <td>Distribution as an operator</td>
+      <td>13–22</td>
+    </tr>
+    <tr>
+      <td>23</td>
+      <td>Joins across shards</td>
+      <td>24–27</td>
+    </tr>
+    <tr>
+      <td>28</td>
+      <td>Range extraction</td>
+      <td>29–31</td>
+    </tr>
+    <tr>
+      <td>32</td>
+      <td>Restarts</td>
+      <td>33–38</td>
+    </tr>
+    <tr>
+      <td>39</td>
+      <td>Spanner Lessons</td>
+      <td>40–43</td>
+    </tr>
+    <tr>
+      <td>—</td>
+      <td>Recap</td>
+      <td>44</td>
+    </tr>
+    <tr>
+      <td>45</td>
+      <td>Backup</td>
+      <td>46–50</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="the-locked-scenario">The locked scenario</h2>
+
+<p><strong>The shard map, the arrays, the Denver batch, the version counts and the restart traces
+are illustrative; the paper gives none.</strong> The paper’s own examples are its Figure 1 query
+(Q1 here), the Documents table of section 4 with its parameters P001 and 2017-01-01 and
+its ten documents under /proposals, the filter-tree predicate of Figure 4, and the
+resharding example of section 5 ([20, 30) merged into [10, 40)); the deck uses all but the
+filter tree, which is in the notes only,
+says in slide 29’s note which Documents values are the paper’s, names the documents doc1 to
+doc10 (so the path after doc1 is doc10, not the paper’s doc2), and adds the following,
+consistent with the notes:</p>
+
+<ul>
+  <li>Customer is sharded on <code class="language-plaintext highlighter-rouge">ckey</code> into S1 <code class="language-plaintext highlighter-rouge">[−∞, 250)</code> in G1, S2 <code class="language-plaintext highlighter-rouge">[250, 500)</code> in G2, S3
+<code class="language-plaintext highlighter-rouge">[500, 750)</code> in G1 and S4 <code class="language-plaintext highlighter-rouge">[750, +∞)</code> in G3; Sales is interleaved in Customer. G1
+holding two shards is what slide 46’s “four shards, three calls” relies on. Slide 6
+draws the map and its note asks the class to photograph it.</li>
+  <li>Q1’s array is <code class="language-plaintext highlighter-rouge">[7, 412, 7, 950]</code>: deduplicated to 7, 412 and 950, it calls S1, S2 and
+S4 and never S3 (slide 22).</li>
+  <li>Q2 (<code class="language-plaintext highlighter-rouge">c.city = 'Denver'</code>) uses the global index CustomerByCity, key (city, ckey),
+sharded on city at Chicago and Miami, so index shard I2 holds all of Denver. Denver’s
+entries are ckeys 7, 300, 310, 820 and 990: five rows in three Customer shards, five
+calls one after another without batching (slide 25), three calls in parallel with it
+(slide 27). Slide 25’s note uses 1,000 Denver customers for the row-at-a-time cost.</li>
+  <li>Each of the paper’s ten documents gets 1,000 versions: one start/stop range reads
+10,000 rows to keep 10 (slide 30), and the correlated scans of slide 31 seek each
+document’s one wanted version instead. Paths are strings, so in key order
+<code class="language-plaintext highlighter-rouge">/proposals/doc10</code> comes right after <code class="language-plaintext highlighter-rouge">/proposals/doc1</code>: slide 30’s strip shows those two
+and draws doc2 to doc9 as one box.</li>
+  <li>The restart scenario is one query over 50 shards streaming a million rows, 400,000
+consumed (slide 33). The timestamp figure moves one row between keys 10 and 90 at ts
+110, between halves read at ts 100 and ts 120 (slide 36). The resharding trace on slide
+38 uses the paper’s ranges with our timestamp, keys and servers.</li>
+</ul>
+
+<p>Statements the notes mark as “our reading” stay marked in the speaker notes; on screen
+they are stated plainly, like everything else, since no slide refers to the paper: hash
+sharding sufficing for <code class="language-plaintext highlighter-rouge">GroupBy(ckey)</code> (slide 16), the Apply pull-up rule, which slide
+47’s figure states beside Q2’s two-level plan, and why the key-column lock covers a range
+(slide 50).</p>
+
+<p>The deck as a whole and the notes teach the same content in the same order, and nothing
+on the slides goes beyond the notes except the lesson slides (40–43): their
+Cloud-customer caption, the six-step path with its advice arrow, the regression
+curves, and slide 43’s burden of running several systems and its goal of doing well
+across that range come from the paper’s sections 8 and 9, beyond the notes’ shorter
+lessons list.
+The main route presents a subset of the notes and the backup slides a little more; the
+rest, including “The rules, collected” and “Questions to review”, is in the notes only.
+The paper’s two slips (Timestamp once for Version, DocumentId in Figure 3) are mentioned
+only in slide 29’s note.</p>
+
+<h2 id="standards">Standards</h2>
+
+<p>The deck follows the query-optimization deck’s standard. Every slide stands alone in the
+handout: its claim is argued on the slide, and no technical word appears on screen
+before a slide has defined it. No slide cites another slide by number on screen; the
+cross-references live in the speaker notes and this README. Nor does any slide after the
+title refer to the paper: no “the paper says”, no quoted sentences, no “ours” against
+“the paper’s”. Each slide states its content directly, and the speaker notes keep the
+attributions and section numbers. On the main route, terms
+are defined where first used: <em>shard</em> on slide 3 (as key ranges) and with the <em>Paxos
+group</em> on slide 6, Bigtable and OLTP on slide 2, TiKV on slide 4, <em>sharding key</em> on
+slide 7, the array <code class="language-plaintext highlighter-rouge">@arr</code> on slide 9 (slide 10 says “the array”, not “IN list”),
+<code class="language-plaintext highlighter-rouge">CrossApply</code> and <code class="language-plaintext highlighter-rouge">OuterApply</code> on slide 18, <code class="language-plaintext highlighter-rouge">Top(5)</code> on slide 16,
+DistributedUnion and the <em>root server</em> on slide 13, <em>partitionability</em> and
+<code class="language-plaintext highlighter-rouge">OrderedUnionAll</code> on slide 15, OpLocal and OpFinal on slide 17,
+the <em>sharding-key filter</em> on slide 20, <em>shard pruning</em> on slide 22, DistributedApply,
+with <code class="language-plaintext highlighter-rouge">Batch</code> and <code class="language-plaintext highlighter-rouge">Unnest</code>, drawn on slide 26 (its caption was dropped),
+the <em>restart token</em> and the <em>snapshot timestamp</em> on slide 35, <code class="language-plaintext highlighter-rouge">t_safe</code> on slide 36, strong reads, the leader replica
+and wound-wait on slide 37. Slide 3 says “a query at one timestamp” rather than “snapshot”. The backup
+slides define their own terms: shard affinity (46), the <em>location hint</em> (48),
+<em>root-partitionable</em> and <em>parallel consumers</em> (49), and <em>phantom</em> (50).
+Slide 30 says “test key columns” rather than last lecture’s “factors match”, slide 18
+avoids “column op value”, slide 24 writes Q2 as a join over the index table rather
+than naming an access path, and slide 25 labels the nested-loop cost formula and names its
+outer and inner, so no slide needs the previous lecture’s vocabulary to be read. The
+speaker notes follow the same rule for what the lecturer says aloud: a term from Oct 19
+or last lecture gets a phrase of gloss where it first comes up (wound-wait, <code class="language-plaintext highlighter-rouge">t_safe</code>,
+interesting order, Table 1’s selectivity guesses, PD, a TiFlash learner).</p>
+
+<p>The look is the query-optimization deck’s: <code class="language-plaintext highlighter-rouge">spannersql-theme.typ</code> is a copy of
+<code class="language-plaintext highlighter-rouge">queryopt-theme.typ</code> with this lecture’s title, date and DOI, plus <code class="language-plaintext highlighter-rouge">size</code> and <code class="language-plaintext highlighter-rouge">inset</code>
+options on the <code class="language-plaintext highlighter-rouge">comparison</code> table helper. Serif titles, white pages, thin grey rules, red
+for the one operator, shard, call or range under discussion. Body text is 24pt with 1.5×
+baseline spacing and tables 21pt; dense slides were reflowed or split rather than set
+smaller. Code blocks use the <code class="language-plaintext highlighter-rouge">sql</code> helper, whose
+size argument is about 1.47 times the rendered size because the theme’s raw-text rules
+compound; the sizes in the source were picked by rendering.</p>
+
+<p><code class="language-plaintext highlighter-rouge">spannersql-diagrams.typ</code> holds 27 editable CeTZ figures and no images; three of them,
+<code class="language-plaintext highlighter-rouge">key-range-call</code>, <code class="language-plaintext highlighter-rouge">filter-tree</code> and <code class="language-plaintext highlighter-rouge">pax-block</code>, drew the removed appendix and are unused,
+kept so those slides can be restored. It copies the
+query-optimization deck’s drawing primitives rather than importing them, so the two decks
+can change independently. Every figure that draws Customer’s shard strip uses the same
+geometry (<code class="language-plaintext highlighter-rouge">shard-row</code>), so S1–S4 sit in the same place on slides 6, 10, 22, 24, 25 and 27;
+slide 49 instead groups the four shards under its two workers. Slides 24, 25 and 27 also
+open with the same one-line lead, so the index figure does not move between them.
+The four lesson figures, <code class="language-plaintext highlighter-rouge">sql-growth</code>, <code class="language-plaintext highlighter-rouge">plan-regression</code>, <code class="language-plaintext highlighter-rouge">sql-path</code> and <code class="language-plaintext highlighter-rouge">nosql-stack</code>,
+draw slides 40–43 in one state each; the second’s curves are illustrative, as its caption says.
+Twelve figures in the deck take a <code class="language-plaintext highlighter-rouge">stage:</code>, <code class="language-plaintext highlighter-rouge">step:</code> or <code class="language-plaintext highlighter-rouge">mode:</code> parameter, and several keep identical
+coordinates across states so the picture stays still while one thing changes:
+<code class="language-plaintext highlighter-rouge">q1-tree</code> draws the six states of slide 20 and slide 21
+(<code class="language-plaintext highlighter-rouge">"final"</code>), with only the union, and from step 1 its sharding-key filter, moving; <code class="language-plaintext highlighter-rouge">index-calls</code> draws slides 24, 25 and 27
+(<code class="language-plaintext highlighter-rouge">"index"</code> then <code class="language-plaintext highlighter-rouge">"scatter"</code>, <code class="language-plaintext highlighter-rouge">"row"</code>, <code class="language-plaintext highlighter-rouge">"batch"</code>); <code class="language-plaintext highlighter-rouge">doc-keys</code> draws slide 30
+(<code class="language-plaintext highlighter-rouge">"range"</code>; its <code class="language-plaintext highlighter-rouge">"seek"</code> mode drew a removed slide); <code class="language-plaintext highlighter-rouge">coupling</code> draws slide 4, the loose design alone and then both;
+<code class="language-plaintext highlighter-rouge">du-fanout</code> draws slide 13, the compiled tree alone and then the run-time calls too (slide 14’s
+<code class="language-plaintext highlighter-rouge">pull-up</code>, which takes no parameter, redraws that tree with a “pull up” arrow and the root and
+shard brackets); <code class="language-plaintext highlighter-rouge">parent-child-merge</code> draws slide 19’s three states, the interleaved shards, then the plan
+before, then after the two unions merge;
+<code class="language-plaintext highlighter-rouge">self-join-tree</code> draws the six states of slide 31, whose last
+state, the handout page, is the tree with a one-line summary; <code class="language-plaintext highlighter-rouge">beside</code>,
+<code class="language-plaintext highlighter-rouge">pruning</code>, <code class="language-plaintext highlighter-rouge">long-query</code>, <code class="language-plaintext highlighter-rouge">resume-ts</code> and <code class="language-plaintext highlighter-rouge">reshard-trace</code> draw the reveals of slides 10, 22, 33, 36
+and 38. Every reveal only
+adds to the picture except on slides 10, 20 and 31: on 10 the second state replaces the
+with-array picture (S3 greyed, thin arrows) with the no-array one, its caption
+keeping its baseline; on 20 the union moves up the tree and the panel reddens the current
+step; on 31 the tree is built bottom up, Scan1, Scan2, their CrossApply, Scan3, the top
+CrossApply, each red with its edges as it appears, with a line naming what it needs or feeds, and turns black on the next click.
+Multi-line text inside figures, prose and the scan boxes’ code alike, goes through the
+<code class="language-plaintext highlighter-rouge">spaced</code> helper, which gives it the body text’s 1.5× baseline spacing (CeTZ labels do not
+inherit the theme’s text edges); no figure text is smaller than 13pt. The last state of each slide is its handout page.</p>
+
+<p>The whole deck, every reveal state included, and the handout were rendered and
+inspected page by page at 960 × 540. An independent review then checked the slides and
+notes against the paper and the notes, the teaching standard, the figures and every
+rendered page; 70 findings survived a second reviewer’s attempt to refute them and were
+applied, the deck was rendered and inspected again, and a second, smaller review of the
+fixes found 27 more, mostly line wraps and README details, which were applied the same
+way. The deck was then cut to a 45-slide main route at the lecturer’s request, with five
+backup slides and the rest moved to the appendix; every speaker-note cross-reference was
+renumbered, the transitions around the cut slides were rewritten, and every page was
+inspected again. A term audit followed: four reviewers, three by slide range and one by
+term, listed every word used on screen or in a note before the deck defined it, and three
+skeptics tried to refute each; 80 survived (many duplicates). Thirty-eight on-screen
+edits and thirty-two note glosses were applied, every changed slide was re-rendered in each
+state, and seven that then wrapped badly or crowded the footer were reworded to fit.
+Slide 18 was also reworded so that Apply differs from last lecture’s nested loop in what
+its inner side can be, not in whether the inner side sees the outer row. The lecturer
+then moved the three slides that keep the AND/OR tree, build the filter tree and argue why
+extraction is safe into the appendix, beside the two that prepare the leaves, which
+shortened the main route to 42 slides and 58 minutes. A script renumbered every note
+cross-reference and each was checked against its target’s title, and the recap’s ranges
+line was rewritten so that the main route claims nothing it no longer shows. Three lesson slides
+with figures were then added before the recap (40–42), which moved the recap after them and
+the main route to 61 minutes; the appendix’s text lists of lessons (70–71) stay as the full
+version. Then slides 2 and 3 were swapped, so the reason Spanner became SQL comes before
+the bridge from System R, and slides 2, 3 and 4 got reveals (62 minutes); the dividers on
+slides 5 and 8 were retitled “Revisit Spanner” and “Example Query”. Later, one predicate’s
+three uses moved to the appendix (55), ahead of the filter-tree slides, and why inside, not
+beside followed it (63), after what restarts bought; the main route is now 43 slides, 60
+minutes. A “Spanner Lessons” divider (39) then went in before the lessons. Joins as Apply
+moved from right after Q1 to just before the first join the union meets (18), so the
+strawmen follow Q1 directly. A fourth lesson, SQL vs. NoSQL and one size fits all (43),
+went in before the recap, which now shows its six topics as reminder words. Scan2 skips
+then moved to the appendix too, so the main route is 44 slides, the recap at 44. Before
+publishing, the appendix was removed from the deck (50 slides); its notes references now
+point to the lecture notes. Four of the first round’s fixes also corrected the
+lecture notes, which the deck follows: the point-lookup hop (one call becomes two, not
+“most of the latency”), the doc10 key order, the NOT push-down example, and a
+floating-point SUM’s input order changing its value rather than the row order.</p>
+
+<h2 id="build">Build</h2>
+
+<p>Requires Typst 0.15 or later (checked with 0.15.1). Imports pin Touying 0.7.4 and CeTZ
+0.5.2.</p>
+
+<div class="language-sh highlighter-rouge"><div class="highlight"><pre class="highlight"><code>make <span class="nt">-C</span> teaching/db/26fa/slides spannersql
+make <span class="nt">-C</span> teaching/db/26fa/slides spannersql-export   <span class="c"># the HTML player</span>
+</code></pre></div></div>
+
+<p>Or, from this directory:</p>
+
+<div class="language-sh highlighter-rouge"><div class="highlight"><pre class="highlight"><code>typst compile DB26fa-SpannerSQL.typ
+typst compile <span class="nt">--input</span> <span class="nv">handout</span><span class="o">=</span><span class="nb">true </span>DB26fa-SpannerSQL.typ DB26fa-SpannerSQL-handout.pdf
+typst <span class="nb">eval</span> <span class="nt">--in</span> DB26fa-SpannerSQL.typ <span class="nt">--pretty</span> <span class="s1">'query(&lt;pdfpc-file&gt;).first().value'</span> <span class="o">&gt;</span> DB26fa-SpannerSQL.pdfpc
+</code></pre></div></div>
+
+<p>Fonts are the query-optimization deck’s: STIX Two Text titles, Helvetica Neue body, Menlo
+code, with Arial and STIX Two Math as per-glyph fallbacks for ⊆, ∘, ∪, ∩, ⇒ and ⋈.
+Building the slides does not need Jekyll; avoid regenerating the tracked <code class="language-plaintext highlighter-rouge">docs/</code> tree
+unless publishing.</p>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
+<script async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script>
+</body>
+
+</html>

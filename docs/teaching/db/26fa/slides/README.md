@@ -1,7 +1,7 @@
 # CSE 532 RocksDB lecture
 
-This directory also holds the query-optimization lecture; see
-[README-QueryOpt.md](README-QueryOpt.md).
+This directory also holds the query-optimization and Spanner SQL lectures; see
+[README-QueryOpt.md](README-QueryOpt.md) and [README-SpannerSQL.md](README-SpannerSQL.md).
 
 September 21, 2026. Follows `../notes/rocksdb.md` and Dong et al.,
 *Evolution of Development Priorities in Key-value Stores Serving Large-scale

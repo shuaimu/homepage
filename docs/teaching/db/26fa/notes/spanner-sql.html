@@ -3,15 +3,15 @@
  <meta charset="utf-8">
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
-<title>Spanner SQL: From Key-Value to Relational Database | Home</title>
+<title>Spanner SQL | Home</title>
 <meta name="generator" content="Jekyll v3.9.0" />
-<meta property="og:title" content="Spanner SQL: From Key-Value to Relational Database" />
+<meta property="og:title" content="Spanner SQL" />
 <meta property="og:locale" content="en_US" />
 <meta property="og:site_name" content="Home" />
 <meta name="twitter:card" content="summary" />
-<meta property="twitter:title" content="Spanner SQL: From Key-Value to Relational Database" />
+<meta property="twitter:title" content="Spanner SQL" />
 <script type="application/ld+json">
-{"@type":"WebPage","headline":"Spanner SQL: From Key-Value to Relational Database","url":"/teaching/db/26fa/notes/spanner-sql.html","@context":"https://schema.org"}</script>
+{"@type":"WebPage","headline":"Spanner SQL","url":"/teaching/db/26fa/notes/spanner-sql.html","@context":"https://schema.org"}</script>
 <!-- End Jekyll SEO tag -->
 <link rel="stylesheet" href="/assets/main.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"><link type="application/atom+xml" rel="alternate" href="/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
@@ -33,1324 +33,895 @@
           <article>
 
     <!-- <header>
-         <h1>Spanner SQL: From Key-Value to Relational Database</h1>
+         <h1>Spanner SQL</h1>
          </header> -->
 
   <section>
-    <h1 id="spanner-sql-from-key-value-to-relational-database">Spanner SQL: From Key-Value to Relational Database</h1>
+    
+<h1 id="spanner-sql">Spanner SQL</h1>
 
-<h2 id="evolution">Evolution</h2>
+<p>Paper: Bacon et al., <em>Spanner: Becoming a SQL System</em> (SIGMOD 2017).</p>
+
+<p>Last time (<a href="/teaching/db/26fa/slides/DB26fa-QueryOpt.pdf">slides</a>): System R plans a query for one machine; cost = page fetches. Today: SQL inside Spanner (Oct 19, <a href="spanner.html">notes</a>), where every table is sharded across machines, shards move mid-query, and what a plan must avoid is calls between machines.</p>
+
+<h2 id="the-job">The job</h2>
+
 <ul>
-  <li>Spanner started as a key-value store (2012)
+  <li>Spanner started as a key-value store: “NoSQL methods for point lookups and range scans”, multi-row transactions, reads at a timestamp
     <ul>
-      <li>Multi-row transactions</li>
-      <li>External consistency</li>
-      <li>Transparent failover across datacenters</li>
+      <li>by the 2012 paper (Oct 19) it already had schematized tables, interleaving, and “a SQL-based query language”</li>
     </ul>
   </li>
-  <li>Evolved into full SQL relational database system (2012-2017)
+  <li>What Google developers lacked on Bigtable: a schema, cross-row transactions, consistent replication, a real query language
     <ul>
-      <li>Strongly-typed schema system</li>
-      <li>SQL query processor</li>
-      <li>Initially “bolted on” but became tightly integrated</li>
+      <li>Megastore put transactions on top of Bigtable, still with no robust query language</li>
+      <li>so application code did its own joins and aggregations</li>
     </ul>
   </li>
-</ul>
-
-<h2 id="key-design-philosophy">Key Design Philosophy</h2>
-<ul>
-  <li>Storage architecture drives query execution design</li>
-  <li>Query processor demands drive storage evolution</li>
-  <li>Preserve massive scalability while offering full SQL</li>
-  <li>Hide transient failures completely from users</li>
-</ul>
-
-<h2 id="architecture-overview">Architecture Overview</h2>
-<ul>
-  <li>Geo-replicated, sharded relational database</li>
-  <li>Horizontal row-range sharding within datacenters</li>
-  <li>Shards replicated across geographically separated datacenters</li>
-  <li>Paxos consensus for replication (see Paxos notes)</li>
-  <li>External consistency via TrueTime</li>
-  <li>Snapshot isolation for reads (see isolation notes)</li>
-  <li>Two-phase locking (2PL) + two-phase commit (2PC) for transactions</li>
-  <li>LSM-tree based storage (evolved from SSTables to Ressi)</li>
-</ul>
-
-<h3 id="table-interleaving">Table Interleaving</h3>
-<ul>
-  <li>Child tables co-located with parent tables</li>
-  <li>Rows with matching key prefixes stored together</li>
-  <li>Example:
-    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Parent(key, name)
-Child(parent_key, child_key, value) INTERLEAVE IN PARENT
-
-Storage layout:
-Parent(K1) → [Child(K1,C1), Child(K1,C2), Child(K1,C3)]
-Parent(K2) → [Child(K2,C1), Child(K2,C2)]
-</code></pre></div>    </div>
-  </li>
-  <li>Shard boundaries preserve co-location</li>
-</ul>
-
-<h2 id="background-database-query-processing-basics">Background: Database Query Processing Basics</h2>
-
-<h3 id="relational-algebra">Relational Algebra</h3>
-<ul>
-  <li>Mathematical foundation for query processing</li>
-  <li>Set of operations on relations (tables)</li>
-  <li>Basic operators:
+  <li>Two ways to add SQL
     <ul>
-      <li><strong>Scan</strong>: Read rows from table</li>
-      <li><strong>Filter (σ)</strong>: Select rows matching condition</li>
-      <li><strong>Project (π)</strong>: Select specific columns</li>
-      <li><strong>Join (⋈)</strong>: Combine rows from two tables</li>
-      <li><strong>GroupBy/Aggregate</strong>: Group rows and compute aggregates</li>
-      <li><strong>Sort</strong>: Order rows by column values</li>
-      <li><strong>Union/Intersection/Difference</strong>: Set operations</li>
+      <li><em>loosely coupled</em>: SQL is a separate service over the storage API. F1 (2012, the AdWords database) did this over Spanner’s key-range reads</li>
+      <li><em>tightly coupled</em>: the compiler and executor live inside the Spanner servers and know where shards are, how they are replicated, and how they move. This paper</li>
+      <li>TiDB (Aug 31; its pushdown is in the paper, not our notes) sits in between: SQL in its own processes, but it ships single-table plan pieces (filters, aggregates, TopN) into TiKV; the rest runs in the SQL layer</li>
     </ul>
   </li>
+  <li>Spanner’s own first query engine was “bolted on”: it “used high-level APIs almost like an external application”</li>
+  <li>Making it tight changed both sides: how Spanner stores data changed how queries run (distribution, range extraction, restarts), and what queries need changed how it stores data (Ressi)</li>
+  <li>Workload: OLTP (point lookups, small joins, milliseconds) and analytics (long scans and aggregations, seconds to hours) in one system</li>
 </ul>
 
-<h3 id="relational-algebra-tree">Relational Algebra Tree</h3>
+<h2 id="the-machine-we-have">The machine we have</h2>
+
+<p>From earlier lectures:</p>
+
 <ul>
-  <li>Tree representation of query execution plan</li>
-  <li>Leaves: Base table scans</li>
-  <li>Internal nodes: Operators (joins, filters, etc.)</li>
-  <li>Root: Final result</li>
-  <li>Example:
-    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Query: SELECT name FROM Customer WHERE age &gt; 30
-
-Relational Algebra Tree:
-     Project(name)
-          ↓
-      Filter(age &gt; 30)
-          ↓
-     Scan(Customer)
-
-Execution: bottom-up
-1. Scan Customer table
-2. Filter rows where age &gt; 30
-3. Project only 'name' column
-</code></pre></div>    </div>
+  <li>Rows sorted by primary key and cut into contiguous key ranges, <em>shards</em>: TiDB’s Regions (Aug 31) under another name</li>
+  <li>Each shard belongs to one Paxos group, whose replicas sit in different datacenters
+    <ul>
+      <li>a Spanner group holds many shards; a TiDB Region, or a Mako shard (Oct 21), is its own group</li>
+      <li>Paxos group = unit of replication; shard = unit of key range</li>
+    </ul>
   </li>
+  <li>Read-write transactions: 2PL + 2PC (Oct 19). A wound-wait abort already makes the client retry</li>
+  <li>Lock-free reads at a timestamp, <em>strong</em> (<code class="language-plaintext highlighter-rouge">s_read = TT.now().latest</code>) or <em>stale</em> (an older one the client picks), served by any replica with <code class="language-plaintext highlighter-rouge">t_safe ≥</code> it (Oct 19). The paper calls both “snapshot” reads</li>
 </ul>
 
-<h3 id="logical-vs-physical-plans">Logical vs Physical Plans</h3>
+<p>New to us today (1 and 3 are already in the 2012 paper, as moving directories and INTERLEAVE IN PARENT):</p>
 
-<h4 id="logical-plan">Logical Plan</h4>
-<ul>
-  <li>Abstract representation using relational algebra</li>
-  <li>Describes WHAT to compute</li>
-  <li>Independent of execution strategy</li>
-  <li>Example: <code class="language-plaintext highlighter-rouge">Join(Customer, Orders)</code></li>
-</ul>
-
-<h4 id="physical-plan">Physical Plan</h4>
-<ul>
-  <li>Concrete execution strategy</li>
-  <li>Describes HOW to compute</li>
-  <li>Specifies algorithms and data movement</li>
-  <li>Example: <code class="language-plaintext highlighter-rouge">HashJoin(Customer, Orders)</code> or <code class="language-plaintext highlighter-rouge">NestedLoopJoin(Customer, Orders)</code></li>
-</ul>
-
-<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Logical Plan:              Physical Plan:
-    Join                      HashJoin
-   /    \                    /        \
-Customer Orders     Scan(Customer)  Scan(Orders)
-                      ↓                ↓
-                   Build Hash      Probe Hash
-</code></pre></div></div>
-
-<h3 id="query-compilation-pipeline">Query Compilation Pipeline</h3>
-<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>SQL Text
-  ↓
-Parsing → Abstract Syntax Tree (AST)
-  ↓
-Semantic Analysis → Resolved AST (with types, schema)
-  ↓
-Logical Optimization → Logical Plan
-  ↓
-Physical Planning → Physical Plan
-  ↓
-Code Generation → Executable Query Plan
-  ↓
-Execution
-</code></pre></div></div>
-
-<h3 id="common-join-operators">Common Join Operators</h3>
-
-<h4 id="crossapply-correlated-join">CrossApply (Correlated Join)</h4>
-<ul>
-  <li>For each row from left input, evaluate right expression</li>
-  <li>Right side can reference columns from left row</li>
-  <li>Concatenates all results</li>
-  <li>Example:
-    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>CrossApply(
-  Scan(Customer),
-  λc. Scan(Orders WHERE customer_id = c.id)
-)
-
-For each customer c:
-  Find all orders for c
-  Output: (c.name, c.id, order.id, order.amount)
-</code></pre></div>    </div>
-  </li>
-</ul>
-
-<h4 id="outerapply">OuterApply</h4>
-<ul>
-  <li>Like CrossApply but emits row even if right side is empty</li>
-  <li>Similar to LEFT OUTER JOIN</li>
-  <li>Example:
-    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>OuterApply(
-  Scan(Customer),
-  λc. Scan(Orders WHERE customer_id = c.id)
-)
-
-Customer with no orders → (c.name, c.id, NULL, NULL)
-</code></pre></div>    </div>
-  </li>
-</ul>
-
-<h4 id="nested-loop-join">Nested Loop Join</h4>
-<ul>
-  <li>Simple join algorithm</li>
-  <li>For each row in outer table, scan inner table</li>
-  <li>Inefficient but works for any join condition
-    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>for each row r1 in Table1:
-for each row r2 in Table2:
-  if join_condition(r1, r2):
-    output (r1, r2)
-</code></pre></div>    </div>
-  </li>
-</ul>
-
-<h4 id="hash-join">Hash Join</h4>
-<ul>
-  <li>Build hash table on one input</li>
-  <li>Probe with other input</li>
-  <li>Efficient for equi-joins
-```
-Build phase:
-for each row r in Table1:
-  hash_table[r.key] = r</li>
-</ul>
-
-<p>Probe phase:
-  for each row s in Table2:
-    if s.key in hash_table:
-      output (hash_table[s.key], s)</p>
-<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
-### Query Optimization Concepts
-
-#### Predicate Pushdown
-* Move filters closer to data sources
-* Reduces data movement
-</code></pre></div></div>
-<p>Before:                     After:
-  Filter(age &gt; 30)           Join
-       ↓                    /    <br />
-     Join          Filter(age&gt;30) Orders
-    /    \         ↓
-Customer Orders   Scan(Customer)</p>
-
-<p>Fewer rows sent to join!</p>
-<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
-#### Projection Pushdown
-* Select only needed columns early
-* Reduces data size in pipeline
-
-#### Transformation Rules
-* Equivalence rules for rewriting plans
-* Examples:
-  * Filter(A AND B) = Filter(A) ∘ Filter(B)
-  * Join is commutative: R ⋈ S = S ⋈ R
-  * Join is associative: (R ⋈ S) ⋈ T = R ⋈ (S ⋈ T)
-
-### Distributed Query Execution Basics
-
-#### Data Partitioning
-* Horizontal partitioning: Split rows across servers
-* Range partitioning: Rows with keys in [a,b) on server 1
-* Hash partitioning: Hash(key) mod N determines server
-
-#### Distributed Operators
-* **Partition**: Route data to servers based on key
-* **Gather**: Collect data from multiple servers
-* **Broadcast**: Send data to all servers
-* **Shuffle**: Redistribute data (e.g., for distributed join)
-
-#### Example: Distributed GroupBy
-</code></pre></div></div>
-<p>Query: SELECT dept, SUM(salary) FROM Employee GROUP BY dept</p>
-
-<p>If data partitioned by employee_id (not dept):</p>
-
-<p>Plan:</p>
 <ol>
-  <li>
-    <p>Local partial aggregation (each server)
-GroupBy(dept) → partial sums</p>
+  <li>Shards move. Spanner splits, merges, and moves shards between Paxos groups to balance load, at any time, <em>including while a query is reading them</em>, and nothing tells the query</li>
+  <li>Calls are addressed to key ranges, not machines: the <em>coprocessor framework</em>
+    <ul>
+      <li>takes “run this on keys [250, 500)”</li>
+      <li>finds the Paxos group that owns that range now; picks the nearest replica fresh enough for the read</li>
+      <li>reroutes if the range moves mid-call; retries transient faults</li>
+    </ul>
   </li>
-  <li>
-    <p>Shuffle by dept
-Partition data so same dept goes to same server</p>
-  </li>
-  <li>
-    <p>Final aggregation
-Merge partial sums per dept
-```</p>
-  </li>
+  <li>Interleaving. A child table can be stored inside its parent</li>
 </ol>
 
-<h3 id="spanner-specific-concepts">Spanner-Specific Concepts</h3>
-
-<h4 id="sharding">Sharding</h4>
-<ul>
-  <li>Table split into contiguous key ranges</li>
-  <li>Each shard = one key range</li>
-  <li>Example: Table with keys 1-1000
-    <ul>
-      <li>Shard 1: [1, 250)</li>
-      <li>Shard 2: [250, 500)</li>
-      <li>Shard 3: [500, 750)</li>
-      <li>Shard 4: [750, 1000]</li>
-    </ul>
-  </li>
-</ul>
-
-<h4 id="coprocessor-framework">Coprocessor Framework</h4>
-<ul>
-  <li>RPC addressed to key/key range, not server</li>
-  <li>Framework determines:
-    <ul>
-      <li>Which Paxos group owns the data</li>
-      <li>Which replica to use (nearest, most up-to-date)</li>
-    </ul>
-  </li>
-  <li>Transparently handles:
-    <ul>
-      <li>Data movement (resharding)</li>
-      <li>Server failures</li>
-      <li>Network issues</li>
-    </ul>
-  </li>
-</ul>
-
-<h4 id="distribution-vs-execution">Distribution vs Execution</h4>
-<ul>
-  <li><strong>Distribution</strong>: Decide which servers to query</li>
-  <li><strong>Execution</strong>: Run query logic on each server</li>
-  <li>Distribution operators: DistributedUnion, DistributedApply</li>
-  <li>Execution operators: Scan, Filter, Join, etc.</li>
-</ul>
-
-<h2 id="query-distribution">Query Distribution</h2>
-
-<h3 id="from-logic-to-physical-plan">From Logic to Physical Plan</h3>
-
-<h4 id="distributed-union-operator">Distributed Union Operator</h4>
-<ul>
-  <li>Core building block for distributed execution</li>
-  <li>Inserted above every table scan in relational algebra</li>
-  <li>Transforms global scan into distributed local scans:
-    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Scan(T) ⇒ DistributedUnion[shard ⊆ T](Scan(shard))
-</code></pre></div>    </div>
-  </li>
-</ul>
-
-<h4 id="partitionability-property">Partitionability Property</h4>
-<ul>
-  <li>Key requirement for pushing operations down to shards</li>
-  <li>For operation F to be pushed down:
-    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>F(Scan(T)) = OrderedUnionAll[shard ⊆ T](F(Scan(shard)))
-</code></pre></div>    </div>
-  </li>
-  <li>Operations that can be pushed down:
-    <ul>
-      <li>Projection and filtering (always)</li>
-      <li>Sorting/GroupBy when sharding columns are prefix</li>
-      <li>Joins between interleaved tables</li>
-    </ul>
-  </li>
-</ul>
-
-<h4 id="multi-stage-processing">Multi-Stage Processing</h4>
-<ul>
-  <li>Operations pushed down even when not fully partitionable</li>
-  <li>Example: Top-K query
-    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Top(N) ⇒ TopFinal(DistributedUnion[shard](TopLocal(N, shard)))
-</code></pre></div>    </div>
-  </li>
-  <li>Each shard computes local Top N</li>
-  <li>Final stage merges results</li>
-</ul>
-
-<h4 id="example-query-plan">Example Query Plan</h4>
-<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Query: SELECT ANY_VALUE(c.name), SUM(s.amount) total
-       FROM Customer c JOIN Sales s ON c.ckey=s.ckey
-       WHERE s.type='global' AND c.ckey IN UNNEST(@array)
-       GROUP BY c.ckey ORDER BY total DESC LIMIT 5
-
-Initial Plan:
-    Top(5)
-      ↓
-    GroupBy(ckey)
-      ↓
-    CrossApply (Join)
-    /         \
-  Scan(Customer)  Scan(Sales)
-
-After Distribution Optimization:
-           Top(5) ← final
-             ↓
-    DistributedUnion
-             ↓
-         Top(5) ← local per shard
-             ↓
-       GroupBy(ckey) ← pushed to shards
-             ↓
-       CrossApply
-       /         \
-  Scan(Customer)  Scan(Sales) ← executed locally on each shard
-  Filter: ckey IN @array
-</code></pre></div></div>
-
-<h3 id="distributed-execution">Distributed Execution</h3>
-
-<h4 id="shard-pruning">Shard Pruning</h4>
-<ul>
-  <li>Extract sharding key ranges from query predicates</li>
-  <li>Only query relevant shards</li>
-  <li>Example: <code class="language-plaintext highlighter-rouge">WHERE ckey IN (1, 5, 10)</code> → query only 3 shards</li>
-</ul>
-
-<h4 id="parallel-execution">Parallel Execution</h4>
-<ul>
-  <li>Dispatch subqueries to shards in parallel</li>
-  <li>Use coprocessor framework to route to nearest replica</li>
-  <li>Adjustable parallelism for load isolation</li>
-</ul>
-
-<h4 id="batching-strategy">Batching Strategy</h4>
-<ul>
-  <li>Single call per server (hosting multiple shards)</li>
-  <li>vs. one call per shard</li>
-  <li>Minimizes cross-machine calls</li>
-</ul>
-
-<h4 id="shard-affinity-optimization">Shard Affinity Optimization</h4>
-<ul>
-  <li>Detect when shards are co-located locally</li>
-  <li>Avoid remote calls for small databases</li>
-  <li>Important for queries on shared sharding keys (e.g., User object)</li>
-</ul>
-
-<h3 id="distributed-joins">Distributed Joins</h3>
-
-<h4 id="batched-apply-join">Batched Apply Join</h4>
-<ul>
-  <li>Problem: Naive apply join = 1 RPC per row (too expensive!)</li>
-  <li>Solution: Batch rows before remote calls</li>
-</ul>
-
-<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Transformation:
-  CrossApply(&lt;input&gt;, &lt;map&gt;)
-    ↓
-  DistributedApply
-    ↓
-  Batch(&lt;input&gt;) → $batch
-    ↓
-  DistributedUnion
-    ↓
-  Unnest($batch) → CrossApply(&lt;row&gt;, &lt;map&gt;)
-</code></pre></div></div>
-
-<ul>
-  <li>Example use cases:
-    <ul>
-      <li>Join secondary index with base table</li>
-      <li>Inner/Left/Semi-joins on remote table keys</li>
-      <li>Turn full table scans into minimal range scans</li>
-    </ul>
-  </li>
-</ul>
-
-<h4 id="batched-apply-shard-pruning">Batched Apply Shard Pruning</h4>
-<ol>
-  <li>Evaluate sharding key filter for each row in batch</li>
-  <li>Merge sharding key ranges across all rows</li>
-  <li>Compute minimal set of shards</li>
-  <li>Construct minimal batch per shard</li>
-  <li>Execute in parallel on relevant shards</li>
-</ol>
-
-<h3 id="query-distribution-apis">Query Distribution APIs</h3>
-
-<h4 id="single-consumer-api">Single-Consumer API</h4>
-<ul>
-  <li>Query sent to root server</li>
-  <li>Location hint extraction:
-    <ul>
-      <li>Analyze outermost distribution operator</li>
-      <li>Extract pattern for sharding keys from query parameters</li>
-      <li>Cache on client for subsequent executions</li>
-    </ul>
-  </li>
-  <li>Direct routing to relevant server</li>
-  <li>Example:
-    <div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">SELECT</span> <span class="o">*</span> <span class="k">FROM</span> <span class="n">Parent</span> <span class="k">WHERE</span> <span class="k">key</span> <span class="o">=</span> <span class="o">@</span><span class="n">t</span>
-</code></pre></div>    </div>
-    <p>→ Sent directly to server owning shard with key=@t</p>
-  </li>
-</ul>
-
-<h4 id="parallel-consumer-api">Parallel-Consumer API</h4>
-<ul>
-  <li>For large-scale data processing pipelines</li>
-  <li>Two-stage process:
-    <ol>
-      <li>Partition query into N parts (returns partition descriptors)</li>
-      <li>Execute each partition from separate machines in parallel</li>
-    </ol>
-  </li>
-  <li>Requires root-partitionable queries
-    <ul>
-      <li>Must have DistributedUnion at root after compilation</li>
-    </ul>
-  </li>
-  <li>Example:
-    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Table Parent with 10 shards [0,100), [100,200), ..., [900,1000)
-Request 5-way parallelism
-→ Returns 5 descriptors, each covering 2 shards
-→ 5 clients execute in parallel, each queries 2 shards
-</code></pre></div>    </div>
-  </li>
-</ul>
-
-<h2 id="query-range-extraction">Query Range Extraction</h2>
-
-<h3 id="three-types-of-range-extraction">Three Types of Range Extraction</h3>
-
-<h4 id="1-distribution-range-extraction">1. Distribution Range Extraction</h4>
-<ul>
-  <li>Determines which shards to query</li>
-  <li>Uses sharding key prefix (e.g., ProjectId)</li>
-  <li>Routes query to correct servers</li>
-</ul>
-
-<h4 id="2-seek-range-extraction">2. Seek Range Extraction</h4>
-<ul>
-  <li>Determines what data to read from storage</li>
-  <li>Uses full or longer key prefix</li>
-  <li>Converts full-shard scans to targeted seeks</li>
-  <li>Trade-off: cost of extraction vs. benefit of smaller reads</li>
-</ul>
-
-<h4 id="3-lock-range-extraction">3. Lock Range Extraction</h4>
-<ul>
-  <li>Determines what ranges to lock for transactions</li>
-  <li>Fine-grained locks improve concurrency</li>
-  <li>Trade-off: many fine locks vs. few coarse locks</li>
-  <li>Spanner supports column-level locking</li>
-</ul>
-
-<h4 id="example">Example</h4>
-<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">Table</span> <span class="n">Documents</span><span class="p">(</span><span class="n">ProjectId</span><span class="p">,</span> <span class="n">DocumentPath</span><span class="p">,</span> <span class="nb">Timestamp</span><span class="p">)</span>
-<span class="n">Sharding</span> <span class="k">key</span><span class="p">:</span> <span class="n">ProjectId</span>
-
-<span class="n">Query</span><span class="p">:</span>
-<span class="k">SELECT</span> <span class="o">*</span> <span class="k">FROM</span> <span class="n">Documents</span>
-<span class="k">WHERE</span> <span class="n">ProjectId</span> <span class="o">=</span> <span class="s1">'P001'</span>
-  <span class="k">AND</span> <span class="n">STARTS_WITH</span><span class="p">(</span><span class="n">DocumentPath</span><span class="p">,</span> <span class="s1">'/proposals'</span><span class="p">)</span>
-  <span class="k">AND</span> <span class="k">Version</span> <span class="o">=</span> <span class="s1">'2017-01-01'</span>
-
-<span class="n">Distribution</span> <span class="n">ranges</span><span class="p">:</span> <span class="p">(</span><span class="n">P001</span><span class="p">)</span>
-<span class="n">Seek</span> <span class="n">ranges</span><span class="p">:</span> <span class="p">(</span><span class="n">P001</span><span class="p">,</span> <span class="o">/</span><span class="n">proposals</span><span class="o">/</span><span class="n">doc1</span><span class="p">,</span> <span class="mi">2017</span><span class="o">-</span><span class="mi">01</span><span class="o">-</span><span class="mi">01</span><span class="p">),</span>
-             <span class="p">(</span><span class="n">P001</span><span class="p">,</span> <span class="o">/</span><span class="n">proposals</span><span class="o">/</span><span class="n">doc2</span><span class="p">,</span> <span class="mi">2017</span><span class="o">-</span><span class="mi">01</span><span class="o">-</span><span class="mi">01</span><span class="p">),</span> <span class="p">...</span>
-<span class="k">Lock</span> <span class="n">ranges</span><span class="p">:</span> <span class="k">Key</span> <span class="n">columns</span><span class="p">:</span> <span class="p">(</span><span class="n">P001</span><span class="p">,</span> <span class="o">/</span><span class="n">proposals</span><span class="p">)</span>
-             <span class="n">Non</span><span class="o">-</span><span class="k">key</span> <span class="n">columns</span><span class="p">:</span> <span class="n">Same</span> <span class="k">as</span> <span class="n">seek</span> <span class="n">ranges</span>
-</code></pre></div></div>
-
-<h3 id="compile-time-rewriting">Compile-Time Rewriting</h3>
-
-<h4 id="correlated-self-joins">Correlated Self-Joins</h4>
-<ul>
-  <li>Transform filtered scan into tree of correlated scans</li>
-  <li>One scan per key column</li>
-  <li>Extract ranges for successive key columns</li>
-</ul>
-
-<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Original:
-  Scan(Documents)
-  Filter: ProjectId=@p AND STARTS_WITH(path,'/proposals') AND Version=@v
-
-Rewritten:
-         CrossApply
-        /          \
-   CrossApply    Scan3(Documents.*)
-   /        \    Filter: ProjectId=@pid AND
-Scan1      Scan2      DocumentPath=@dpath AND Version=@v
-(ProjectId) (DocumentPath)
-Filter:     Filter:
-ProjectId   ProjectId=@pid AND
-=@p         STARTS_WITH(path,'/proposals')
-Outputs:    Outputs:
-@pid        @dpath
-</code></pre></div></div>
-
-<h4 id="expression-normalization">Expression Normalization</h4>
-<ul>
-  <li>Push NOT to leaf predicates</li>
-  <li>Isolate key column references
-    <ul>
-      <li><code class="language-plaintext highlighter-rouge">1 &gt; k</code> becomes <code class="language-plaintext highlighter-rouge">k &lt; 1</code></li>
-      <li><code class="language-plaintext highlighter-rouge">NOT(k &gt; 1)</code> becomes <code class="language-plaintext highlighter-rouge">k &lt;= 1</code></li>
-    </ul>
-  </li>
-  <li>Discretize small integer intervals
-    <ul>
-      <li><code class="language-plaintext highlighter-rouge">k BETWEEN 5 AND 7</code> → explicit enumeration: 5, 6, 7</li>
-      <li><code class="language-plaintext highlighter-rouge">k BETWEEN 5 AND 7000</code> → non-enumerable, requires table read</li>
-    </ul>
-  </li>
-  <li>Eliminate complex conditions (subqueries, expensive functions)</li>
-</ul>
-
-<h4 id="post-filtering">Post-Filtering</h4>
-<ul>
-  <li>Rewritten plan may not fully absorb original filter</li>
-  <li>Add post-filter for conditions not expressible as seeks</li>
-  <li>Example:
-    <div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">(</span><span class="n">k1</span><span class="o">=</span><span class="mi">1</span> <span class="k">AND</span> <span class="n">k2</span><span class="o">=</span><span class="nv">"a"</span> <span class="k">AND</span> <span class="n">REGEXP_MATCH</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="o">@</span><span class="n">param</span><span class="p">))</span> <span class="k">OR</span>
-<span class="p">(</span><span class="n">k1</span><span class="o">=</span><span class="mi">2</span> <span class="k">AND</span> <span class="n">k2</span><span class="o">&lt;</span><span class="nv">"b"</span><span class="p">)</span>
-
-<span class="n">Rewritten</span> <span class="n">plan</span><span class="p">:</span>
-<span class="o">-</span> <span class="n">Seek</span> <span class="k">to</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="nv">"a"</span><span class="p">)</span> <span class="o">+</span> <span class="n">post</span><span class="o">-</span><span class="n">filter</span> <span class="k">with</span> <span class="n">REGEXP</span>
-<span class="o">-</span> <span class="n">Seek</span> <span class="k">to</span> <span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="o">*</span><span class="p">)</span> <span class="k">with</span> <span class="n">k2</span> <span class="o">&lt;</span> <span class="nv">"b"</span>
-</code></pre></div>    </div>
-  </li>
-</ul>
-
-<h3 id="filter-tree">Filter Tree</h3>
-
-<h4 id="dual-purpose-data-structure">Dual Purpose Data Structure</h4>
-<ul>
-  <li>Simultaneously used for:
-    <ol>
-      <li>Range extraction via interval arithmetic</li>
-      <li>Post-filtering of emitted rows</li>
-    </ol>
-  </li>
-</ul>
-
-<h4 id="how-it-works">How It Works</h4>
-<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Filter: (k1=1 AND k2="a" AND REGEXP(...)) OR (k1=2 AND k2&lt;"b")
-
-Filter Tree:
-                    OR (union)
-                   /          \
-         AND (intersection)  AND (intersection)
-        /      |      \           /        \
-      k1=1   k2="a"  REGEXP    k1=2      k2&lt;"b"
-
-Extract k1 ranges:
-  Left AND:  [1,1] ∩ (-∞,+∞) ∩ (-∞,+∞) = [1,1]
-  Right AND: [2,2] ∩ (-∞,+∞) = [2,2]
-  OR:        [1,1] ∪ [2,2] = [1,2]
-
-Extract k2 ranges (given k1=1):
-  Left AND:  ["a","a"] but REGEXP unknown → ["a","a"]
-  Right AND: Unsatisfiable (k1≠2) → empty
-  OR:        ["a","a"]
-
-Extract k2 ranges (given k1=2):
-  Left AND:  Unsatisfiable (k1≠1) → empty
-  Right AND: (-∞,"b")
-  OR:        (-∞,"b")
-</code></pre></div></div>
-
-<h4 id="memoization-and-pruning">Memoization and Pruning</h4>
-<ul>
-  <li>Cache predicate values that haven’t changed</li>
-  <li>Prune unsatisfiable branches (empty intervals)</li>
-  <li>Skip tautologies (infinite intervals)</li>
-  <li>Efficient post-filter evaluation</li>
-</ul>
-
-<h3 id="properties">Properties</h3>
-<ul>
-  <li>Produces minimal key ranges when possible</li>
-  <li>Range computation is an approximation
-    <ul>
-      <li>Exact isolation may require solving polynomials</li>
-      <li>Diminishing returns for complex expressions</li>
-    </ul>
-  </li>
-  <li>Distribution range extraction is heuristic
-    <ul>
-      <li>May send subquery to irrelevant shard</li>
-      <li>Empty result returned if no matching data</li>
-    </ul>
-  </li>
-  <li>Trade-offs:
-    <ul>
-      <li>Seeks vs. scans (I/O cost vs. CPU cost)</li>
-      <li>Lock granularity (concurrency vs. overhead)</li>
-    </ul>
-  </li>
-</ul>
-
-<h2 id="query-restarts">Query Restarts</h2>
-
-<h3 id="what-are-query-restarts">What Are Query Restarts?</h3>
-<ul>
-  <li>Automatic recovery from transient failures</li>
-  <li>Query continues from where it left off</li>
-  <li>No client retry loops needed</li>
-  <li>Works even after partial results consumed</li>
-</ul>
-
-<h3 id="hidden-transient-failures">Hidden Transient Failures</h3>
-<ul>
-  <li>Network disconnects</li>
-  <li>Machine reboots</li>
-  <li>Process crashes</li>
-  <li>Distributed wait (replica not caught up)</li>
-  <li>Data movement (resharding during query)</li>
-</ul>
-
-<h3 id="benefits">Benefits</h3>
-
-<h4 id="simpler-programming-model">Simpler Programming Model</h4>
-<ul>
-  <li>No retry loops in application code</li>
-  <li>No complex backoff logic</li>
-  <li>Multi-module queries possible</li>
-  <li>Just set realistic deadlines</li>
-</ul>
-
-<h4 id="streaming-pagination">Streaming Pagination</h4>
-<ul>
-  <li>Long-running queries instead of:
-    <div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">-- Traditional paging (can eliminate ORDER BY!)</span>
-<span class="k">SELECT</span> <span class="p">...</span> <span class="k">LIMIT</span> <span class="o">@</span><span class="n">page_size</span> <span class="k">OFFSET</span> <span class="o">@</span><span class="n">skip</span>
-<span class="k">SELECT</span> <span class="p">...</span> <span class="k">WHERE</span> <span class="n">col</span> <span class="o">&gt;</span> <span class="o">@</span><span class="n">last_value</span> <span class="k">LIMIT</span> <span class="o">@</span><span class="n">page_size</span>
-</code></pre></div>    </div>
-  </li>
-  <li>Can pause consumption without holding server resources</li>
-  <li>Query transparently resumes on next read</li>
-</ul>
-
-<h4 id="improved-tail-latency">Improved Tail Latency</h4>
-<ul>
-  <li>Minimal wasted work on restart</li>
-  <li>Important for parallel queries across many machines</li>
-  <li>Automatic retry from best replica</li>
-</ul>
-
-<h4 id="forward-progress-for-long-queries">Forward Progress for Long Queries</h4>
-<ul>
-  <li>Queries can run longer than mean-time-to-failure</li>
-  <li>Guaranteed completion (within garbage collection window)</li>
-</ul>
-
-<h4 id="rolling-upgrades">Rolling Upgrades</h4>
-<ul>
-  <li>Deploy new server versions without disrupting queries</li>
-  <li>Recurrent upgrades with no downtime</li>
-  <li>Critical for Google’s rapid development cycle</li>
-</ul>
-
-<h3 id="restart-contract">Restart Contract</h3>
-
-<h4 id="restart-tokens">Restart Tokens</h4>
-<ul>
-  <li>Opaque blob sent with each result batch</li>
-  <li>Added to original request to prevent duplicates</li>
-  <li>No repeatability guarantee
-    <div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">SELECT</span> <span class="o">*</span> <span class="k">FROM</span> <span class="n">T</span> <span class="k">LIMIT</span> <span class="mi">100</span>
-
-<span class="k">After</span> <span class="n">returning</span> <span class="mi">30</span> <span class="k">rows</span> <span class="err">→</span> <span class="k">restart</span> <span class="k">with</span> <span class="n">token</span>
-<span class="err">→</span> <span class="k">Returns</span> <span class="mi">70</span> <span class="n">different</span> <span class="k">rows</span> <span class="p">(</span><span class="n">but</span> <span class="k">no</span> <span class="n">duplicates</span><span class="p">)</span>
-</code></pre></div>    </div>
-  </li>
-</ul>
-
-<h4 id="streaming-implementation">Streaming Implementation</h4>
-<ul>
-  <li>No persistent buffering of results</li>
-  <li>Capture distributed state of query plan</li>
-  <li>Small size, cheap to produce</li>
-</ul>
-
-<h3 id="technical-challenges">Technical Challenges</h3>
-
-<h4 id="dynamic-resharding">Dynamic Resharding</h4>
-<ul>
-  <li>Shard boundaries change during query</li>
-  <li>Server may lose/gain ownership</li>
-  <li>Example:
-    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Server executes query on shard [20, 30)
-→ Interrupted
-→ Same server now hosts merged shard [10, 40)
-→ Must not re-execute [20, 30) portion
-</code></pre></div>    </div>
-  </li>
-  <li>Solution: Track progress in key space, not shard IDs</li>
-</ul>
-
-<h4 id="non-determinism-sources">Non-Determinism Sources</h4>
-<ul>
-  <li>Parallel subquery execution (network/load dependent)</li>
-  <li>Blocking operator memory allocation</li>
-  <li>Floating point computation order</li>
-  <li>Must ensure repeatable results across restarts</li>
-</ul>
-
-<h4 id="cross-version-compatibility">Cross-Version Compatibility</h4>
-<ul>
-  <li>Must support restart across server versions N and N+1</li>
-  <li>Requirements:
-    <ul>
-      <li>Restart token wire format versioned</li>
-      <li>Query plan must remain same across versions</li>
-      <li>Operator behavior must be compatible</li>
-      <li>Even without restart token, operators must not change order</li>
-    </ul>
-  </li>
-</ul>
-
-<h4 id="version-compatibility-example">Version Compatibility Example</h4>
-<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Query starts on version N
-  ↓
-Returns 1000 rows
-  ↓
-Binary rollout: server upgrades to N+1
-  ↓
-Query restarts with token from version N
-  ↓
-Version N+1 must:
-- Parse token from version N
-- Use same query plan as version N
-- Respect operator ordering from version N
-</code></pre></div></div>
-
-<h3 id="engineering-cost">Engineering Cost</h3>
-<ul>
-  <li>Restart token versioning mechanism</li>
-  <li>Processes to force explicit versioning</li>
-  <li>Framework to catch incompatibilities</li>
-  <li>But worth it for stability and operational flexibility</li>
-</ul>
-
-<h2 id="common-sql-dialect-standard-sql">Common SQL Dialect (Standard SQL)</h2>
-
-<h3 id="motivation">Motivation</h3>
-<ul>
-  <li>Shared across Spanner, F1, Dremel, BigQuery</li>
-  <li>Lower barrier for users working across systems</li>
-  <li>Consistent syntax, semantics, NULL handling, etc.</li>
-</ul>
-
-<h3 id="design-choices">Design Choices</h3>
-<ul>
-  <li>Fill gaps left by SQL standard</li>
-  <li>Google-specific extensions</li>
-  <li>Protocol Buffer integration
-    <ul>
-      <li>MESSAGE and ENUM as first-class types</li>
-    </ul>
-  </li>
-  <li>UTF8 STRING type (not CHAR/VARCHAR)</li>
-  <li>Nested data support (ARRAY, STRUCT)</li>
-</ul>
-
-<h3 id="shared-components">Shared Components</h3>
-
-<h4 id="1-compiler-front-end">1. Compiler Front-End</h4>
-<ul>
-  <li>Parsing, name resolution, type checking</li>
-  <li>Prevents subtle divergences (coercion rules, scoping)</li>
-  <li>Consistent error messages</li>
-  <li>Outputs: Resolved Abstract Syntax Tree (AST)</li>
-  <li>Systems convert Resolved AST to their algebras</li>
-</ul>
-
-<h4 id="2-scalar-function-library">2. Scalar Function Library</h4>
-<ul>
-  <li>Shared implementation of functions</li>
-  <li>Consistency in corner cases</li>
-  <li>Uniform overflow checking and runtime errors</li>
-</ul>
-
-<h4 id="3-testing-framework">3. Testing Framework</h4>
-
-<h5 id="compliance-tests">Compliance Tests</h5>
-<ul>
-  <li>Developer-written queries with expected results</li>
-  <li>Cover primary use cases and corner cases</li>
-  <li>Systems enable tests as they implement features</li>
-</ul>
-
-<h5 id="coverage-tests---random-query-generation">Coverage Tests - Random Query Generation</h5>
-<ul>
-  <li>Graph of node generators</li>
-  <li>One generator per Resolved AST node type</li>
-  <li>Example: FilterScanNodeGenerator
-```
-FilterScanNodeGenerator
-  ↓ edges to
-    <ul>
-      <li>Boolean expression generators (for condition)</li>
-      <li>Scan generators (for input)
-```</li>
-    </ul>
-  </li>
-  <li>Special generators for important patterns (e.g., key joins)</li>
-  <li>Configurable: query size, scalar functions, etc.</li>
-</ul>
-
-<h5 id="reference-implementation">Reference Implementation</h5>
-<ul>
-  <li>Produces annotated results
-    <ul>
-      <li>Imprecise values (e.g., AVG with floats)</li>
-      <li>Ordered vs. unordered lists</li>
-    </ul>
-  </li>
-  <li>Skips verification when unique result impossible
-    <ul>
-      <li>Example: LIMIT without ORDER BY</li>
-    </ul>
-  </li>
-  <li>~10% of random queries skip verification in unit tests</li>
-</ul>
-
-<h5 id="continuous-testing">Continuous Testing</h5>
-<ul>
-  <li>Millions of random queries per day</li>
-  <li>Random schema and data generation</li>
-  <li>Bug reports help identify gaps in coverage</li>
-</ul>
-
-<h2 id="blockwise-columnar-storage-ressi">Blockwise-Columnar Storage (Ressi)</h2>
-
-<h3 id="background-storage-concepts">Background: Storage Concepts</h3>
-
-<h4 id="oltp-vs-olap-workloads">OLTP vs OLAP Workloads</h4>
-<ul>
-  <li><strong>OLTP (Online Transaction Processing)</strong>
-    <ul>
-      <li>Short transactions (ms to seconds)</li>
-      <li>Read/write small number of rows</li>
-      <li>Examples: Insert order, update account balance</li>
-      <li>Access pattern: Random reads/writes by key</li>
-      <li>Metrics: Transactions per second, latency</li>
-    </ul>
-  </li>
-  <li><strong>OLAP (Online Analytical Processing)</strong>
-    <ul>
-      <li>Long-running queries (seconds to hours)</li>
-      <li>Scan large portions of tables</li>
-      <li>Examples: Sum sales by region, compute trends</li>
-      <li>Access pattern: Sequential scans, many columns</li>
-      <li>Metrics: Query throughput, data scanned</li>
-    </ul>
-  </li>
-</ul>
-
-<h4 id="row-major-vs-column-major-layout">Row-Major vs Column-Major Layout</h4>
-<ul>
-  <li><strong>Row-Major</strong> (traditional databases)
-    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Row 1: [id=1, name="Alice", age=30, salary=100k]
-Row 2: [id=2, name="Bob",   age=25, salary=80k]
-Row 3: [id=3, name="Carol", age=35, salary=120k]
-
-Storage: [1,"Alice",30,100k, 2,"Bob",25,80k, 3,"Carol",35,120k]
-</code></pre></div>    </div>
-    <ul>
-      <li>Good for OLTP: Fetching entire row is one I/O</li>
-      <li>Bad for OLAP: Reading one column scans all data</li>
-    </ul>
-  </li>
-  <li><strong>Column-Major</strong> (analytical databases)
-    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Col id:     [1, 2, 3]
-Col name:   ["Alice", "Bob", "Carol"]
-Col age:    [30, 25, 35]
-Col salary: [100k, 80k, 120k]
-
-Storage: [1,2,3, "Alice","Bob","Carol", 30,25,35, 100k,80k,120k]
-</code></pre></div>    </div>
-    <ul>
-      <li>Good for OLAP: Reading one column is efficient</li>
-      <li>Bad for OLTP: Reconstructing row requires multiple I/Os</li>
-    </ul>
-  </li>
-  <li><strong>PAX Layout</strong> (Partition Attributes Across)
-    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Block 1 (rows 1-2):
-  id: [1, 2]
-  name: ["Alice", "Bob"]
-  age: [30, 25]
-  salary: [100k, 80k]
-
-Block 2 (rows 3-4):
-  id: [3, 4]
-  name: ["Carol", "Dave"]
-  age: [35, 40]
-  salary: [120k, 90k]
-</code></pre></div>    </div>
-    <ul>
-      <li>Hybrid: Row-major across blocks, column-major within blocks</li>
-      <li>Benefits both OLTP and OLAP</li>
-      <li>Ressi uses this approach</li>
-    </ul>
-  </li>
-</ul>
-
-<h4 id="lsm-tree-log-structured-merge-tree">LSM-Tree (Log-Structured Merge Tree)</h4>
-<ul>
-  <li>Write-optimized data structure</li>
-  <li>Key idea: Turn random writes into sequential writes</li>
-</ul>
-
-<p><strong>Structure:</strong></p>
-<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Writes → MemTable (in-memory, sorted)
-           ↓ (when full)
-         Flush to disk
-           ↓
-        Level 0 (multiple sorted files, may overlap)
-           ↓ (compaction)
-        Level 1 (sorted files, non-overlapping within level)
-           ↓ (compaction)
-        Level 2 (10x larger than L1)
-           ↓
-        Level 3 (10x larger than L2)
-         ...
-
-Example:
-  MemTable: [5→v5, 10→v10, 15→v15]
-  L0 File1: [1→v1, 10→v10_old, 20→v20]
-  L0 File2: [5→v5_old, 12→v12]
-  L1 File1: [1→v1, 5→v5_old, 8→v8]
-  L1 File2: [15→v15_old, 20→v20_old]
-</code></pre></div></div>
-
-<p><strong>Operations:</strong></p>
-<ul>
-  <li><strong>Write</strong>: Insert into MemTable (fast, in-memory)</li>
-  <li><strong>Read</strong>: Check MemTable → L0 → L1 → L2 → …
-    <ul>
-      <li>May need to check multiple files (slower than B-tree)</li>
-      <li>Bloom filters help skip files without the key</li>
-    </ul>
-  </li>
-  <li><strong>Compaction</strong>: Merge files from Lᵢ into Lᵢ₊₁
-    <ul>
-      <li>Removes deleted/old versions</li>
-      <li>Maintains sorted order</li>
-      <li>Background process</li>
-    </ul>
-  </li>
-</ul>
-
-<h4 id="bloom-filters">Bloom Filters</h4>
-<ul>
-  <li>Space-efficient probabilistic data structure</li>
-  <li>Answers: “Is key X in this file?”</li>
-  <li>Properties:
-    <ul>
-      <li><strong>Never false negatives</strong>: If says “no”, definitely not in file</li>
-      <li><strong>May have false positives</strong>: If says “yes”, might not be in file</li>
-      <li>Very small: ~10 bits per key for 1% false positive rate</li>
-    </ul>
-  </li>
-</ul>
-
-<p><strong>How It Works:</strong></p>
-<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Bloom filter = bit array + k hash functions
-
-Insert key "foo":
-  h1("foo") = 3   → Set bit[3] = 1
-  h2("foo") = 7   → Set bit[7] = 1
-  h3("foo") = 15  → Set bit[15] = 1
-
-Check if "bar" exists:
-  h1("bar") = 3   → bit[3] = 1 ✓
-  h2("bar") = 7   → bit[7] = 1 ✓
-  h3("bar") = 10  → bit[10] = 0 ✗
-  Result: Definitely NOT in file
-
-Check if "baz" exists:
-  h1("baz") = 3   → bit[3] = 1 ✓
-  h2("baz") = 7   → bit[7] = 1 ✓
-  h3("baz") = 15  → bit[15] = 1 ✓
-  Result: MAYBE in file (could be false positive)
-</code></pre></div></div>
-
-<p><strong>Use in LSM-Trees:</strong></p>
-<ul>
-  <li>Each SSTable has a bloom filter</li>
-  <li>Read path: Check bloom filter before reading file</li>
-  <li>Example:
-    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Read(key=500):
-  Check MemTable: Not found
-  L0: Check bloom filter → "No" → Skip file
-  L1: Check bloom filter → "Yes" → Read file → Found!
-
-Saved expensive disk I/O on L0 file
-</code></pre></div>    </div>
-  </li>
-</ul>
-
-<p><strong>Write Amplification:</strong></p>
-<ul>
-  <li>Data written multiple times during compactions</li>
-  <li>Example: 1KB written by user → 10KB actual disk writes</li>
-  <li>Trade-off: Fast writes vs. read performance</li>
-</ul>
-
-<h4 id="sstables-sorted-string-tables">SSTables (Sorted String Tables)</h4>
-<ul>
-  <li>On-disk file format for LSM-tree levels</li>
-  <li>Properties:
-    <ul>
-      <li>Sorted by key</li>
-      <li>Immutable (never modified, only created/deleted)</li>
-      <li>Self-describing (stores schema with data)</li>
-    </ul>
-  </li>
-  <li>Structure:
-    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>SSTable File:
-  [Index Block] → Points to data blocks
-  [Data Block 1]: Keys [a, f), sorted
-  [Data Block 2]: Keys [f, m), sorted
-  [Data Block 3]: Keys [m, z), sorted
-  [Metadata]: Schema, stats, bloom filter
-</code></pre></div>    </div>
-  </li>
-  <li>Used by Bigtable, original Spanner, RocksDB, LevelDB</li>
-</ul>
-
-<h3 id="motivation-for-change">Motivation for Change</h3>
-<ul>
-  <li>SSTables inherited from Bigtable
-    <ul>
-      <li>Optimized for schemaless NoSQL, large strings</li>
-      <li>Self-describing, highly redundant</li>
-      <li>Inefficient column traversal</li>
-    </ul>
-  </li>
-  <li>Spanner’s workload:
-    <ul>
-      <li>Schematized data, small values</li>
-      <li>Frequent column-wise access</li>
-      <li>Hybrid OLTP/OLAP</li>
-    </ul>
-  </li>
-</ul>
-
-<h3 id="ressi-data-layout">Ressi Data Layout</h3>
-
-<h4 id="lsm-tree-structure">LSM-Tree Structure</h4>
-<ul>
-  <li>Same overall structure as SSTables</li>
-  <li>Periodic compaction of layers</li>
-  <li>But different on-disk format (PAX instead of row-major)</li>
-</ul>
-
-<h4 id="block-organization">Block Organization</h4>
-<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Layer:
-  Block 1: [Row1, Row2, Row3, ...]  ← Row-major order
-  Block 2: [Row50, Row51, Row52, ...]
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>CREATE TABLE Customer (ckey INT64, name STRING, city STRING) PRIMARY KEY (ckey)
+CREATE TABLE Sales (ckey INT64, skey INT64, type STRING, amount INT64)
+  PRIMARY KEY (ckey, skey), INTERLEAVE IN PARENT Customer
+
+stored in key order:
+  Customer(7)
+    Sales(7, 1)
+    Sales(7, 2)
+  Customer(8)
+    Sales(8, 1)
   ...
-
-Within Block (Column-major, PAX layout):
-  Col1: [val1_1, val1_2, val1_3, ...]
-  Col2: [val2_1, val2_2, val2_3, ...]
-  Col3: [val3_1, val3_2, val3_3, ...]
 </code></pre></div></div>
 
-<h4 id="table-interleaving-support">Table Interleaving Support</h4>
 <ul>
-  <li>Child table rows in same/nearby blocks as parent rows</li>
-  <li>Preserves co-location for efficient joins</li>
+  <li>A child’s key starts with its parent’s key, so they sort together</li>
+  <li>Shard boundaries fall between parent keys: a customer and all its sales are in one shard (the paper: boundaries “preserve row co-location”; the rules below assume it)</li>
+  <li><code class="language-plaintext highlighter-rouge">ckey</code> is the <em>sharding key</em>: the key prefix shard boundaries are cut on. It can be several columns; an interleaved child uses its parent’s</li>
+  <li>A physical design choice, like “EMP stored in DNO order” last time: the schema author decides what sits together, and some plans get cheap because of it</li>
 </ul>
 
-<h4 id="multi-level-index">Multi-Level Index</h4>
-<ul>
-  <li>Fast binary search for random key access</li>
-</ul>
+<p>Shard map for the examples:</p>
 
-<h3 id="file-organization">File Organization</h3>
-
-<h4 id="active-vs-inactive-files">Active vs Inactive Files</h4>
-<ul>
-  <li>Active file: most recent values only</li>
-  <li>Inactive file: older versions</li>
-  <li>Benefit: Recent data queries avoid loading old versions</li>
-</ul>
-
-<h4 id="large-value-segregation">Large Value Segregation</h4>
-<ul>
-  <li>Multi-page values in separate files</li>
-  <li>Fast scans without I/O cost of large values</li>
-  <li>Load large values only when needed</li>
-</ul>
-
-<h3 id="fundamental-data-structure-vector">Fundamental Data Structure: Vector</h3>
-<ul>
-  <li>Ordinally indexed sequence of homogeneous values</li>
-  <li>Each column = one or multiple vectors</li>
-  <li>Operate directly on compressed vectors
-    <ul>
-      <li>No decompression needed for many operations</li>
-    </ul>
-  </li>
-</ul>
-
-<h3 id="live-migration-from-sstables">Live Migration from SSTables</h3>
-
-<h4 id="requirements">Requirements</h4>
-<ul>
-  <li>Preserve data integrity</li>
-  <li>Minimal impact on live workloads</li>
-  <li>Reversible rollout</li>
-</ul>
-
-<h4 id="migration-strategy">Migration Strategy</h4>
-<ol>
-  <li>Change group specification (including storage format)</li>
-  <li>Use Spanner’s data movement mechanism</li>
-  <li>Copy and convert data from old group to new group</li>
-  <li>Old group continues serving live traffic</li>
-  <li>New group takes over when ready</li>
-  <li>Gradual per-group conversion</li>
-</ol>
-
-<h4 id="flexibility">Flexibility</h4>
-<ul>
-  <li>Convert to Ressi replicas</li>
-  <li>Mixed format replicas (testing/verification)</li>
-  <li>Rollback to SSTables if needed</li>
-</ul>
-
-<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Migration Flow:
-  Group A (SSTables)        Group B (Ressi)
-  [Replica 1, 2, 3]    →    [Replica 4, 5, 6]
-        ↓                           ↓
-  Serving live traffic      Copying + converting
-        ↓                           ↓
-  Still serving            Ready to serve
-        ↓                           ↓
-                 Handoff
-        ↓                           ↓
-  Decommissioned           Now serving traffic
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>shard   Customer keys    Paxos group
+S1      [−∞, 250)        G1
+S2      [250, 500)       G2
+S3      [500, 750)       G1
+S4      [750, +∞)        G3
 </code></pre></div></div>
 
-<h2 id="lessons-learned">Lessons Learned</h2>
+<h2 id="the-running-query">The running query</h2>
 
-<h3 id="scalability-first-then-performance">Scalability First, Then Performance</h3>
+<p>The paper’s Figure 1, called Q1 below:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>SELECT ANY_VALUE(c.name) AS name, SUM(s.amount) AS total
+FROM   Customer c JOIN Sales s ON c.ckey = s.ckey
+WHERE  s.type = 'global' AND c.ckey IN UNNEST(@customer_key_arr)
+GROUP  BY c.ckey
+ORDER  BY total DESC
+LIMIT  5
+</code></pre></div></div>
+
 <ul>
-  <li>Horizontal scalability enabled deployment at scale</li>
-  <li>Single-machine performance improved later</li>
-  <li>Aggressive focus on distribution over single-node optimization</li>
+  <li>The 5 customers, out of a list passed in, with the most ‘global’ sales</li>
+  <li><code class="language-plaintext highlighter-rouge">@customer_key_arr</code> (<code class="language-plaintext highlighter-rouge">@arr</code> below) is a query parameter: the plan is compiled once, cached, and run with different arrays. <code class="language-plaintext highlighter-rouge">UNNEST(@arr)</code> turns the array into rows, so <code class="language-plaintext highlighter-rouge">c.ckey IN UNNEST(@arr)</code> means “ckey is one of its elements”</li>
+  <li><code class="language-plaintext highlighter-rouge">ANY_VALUE(c.name)</code>: all rows with one <code class="language-plaintext highlighter-rouge">ckey</code> are one customer and share a name; take any</li>
+  <li>Joins are written as <em>correlated joins</em>
+    <ul>
+      <li><code class="language-plaintext highlighter-rouge">CrossApply(input, map)</code>: for each row of <code class="language-plaintext highlighter-rouge">input</code>, run <code class="language-plaintext highlighter-rouge">map</code> with that row’s columns bound, and concatenate the results (<code class="language-plaintext highlighter-rouge">OuterApply</code>: the left-outer version, NULLs when <code class="language-plaintext highlighter-rouge">map</code> is empty)</li>
+      <li>it runs like last lecture’s nested-loop join, with the same cost formula, <code class="language-plaintext highlighter-rouge">C = C_outer + outer_rows × C_inner</code></li>
+      <li>as there, the outer row’s columns are constants in the map, so <code class="language-plaintext highlighter-rouge">s.ckey = c.ckey</code> becomes <code class="language-plaintext highlighter-rouge">s.ckey = 7</code>: sargable, a seek into Sales</li>
+      <li>what differs is the inner. Last lecture’s join inner was always one base table through one access path, and a correlated subquery stayed a separate block; the map is any plan over the outer row’s columns: a filter, a union over shards, an aggregate, another Apply</li>
+      <li>the map needs nothing from the input but those column values, so it can be shipped, with a batch of input rows, to each shard the batch touches (<code class="language-plaintext highlighter-rouge">DistributedApply</code>, below)</li>
+    </ul>
+  </li>
+  <li>The single-machine tree, before anything is distributed (Figure 1 without its unions): filters pushed down, the join as a <code class="language-plaintext highlighter-rouge">CrossApply</code>. Children are indented under their parent; <code class="language-plaintext highlighter-rouge">CrossApply</code>’s input comes first, its map second</li>
 </ul>
 
-<h3 id="sql-adoption-trajectory">SQL Adoption Trajectory</h3>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Top(5) ORDER BY total DESC
+  GroupBy(c.ckey)  name = ANY_VALUE(c.name), total = SUM(s.amount)
+    CrossApply
+      Filter c.ckey IN UNNEST(@arr)
+        Scan(Customer c)
+      Filter s.ckey = c.ckey AND s.type = 'global'
+        Scan(Sales s)
+</code></pre></div></div>
+
 <ul>
-  <li>NoSQL API initially (simple point lookups, range scans)</li>
-  <li>SQL added significant value for complex queries</li>
-  <li>Switching to common dialect accelerated adoption:
+  <li><code class="language-plaintext highlighter-rouge">Filter</code> over <code class="language-plaintext highlighter-rouge">Scan</code> is logical: how a predicate turns into seeks is range extraction, below</li>
+</ul>
+
+<h2 id="strawman-1-sql-beside-the-store-key-range-reads-only">Strawman 1: SQL beside the store, key-range reads only</h2>
+
+<ul>
+  <li>Run that tree on one SQL server; each <code class="language-plaintext highlighter-rouge">Scan</code> becomes key-range reads against Spanner</li>
+  <li>With the array it is tolerable: point reads for its few customers and their sales</li>
+  <li>Drop the array (“top 5 customers overall”) and the SQL server pulls every Customer and Sales row across the network, global or not (a key-range read cannot test <code class="language-plaintext highlighter-rouge">type</code>), to keep five</li>
+  <li>The filters, the join, and the aggregation could all have run next to the data</li>
+  <li>Fix: ship operators to the data. Which operators, and where to?</li>
+</ul>
+
+<h2 id="strawman-2-split-the-plan-by-the-shard-map-at-compile-time">Strawman 2: split the plan by the shard map, at compile time</h2>
+
+<ul>
+  <li>What a classic parallel database does: partitioning is fixed, so the optimizer writes “run this subplan on servers A, B, C; combine at the root”</li>
+  <li>In Spanner the map does not hold still
     <ul>
-      <li>2× increase in year before common dialect</li>
-      <li>5× increase in year after common dialect</li>
-      <li>4× increase in distributed query complexity</li>
+      <li>plans are cached and reused; by the next run S2 may have split into [250, 400) and [400, 500), and one half moved to another Paxos group</li>
+      <li>a shard can move <em>during</em> the query</li>
+      <li>which shards Q1 needs depends on <code class="language-plaintext highlighter-rouge">@arr</code>, which the compiler has not seen
+        <ul>
+          <li>System R hit the same wall: a host variable in a stored plan has no value when the plan is chosen, so Table 1 fell back to fixed guesses (1/3 for a range). Spanner does not guess; it decides at run time</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>The paper: “we do not rely on static partitioning during query planning”</li>
+  <li>Fix: the plan says <em>what</em> to run on each piece of a table. <em>Which</em> pieces, and <em>where</em> they live, is decided at run time, by key range</li>
+</ul>
+
+<h2 id="distribution-as-an-operator-distributedunion">Distribution as an operator: DistributedUnion</h2>
+
+<ul>
+  <li>At the start of compilation, put an explicit operator above every table scan:</li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Scan(T)  ⇒  DistributedUnion[shard ⊆ T]( Scan(shard) )
+</code></pre></div></div>
+
+<ul>
+  <li>Meaning: for each shard of <code class="language-plaintext highlighter-rouge">T</code>, run the subtree on a server hosting that shard; concatenate the results, in key order when the plan needs it
+    <ul>
+      <li><code class="language-plaintext highlighter-rouge">T</code> is the table whose shards hold the rows. An interleaved child has no shards of its own: <code class="language-plaintext highlighter-rouge">Scan(Sales)</code> gets <code class="language-plaintext highlighter-rouge">DistributedUnion(Customer)</code> (Figure 1, both dashed boxes)</li>
+    </ul>
+  </li>
+  <li>The plan stays one tree. At run time the edge under a union becomes a 1-to-N call: the subtree goes to the N shards it needs, chosen then
+    <ul>
+      <li>the subtree can itself contain a union: multi-level distribution (Q2, below)</li>
+    </ul>
+  </li>
+  <li>The <em>root server</em> is the server the query was sent to. It runs everything above the outermost union. Any Spanner server can be root</li>
+  <li>Optimization now has a direction: pull the union <em>up</em>. Everything below it runs next to the data, in parallel; everything above it runs on the root, on what came back</li>
+  <li>Last lecture promised a network term and a shard fan-out term in the cost. The paper writes no cost formula
+    <ul>
+      <li>it pulls the union up “where possible”, as far as partitionability (next) allows. Calls and rows shipped are cut by rules: pull-up, pruning, batching, affinity. Whether anything is ever priced, it does not say</li>
+      <li>the compiler is described as rewrites “via transformation rules”: push predicates down, pick indexes, remove subqueries. Join order and statistics are not described: “we have barely touched on query optimization”</li>
     </ul>
   </li>
 </ul>
 
-<h3 id="transaction-guarantees">Transaction Guarantees</h3>
+<h2 id="how-far-up-partitionability">How far up: partitionability</h2>
+
 <ul>
-  <li>External consistency (global ordering)</li>
-  <li>Constraint: All updates committed at transaction end</li>
-  <li>Limitation: Can’t read uncommitted results within transaction</li>
-  <li>Low internal demand, but important for compatibility</li>
+  <li>Pulling the union above an operator <code class="language-plaintext highlighter-rouge">F</code> is correct only if running <code class="language-plaintext highlighter-rouge">F</code> per shard and concatenating gives the same answer as running it on the whole table:</li>
 </ul>
 
-<h3 id="truetime-epsilon-improvements">TrueTime Epsilon Improvements</h3>
-<ul>
-  <li>Continued reduction in clock drift</li>
-  <li>Simplified timestamp picking for queries</li>
-  <li>Reads at now+epsilon avoids complex analysis</li>
-  <li>Increases replica selection freedom</li>
-</ul>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>F(Scan(T))  =  OrderedUnionAll[shard ⊆ T]( F(Scan(shard)) )        shards concatenated in key order
+</code></pre></div></div>
 
-<h3 id="schema-design-complexity">Schema Design Complexity</h3>
 <ul>
-  <li>Many physical layout options:
+  <li><code class="language-plaintext highlighter-rouge">OrderedUnionAll</code>: the paper’s name for what the union does once its subtrees return</li>
+  <li>Passes
     <ul>
-      <li>Geographic placement</li>
-      <li>Replication configuration</li>
-      <li>Protocol buffers vs. interleaved tables</li>
-      <li>Vertical partitioning</li>
+      <li>Filter, Project: per row, always</li>
+      <li>GroupBy whose grouping columns include the sharding key: shard boundaries never fall inside one <code class="language-plaintext highlighter-rouge">ckey</code> value, so every group lives in one shard. Needs only co-location: hash sharding on <code class="language-plaintext highlighter-rouge">ckey</code> would do (our reading; the paper credits range sharding for both this and Sort)</li>
+      <li>Sort whose sort columns start with the sharding key, in the key’s direction: sort each shard, concatenate in key order. This needs <em>range</em> sharding
+        <ul>
+          <li>last lecture’s interesting order: a key-ordered union delivers <code class="language-plaintext highlighter-rouge">ckey</code> order for free, like a clustered index scan</li>
+        </ul>
+      </li>
     </ul>
   </li>
-  <li>Internal schema reviews prevent production issues</li>
-</ul>
-
-<h3 id="query-optimization-challenges">Query Optimization Challenges</h3>
-<ul>
-  <li>Declarative SQL + varying user sophistication</li>
-  <li>Bi-weekly deployment cycle</li>
-  <li>Optimizer changes can cause order-of-magnitude swings</li>
-  <li>Challenge: Innovate while preserving workload stability</li>
-</ul>
-
-<h3 id="one-size-fits-all-remains-goal">One-Size-Fits-All Remains Goal</h3>
-<ul>
-  <li>Combine OLTP, OLAP, full-text search in single system</li>
-  <li>Reduces operational burden vs. multiple systems</li>
-  <li>Single transactional semantics, API, deployment</li>
-  <li>Focus on broad spectrum performance and cost-effectiveness</li>
-</ul>
-
-<h2 id="key-insights">Key Insights</h2>
-
-<h3 id="architectural-rethinking-for-scale">Architectural Rethinking for Scale</h3>
-<ul>
-  <li>Static partitioning → Dynamic resharding</li>
-  <li>Node-addressed RPC → Data-range-addressed RPC</li>
-  <li>Single replication config → Multiple configs for different workloads</li>
-  <li>In-memory metadata → Metadata as data</li>
-  <li>Simple control plane → Complex monitoring/management system</li>
-</ul>
-
-<h3 id="sql-vs-nosql-reconciliation">SQL vs NoSQL Reconciliation</h3>
-<ul>
-  <li>Scalable, manageable, transactional key-value = foundation</li>
-  <li>Can support both loosely coupled (F1) and tightly coupled (Spanner) SQL</li>
-  <li>SQL provides value for complex access patterns</li>
-  <li>Recommendation: Start with relational model early
+  <li>Fails
     <ul>
-      <li>Once scalable, available storage core exists</li>
-      <li>Speeds development, reduces future migration costs</li>
+      <li>GroupBy on columns without the sharding key (<code class="language-plaintext highlighter-rouge">GROUP BY type</code>): one type’s rows span shards</li>
+      <li>Top-k, in any order: N shards each keep k, so the union returns up to N·k rows, not k
+        <ul>
+          <li>ordered by the key, same direction: Top = Limit ∘ Sort. The Sort passes; only “keep the first k of the ordered union” stays above</li>
+          <li>ordered by anything else (<code class="language-plaintext highlighter-rouge">ORDER BY total DESC LIMIT 5</code>): a real Top over the N per-shard lists</li>
+        </ul>
+      </li>
     </ul>
   </li>
+  <li>Partial push: write <code class="language-plaintext highlighter-rouge">Op = OpFinal ∘ OpLocal</code>, run <code class="language-plaintext highlighter-rouge">OpLocal</code> on each shard and <code class="language-plaintext highlighter-rouge">OpFinal</code> above</li>
 </ul>
 
-<h3 id="evolution-path">Evolution Path</h3>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Op( DistributedUnion[shard ⊆ T]( F(Scan(shard)) ) )
+  =  OpFinal( DistributedUnion[shard ⊆ T]( OpLocal( F(Scan(shard)) ) ) )
+</code></pre></div></div>
+
+<ul>
+  <li>Top(5) = top 5 of the per-shard top 5s: each of the global top 5 rows is in its own shard’s top 5</li>
+  <li>SUM = SUM of per-shard SUMs; COUNT = SUM of COUNTs; AVG = SUM of SUMs / SUM of COUNTs</li>
+  <li>Joins have two inputs. Two unions <em>on the same table</em>, pulled up through an inner or semi join (a semi join keeps an input row if a match exists: <code class="language-plaintext highlighter-rouge">EXISTS</code>, <code class="language-plaintext highlighter-rouge">IN (subquery)</code>), merge into one when the equi-join names every sharding-key column. In our notation:</li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>CrossApply( DistributedUnion[shard ⊆ T]( C(shard) ),  DistributedUnion[shard ⊆ T]( S(shard) ) )
+  =  DistributedUnion[shard ⊆ T]( CrossApply( C(shard), S(shard) ) )
+
+holds when every S row that matches a C row of shard i is itself in shard i
+</code></pre></div></div>
+
+<ul>
+  <li>The rules, collected:</li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>pull DistributedUnion(T) up through
+  Filter, Project                          always; a filter on the sharding key is also
+                                           copied into the union (its sharding-key filter)
+  Apply, union on its input side           always: the map runs per input row, like a Filter
+                                           (our reading; Q2 below needs it)
+  GroupBy ⊇ sharding key                   always
+  Sort starting with the sharding key,     yes, as an ordered union
+    in the key's direction
+  inner/semi join of two unions on T,      merge the two unions into one
+    equi-join on every sharding column
+  Top, GroupBy without the key             split: OpLocal below, OpFinal above; stop
+  anything else                            stop
+</code></pre></div></div>
+
+<h2 id="q1-rewritten">Q1, rewritten</h2>
+
+<p>Start with a union over each scan:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Top(5) ORDER BY total DESC
+  GroupBy(c.ckey)  name = ANY_VALUE(c.name), total = SUM(s.amount)
+    CrossApply
+      Filter c.ckey IN UNNEST(@arr)
+        DistributedUnion(Customer)
+          Scan(Customer c)
+      Filter s.ckey = c.ckey AND s.type = 'global'
+        DistributedUnion(Customer)            Sales has no shards of its own
+          Scan(Sales s)
+</code></pre></div></div>
+
+<p>Pull up, bottom to top (the dotted lines in the paper’s Figure 1):</p>
+
 <ol>
-  <li>Scalability</li>
-  <li>Manageability</li>
-  <li>ACID transactions</li>
-  <li>Relational model</li>
-  <li>Schema DDL with nested data indexing</li>
-  <li>SQL</li>
+  <li>Through <code class="language-plaintext highlighter-rouge">Filter c.ckey IN UNNEST(@arr)</code>: partitionable. The filter is on the sharding key, so the union also keeps a copy, its <em>sharding-key filter</em>, for picking shards at run time</li>
+  <li>Through <code class="language-plaintext highlighter-rouge">Filter s.ckey = c.ckey AND s.type = 'global'</code> on the Sales side: partitionable. The union notes <code class="language-plaintext highlighter-rouge">s.ckey = c.ckey</code>: the shard it needs is the one holding the input row’s <code class="language-plaintext highlighter-rouge">ckey</code></li>
+  <li>Through <code class="language-plaintext highlighter-rouge">CrossApply</code>: both unions are over Customer, and <code class="language-plaintext highlighter-rouge">s.ckey = c.ckey</code> names the whole sharding key. Customer c in shard i has its sales only in shard i: merge</li>
+  <li>Through <code class="language-plaintext highlighter-rouge">GroupBy(c.ckey)</code>: groups on the full sharding key, partitionable</li>
+  <li>At <code class="language-plaintext highlighter-rouge">Top(5) ORDER BY total DESC</code>: not partitionable. Split it: a local Top(5) goes below the union, the final Top(5) stays above. Stop
+    <ul>
+      <li>the per-shard totals are already final (step 4: a customer’s rows are all in one shard), so the local Top ranks true totals</li>
+    </ul>
+  </li>
 </ol>
 
-<p>For other systems following similar path: Start relational early!</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Top(5) ORDER BY total DESC                                   root server
+  DistributedUnion(Customer)   sharding-key filter: ckey IN UNNEST(@arr)
+    Top(5) ORDER BY total DESC                               each shard
+      GroupBy(c.ckey)  name = ANY_VALUE(c.name), total = SUM(s.amount)
+        CrossApply
+          Filter c.ckey IN UNNEST(@arr)
+            Scan(Customer c)
+          Filter s.ckey = c.ckey AND s.type = 'global'
+            Scan(Sales s)
+</code></pre></div></div>
+
+<ul>
+  <li>Everything but the final Top runs on the shards. At most 5 rows per shard cross the network</li>
+  <li>What made it cheap is the interleaving the schema chose. Without it, Sales has shards of its own, step 3 fails, and the <code class="language-plaintext highlighter-rouge">CrossApply</code> becomes a distributed join (below)</li>
+</ul>
+
+<h2 id="at-run-time-which-shards-which-servers">At run time: which shards, which servers</h2>
+
+<ul>
+  <li>The union holds <code class="language-plaintext highlighter-rouge">ckey IN UNNEST(@arr)</code>. Before calling anyone, evaluate it with this run’s parameters into key ranges (range extraction, below)
+    <ul>
+      <li><code class="language-plaintext highlighter-rouge">@arr = [7, 412, 7, 950]</code> → remove duplicates → points 7, 412, 950</li>
+      <li>intersect with the shard map → S1, S2, S4. S3 is never contacted: <em>shard pruning</em></li>
+    </ul>
+  </li>
+  <li>Safe: the sharding-key filter is implied by the filters of the scans below the union, so every row the subquery could return lies in an extracted range</li>
+  <li>If the ranges cover the whole table: one call per <em>Paxos group</em> rather than per shard. G1 hosts S1 and S3: one call for both, 3 calls instead of 4</li>
+  <li>Calls go out in parallel, up to a cap that keeps one query from swamping the servers; big shards can be split further into sub-shards</li>
+  <li>Shard affinity: if a target shard is hosted on this server, run the subtree in-process. No call at all
+    <ul>
+      <li>common: many queries read one object (a user and its interleaved rows) under one sharding key, and most such row sets fit in one shard</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="joins-across-shards-distributedapply">Joins across shards: DistributedApply</h2>
+
+<ul>
+  <li>What interleaving does not cover: a global secondary index. It is its own table, sharded on the indexed column</li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>CREATE INDEX CustomerByCity ON Customer(city)
+  -- stored as a table with key (city, ckey), sharded on city
+
+Q2:  SELECT c.* FROM Customer c WHERE c.city = 'Denver'
+</code></pre></div></div>
+
+<ul>
+  <li>On one machine Q2 is not even a join: last lecture’s access path through a non-clustered index, about a page fetch per row found</li>
+  <li>Here the index is a table of its own, so the access path becomes a join, and a union sits over each scan:</li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>CrossApply
+  DistributedUnion(CustomerByCity)
+    Scan(CustomerByCity)  city = 'Denver'                → ckeys, from one index shard
+  DistributedUnion(Customer)
+    Scan(Customer)        ckey = (the input row's ckey)  → one row, in any Customer shard
+</code></pre></div></div>
+
+<ul>
+  <li>The map’s union cannot be pulled up: the two tables are sharded differently. So it fires once per input row: <code class="language-plaintext highlighter-rouge">C = C_outer + outer_rows × C_inner</code>, and <code class="language-plaintext highlighter-rouge">C_inner</code> is a call to another machine, not a page fetch
+    <ul>
+      <li>1,000 Denver customers: 1,000 calls, one after another</li>
+    </ul>
+  </li>
+  <li>The other plan, scan all of Customer and filter on city, reads the whole table, which is what the index was for</li>
+  <li>Fix: send the input rows in batches. One join becomes two (the paper’s Figure 2): a distributed one that ships batches, and a local one that applies each row of a batch on the shard</li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>CrossApply(input, DistributedUnion(map))     one remote call per input row
+  ⇒  DistributedApply                        the apply and the union, fused into one operator
+        Batch(input) =&gt; $batch               on the caller: cut the input rows into arrays,
+                                             each one named $batch in turn
+        CrossApply(Unnest($batch), map)      shipped to each shard the batch touches;
+                                             Unnest turns $batch back into rows
+</code></pre></div></div>
+
+<ul>
+  <li>For each batch, before calling (the paper’s four steps)
+    <ol>
+      <li>evaluate the map’s sharding-key filter (<code class="language-plaintext highlighter-rouge">ckey =</code> the row’s ckey) on each row of the batch → key ranges per row</li>
+      <li>merge them into one set</li>
+      <li>intersect with the shard boundaries → the shards to call</li>
+      <li>per shard, keep only the batch rows whose ranges overlap it; a row whose range spans two shards goes to both</li>
+    </ol>
+  </li>
+  <li>Trace, a batch of five ckeys from the index:</li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>batch  7, 300, 310, 820, 990
+
+S1 [−∞, 250)    ← 7
+S2 [250, 500)   ← 300, 310
+S3 [500, 750)     none: not called
+S4 [750, +∞)    ← 820, 990
+
+3 calls, in parallel, instead of 5 in a row
+</code></pre></div></div>
+
+<ul>
+  <li>Calls per batch = shards touched, not rows. Often the whole input fits in one batch: one round of calls</li>
+  <li>Last lecture’s Table 2 again: a non-clustered index pays per row, a clustered one per page. Batching makes the index pay per shard touched</li>
+  <li>On the shard, the per-row map seeks to its keys instead of scanning</li>
+  <li>Q2’s final plan, two levels of distribution (the index’s union pulled above the apply, by the Apply row of the rules):</li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>DistributedUnion(CustomerByCity)   sharding-key filter: city = 'Denver'     → the index shard(s) with Denver
+  DistributedApply                                                        runs on each such index shard
+    Batch( Scan(CustomerByCity) city = 'Denver' ) =&gt; $batch
+    CrossApply(Unnest($batch), Scan(Customer) ckey = (the row's ckey))     on each Customer shard called
+</code></pre></div></div>
+
+<ul>
+  <li>Where it fits: the input is small, and the join condition constrains the map table’s sharding key (equality or range). Index → base table, foreign key → parent; inner, left outer, and semi joins</li>
+  <li>Where it does not: two big tables joined on a non-key column. Nothing to route on, so every batch goes to every shard. The paper calls distributed joins “too large to cover exhaustively” and shows only this one</li>
+</ul>
+
+<h2 id="getting-the-query-in-and-the-rows-out">Getting the query in and the rows out</h2>
+
+<ul>
+  <li>Single consumer: one client reads all the results
+    <ul>
+      <li>a root that holds none of the data costs an extra hop: a point lookup that needs one cross-machine call makes two</li>
+      <li><em>location hint</em>: route the query to the data, not to any root
+        <ul>
+          <li>first run: take the outermost union’s sharding-key filter, written in terms of the parameters; cache it on the client as a pattern</li>
+          <li>later runs: plug in the parameters, get a key, address the query to that key. The coprocessor framework finds the server</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>SELECT c.*, s.* FROM Customer c JOIN Sales s ON c.ckey = s.ckey WHERE c.ckey = @k
+  hint: Customer key = @k              to the server holding customer @k; Sales is
+                                       interleaved, so the whole query runs there
+
+SELECT c.* FROM Customer c WHERE c.city = @city
+  hint: CustomerByCity key = @city     to the server holding that index shard
+</code></pre></div></div>
+
+<ul>
+  <li>The paper’s examples use tables named Parent, Child, and Index; the shapes are the same</li>
+  <li>Parallel consumer: results too big for one machine, e.g., a MapReduce-style pipeline that joins Spanner data with other data
+    <ol>
+      <li>send the query and the parallelism wanted; get back opaque <em>partition descriptors</em></li>
+      <li>workers each run one descriptor, calling the shards directly. Together they return the single-consumer result, up to order (all at one snapshot timestamp)
+        <ul>
+          <li>Customer’s 4 shards, 2 partitions: each descriptor covers 2 shards</li>
+          <li>only for <em>root-partitionable</em> queries: the compiled plan’s root is a <code class="language-plaintext highlighter-rouge">DistributedUnion</code>, so a descriptor is just a subset of its shards</li>
+          <li>Q1 is not: its final <code class="language-plaintext highlighter-rouge">Top(5)</code> sits above the union, and no single worker can do it</li>
+        </ul>
+      </li>
+    </ol>
+  </li>
+</ul>
+
+<h2 id="range-extraction-which-keys-can-a-predicate-touch">Range extraction: which keys can a predicate touch?</h2>
+
+<ul>
+  <li>Every step so far needed it: the union’s shard list, the per-row ranges of a <code class="language-plaintext highlighter-rouge">DistributedApply</code>, the seek in place of a scan on each shard</li>
+  <li>Locking needs it too: which keys a read-write transaction must lock</li>
+  <li>Done at run time: parameters, and the values earlier scans read, are known only then</li>
+  <li>The paper’s example</li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Documents   PRIMARY KEY (ProjectId, DocumentPath, Version), sharded on ProjectId
+
+SELECT d.* FROM Documents d
+WHERE  d.ProjectId = @param1
+  AND  STARTS_WITH(d.DocumentPath, '/proposals')
+  AND  d.Version = @param2
+
+@param1 = P001, @param2 = 2017-01-01; ten documents under /proposals, many versions each
+</code></pre></div></div>
+
+<ul>
+  <li>(The paper’s text calls the third key column Timestamp once, and Figure 3 labels Scan2 DocumentId. Both are slips)</li>
+</ul>
+
+<h2 id="strawman-one-start-key-one-stop-key">Strawman: one start key, one stop key</h2>
+
+<ul>
+  <li>Last lecture’s index scan reads one key range, from a start key to a stop key</li>
+  <li>By last lecture’s definition all three factors match: they are sargable, and their columns form a prefix of the key. But only equalities on the leading columns, then one range, narrow the scan. That fine print is new today</li>
+  <li>Here: <code class="language-plaintext highlighter-rouge">ProjectId = P001</code> (equality), then <code class="language-plaintext highlighter-rouge">DocumentPath</code> in <code class="language-plaintext highlighter-rouge">['/proposals', '/proposalt')</code> (a range). <code class="language-plaintext highlighter-rouge">Version = @param2</code> comes after the range: tested on every version read, narrowing nothing</li>
+  <li>With 1,000 versions per document, 1,000 times the rows needed</li>
+  <li>Wanted: for each distinct <code class="language-plaintext highlighter-rouge">DocumentPath</code> in the range, one seek to <code class="language-plaintext highlighter-rouge">(P001, path, 2017-01-01)</code></li>
+</ul>
+
+<h2 id="key-columns-one-at-a-time-correlated-self-joins">Key columns one at a time: correlated self-joins</h2>
+
+<ul>
+  <li>Pin one key column, then constrain the next given its value: a nested loop over key columns</li>
+  <li>The compiler rewrites the filtered scan into a chain of <code class="language-plaintext highlighter-rouge">CrossApply</code>s over the same table, one scan per key column (the paper’s Figure 3). The lowercase <code class="language-plaintext highlighter-rouge">filter</code> and <code class="language-plaintext highlighter-rouge">emits</code> lines are each scan’s own attributes, not children</li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>CrossApply
+  CrossApply
+    Scan1(Documents.ProjectId)
+      filter  ProjectId = @param1
+      emits   @project_id              no read: the filter pins the value
+    Scan2(Documents.DocumentPath)
+      filter  ProjectId = @project_id AND STARTS_WITH(DocumentPath, '/proposals')
+      emits   @document_path           one per distinct path
+  Scan3(Documents.*)
+    filter  ProjectId = @project_id AND DocumentPath = @document_path
+            AND Version = @param2
+    emits   the rows                   one seek per path
+</code></pre></div></div>
+
+<ul>
+  <li>Scan2 skips: find the first path under the prefix (<code class="language-plaintext highlighter-rouge">/proposals/doc1</code>), emit it, then seek straight past all its versions to the next path in key order (<code class="language-plaintext highlighter-rouge">/proposals/doc10</code>: strings compare character by character, so doc10 sorts before doc2; the paper’s text says doc2, which holds only if there is no doc10)</li>
+  <li>Cost: about two seeks per document instead of one row per version
+    <ul>
+      <li>if every document had one version, plain scanning would win: the seeks would cost more than they skip</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="three-uses-three-prefix-lengths">Three uses, three prefix lengths</h2>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>distribution   (P001)                                   1 key column: which shards to call
+seek           (P001, /proposals/doc1, 2017-01-01),     3 columns: what Scan3 reads
+               (P001, /proposals/doc10, 2017-01-01), ...
+lock           key columns:      (P001, /proposals)     2 columns, one range
+               non-key columns:  the seek ranges
+</code></pre></div></div>
+
+<ul>
+  <li>Shorthand, as in the paper: <code class="language-plaintext highlighter-rouge">(P001)</code> is every key starting with P001; <code class="language-plaintext highlighter-rouge">(P001, /proposals)</code> is ProjectId = P001 with DocumentPath in <code class="language-plaintext highlighter-rouge">['/proposals', '/proposalt')</code>, the strawman’s one range. Seek tuples are full keys</li>
+  <li>Seek ranges need a read to find them: which documents exist under <code class="language-plaintext highlighter-rouge">/proposals</code> is in the table, not in the query (Scan2)</li>
+  <li>Spanner locks per column
+    <ul>
+      <li>the key columns of a range stand for which rows exist there: an insert or delete in the range conflicts</li>
+      <li>a non-key column of a row stands for its value: an update of that row conflicts</li>
+    </ul>
+  </li>
+  <li>Why the key-column lock covers the whole range (our reading): the answer also depends on which documents are <em>absent</em>. Oct 19’s 2PL locks the items read; <code class="language-plaintext highlighter-rouge">/proposals/doc11</code> is not an item yet, so lock the range its insert would land in. That is a <em>phantom</em>, Nov 11</li>
+  <li>Snapshot reads lock nothing; for them the ranges say which prepared, uncommitted writes to wait out, rather than every one in the Paxos group (Oct 19’s <code class="language-plaintext highlighter-rouge">t_safe</code>; a refinement already in the 2012 paper)</li>
+  <li>Trade-off the paper leaves open: fine ranges read and lock less, but cost more to compute and to hold</li>
+</ul>
+
+<h2 id="messier-predicates">Messier predicates</h2>
+
+<ul>
+  <li>Normalization at compile time
+    <ul>
+      <li>push NOT down to the leaves: <code class="language-plaintext highlighter-rouge">NOT(a OR b)</code> → <code class="language-plaintext highlighter-rouge">NOT a AND NOT b</code>. Linear in the size of the predicate</li>
+      <li>isolate the key column in each leaf: <code class="language-plaintext highlighter-rouge">1 &gt; k</code> → <code class="language-plaintext highlighter-rouge">k &lt; 1</code>, <code class="language-plaintext highlighter-rouge">NOT(k &gt; 1)</code> → <code class="language-plaintext highlighter-rouge">k &lt;= 1</code></li>
+      <li>enumerate small integer ranges: <code class="language-plaintext highlighter-rouge">k BETWEEN 5 AND 7</code> → 5, 6, 7, three points, so the <em>next</em> key column can be pinned per point (the Version problem again). <code class="language-plaintext highlighter-rouge">k BETWEEN 5 AND 7000</code> is not enumerated: read the <code class="language-plaintext highlighter-rouge">k</code> values that exist, as Scan2 did</li>
+      <li>leaves too complex for extraction (subqueries, expensive functions, arithmetic) constrain nothing: their interval is (−∞, +∞). They stay in the post-filter</li>
+    </ul>
+  </li>
+  <li>No conversion to CNF or DNF
+    <ul>
+      <li>last lecture: WHERE in CNF, and only a sargable factor (<code class="language-plaintext highlighter-rouge">column op value</code>) could start or stop an index scan</li>
+      <li><code class="language-plaintext highlighter-rouge">(k1 = 1 AND k2 = "a") OR (k1 = 2 AND k2 = "b")</code> is one boolean factor headed by OR: not sargable, so System R reads every row and tests it</li>
+      <li>normalizing to dig out sargable pieces can blow up: <code class="language-plaintext highlighter-rouge">(a1 OR b1) AND ... AND (an OR bn)</code> has 2ⁿ DNF terms</li>
+      <li>Spanner keeps the AND/OR tree (NOT pushed down) and extracts ranges from it directly. The example above becomes two seeks, (1, “a”) and (2, “b”), fully absorbed</li>
+    </ul>
+  </li>
+  <li>Post-filter: when the scans cannot absorb the whole predicate, what is left is checked on each row they emit
+    <ul>
+      <li>the original predicate would always do as the post-filter; it just re-tests what the seeks already guarantee</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="the-filter-tree">The filter tree</h2>
+
+<ul>
+  <li>A table with key (k1 INT64, k2 STRING) and another column <code class="language-plaintext highlighter-rouge">value</code>; the predicate is below. Rewritten as before: Scan1 over k1, Scan2 over k2</li>
+  <li>One run-time structure (the paper’s Figure 4), shared by all the correlated scans, used twice: compute ranges, then post-filter</li>
+  <li>The scans drive it: Scan1 asks it for k1 ranges and emits 1, then 2; for each value, Scan2 asks for k2 ranges with k1 bound</li>
+  <li>Ranges, one key column at a time, bottom up
+    <ul>
+      <li>a leaf gets the interval it allows on that column; a leaf that says nothing usable about the column gets (−∞, +∞)</li>
+      <li>AND intersects its children’s intervals; OR takes their ∪</li>
+      <li>once earlier key columns are fixed, a leaf they decide gets its exact value: false → empty, true → (−∞, +∞)
+        <ul>
+          <li>under AND: empty empties the AND (prune the branch); true drops out</li>
+          <li>under OR: empty drops out; true makes the whole OR (−∞, +∞)</li>
+          <li><code class="language-plaintext highlighter-rouge">k1 = 1 OR k2 = "a"</code>, given k1 = 1: every k2 qualifies. Dropping the true leaf would leave [“a”, “a”] and lose the row (1, “z”)</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>(k1 = 1 AND k2 = "a" AND REGEXP_MATCH(value, @param)) OR (k1 = 2 AND k2 &lt; "b")
+
+                            OR
+                 /                       \
+              AND                         AND
+       /       |        \               /      \
+   k1 = 1   k2 = "a"   REGEXP_MATCH   k1 = 2   k2 &lt; "b"
+
+k1 ranges
+  left AND:   [1, 1] ∩ (−∞, +∞) ∩ (−∞, +∞)      = [1, 1]
+  right AND:  [2, 2] ∩ (−∞, +∞)                 = [2, 2]
+  OR:         [1, 1] ∪ [2, 2]                   = [1, 2]   integers: adjacent points merge
+
+k2 ranges, given k1 = 1
+  left AND:   k1 = 1 true, drops out;  ["a", "a"] ∩ (−∞, +∞) = ["a", "a"]
+  right AND:  k1 = 2 false → empty, pruned
+  OR:         ["a", "a"]
+
+k2 ranges, given k1 = 2
+  left AND:   k1 = 1 false → empty, pruned
+  right AND:  (−∞, "b")
+  OR:         (−∞, "b")
+
+result: seek (1, "a") with REGEXP_MATCH as a post-filter; range k1 = 2, k2 &lt; "b"
+</code></pre></div></div>
+
+<ul>
+  <li>Post-filtering a row from the seek at (1, “a”): <code class="language-plaintext highlighter-rouge">k1 = 1</code> and <code class="language-plaintext highlighter-rouge">k2 = "a"</code> are already known true (memoized), the right branch is already pruned, so only <code class="language-plaintext highlighter-rouge">REGEXP_MATCH</code> is evaluated</li>
+  <li>Rows from the k1 = 2 range: the range itself guarantees the right branch, so nothing is left to evaluate (our reading; the paper shows only the (1, “a”) case)</li>
+</ul>
+
+<h2 id="why-extraction-is-safe">Why extraction is safe</h2>
+
+<ul>
+  <li>Each leaf’s interval contains every value that could make the leaf true. “Don’t know” is (−∞, +∞)</li>
+  <li>∩ and ∪ keep that property: if each child’s interval covers the values that make the child true, the AND’s intersection and the OR’s union cover theirs</li>
+  <li>Fixing earlier key columns keeps it too: a decided leaf is exactly empty or exactly (−∞, +∞)</li>
+  <li>NOT would not: the complement of a too-big set is a too-small set. Hence NOT goes to the leaves first; a NOT inside a leaf that cannot be analyzed leaves that leaf at (−∞, +∞)
+    <ul>
+      <li>last lecture’s Table 1 took 1 − F for NOT: an estimate may err either way. A guaranteed superset may not</li>
+    </ul>
+  </li>
+  <li>So extracted ranges ⊇ the rows that satisfy the predicate, and the post-filter removes the extra. The answer is exact</li>
+  <li>Too big is the safe side every time
+    <ul>
+      <li>distribution: an extra shard runs the subquery and returns nothing</li>
+      <li>seek: extra rows are read, then filtered out</li>
+      <li>lock: extra locks cost concurrency, not correctness</li>
+      <li>too small would lose rows, or miss a conflicting write</li>
+    </ul>
+  </li>
+  <li>Often the ranges are exact (Q1, Documents). Approximate on purpose otherwise: isolating a key column can mean solving polynomials, with diminishing returns. The paper calls distribution-range extraction a heuristic, though a heavily used one</li>
+</ul>
+
+<h2 id="failures-in-the-middle-of-a-query">Failures in the middle of a query</h2>
+
+<ul>
+  <li>A long query reads 50 shards at one snapshot timestamp and streams a million rows to the client over half a minute. The client has consumed 400,000. Then:
+    <ul>
+      <li>a server it reads from restarts. Spanner is always upgrading somewhere: the paper reports “very few moments” when no zone was being upgraded</li>
+      <li>a shard it reads splits, and half moves to another Paxos group (<em>data movement</em>)</li>
+      <li>a later or retried call lands on a replica that is overloaded, or not yet caught up to the query’s timestamp (<code class="language-plaintext highlighter-rouge">t_safe &lt; s_read</code>). Rather than block, give up and retry at another replica (<em>distributed wait</em>)</li>
+    </ul>
+  </li>
+  <li>Strawman: return an error, the client retries from the start
+    <ul>
+      <li>every application writes a retry loop with backoff, and those loops are a known source of bugs</li>
+      <li>a snapshot transaction whose reads are spread across modules of an application cannot be retried cleanly</li>
+      <li>a query that runs about as long as the time between failures may not finish before its snapshot is garbage-collected, retry loop or not</li>
+      <li>one bad shard sets the latency of a query that touched 50</li>
+    </ul>
+  </li>
+  <li>Strawman: make results durable. Buffer the results, or each operator’s intermediate output, in storage as reliable as the database, and resume from there
+    <ul>
+      <li>every query pays latency to protect the few that fail</li>
+    </ul>
+  </li>
+  <li>Strawman: rewrite the query so it can resume. Tag every intermediate row with an identity column, or page by key (<code class="language-plaintext highlighter-rouge">WHERE col &gt; @last ORDER BY col LIMIT n</code>)
+    <ul>
+      <li>the paper: identity columns “looked impossible in the general case” (our guess at why: aggregates and joins make rows with no identity of their own)</li>
+      <li>paging adds a sort the query did not otherwise need</li>
+    </ul>
+  </li>
+  <li>Insight: the query processor knows how far it got. Have it say so, cheaply, with every batch of results</li>
+</ul>
+
+<h2 id="restart-tokens">Restart tokens</h2>
+
+<ul>
+  <li>Every batch of results carries an opaque <em>restart token</em>. To resume, the client library resends the original request plus the last token it received
+    <ul>
+      <li>the calls between Spanner servers (a union’s calls to its shards) are restartable the same way</li>
+    </ul>
+  </li>
+  <li>Contract: the rows before and after a restart together are a correct answer, none returned twice. No promise that it is the answer an uninterrupted run would have given
+    <ul>
+      <li><code class="language-plaintext highlighter-rouge">SELECT * FROM T LIMIT 100</code>, restarted after 30 rows: 70 more rows, none repeated, not necessarily the 70 the first attempt would have sent</li>
+    </ul>
+  </li>
+  <li>Streaming: nothing is written to persistent storage for the sake of restarts</li>
+  <li>Simplest case, a range scan with filters and projections: token = last primary key returned + the snapshot timestamp. Resume = seek just past that key, at that timestamp</li>
+  <li>Why the timestamp
+    <ul>
+      <li>the part after the restart must read the same state as the part before. A scan stopped at key 50 resumes at a newer timestamp: a transaction that meanwhile deleted the row at key 10 (returned) and reinserted its data at 90 (not yet reached) makes it show up twice; one that moved a row from 90 to 10 makes it vanish</li>
+      <li>every replica with <code class="language-plaintext highlighter-rouge">t_safe</code> past it returns the same data (Oct 19), so the resume may run on any of them, even in another datacenter</li>
+      <li>the limit: old versions are garbage-collected. “Snapshot data has been garbage collected” is an error the client still sees, as is “deadline exceeded”</li>
+    </ul>
+  </li>
+  <li>Covers strong reads too: their timestamp is picked once, at the start, and travels in the token. Snapshot queries, strong ones included, are most of Spanner’s queries</li>
+  <li>Read-write transactions do not get this
+    <ul>
+      <li>their reads have no snapshot timestamp: they read the latest data, which stays valid only while their locks are held</li>
+      <li>locks taken as the transaction runs live only in leader memory (the prepare record is what goes through Paxos, Oct 21). A failure “often” loses them, and another transaction may then change rows already read</li>
+      <li>so: abort, and the client retries, as it already must after a wound-wait abort</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="what-makes-tokens-hard">What makes tokens hard</h2>
+
+<p>The paper names the problems and defers the mechanisms to another paper. What a token has to capture:</p>
+
+<ul>
+  <li>Resharding: the server that resumes may own a different range from the one that stopped</li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>before   server A serves [20, 30) at ts 105       returned keys 20 .. 24; A restarts
+token    ts 105; [20, 30) done up to key 24
+after    [10, 40) is now one shard, on server B
+         the resume, still addressed to [20, 30), reaches B: seek just past 24, stop at 30, ts 105
+</code></pre></div></div>
+
+<ul>
+  <li>“shard 3, 400 rows done” would mean nothing on B: progress must be recorded in <em>key space</em></li>
+  <li>Non-determinism: row order depends on which shard answers first and how much memory a blocking operator got; a floating-point SUM’s value depends on the order of its inputs
+    <ul>
+      <li>so “rerun and skip the first 400,000 rows” fails: a rerun produces a different sequence</li>
+      <li>each source has to be recorded or compensated; for a union, say, one key position per range it called instead of one row count (our example)</li>
+    </ul>
+  </li>
+  <li>Server versions: the resume may land on the next release
+    <ul>
+      <li>token format versioned, readable by the previous and the next release</li>
+      <li>same plan: a query started on version N resumes with N’s operator tree, even if N+1 would compile the SQL differently. The token is positions inside N’s operators; another tree could not tell which rows were already returned</li>
+      <li>operators read their part of a token the same way across versions. One rerun from scratch (no token part of its own) must still emit rows in the order its parent’s token counted on; a release may change that order only together with a new token version</li>
+    </ul>
+  </li>
+  <li>Engineering cost: token versioning, processes that force explicit versioning on incompatible changes, a framework to catch incompatibilities</li>
+</ul>
+
+<h2 id="what-restarts-bought">What restarts bought</h2>
+
+<ul>
+  <li>The first strawman’s problems, gone: no retry loops (set a realistic deadline instead), little work redone, forward progress for long queries, one bad shard costs one resume</li>
+  <li>Streaming instead of paging: no <code class="language-plaintext highlighter-rouge">ORDER BY ... LIMIT ... OFFSET</code> just to page; the server holds no resources while the client pauses</li>
+  <li>Rolling upgrades: a release reaches every machine over a week or so, several versions live at once, queries undisturbed. Why Spanner can ship a fix quickly</li>
+  <li>Simpler internals: an overloaded server, or one with a problem shard, returns “retry”, and the request resumes on another replica with little lost</li>
+</ul>
+
+<h2 id="why-inside-not-beside">Why inside, not beside</h2>
+
+<ul>
+  <li>What each piece got from being inside the store (our summary)
+    <ul>
+      <li>DistributedUnion: the current shard map, and the right to run a subtree in the process that holds the shard (affinity, location hints). A SQL tier beside the store adds a hop</li>
+      <li>interleaving: the parent-child join runs inside the shard. A tier beside the store can read the co-located range in one call, but must ship all of it</li>
+      <li>range extraction: one predicate analysis feeds routing, storage seeks, and the lock manager</li>
+      <li>restarts: progress in key space at a snapshot timestamp, on every call, server-to-server ones included, across resharding and releases</li>
+    </ul>
+  </li>
+  <li>The paper’s verdict is milder: loose (F1) and tight designs both work, “even simultaneously” on the same core, and “a detailed exploration of the pros and cons of these designs is still outstanding”</li>
+  <li>SQL vs NoSQL is a stack, not a choice: scale and manageability (a key-value store, Bigtable) → cross-row ACID (a transactional key-value store, “the lowest common denominator”) → SQL on top, loose or tight. “The SQL vs. NoSQL dichotomy may no longer be relevant”</li>
+  <li>The core lecture ends here. The next three sections are optional: run on if time is left, otherwise leave them for reading</li>
+</ul>
+
+<h2 id="one-sql-across-google">One SQL across Google</h2>
+
+<ul>
+  <li>Spanner, F1, and Dremel (BigQuery outside Google) each had their own SQL: the same query could differ in syntax, NULL handling, type coercion, name scoping</li>
+  <li>An open-source front end such as Postgres’s was rejected: Google’s data is Protocol Buffers, wanted as first-class SQL types; and a UTF-8 <code class="language-plaintext highlighter-rouge">STRING</code> instead of <code class="language-plaintext highlighter-rouge">CHAR</code>/<code class="language-plaintext highlighter-rouge">VARCHAR</code></li>
+  <li>Instead, one ANSI-based dialect, Standard SQL, with <code class="language-plaintext highlighter-rouge">ARRAY</code> and <code class="language-plaintext highlighter-rouge">STRUCT</code> for nested data, and shared pieces (the GoogleSQL library): one front end (parse, resolve names, check types → a <em>resolved AST</em> that each system translates into its own algebra), one scalar-function library</li>
+  <li>Tests: hand-written compliance queries per feature, plus millions of random queries a day, on random schemas and data, compared against a reference engine
+    <ul>
+      <li>reference results are annotated: imprecise (a floating-point AVG), ordered or unordered</li>
+      <li>a query with no unique answer (<code class="language-plaintext highlighter-rouge">LIMIT</code> without enough <code class="language-plaintext highlighter-rouge">ORDER BY</code>) is not checked, only run: about 10% of random queries in unit tests</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="storage-that-suits-sql-ressi">Storage that suits SQL: Ressi</h2>
+
+<ul>
+  <li>Spanner started on Bigtable’s SSTables (Sep 21: RocksDB’s files descend from the same design): built for schemaless data and large strings, self-describing and so redundant, slow to walk one column across rows. Scale-out hid the cost, but they “leave a lot of performance on the table”</li>
+  <li>Ressi, entering production in 2017: still an LSM tree whose layers are compacted (Sep 16), with a new file format
+    <ul>
+      <li>blocks in key order; inside a block, one array per column (the PAX layout)
+        <ul>
+          <li>a point lookup for the newest values reads one block</li>
+          <li>a scan of two columns still loads the same blocks: PAX changes the layout inside a block, not which blocks are read. The gain is mostly CPU: walk two dense, same-typed arrays instead of decoding every cell; typed arrays also compress better, so blocks hold more rows (our reading)</li>
+          <li>a pure column store would cut the bytes a scan reads, but a point lookup would then read one block per column</li>
+          <li>Aug 31: TiDB answered OLTP plus analytics with two copies, rows in TiKV and columns in a TiFlash learner. Ressi keeps one copy and splits the difference inside each block</li>
+        </ul>
+      </li>
+      <li>I/O is saved by splitting files
+        <ul>
+          <li>an <em>active</em> file holds only the newest value of each cell, an <em>inactive</em> file the older versions. A read of the latest data never loads old versions</li>
+          <li>large (multi-page) values live in separate files, read only when needed</li>
+        </ul>
+      </li>
+      <li>interleaved child rows go in or near their parent’s block; operators work on compressed vectors directly</li>
+    </ul>
+  </li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>one block, three Customer rows
+
+row-major (SSTable)          PAX (Ressi)
+  7, Ann, Denver               ckey:  7, 8, 9
+  8, Bob, Boston               name:  Ann, Bob, Cy
+  9, Cy,  Denver               city:  Denver, Boston, Denver
+</code></pre></div></div>
+
+<ul>
+  <li>Changing the format of a live, replicated database: reuse the machinery that moves shards
+    <ul>
+      <li>change a Paxos group’s specification (which includes each replica’s storage format), then <em>move</em> its data to a new group, converting on the way; the old group serves until the new one takes over</li>
+      <li>group by group, reversible: to Ressi, to mixed replicas (to compare), or back to SSTables</li>
+    </ul>
+  </li>
+  <li>The shard moves that forced DistributedUnion and restarts also made a storage migration routine</li>
+</ul>
+
+<h2 id="lessons-the-paper-reports">Lessons the paper reports</h2>
+
+<ul>
+  <li>Scale first. Horizontal scaling got Spanner deployed; per-machine speed (Ressi) came later</li>
+  <li>SQL beat the key-value API for anything past simple lookups: SQL volume grew 2× in the year before the common dialect, 5× in the year after, and queries grew more complex</li>
+  <li>Read your own writes: unsupported, since a transaction’s writes are buffered at the client until commit (2012 paper). Little demand inside Google, but other SQL systems allow it. Cloud Spanner’s DML has since added it</li>
+  <li>TrueTime’s ε kept shrinking
+    <ul>
+      <li>a read at <code class="language-plaintext highlighter-rouge">TT.now().latest</code> may wait about ε for replicas’ <code class="language-plaintext highlighter-rouge">t_safe</code> to pass it (our reading); a query analyzed for the oldest timestamp that still sees every change it needs (Oct 19’s one-group aside, for every group) waits less and can use more replicas</li>
+      <li>with small ε, reading at <code class="language-plaintext highlighter-rouge">TT.now().latest</code> is good enough, and the analysis is skipped</li>
+    </ul>
+  </li>
+  <li>Many physical design knobs (placement, replication, protocol buffers vs interleaved tables, vertical partitioning): Spanner engineers review new schemas</li>
+  <li>Optimizer stability: a new release about every two weeks, and a changed plan can swing latency by an order of magnitude. Hard to improve the optimizer without hurting someone</li>
+  <li>One system for OLTP, analytics, and text search is still what customers want most, despite the critique of “one size fits all”</li>
+  <li>What a DBMS had to unlearn for this scale (the conclusions)
+    <ul>
+      <li>it runs only as a service: one team operates every database</li>
+      <li>no static partitioning; calls go to key ranges, not machines</li>
+      <li>several replication configurations, chosen per workload; one shard can be down while the rest of its table serves</li>
+      <li>metadata (schema versions, placement) is managed as data: there is too much of it to keep any other way (TiDB keeps its Region map in PD, Aug 31)</li>
+      <li>the control plane (health, SLOs, placement, lock conflicts) is a database application of its own</li>
+    </ul>
+  </li>
+  <li>Advice: once a scalable, available storage core exists, go relational early</li>
+</ul>
+
+<h2 id="the-design-assembled">The design, assembled</h2>
+
+<ol>
+  <li>Joins as Apply; a <code class="language-plaintext highlighter-rouge">DistributedUnion</code> over every scan, pulled up while partitionability holds; Top and aggregates split into local and final parts</li>
+  <li>Interleaving makes parent-child joins local; <code class="language-plaintext highlighter-rouge">DistributedApply</code> batches the rest</li>
+  <li>At run time: prune shards with the sharding-key filter, one call per Paxos group, in-process when local; location hints; root-partitionable queries split across consumers</li>
+  <li>Range extraction for distribution, seek, and lock: correlated self-joins over key columns, a filter tree that computes ranges and post-filters; a superset, sometimes too big, never too small</li>
+  <li>Restart tokens on every batch: snapshot timestamp, progress in key space, the same plan across releases</li>
+  <li>Optional part: one dialect across Google, checked against a reference engine; Ressi, PAX blocks with the newest versions apart, migrated by moving data between groups</li>
+</ol>
+
+<h2 id="where-the-idea-went">Where the idea went</h2>
+
+<ul>
+  <li>Cloud Spanner’s public API exposes these pieces: streamed results carry a <code class="language-plaintext highlighter-rouge">resume_token</code>, and <code class="language-plaintext highlighter-rouge">PartitionQuery</code> is the parallel-consumer API, for root-partitionable queries only</li>
+  <li>The GoogleSQL front end was open-sourced as ZetaSQL (2019) and renamed GoogleSQL in 2026</li>
+  <li>F1 Query (VLDB 2018): F1’s engine as a stand-alone, federated service over Spanner, Bigtable, and files. The loosely coupled path, kept</li>
+  <li>TiKV’s <em>coprocessor</em> (the Aug 31 paper) runs pushed-down operators; Spanner’s coprocessor framework routes calls by key range. Same word, different job</li>
+  <li>CockroachDB (Nov 16): range-sharded key-value storage with SQL in the same process; predicates become key spans, and plans are shipped to the nodes holding the ranges</li>
+  <li>Next: Spanner’s default is strict serializability (Oct 19’s external consistency). Most SQL systems default to something weaker, and Spanner itself now also offers repeatable read, built as snapshot isolation. Nov 11: what the weaker levels let through, phantoms included</li>
+</ul>
+
+<h2 id="questions-to-review">Questions to review</h2>
+
+<ul>
+  <li>Why can’t Spanner split a query by the shard map at compile time, as a classic parallel database does? Give three reasons</li>
+  <li>State partitionability. Which of these pass: Filter, Project, <code class="language-plaintext highlighter-rouge">GroupBy(ckey)</code>, <code class="language-plaintext highlighter-rouge">GroupBy(type)</code>, Sort by <code class="language-plaintext highlighter-rouge">ckey</code>, <code class="language-plaintext highlighter-rouge">Top(5)</code> by <code class="language-plaintext highlighter-rouge">ckey</code>, <code class="language-plaintext highlighter-rouge">Top(5)</code> by total? What happens to the ones that fail?</li>
+  <li><code class="language-plaintext highlighter-rouge">GroupBy(ckey)</code> would stay partitionable under hash sharding on <code class="language-plaintext highlighter-rouge">ckey</code>; Sort by <code class="language-plaintext highlighter-rouge">ckey</code> would not. Why?</li>
+  <li>Write SUM, COUNT, AVG, and MAX as <code class="language-plaintext highlighter-rouge">OpFinal ∘ OpLocal</code>. Why can’t <code class="language-plaintext highlighter-rouge">COUNT(DISTINCT type)</code> ship one number per shard, as COUNT does? What must its OpLocal ship instead, and how big can that get?</li>
+  <li>Why do the two unions in Q1 merge? If Sales were its own table sharded on <code class="language-plaintext highlighter-rouge">ckey</code>, not interleaved, which step of the Q1 walk fails, and what does the <code class="language-plaintext highlighter-rouge">CrossApply</code> become?</li>
+  <li>On one machine, Q2 was an access path through a non-clustered index. Why does it become a join in Spanner, and what does batching change in <code class="language-plaintext highlighter-rouge">outer_rows × C_inner</code>?</li>
+  <li>What does a location hint cache, and why can it be computed once per query text rather than once per run?</li>
+  <li>Which queries can use the parallel-consumer API? Is Q1 one? <code class="language-plaintext highlighter-rouge">SELECT c.name, s.amount FROM Customer c JOIN Sales s ON c.ckey = s.ckey WHERE s.type = 'global'</code>? <code class="language-plaintext highlighter-rouge">SELECT type, SUM(amount) FROM Sales GROUP BY type</code>?</li>
+  <li>For <code class="language-plaintext highlighter-rouge">Documents</code>, why can’t one start/stop key pair answer the query well? How do correlated self-joins fix it, and when is a plain scan cheaper?</li>
+  <li>Why is the key-column lock range a whole range, while non-key columns are locked only on the rows read?</li>
+  <li>Why push NOT to the leaves before interval arithmetic? Why not convert to CNF or DNF first?</li>
+  <li>Filter tree, key (k1, k2): compute the ranges for <code class="language-plaintext highlighter-rouge">(k1 = 3 AND k2 &gt; "m") OR (k1 = 3 AND k2 = "c") OR (k1 = 4 AND LENGTH(k2) = 2)</code>, and say where a post-filter is needed. Then for <code class="language-plaintext highlighter-rouge">k1 = 1 OR k2 = "a"</code>: k1 ranges, k2 ranges given k1 = 1, and given k1 = 2</li>
+  <li>Extracted ranges may cover too many keys, never too few. Why is that the right direction for distribution, seek, and lock ranges each?</li>
+  <li>A scan’s restart token is a key and a timestamp. Why the timestamp? Why can’t it say “shard 3, 400 rows done”, and what does it say instead?</li>
+  <li>Why do restarts work for snapshot queries, strong reads included, but not for read-write transactions?</li>
+  <li>Why must a query restarted on a newer server release still run its old plan?</li>
+  <li>Name two things the tightly coupled design does that a SQL tier beside the store cannot do as cheaply. What is the paper’s own verdict on loose vs tight?</li>
+  <li>(Optional part) What does PAX save over a row-major block, and what does it not? How did TiDB answer the same OLTP-plus-analytics problem?</li>
+  <li>(Optional part) Shard movement between Paxos groups forced two designs in this paper and made a third cheap. Which three?</li>
+</ul>
 
   </section>
 
