@@ -55,7 +55,7 @@ table td:first-child {
 | Oct 28 | **Exam 2** |
 |        | Session VI: SQL |
 | Nov 02 | Query Optimization ([slides](slides/DB26fa-QueryOpt.pdf))<br>[Access Path Selection in a Relational Database Management System](readings/selinger.pdf) |
-| Nov 04 | Spanner SQL ([notes](notes/spanner-sql.html), [slides](slides/DB26fa-SpannerSQL.pdf))<br>[Spanner: Becoming a SQL System](readings/spanner-sql.pdf) |
+| Nov 04 | Spanner SQL ([slides](slides/DB26fa-SpannerSQL.pdf))<br>[Spanner: Becoming a SQL System](readings/spanner-sql.pdf) |
 | Nov 09 | Student presentation |
 |        | Session VII: Weaker Isolation and Consistency |
 | Nov 11 | More Isolation Levels ([notes](notes/isolations.html))<br>[A Critique of ANSI SQL Isolation Levels](readings/si.pdf) |
