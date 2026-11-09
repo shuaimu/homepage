@@ -15,22 +15,28 @@
   #v(35pt)
   #text(size: 19pt, fill: muted)[Selinger, Astrahan, Chamberlin, Lorie, and Price\ _Access Path Selection in a Relational Database Management System_ · SIGMOD 1979]
 ]
-// The paper's Figure 1 query, verbatim. EMP has no local predicate, which the deck uses
+// The paper's Figure 1 query, its WHERE columns prefixed by their tables, beside the three
+// tables' columns. EMP has no local predicate, which the deck uses
 // later (rule 2 breaks on it); the one-table query `SAL > 20000` is a separate example.
 // 2
-#lecture-slide(source: [§5, Figure 1], notes: [2 minutes. This is the paper's own running example, Figure 1, word for word, and the whole hour stays on it. Read it aloud as English, the way the paper captions it: retrieve the name, salary, job title and department name of employees who are clerks and work for departments in Denver. Three tables. Two local predicates, each on one table: TITLE = 'CLERK' on JOB and LOC = 'DENVER' on DEPT. Two join predicates, each tying two tables together: EMP.DNO = DEPT.DNO and EMP.JOB = JOB.JOB. Point out what is missing, because it matters later: nothing in the WHERE clause filters EMP, the biggest table. Stress that the query is declarative: it fixes the answer and says nothing about the method, not which table to read first, not which index, not which join algorithm. Choosing the how is the optimizer's job, and today we reinvent the System R optimizer piece by piece. The paper's Figure 1 shows a few rows of each table and no sizes; ours follow on slides 4 and 5.])[The Denver clerks query][
-  #sql(size: 27pt)[```
+#lecture-slide(source: [§5, Figure 1], notes: [2 minutes. This is the paper's own running example, Figure 1, and the whole hour stays on it. One change from the paper: each column in the WHERE clause carries its table's name, JOB.TITLE where the paper writes TITLE, so every predicate shows which table it touches. The boxes on the right are the three tables' columns, as Figure 1 lists them; only the join columns DNO and JOB appear in two tables. Read it aloud as English, the way the paper captions it: retrieve the name, salary, job title and department name of employees who are clerks and work for departments in Denver. Three tables. Two local predicates, each on one table: TITLE = 'CLERK' on JOB and LOC = 'DENVER' on DEPT. Two join predicates, each tying two tables together: EMP.DNO = DEPT.DNO and EMP.JOB = JOB.JOB. Point out what is missing, because it matters later: nothing in the WHERE clause filters EMP, the biggest table. Stress that the query is declarative: it fixes the answer and says nothing about the method, not which table to read first, not which index, not which join algorithm. Choosing the how is the optimizer's job, and today we reinvent the System R optimizer piece by piece. The paper's Figure 1 shows a few rows of each table and no sizes; ours follow on slides 4 and 5.])[The Denver clerks query][
+  // In a grid the sql block's own above/below spacing is dropped, so it is restored here.
+  #v(14pt)
+  #grid(columns: (auto, 1fr), column-gutter: 56pt, align: horizon,
+    sql(size: 27pt)[```
 SELECT NAME, TITLE, SAL, DNAME
 FROM   EMP, DEPT, JOB
-WHERE  TITLE = 'CLERK'
-  AND  LOC = 'DENVER'
+WHERE  JOB.TITLE = 'CLERK'
+  AND  DEPT.LOC = 'DENVER'
   AND  EMP.DNO = DEPT.DNO
   AND  EMP.JOB = JOB.JOB
-```]
-  #v(10pt)
+```],
+    schema-a(),
+  )
+  #v(24pt)
   #small[Name, salary, job title and department of every clerk in a Denver department.]
   #takeaway[SQL says what rows you want. It never says how to get them.]
-  #caption[Figure 1’s query, verbatim. Three tables, two local predicates, two join predicates.]
+  #caption[Figure 1’s query, with each WHERE column’s table named. Two local predicates, two join predicates.]
 ]
 // 3
 #lecture-slide(source: [§1, §7], notes: [1 minute. The job, as four questions, and nothing answered yet. The user did not say which table to read first or in what order to join the three; whether to use an index, and which one; which join algorithm; and, a choice that comes with the join algorithm, whether to sort. Do not answer them now: the hour answers each in turn, with its arithmetic. Say only that every one of them can change the running time by orders of magnitude on this very query, more than a hundredfold for the join order alone, and that none of them changes the answer. Then the last line, the goal: not the best plan, because the paper is explicit that its estimates are rough, but a plan close to the best, found cheaply enough to run at compile time and amortize over many runs of a compiled program. For anyone who wants the numbers now, the appendix cards from slide 68 price each question.])[Four choices nobody made][

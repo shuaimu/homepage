@@ -8,7 +8,8 @@ A PDF gives every reveal step its own page. Both exports group the steps of a sl
 under one slide number, using the overlay metadata in DECK.pdfpc, so build that (and
 DECK.pdf, for slide titles) first; the Makefile does. Pages come from typst itself:
 SVG for the HTML player, PNG for PowerPoint, where each step is a full-slide picture
-that appears on click over the previous one. Speaker notes come from DECK.pdfpc.
+that appears on click over the previous one. Speaker notes come from DECK.pdfpc and go
+into the HTML player's speaker window only; the PowerPoint copy carries no notes.
 Needs only Python 3 and typst; pdftotext and pdfinfo (poppler) add titles if present.
 Set TYPST and TYPST_FLAGS in the environment to override the typst command.
 """
@@ -543,13 +544,6 @@ def appear_timing(shape_ids):
             '</p:seq></p:childTnLst></p:cTn></p:par></p:tnLst></p:timing>')
 
 
-def text_paragraphs(text):
-    clean = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', text)
-    lines = [line.strip() for line in clean.split('\n')] or ['']
-    return ''.join(f'<a:p><a:r><a:rPr lang="en-US" dirty="0"/><a:t>{escape(line)}</a:t></a:r></a:p>'
-                   if line else '<a:p><a:endParaRPr lang="en-US"/></a:p>' for line in lines)
-
-
 def build_pptx(deck):
     slides, n_pages, title, author = load_slides(deck)
     with tempfile.TemporaryDirectory() as tmp:
@@ -564,15 +558,13 @@ def build_pptx(deck):
         ctypes = [('/ppt/presentation.xml', CT + 'presentationml.presentation.main+xml'),
                   ('/ppt/slideMasters/slideMaster1.xml', CT + 'presentationml.slideMaster+xml'),
                   ('/ppt/slideLayouts/slideLayout1.xml', CT + 'presentationml.slideLayout+xml'),
-                  ('/ppt/notesMasters/notesMaster1.xml', CT + 'presentationml.notesMaster+xml'),
-                  ('/ppt/theme/theme1.xml', CT + 'theme+xml'), ('/ppt/theme/theme2.xml', CT + 'theme+xml'),
+                  ('/ppt/theme/theme1.xml', CT + 'theme+xml'),
                   ('/ppt/presProps.xml', CT + 'presentationml.presProps+xml'),
                   ('/ppt/viewProps.xml', CT + 'presentationml.viewProps+xml'),
                   ('/ppt/tableStyles.xml', CT + 'presentationml.tableStyles+xml'),
                   ('/docProps/core.xml', 'application/vnd.openxmlformats-package.core-properties+xml'),
                   ('/docProps/app.xml', CT + 'extended-properties+xml')]
         pres_rels = [('rId1', REL + 'slideMaster', 'slideMasters/slideMaster1.xml'),
-                     ('rId2', REL + 'notesMaster', 'notesMasters/notesMaster1.xml'),
                      ('rId3', REL + 'theme', 'theme/theme1.xml'),
                      ('rId4', REL + 'presProps', 'presProps.xml'),
                      ('rId5', REL + 'viewProps', 'viewProps.xml'),
@@ -580,8 +572,7 @@ def build_pptx(deck):
         media = {}
         slide_ids = []
         for n, sl in enumerate(slides, 1):
-            pics, srels = [], [('rId1', REL + 'slideLayout', '../slideLayouts/slideLayout1.xml'),
-                               ('rId2', REL + 'notesSlide', f'../notesSlides/notesSlide{n}.xml')]
+            pics, srels = [], [('rId1', REL + 'slideLayout', '../slideLayouts/slideLayout1.xml')]
             for k, page in enumerate(sl['pages']):
                 media[f'ppt/media/page{page + 1}.png'] = files[page]
                 rid = f'rId{k + 3}'
@@ -599,20 +590,7 @@ def build_pptx(deck):
                 XML + f'<p:sld {NS}><p:cSld><p:spTree>{EMPTY_TREE}{"".join(pics)}</p:spTree></p:cSld>'
                 '<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>' + timing + '</p:sld>')
             parts[f'ppt/slides/_rels/slide{n}.xml.rels'] = rels(srels)
-            parts[f'ppt/notesSlides/notesSlide{n}.xml'] = (
-                XML + f'<p:notes {NS}><p:cSld><p:spTree>{EMPTY_TREE}'
-                '<p:sp><p:nvSpPr><p:cNvPr id="2" name="Slide Image Placeholder 1"/><p:cNvSpPr>'
-                '<a:spLocks noGrp="1" noRot="1" noChangeAspect="1"/></p:cNvSpPr><p:nvPr><p:ph type="sldImg"/>'
-                '</p:nvPr></p:nvSpPr><p:spPr/></p:sp>'
-                '<p:sp><p:nvSpPr><p:cNvPr id="3" name="Notes Placeholder 2"/><p:cNvSpPr>'
-                '<a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr>'
-                '<p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/>' + text_paragraphs(sl['note']) +
-                '</p:txBody></p:sp></p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:notes>')
-            parts[f'ppt/notesSlides/_rels/notesSlide{n}.xml.rels'] = rels(
-                [('rId1', REL + 'notesMaster', '../notesMasters/notesMaster1.xml'),
-                 ('rId2', REL + 'slide', f'../slides/slide{n}.xml')])
-            ctypes += [(f'/ppt/slides/slide{n}.xml', CT + 'presentationml.slide+xml'),
-                       (f'/ppt/notesSlides/notesSlide{n}.xml', CT + 'presentationml.notesSlide+xml')]
+            ctypes.append((f'/ppt/slides/slide{n}.xml', CT + 'presentationml.slide+xml'))
             pres_rels.append((f'rId{n + 10}', REL + 'slide', f'slides/slide{n}.xml'))
             slide_ids.append(f'<p:sldId id="{n + 255}" r:id="rId{n + 10}"/>')
 
@@ -630,7 +608,6 @@ def build_pptx(deck):
         parts['ppt/presentation.xml'] = (
             XML + f'<p:presentation {NS} saveSubsetFonts="1">'
             '<p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>'
-            '<p:notesMasterIdLst><p:notesMasterId r:id="rId2"/></p:notesMasterIdLst>'
             f'<p:sldIdLst>{"".join(slide_ids)}</p:sldIdLst>'
             f'<p:sldSz cx="{cx}" cy="{cy}"/><p:notesSz cx="6858000" cy="9144000"/></p:presentation>')
         parts['ppt/_rels/presentation.xml.rels'] = rels(pres_rels)
@@ -647,27 +624,7 @@ def build_pptx(deck):
             '</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>')
         parts['ppt/slideLayouts/_rels/slideLayout1.xml.rels'] = rels(
             [('rId1', REL + 'slideMaster', '../slideMasters/slideMaster1.xml')])
-        parts['ppt/notesMasters/notesMaster1.xml'] = (
-            XML + f'<p:notesMaster {NS}><p:cSld><p:bg><p:bgRef idx="1001"><a:schemeClr val="bg1"/></p:bgRef>'
-            f'</p:bg><p:spTree>{EMPTY_TREE}'
-            '<p:sp><p:nvSpPr><p:cNvPr id="2" name="Slide Image Placeholder 1"/><p:cNvSpPr>'
-            '<a:spLocks noGrp="1" noRot="1" noChangeAspect="1"/></p:cNvSpPr><p:nvPr>'
-            '<p:ph type="sldImg" idx="2"/></p:nvPr></p:nvSpPr><p:spPr><a:xfrm><a:off x="685800" y="1143000"/>'
-            '<a:ext cx="5486400" cy="3086100"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom>'
-            '<a:noFill/><a:ln w="12700"><a:solidFill><a:prstClr val="black"/></a:solidFill></a:ln></p:spPr></p:sp>'
-            '<p:sp><p:nvSpPr><p:cNvPr id="3" name="Notes Placeholder 2"/><p:cNvSpPr><a:spLocks noGrp="1"/>'
-            '</p:cNvSpPr><p:nvPr><p:ph type="body" sz="quarter" idx="3"/></p:nvPr></p:nvSpPr><p:spPr><a:xfrm>'
-            '<a:off x="685800" y="4400550"/><a:ext cx="5486400" cy="3600450"/></a:xfrm><a:prstGeom prst="rect">'
-            '<a:avLst/></a:prstGeom></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:endParaRPr lang="en-US"/>'
-            f'</a:p></p:txBody></p:sp></p:spTree></p:cSld>{CLR_MAP}<p:notesStyle>'
-            '<a:lvl1pPr marL="0" algn="l" defTabSz="914400" rtl="0" eaLnBrk="1" latinLnBrk="0" hangingPunct="1">'
-            '<a:defRPr sz="1400" kern="1200"><a:solidFill><a:schemeClr val="tx1"/></a:solidFill>'
-            '<a:latin typeface="+mn-lt"/><a:ea typeface="+mn-ea"/><a:cs typeface="+mn-cs"/></a:defRPr>'
-            '</a:lvl1pPr></p:notesStyle></p:notesMaster>')
-        parts['ppt/notesMasters/_rels/notesMaster1.xml.rels'] = rels(
-            [('rId1', REL + 'theme', '../theme/theme2.xml')])
         parts['ppt/theme/theme1.xml'] = theme('Slides')
-        parts['ppt/theme/theme2.xml'] = theme('Notes')
         parts['ppt/presProps.xml'] = XML + f'<p:presentationPr {NS}/>'
         parts['ppt/viewProps.xml'] = (XML + f'<p:viewPr {NS}><p:normalViewPr><p:restoredLeft sz="15620"/>'
                                       '<p:restoredTop sz="80000"/></p:normalViewPr></p:viewPr>')
@@ -680,7 +637,7 @@ def build_pptx(deck):
         parts['docProps/app.xml'] = (
             XML + '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties">'
             f'<Application>export-deck.py</Application><Slides>{len(slides)}</Slides>'
-            f'<Notes>{len(slides)}</Notes></Properties>')
+            '<Notes>0</Notes></Properties>')
 
         out = f'{deck}.pptx'
         stamp = (2026, 1, 1, 0, 0, 0)  # fixed, so an unchanged deck gives an identical file

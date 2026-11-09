@@ -39,8 +39,9 @@ Build the HTML file with `make -C teaching/db/26fa/slides queryopt-export` (Pyth
 and typst only); it is generated from the presentation PDF's pages and the pdfpc file,
 so rebuild it after any slide change. A PowerPoint copy is not kept while the slides are
 changing. When one is needed, `make -C teaching/db/26fa/slides DB26fa-QueryOpt.pptx`
-builds it: 85 slides with the speaker notes, each step a picture of the rendered page
-that appears on a click, so it is for presenting rather than editing.
+builds it: 85 slides without speaker notes, which stay in the HTML player and the pdfpc
+file, each step a picture of the rendered page that appears on a click, so it is for
+presenting rather than editing.
 
 Slides 1–55 form the core lecture, which ends on a recap, slide 55. The suggested
 timings in the speaker notes total 75 minutes, inside an 80-minute slot with five minutes
@@ -110,7 +111,9 @@ needs them (the slides say *useful order* on screen, the notes give the paper's 
 both walk the merge trace on DEPT with EMP, and both end the core route with a recap:
 nested queries, what held up and the design assembled follow as optional reading in the
 notes and open the appendix in the deck. Slides 1–5 are the notes' "The job" and "The
-tables". Slide 2 prints the paper's Figure 1 query verbatim, six lines, and the whole
+tables". Slide 2 prints the paper's Figure 1 query, six lines, with one change: each
+WHERE column carries its table's name (`JOB.TITLE` and `DEPT.LOC` where the paper writes
+`TITLE` and `LOC`), and `schema-a` beside it lists the three tables' columns. The whole
 hour runs on it. Nothing in its WHERE clause filters EMP, the biggest table, and the
 deck uses that rather than hiding it: rule 2 breaks on it (slide 16's caption), and
 every EMP index path matches nothing, which is why Table 2's two matching-nothing rows,
@@ -470,8 +473,8 @@ Explicit Typst text edges make this independent of font metrics. Dense slides we
 reflowed rather than set in smaller type. The full lecture, every reveal state included,
 and the handout were rendered and reviewed page by page, the arithmetic was audited
 slide by slide, and each slide a fix touched was re-rendered and checked again.
-`queryopt-diagrams.typ` holds 27 editable figures and no imported images, 26 of them
-CeTZ canvases and `tables-a` a plain Typst table. All of them appear in the deck; the
+`queryopt-diagrams.typ` holds 28 editable figures and no imported images, 26 of them
+CeTZ canvases and `schema-a` and `tables-a` plain Typst tables. All of them appear in the deck; the
 three that lost their slides, the RSI boundary, the old LOC/ZIP grid and
 `interesting-order`, EMP's four paths with their verdicts, were removed, and
 the two-panel heuristics figure was split into `no-cross-products` and `left-deep`. Ten
@@ -491,9 +494,9 @@ outline and panel move from box to box and clear for the question. The last stat
 each slide is the handout page, so slide 51's handout page shows the question, and
 appendix slides 80 and 81 carry every price its panels explain. `clustered-scan`,
 `nonclustered-scatter` and `buffer-rescue-g` share one private strip helper so their
-geometry cannot drift apart. The suffixes on the five newest figure names (`tables-a`,
-`stored-order-a`, `merge-trace-b`, `rss-rsi-c`, `buffer-rescue-g`) are left over from
-the section-by-section rewrite and carry no meaning; `rss-rsi-c` now draws appendix
+geometry cannot drift apart. The suffixes on six figure names (`schema-a`, `tables-a`,
+`stored-order-a`, `merge-trace-b`, `rss-rsi-c`, `buffer-rescue-g`) carry no meaning;
+five are left over from the section-by-section rewrite, and `schema-a` follows `tables-a`; `rss-rsi-c` now draws appendix
 slide 79.
 
 ## Build

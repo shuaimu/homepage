@@ -11,12 +11,13 @@ Paper: Selinger, Astrahan, Chamberlin, Lorie, and Price, *Access Path Selection 
 ## The job
 
 * Paper's running example: name, salary, job title and department of every clerk in a Denver department
+* Three tables: EMP (NAME, DNO, JOB, SAL), DEPT (DNO, DNAME, LOC), JOB (JOB, TITLE). The WHERE columns below carry their table's name, which the paper leaves off
 
 ```
 SELECT NAME, TITLE, SAL, DNAME
 FROM   EMP, DEPT, JOB
-WHERE  TITLE = 'CLERK'
-  AND  LOC = 'DENVER'
+WHERE  JOB.TITLE = 'CLERK'
+  AND  DEPT.LOC = 'DENVER'
   AND  EMP.DNO = DEPT.DNO
   AND  EMP.JOB = JOB.JOB
 ```

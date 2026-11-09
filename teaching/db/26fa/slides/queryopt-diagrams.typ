@@ -978,6 +978,30 @@
 // with its columns in grey; its indexes sit indented beneath it; pages are right-aligned
 // so the sizes read straight down. Sizes are this lecture's, not the paper's; the index
 // sizes (SAL 40, DNO and JOB 50) are assumed.
+// Slide 2: the three tables' columns, from Figure 1, each a row of boxed column names
+// beside the query, so every name in its WHERE clause can be found in its table.
+#let schema-a() = {
+  let t(name, cols) = (
+    text(size: 21pt, weight: "bold", name),
+    table(
+      columns: cols.len(),
+      inset: (x: 10pt, y: 8pt),
+      stroke: .9pt + ink,
+      align: center + horizon,
+      ..cols.map(c => text(font: mono-font, size: 18pt, c)),
+    ),
+  )
+  grid(
+    columns: 2,
+    column-gutter: 16pt,
+    row-gutter: 22pt,
+    align: left + horizon,
+    ..t([EMP], ("NAME", "DNO", "JOB", "SAL")),
+    ..t([DEPT], ("DNO", "DNAME", "LOC")),
+    ..t([JOB], ("JOB", "TITLE")),
+  )
+}
+
 #let tables-a() = {
   set text(size: 20pt)
   let t(name, cols, size, pages, first: false) = (
