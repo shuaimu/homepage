@@ -93,34 +93,76 @@
       <li>H3: r1[P] w2[insert y to P] r2[z] w2[z] c2 r1[z] c10</li>
     </ul>
   </li>
-  <li>Snapshot isolation
+</ul>
+
+<h1 id="snapshot-isolation">Snapshot isolation</h1>
+
+<h2 id="overview">Overview</h2>
+<ul>
+  <li>A transaction
     <ul>
-      <li>read skew, not possible with si
-        <ul>
-          <li>r1[x]…w2[x]…w2[y]…c2…r1[y]…(c1 or a1)</li>
-        </ul>
-      </li>
-      <li>write skew, possible with si
-        <ul>
-          <li>r1[x]…r2[y]…w1[y]…w2[x]…(c1 and c2 occur)</li>
-        </ul>
-      </li>
-      <li>stronger than read committed</li>
-      <li>stronger than “anomaly serializable”.</li>
-      <li>revisit the long fork example: read skew
-        <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>T1: R(A)=0, R(B)=0, W(A)=1 
-T2:                        R(A)=1, R(B)=0
-T3: R(A)=0, R(B)=0, W(B)=1 
-T4:                        R(A)=0, R(B)=1
-T5:                                       R(A)=1, R(B)=1
-</code></pre></div>        </div>
-      </li>
+      <li>reads a “snapshot” of database image</li>
+      <li>can commit only if there are no write-write conflict</li>
     </ul>
+  </li>
+  <li>protocol:
+    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code> begin_tx : T is assigned a start timestamp T.sts
+ Read: T reads the biggest version i such that i &lt; = T.sts
+ Write: buffers writes, T.wset += {C}
+ commit_tx: T is assigned a commit timestamp T.cts
+          checks for all T' such that T'.cts \in [T.sts, T.cts] whether T'.wset and T.wset overlaps
+          write item with version T.cts
+</code></pre></div>    </div>
   </li>
 </ul>
 
-<h1 id="graph">Graph</h1>
+<h2 id="recall-our-earlier-bad-interleaving">Recall our earlier bad interleaving:</h2>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>r1[C] r1[S] w1[C=90] r3[C] r3[S] w1[S=110]
+
+T3 reads old value of C and S (due to T3.sts &lt; T1.cts)
+</code></pre></div></div>
+
+<h2 id="does-snapshot-isolation-implement-serializability-no">Does snapshot isolation implement serializability? No</h2>
 <ul>
+  <li>read skew, not possible with si
+    <ul>
+      <li>r1[x]…w2[x]…w2[y]…c2…r1[y]…(c1 or a1)</li>
+    </ul>
+  </li>
+  <li>write skew, possible with si
+    <ul>
+      <li>r1[x]…r2[y]…w1[y]…w2[x]…(c1 and c2 occur)</li>
+    </ul>
+  </li>
+  <li>stronger than read committed</li>
+  <li>stronger than “anomaly serializable”.</li>
+  <li>revisit the long fork example: read skew
+    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>T1: r1[A=0] r1[B=0] w1[A=1]
+T2:                         r2[A=1] r2[B=0]
+T3: r3[A=0] r3[B=0] w3[B=1]
+T4:                         r4[A=0] r4[B=1]
+T5:                                         r5[A=1] r5[B=1]
+</code></pre></div>    </div>
+  </li>
+</ul>
+
+<h1 id="serialization-graph">Serialization Graph</h1>
+<ul>
+  <li>How to check if a schedule is serializable?
+    <ul>
+      <li>Check if Serialization graph is cycle-free</li>
+    </ul>
+  </li>
+  <li>Examples:
+    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Serializable? r1[C] r1[S] r2[C] w2[C] c2 w1[C] w1[S] c1
+No
+Serializable? r1[C] r1[S] r3[C] r3[S] c3 w1[C] w1[S] c1
+equivalent to r3[C] r3[S] c3 r1[C] r1[S] w1[C] w1[S] c1
+Serializable? r1[C] r1[S] w1[C] r3[C] r3[S] c3 w1[S] c1
+no.
+</code></pre></div>    </div>
+    <h1 id="serialization-graph-for-weaker-isolation-levels">Serialization graph for weaker isolation levels</h1>
+  </li>
   <li>Read uncommitted
     <ul>
       <li>disallows cycles consisting only of ww edges

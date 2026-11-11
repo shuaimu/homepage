@@ -59,7 +59,7 @@ table td:first-child {
 | Nov 09 | Student presentation |
 |        | Session VII: Weaker Isolation and Consistency |
 | Nov 11 | More Isolation Levels ([notes](notes/isolations.html))<br>[A Critique of ANSI SQL Isolation Levels](readings/si.pdf) |
-| Nov 16 | MVCC<br>[CockroachDB: The Resilient Geo-Distributed SQL Database](readings/cockroachdb.pdf) |
+| Nov 16 | MVCC ([notes](notes/cockroachdb.html))<br>[CockroachDB: The Resilient Geo-Distributed SQL Database](readings/cockroachdb.pdf) |
 | Nov 18 | Student presentation |
 | Nov 23 | Guest Lecture (TBD) |
 | Nov 25 | No class (Thanksgiving break) |
