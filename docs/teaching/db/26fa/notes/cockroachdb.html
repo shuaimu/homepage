@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+ <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>MVCC and Snapshot Isolation — From Write Skew to CockroachDB | Home</title>
+<meta name="generator" content="Jekyll v3.9.0" />
+<meta property="og:title" content="MVCC and Snapshot Isolation — From Write Skew to CockroachDB" />
+<meta property="og:locale" content="en_US" />
+<meta property="og:site_name" content="Home" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="MVCC and Snapshot Isolation — From Write Skew to CockroachDB" />
+<script type="application/ld+json">
+{"@type":"WebPage","headline":"MVCC and Snapshot Isolation — From Write Skew to CockroachDB","url":"/teaching/db/26fa/notes/cockroachdb.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"><link type="application/atom+xml" rel="alternate" href="/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
+  <script src="/assets/javascript/bootstrap/bootstrap.bundle.min.js"></script>
+</head>
+<body><!-- <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+     <div class="container">
+     <a class="navbar-brand" rel="author" href="/">Home</a><button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+     aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+     <span class="navbar-toggler-icon"></span>
+     </button>
+     <div class="collapse navbar-collapse" id="navbarSupportedContent">
+     <ul class="navbar-nav ml-auto"></ul>
+     </div>
+     </div>
+     </nav> -->
+<div class="py-5">
+      <div class="container page-content">
+          <article>
+
+    <!-- <header>
+         <h1>MVCC and Snapshot Isolation — From Write Skew to CockroachDB</h1>
+         </header> -->
+
+  <section>
+    <h1 id="mvcc-and-snapshot-isolation--from-write-skew-to-cockroachdb">MVCC and Snapshot Isolation — From Write Skew to CockroachDB</h1>
+
+<h2 id="1-classic-snapshot-isolation">1. Classic Snapshot Isolation</h2>
+
+<h3 id="mvcc">MVCC</h3>
+
+<ul>
+  <li>Keep multiple versions of each record, identified by timestamps.</li>
+  <li>In the timestamp-based model below, committed versions carry their writer’s <strong>commit timestamp</strong>, not its start timestamp.</li>
+  <li>A read at timestamp <code class="language-plaintext highlighter-rouge">t</code> returns the newest committed version at or before <code class="language-plaintext highlighter-rouge">t</code>, provided the database has established a stable snapshot at <code class="language-plaintext highlighter-rouge">t</code>.</li>
+</ul>
+
+<p>Example:</p>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Key   Version   Value
+C     20        90
+C      5       100
+S     20       110
+S      5       100
+
+read(C, 10) = 100
+read(C, 25) = 90
+</code></pre></div></div>
+
+<h3 id="snapshot-isolation-protocol">Snapshot Isolation protocol</h3>
+
+<p>Use one increasing timestamp order for snapshot creation and commits. Snapshot creation must be coordinated with commit publication: an unfinished commit cannot later insert a version into an already established snapshot.</p>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>BEGIN(T):
+    T.start_ts = establish_snapshot()
+    T.write_set = {}
+
+READ(T, key):
+    if key in T.write_set:
+        return T.write_set[key]
+    return latest_committed_version(key, &lt;= T.start_ts)
+
+WRITE(T, key, value):
+    T.write_set[key] = value
+
+COMMIT(T):
+    atomically with snapshot creation and competing commits:
+        T.commit_ts = get_timestamp()
+
+        if any transaction committed after T.start_ts
+           wrote a key in T.write_set:
+            ABORT
+
+        publish all writes at T.commit_ts
+</code></pre></div></div>
+
+<p>The atomic block includes timestamp assignment, the write-write conflict check, and publication. This is an abstract correctness requirement, not a requirement to use one global lock. A distributed implementation needs a protocol that provides equivalent snapshot visibility and atomic commit.</p>
+
+<p><strong>Two guarantees:</strong></p>
+
+<ul>
+  <li>All reads observe one consistent snapshot.</li>
+  <li>Concurrent transactions cannot both successfully modify the same key.</li>
+</ul>
+
+<p><strong>Notice:</strong> There is no read-set validation.</p>
+
+<h3 id="can-a-write-at-timestamp-10-arrive-after-a-read-at-11">Can a write at timestamp 10 arrive after a read at 11?</h3>
+
+<p>Distinguish the writer’s <strong>start timestamp</strong>, a <strong>reserved commit timestamp</strong>, and a <strong>completed commit</strong>.</p>
+
+<p>If the writer starts at 9 and completes its commit at 10, a reader taking snapshot 11 must see that write, assuming no newer version at or before 11:</p>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Initially: C@1 = 100
+
+Writer W                         Reader R
+BEGIN: start_ts = 9
+write C = 90
+COMMIT: publish C@10 = 90
+                                 BEGIN: snapshot = 11
+                                 read C -&gt; C@10 = 90
+</code></pre></div></div>
+
+<p>But merely obtaining the number 10 does not complete the commit:</p>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Writer W                         Reader R
+BEGIN: start_ts = 9
+reserve commit timestamp 10
+  (still uncommitted)
+                                 request snapshot 11
+                                 read C -&gt; can it return C@1?
+later publish C@10 = 90
+</code></pre></div></div>
+
+<p>There are two implementation approaches:</p>
+
+<ul>
+  <li><strong>Timestamp-defined snapshots:</strong> If snapshot 11 is defined to include committed versions through 11, the database must resolve relevant unfinished commits and make their data available before returning reads that depend on them. If W commits at 10, R must see C@10; it may need to wait. It cannot return C@1 and later treat C@10 as part of the same snapshot.</li>
+  <li><strong>Transaction-visibility snapshots:</strong> The snapshot records which transactions were still in progress when it was taken. If W was uncommitted then, R may read C@1 and must continue to exclude W after W commits. In this approach, a timestamp or transaction-ID comparison alone does not determine visibility; the snapshot also needs transaction-status information.</li>
+</ul>
+
+<p>The pseudocode above uses the first abstraction. The second approach can also implement SI, but its read rule must consult the saved visibility information. In either case, the snapshot is stable. SI reads committed data as of the snapshot, not whatever happens to be physically present when each read arrives. See <a href="https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/tr-95-51.pdf">Berenson et al., section 4</a> and <a href="https://www.postgresql.org/docs/18/transaction-iso.html#XACT-REPEATABLE-READ">PostgreSQL’s snapshot visibility rules</a>.</p>
+
+<h2 id="2-read-skew-prevented-by-si">2. Read Skew: Prevented by SI</h2>
+
+<p>Initial balances:</p>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>C = 100, S = 100
+Invariant: C + S = 200
+</code></pre></div></div>
+
+<p>T1 reports the total. T2 transfers $10 from C to S.</p>
+
+<p>Without transaction-wide snapshots:</p>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>T1: read C = 100
+T2: write C = 90
+T2: write S = 110
+T2: COMMIT
+T1: read S = 110
+T1: report 210    &lt;-- read skew
+</code></pre></div></div>
+
+<p>Under SI:</p>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>T1: BEGIN @10
+T1: read C@10 = 100
+T2: COMMIT transfer @12
+T1: read S@10 = 100
+T1: report 200
+</code></pre></div></div>
+
+<p>Both records are read from the same logical database snapshot.</p>
+
+<p><strong>Conclusion:</strong> SI prevents read skew without locking the read records.</p>
+
+<h2 id="3-write-skew-allowed-by-si">3. Write Skew: Allowed by SI</h2>
+
+<p>Initial state:</p>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>C = 100, S = 100
+Invariant: C + S &gt;= 0
+</code></pre></div></div>
+
+<p>Two transactions independently attempt to withdraw $150, provided the current total is sufficient.</p>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>T1 (start @10)             T2 (start @11)
+-------------------        -------------------
+read C=100, S=100
+                           read C=100, S=100
+write C=-50
+                           write S=-50
+COMMIT @12
+                           COMMIT @13
+</code></pre></div></div>
+
+<p>Both succeed because:</p>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>W(T1) = {C}
+W(T2) = {S}
+
+W(T1) ∩ W(T2) = ∅
+</code></pre></div></div>
+
+<p>Final state:</p>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>C = -50
+S = -50
+Total = -100   &lt;-- invariant violated
+</code></pre></div></div>
+
+<p>Serialization graph:</p>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>T1 --rw--&gt; T2  (T1 read old S)
+T2 --rw--&gt; T1  (T2 read old C)
+</code></pre></div></div>
+
+<p>The cycle proves the history is not serializable.</p>
+
+<p><strong>Question:</strong> How can we prevent this without adding long-lived read locks?</p>
+
+<h2 id="4-cockroachdb-use-one-serialization-timestamp">4. CockroachDB: Use One Serialization Timestamp</h2>
+
+<p>Classic SI above uses a fixed start snapshot and a separate, later commit timestamp. We now change the model: a transaction starts with a <strong>provisional serialization timestamp</strong> that it tries to use for both reads and writes. This timestamp is not evidence that it has already committed.</p>
+
+<p>Start with a stronger rule:</p>
+
+<ul>
+  <li>Assign each transaction a timestamp <code class="language-plaintext highlighter-rouge">t</code>.</li>
+  <li>Read MVCC versions as of <code class="language-plaintext highlighter-rouge">t</code>.</li>
+  <li>Write provisional MVCC versions at <code class="language-plaintext highlighter-rouge">t</code>.</li>
+  <li>Arrange that every committed transaction is valid at its final timestamp.</li>
+</ul>
+
+<p>If all conflicting operations respect that timestamp order, the transactions can be serialized in that order.</p>
+
+<p><strong>Problem: operations arrive out of timestamp order.</strong></p>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>T1 @10                      T2 @11
+                            read C = 100
+write C = -50 @10
+</code></pre></div></div>
+
+<p>T2 has already read C at timestamp 11. We cannot subsequently insert C’s version at timestamp 10: doing so would invalidate T2’s completed read.</p>
+
+<p>Here T1’s <code class="language-plaintext highlighter-rouge">@10</code> is its proposed serialization timestamp, not a completed SI commit at 10. The following patches enforce timestamp order while allowing that proposed timestamp to change.</p>
+
+<h2 id="5-patch-1-timestamp-cache">5. Patch 1: Timestamp Cache</h2>
+
+<p>Each range leaseholder tracks the highest protected read timestamp for keys or key spans.</p>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Key    Highest read timestamp
+C      11
+S      11
+</code></pre></div></div>
+
+<p>A write cannot be placed at a timestamp at or below a conflicting protected read.</p>
+
+<p>Instead, <strong>push the writer’s timestamp forward</strong>.</p>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>WRITE(T, key, value):
+    if conflicting_read_ts(key) &gt;= T.write_ts:
+        T.write_ts = next_ts_after(conflicting_read_ts(key))
+
+    create provisional version at T.write_ts
+</code></pre></div></div>
+
+<p>Writes also have to respect newer committed versions and conflicting write intents.</p>
+
+<h3 id="replay-write-skew-with-only-patch-1">Replay write skew with only Patch 1</h3>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>T1 @10                        T2 @11
+------------------------      ------------------------
+read C,S @10
+                              read C,S @11
+write C@10
+  -&gt; pushed to 12
+commit C=-50 @12
+                              write S@11
+                              commit S=-50 @11
+</code></pre></div></div>
+
+<p><strong>Still wrong!</strong></p>
+
+<p>T1 read S at timestamp 10, but committed at timestamp 12. It failed to observe T2’s write to S at timestamp 11.</p>
+
+<p>We have recreated SI’s fundamental problem: <strong>reads and writes are effectively at different timestamps</strong>.</p>
+
+<h2 id="6-patch-2-read-refresh">6. Patch 2: Read Refresh</h2>
+
+<p>Distinguish two transaction timestamps:</p>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">read_ts</code>: Timestamp of the previously read snapshot.</li>
+  <li><code class="language-plaintext highlighter-rouge">write_ts</code>: Proposed serialization timestamp, which may advance.</li>
+</ul>
+
+<p>Initially:</p>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>read_ts = write_ts
+</code></pre></div></div>
+
+<p>When the write timestamp advances, validate earlier reads.</p>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>REFRESH(T):
+    if T.read_ts == T.write_ts:
+        return OK
+
+    for each span in T.read_spans:
+        if a conflicting version was written
+           in (T.read_ts, T.write_ts]:
+            return RETRY
+
+    protect the reads at the new timestamp
+    T.read_ts = T.write_ts
+    return OK
+</code></pre></div></div>
+
+<p>This checks previously read keys and scanned ranges, including potential phantoms.</p>
+
+<p>It is not necessary to rerun application logic if all the reads remain valid.</p>
+
+<h3 id="replay-write-skew-with-both-patches">Replay write skew with both patches</h3>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>T1 @10                        T2 @11
+------------------------      ------------------------
+read C,S @10
+                              read C,S @11
+write C@10
+  -&gt; pushed to 12
+
+refresh {C,S} (10,12]
+  -&gt; succeeds
+protect reads @12
+
+commit C=-50 @12
+                              write S@11
+                                -&gt; pushed to 13
+
+                              refresh {C,S} (11,13]
+                                -&gt; C changed @12
+                                -&gt; FAIL; RETRY
+</code></pre></div></div>
+
+<p>On retry, T2 reads:</p>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>C = -50
+S = 100
+Total = 50
+</code></pre></div></div>
+
+<p>It refuses the $150 withdrawal.</p>
+
+<p><strong>The invariant is preserved.</strong></p>
+
+<p>If T2’s write had committed before T1 refreshed, T1’s refresh would fail instead.</p>
+
+<p>The important property is that <strong>the two invalidating transactions cannot both commit</strong>.</p>
+
+<h2 id="7-why-is-it-serializable">7. Why Is It Serializable?</h2>
+
+<p>Consider serialization graph dependencies.</p>
+
+<p><strong>Write-read (wr):</strong> If T reads a committed version from U, U must be ordered before T.</p>
+
+<p><strong>Write-write (ww):</strong> Conflicting writers are coordinated through intents and timestamp ordering. A late writer must advance past newer conflicting versions.</p>
+
+<p><strong>Read-write (rw):</strong> Two situations:</p>
+
+<ol>
+  <li>A write arrives after an earlier protected read: the timestamp cache pushes the writer forward.</li>
+  <li>A transaction advances its own timestamp past a write that invalidates an earlier read: read refresh fails.</li>
+</ol>
+
+<p>Therefore, the protocol prevents committed dependency edges from pointing backward relative to the final serialization timestamp order.</p>
+
+<p>All edges point forward, so the serialization graph is acyclic.</p>
+
+<p><strong>That is the fundamental correctness argument.</strong></p>
+
+  </section>
+
+</article>
+
+      </div>
+    </div>
+<div class="py-5 border-top">
+  <div class="container">
+
+      <!-- <p class="h5 mb-3">Home</p> -->
+
+    <div class="row">
+
+      <div class="col-sm">
+        <ul class="list-unstyled">
+          <li><!-- Home --></li><li>
+              <a href="mailto:">
+                
+              </a>
+            </li></ul>
+      </div>
+
+
+      <div class="col-sm text-right">
+        <p></p>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
+<script async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script>
+</body>
+
+</html>
