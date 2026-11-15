@@ -1,4 +1,4 @@
-# MVCC and Snapshot Isolation — From Write Skew to CockroachDB
+# MVCC and Snapshot Isolation
 
 ## 1. Classic Snapshot Isolation
 
@@ -57,42 +57,6 @@ The atomic block includes timestamp assignment, the write-write conflict check, 
 - Concurrent transactions cannot both successfully modify the same key.
 
 **Notice:** There is no read-set validation.
-
-### Can a write at timestamp 10 arrive after a read at 11?
-
-Distinguish the writer's **start timestamp**, a **reserved commit timestamp**, and a **completed commit**.
-
-If the writer starts at 9 and completes its commit at 10, a reader taking snapshot 11 must see that write, assuming no newer version at or before 11:
-
-```text
-Initially: C@1 = 100
-
-Writer W                         Reader R
-BEGIN: start_ts = 9
-write C = 90
-COMMIT: publish C@10 = 90
-                                 BEGIN: snapshot = 11
-                                 read C -> C@10 = 90
-```
-
-But merely obtaining the number 10 does not complete the commit:
-
-```text
-Writer W                         Reader R
-BEGIN: start_ts = 9
-reserve commit timestamp 10
-  (still uncommitted)
-                                 request snapshot 11
-                                 read C -> can it return C@1?
-later publish C@10 = 90
-```
-
-There are two implementation approaches:
-
-- **Timestamp-defined snapshots:** If snapshot 11 is defined to include committed versions through 11, the database must resolve relevant unfinished commits and make their data available before returning reads that depend on them. If W commits at 10, R must see C@10; it may need to wait. It cannot return C@1 and later treat C@10 as part of the same snapshot.
-- **Transaction-visibility snapshots:** The snapshot records which transactions were still in progress when it was taken. If W was uncommitted then, R may read C@1 and must continue to exclude W after W commits. In this approach, a timestamp or transaction-ID comparison alone does not determine visibility; the snapshot also needs transaction-status information.
-
-The pseudocode above uses the first abstraction. The second approach can also implement SI, but its read rule must consult the saved visibility information. In either case, the snapshot is stable. SI reads committed data as of the snapshot, not whatever happens to be physically present when each read arrives. See [Berenson et al., section 4](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/tr-95-51.pdf) and [PostgreSQL's snapshot visibility rules](https://www.postgresql.org/docs/18/transaction-iso.html#XACT-REPEATABLE-READ).
 
 ## 2. Read Skew: Prevented by SI
 
@@ -179,6 +143,43 @@ T2 --rw--> T1  (T2 read old C)
 The cycle proves the history is not serializable.
 
 **Question:** How can we prevent this without adding long-lived read locks?
+
+### Can a write at timestamp 10 arrive after a read at 11?
+
+Distinguish the writer's **start timestamp**, a **reserved commit timestamp**, and a **completed commit**.
+
+If the writer starts at 9 and completes its commit at 10, a reader taking snapshot 11 must see that write, assuming no newer version at or before 11:
+
+```text
+Initially: C@1 = 100
+
+Writer W                         Reader R
+BEGIN: start_ts = 9
+write C = 90
+COMMIT: publish C@10 = 90
+                                 BEGIN: snapshot = 11
+                                 read C -> C@10 = 90
+```
+
+But merely obtaining the number 10 does not complete the commit:
+
+```text
+Writer W                         Reader R
+BEGIN: start_ts = 9
+reserve commit timestamp 10
+  (still uncommitted)
+                                 request snapshot 11
+                                 read C -> can it return C@1?
+later publish C@10 = 90
+```
+
+There are two implementation approaches:
+
+- **Timestamp-defined snapshots:** If snapshot 11 is defined to include committed versions through 11, the database must resolve relevant unfinished commits and make their data available before returning reads that depend on them. If W commits at 10, R must see C@10; it may need to wait. It cannot return C@1 and later treat C@10 as part of the same snapshot.
+- **Transaction-visibility snapshots:** The snapshot records which transactions were still in progress when it was taken. If W was uncommitted then, R may read C@1 and must continue to exclude W after W commits. In this approach, a timestamp or transaction-ID comparison alone does not determine visibility; the snapshot also needs transaction-status information.
+
+The pseudocode above uses the first abstraction. The second approach can also implement SI, but its read rule must consult the saved visibility information. In either case, the snapshot is stable. SI reads committed data as of the snapshot, not whatever happens to be physically present when each read arrives. 
+
 
 ## 4. CockroachDB: Use One Serialization Timestamp
 

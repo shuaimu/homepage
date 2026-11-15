@@ -3,15 +3,15 @@
  <meta charset="utf-8">
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.7.1 -->
-<title>MVCC and Snapshot Isolation — From Write Skew to CockroachDB | Home</title>
+<title>MVCC and Snapshot Isolation | Home</title>
 <meta name="generator" content="Jekyll v3.9.0" />
-<meta property="og:title" content="MVCC and Snapshot Isolation — From Write Skew to CockroachDB" />
+<meta property="og:title" content="MVCC and Snapshot Isolation" />
 <meta property="og:locale" content="en_US" />
 <meta property="og:site_name" content="Home" />
 <meta name="twitter:card" content="summary" />
-<meta property="twitter:title" content="MVCC and Snapshot Isolation — From Write Skew to CockroachDB" />
+<meta property="twitter:title" content="MVCC and Snapshot Isolation" />
 <script type="application/ld+json">
-{"@type":"WebPage","headline":"MVCC and Snapshot Isolation — From Write Skew to CockroachDB","url":"/teaching/db/26fa/notes/cockroachdb.html","@context":"https://schema.org"}</script>
+{"@type":"WebPage","headline":"MVCC and Snapshot Isolation","url":"/teaching/db/26fa/notes/cockroachdb.html","@context":"https://schema.org"}</script>
 <!-- End Jekyll SEO tag -->
 <link rel="stylesheet" href="/assets/main.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"><link type="application/atom+xml" rel="alternate" href="/feed.xml" title="Home" /><script src="/assets/javascript/bootstrap/jquery.min.js"></script>
@@ -33,11 +33,11 @@
           <article>
 
     <!-- <header>
-         <h1>MVCC and Snapshot Isolation — From Write Skew to CockroachDB</h1>
+         <h1>MVCC and Snapshot Isolation</h1>
          </header> -->
 
   <section>
-    <h1 id="mvcc-and-snapshot-isolation--from-write-skew-to-cockroachdb">MVCC and Snapshot Isolation — From Write Skew to CockroachDB</h1>
+    <h1 id="mvcc-and-snapshot-isolation">MVCC and Snapshot Isolation</h1>
 
 <h2 id="1-classic-snapshot-isolation">1. Classic Snapshot Isolation</h2>
 
@@ -98,42 +98,6 @@ COMMIT(T):
 </ul>
 
 <p><strong>Notice:</strong> There is no read-set validation.</p>
-
-<h3 id="can-a-write-at-timestamp-10-arrive-after-a-read-at-11">Can a write at timestamp 10 arrive after a read at 11?</h3>
-
-<p>Distinguish the writer’s <strong>start timestamp</strong>, a <strong>reserved commit timestamp</strong>, and a <strong>completed commit</strong>.</p>
-
-<p>If the writer starts at 9 and completes its commit at 10, a reader taking snapshot 11 must see that write, assuming no newer version at or before 11:</p>
-
-<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Initially: C@1 = 100
-
-Writer W                         Reader R
-BEGIN: start_ts = 9
-write C = 90
-COMMIT: publish C@10 = 90
-                                 BEGIN: snapshot = 11
-                                 read C -&gt; C@10 = 90
-</code></pre></div></div>
-
-<p>But merely obtaining the number 10 does not complete the commit:</p>
-
-<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Writer W                         Reader R
-BEGIN: start_ts = 9
-reserve commit timestamp 10
-  (still uncommitted)
-                                 request snapshot 11
-                                 read C -&gt; can it return C@1?
-later publish C@10 = 90
-</code></pre></div></div>
-
-<p>There are two implementation approaches:</p>
-
-<ul>
-  <li><strong>Timestamp-defined snapshots:</strong> If snapshot 11 is defined to include committed versions through 11, the database must resolve relevant unfinished commits and make their data available before returning reads that depend on them. If W commits at 10, R must see C@10; it may need to wait. It cannot return C@1 and later treat C@10 as part of the same snapshot.</li>
-  <li><strong>Transaction-visibility snapshots:</strong> The snapshot records which transactions were still in progress when it was taken. If W was uncommitted then, R may read C@1 and must continue to exclude W after W commits. In this approach, a timestamp or transaction-ID comparison alone does not determine visibility; the snapshot also needs transaction-status information.</li>
-</ul>
-
-<p>The pseudocode above uses the first abstraction. The second approach can also implement SI, but its read rule must consult the saved visibility information. In either case, the snapshot is stable. SI reads committed data as of the snapshot, not whatever happens to be physically present when each read arrives. See <a href="https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/tr-95-51.pdf">Berenson et al., section 4</a> and <a href="https://www.postgresql.org/docs/18/transaction-iso.html#XACT-REPEATABLE-READ">PostgreSQL’s snapshot visibility rules</a>.</p>
 
 <h2 id="2-read-skew-prevented-by-si">2. Read Skew: Prevented by SI</h2>
 
@@ -212,6 +176,42 @@ T2 --rw--&gt; T1  (T2 read old C)
 <p>The cycle proves the history is not serializable.</p>
 
 <p><strong>Question:</strong> How can we prevent this without adding long-lived read locks?</p>
+
+<h3 id="can-a-write-at-timestamp-10-arrive-after-a-read-at-11">Can a write at timestamp 10 arrive after a read at 11?</h3>
+
+<p>Distinguish the writer’s <strong>start timestamp</strong>, a <strong>reserved commit timestamp</strong>, and a <strong>completed commit</strong>.</p>
+
+<p>If the writer starts at 9 and completes its commit at 10, a reader taking snapshot 11 must see that write, assuming no newer version at or before 11:</p>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Initially: C@1 = 100
+
+Writer W                         Reader R
+BEGIN: start_ts = 9
+write C = 90
+COMMIT: publish C@10 = 90
+                                 BEGIN: snapshot = 11
+                                 read C -&gt; C@10 = 90
+</code></pre></div></div>
+
+<p>But merely obtaining the number 10 does not complete the commit:</p>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Writer W                         Reader R
+BEGIN: start_ts = 9
+reserve commit timestamp 10
+  (still uncommitted)
+                                 request snapshot 11
+                                 read C -&gt; can it return C@1?
+later publish C@10 = 90
+</code></pre></div></div>
+
+<p>There are two implementation approaches:</p>
+
+<ul>
+  <li><strong>Timestamp-defined snapshots:</strong> If snapshot 11 is defined to include committed versions through 11, the database must resolve relevant unfinished commits and make their data available before returning reads that depend on them. If W commits at 10, R must see C@10; it may need to wait. It cannot return C@1 and later treat C@10 as part of the same snapshot.</li>
+  <li><strong>Transaction-visibility snapshots:</strong> The snapshot records which transactions were still in progress when it was taken. If W was uncommitted then, R may read C@1 and must continue to exclude W after W commits. In this approach, a timestamp or transaction-ID comparison alone does not determine visibility; the snapshot also needs transaction-status information.</li>
+</ul>
+
+<p>The pseudocode above uses the first abstraction. The second approach can also implement SI, but its read rule must consult the saved visibility information. In either case, the snapshot is stable. SI reads committed data as of the snapshot, not whatever happens to be physically present when each read arrives.</p>
 
 <h2 id="4-cockroachdb-use-one-serialization-timestamp">4. CockroachDB: Use One Serialization Timestamp</h2>
 
