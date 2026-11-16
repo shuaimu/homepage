@@ -19,6 +19,12 @@ Stony Brook University <br>
 <hr>
 
 ## News 
+* Oct 2026, Boomslang accepted to SIGOPS ATC '26!
+* Aug 2026, Lion accepted to SOSP '26!
+* Jun 2026, Jetpack accepted to OSDI '26!
+* Jun 2026, Weihai defended his PhD dissertation! Congratulations!
+* Sep 2025, AutoMan and Tiga accepted to SOSP '25!
+* Jul 2025, Mako appeared at OSDI '25!
 * Dec 2024, Received SBU Research Excellence Award. Thank you Seawolves!
 * Jun 2024, CausalMesh accepted to PVLDB 24 (VLDB '25)!
 * Sep 2023, Awarded LARGE (Co-PI). Thanks NSF!

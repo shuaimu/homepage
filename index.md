@@ -39,13 +39,12 @@ I'm particularly interested in:
 If you are interested, email me a brief resume.
 
 ## News ([see all](news.html))
+* Oct 2026, Boomslang accepted to SIGOPS ATC '26!
 * Aug 2026, Lion accepted to SOSP '26!
 * Jun 2026, Jetpack accepted to OSDI '26!
 * Jun 2026, Weihai defended his PhD dissertation! Congratulations!
 * Sep 2025, AutoMan and Tiga accepted to SOSP '25!
 * Jul 2025, Mako appeared at OSDI '25!
-* Dec 2024, Received SBU Research Excellence Award. Thank you Seawolves!
-* Jun 2024, CausalMesh accepted to PVLDB 24 (VLDB '25)!
 <!-- * Sep 2023, Awarded LARGE (Co-PI). Thanks NSF! -->
 <!-- * May 2023, NCC accepted to OSDI '23! -->
 <!-- * Feb 2023, Awarded CAREER. Thanks NSF! -->
@@ -95,6 +94,21 @@ If you are interested, email me a brief resume.
 
   <ul>
     <li>
+      Boomslang: A Modular Framework for Database Transaction Isolation Checking
+      <br>
+      Jian Zhang, Shuai Mu, Cheng Tan
+      <br>
+      SIGOPS ATC 26
+    </li>
+    <li>
+      Lion: Modular Verification of Async Runtime Liveness
+      [<a href="pub/lion-sosp26.pdf">paper</a>]
+      <br>
+      Ti Zhou, Zihao Zhang, Omar Chowdhury, Shuai Mu
+      <br>
+      SOSP 26
+    </li>
+    <li>
       Jetpack: Consensus Made Generally Fast
       [<a href="https://www.usenix.org/system/files/osdi26-tang.pdf">paper</a>]
       <br>
@@ -126,16 +140,6 @@ If you are interested, email me a brief resume.
       <br>
       OSDI 25
     </li>
-    <li>
-      CausalMesh: A Causal Cache for Stateful Serverless Computing
-      [<a href="https://www.cis.upenn.edu/~sga001/papers/causalmesh-vldb25.pdf">paper</a>]
-      <br>
-      Haoran Zhang, Shuai Mu, Sebastian Angel, Vincent Liu
-      <br>
-      PVLDB 24, Best Paper Award Nominee
-      <br>
-      ACM SIGMOD Research Highlight Award
-    </li>
   </ul>
 
 ## Students ([see alumni](alumni))
@@ -147,7 +151,7 @@ If you are interested, email me a brief resume.
 * [Ze Tang](https://mintgreentz.github.io/) (PhD)
 * Zeyu Yang (PhD)
 <!-- * Kumar Shivam (PhD) -->
-* [Ti Zhou (PhD)](https://coladog.github.io/)
+<!-- * [Ti Zhou (PhD)](https://coladog.github.io/) -->
 <!-- * Sethu Karthikeyan (MS) -->
 <!-- * Chenyu Wang (MS) -->
 <!-- * Saumitra Bose (MS) -->

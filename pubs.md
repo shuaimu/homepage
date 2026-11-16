@@ -21,6 +21,21 @@ Stony Brook University <br>
 ## Publications
    <ul>
     <li>
+      Boomslang: A Modular Framework for Database Transaction Isolation Checking
+      <br>
+      Jian Zhang, Shuai Mu, Cheng Tan
+      <br>
+      SIGOPS ATC 26
+    </li>
+    <li>
+      Lion: Modular Verification of Async Runtime Liveness
+      [<a href="./pub/lion-sosp26.pdf">paper</a>]
+      <br>
+      Ti Zhou, Zihao Zhang, Omar Chowdhury, Shuai Mu
+      <br>
+      SOSP 26
+    </li>
+    <li>
       Jetpack: Consensus Made Generally Fast
       [<a href="https://www.usenix.org/system/files/osdi26-tang.pdf">paper</a>]
       <br>
