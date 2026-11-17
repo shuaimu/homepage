@@ -20,6 +20,10 @@ Stony Brook University <br>
 
 ## Alumni
 
+### Post-doc
+
+* [Jinkun Geng](https://www.gengjinkun.com/) (Post-doc, co-advised with Anirudh Sivaraman -\> NYU Faculty Fellow)
+
 ### PhD
 
 * [Weihai Shen](https://shenweihai1.github.io/) (PhD -\> Google)
