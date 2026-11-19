@@ -63,6 +63,7 @@ table td:first-child {
 | Nov 18 | Student presentation |
 | Nov 23 | Guest Lecture (TBD) |
 | Nov 25 | No class (Thanksgiving break) |
+| Nov 30 | TBD |
 | Dec 02 | **Exam 3** |
 | Dec 07 | Final project poster presentations |
 
